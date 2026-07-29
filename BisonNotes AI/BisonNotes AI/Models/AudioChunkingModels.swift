@@ -20,7 +20,7 @@ struct AudioChunk: Identifiable, Codable {
     let endTime: TimeInterval
     let fileSize: Int64
     let duration: TimeInterval
-    
+
     init(originalURL: URL, chunkURL: URL, sequenceNumber: Int, startTime: TimeInterval, endTime: TimeInterval, fileSize: Int64) {
         self.id = UUID()
         self.originalURL = originalURL
@@ -45,7 +45,7 @@ struct TranscriptChunk: Identifiable, Codable {
     let endTime: TimeInterval
     let processingTime: TimeInterval?
     let createdAt: Date
-    
+
     init(chunkId: UUID, sequenceNumber: Int, transcript: String, segments: [TranscriptSegment], startTime: TimeInterval, endTime: TimeInterval, processingTime: TimeInterval? = nil) {
         self.id = UUID()
         self.chunkId = chunkId
@@ -65,13 +65,13 @@ enum ChunkingStrategy {
     case fileSize(maxBytes: Int64)
     case duration(maxSeconds: TimeInterval)
     case combined(maxBytes: Int64, maxSeconds: TimeInterval)
-    
+
     static let openAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds (21.67 minutes)
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 10 * 60) // 10 minutes
     static let mistralAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds
-    
+
     var description: String {
         switch self {
         case .fileSize(let maxBytes):
@@ -93,13 +93,13 @@ struct ChunkingConfig {
     let strategy: ChunkingStrategy
     let overlapSeconds: TimeInterval
     let tempDirectory: URL
-    
+
     init(strategy: ChunkingStrategy, overlapSeconds: TimeInterval = 5.0, tempDirectory: URL? = nil) {
         self.strategy = strategy
         self.overlapSeconds = overlapSeconds
         self.tempDirectory = tempDirectory ?? FileManager.default.temporaryDirectory.appendingPathComponent("AudioChunks")
     }
-    
+
     static func config(for engine: TranscriptionEngine) -> ChunkingConfig {
         switch engine {
         case .notConfigured:
@@ -128,7 +128,7 @@ struct ChunkingResult {
     let totalSize: Int64
     let chunkingTime: TimeInterval
     let needsChunking: Bool
-    
+
     init(chunks: [AudioChunk], totalDuration: TimeInterval, totalSize: Int64, chunkingTime: TimeInterval) {
         self.chunks = chunks
         self.totalDuration = totalDuration
@@ -145,13 +145,6 @@ struct ReassemblyResult {
     let totalSegments: Int
     let reassemblyTime: TimeInterval
     let chunks: [TranscriptChunk]
-    
-    init(transcriptData: TranscriptData, totalSegments: Int, reassemblyTime: TimeInterval, chunks: [TranscriptChunk]) {
-        self.transcriptData = transcriptData
-        self.totalSegments = totalSegments
-        self.reassemblyTime = reassemblyTime
-        self.chunks = chunks
-    }
 }
 
 // MARK: - Audio File Info
@@ -168,31 +161,31 @@ struct AudioFileInfo {
         AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
-        
+
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
         AppLog.shared.chunking("AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)", level: .debug)
-        
+
         let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let fileSize = fileAttributes[.size] as? Int64 ?? 0
         AppLog.shared.chunking("AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)", level: .debug)
-        
+
         // Validation checks
         if duration <= 0 {
             AppLog.shared.chunking("AudioFileInfo.create - Invalid duration: \(duration)", level: .error)
             throw AudioChunkingError.invalidAudioFile
         }
-        
+
         if fileSize <= 0 {
             AppLog.shared.chunking("AudioFileInfo.create - Invalid file size: \(fileSize)", level: .error)
             throw AudioChunkingError.invalidAudioFile
         }
-        
+
         // Get format information
         let tracks = try await asset.loadTracks(withMediaType: .audio)
         var sampleRate: Double = 0
         var channels: Int = 0
-        
+
         if let audioTrack = tracks.first {
             let formatDescriptions = try await audioTrack.load(.formatDescriptions)
             if let formatDescription = formatDescriptions.first {
@@ -201,7 +194,7 @@ struct AudioFileInfo {
                 channels = Int(audioStreamBasicDescription?.pointee.mChannelsPerFrame ?? 0)
             }
         }
-        
+
         // Determine format from file extension
         let fileExtension = url.pathExtension.lowercased()
         let format: String
@@ -217,7 +210,7 @@ struct AudioFileInfo {
         default:
             format = fileExtension.uppercased()
         }
-        
+
         let audioFileInfo = AudioFileInfo(
             url: url,
             duration: duration,
@@ -226,19 +219,10 @@ struct AudioFileInfo {
             sampleRate: sampleRate,
             channels: channels
         )
-        
+
         AppLog.shared.chunking("AudioFileInfo.create - Successfully created: duration=\(audioFileInfo.duration)s, size=\(audioFileInfo.fileSize) bytes, format=\(audioFileInfo.format), sampleRate=\(audioFileInfo.sampleRate), channels=\(audioFileInfo.channels)", level: .debug)
-        
+
         return audioFileInfo
-    }
-    
-    init(url: URL, duration: TimeInterval, fileSize: Int64, format: String, sampleRate: Double, channels: Int) {
-        self.url = url
-        self.duration = duration
-        self.fileSize = fileSize
-        self.format = format
-        self.sampleRate = sampleRate
-        self.channels = channels
     }
 }
 
@@ -252,7 +236,7 @@ enum AudioChunkingError: LocalizedError {
     case tempDirectoryCreationFailed
     case fileWriteFailed(String)
     case cleanupFailed(String)
-    
+
     var errorDescription: String? {
         switch self {
         case .fileNotFound:

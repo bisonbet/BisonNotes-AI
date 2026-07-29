@@ -17,6 +17,7 @@ class DeletionData: ObservableObject {
 }
 
 struct RecordingsListView: View {
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -97,6 +98,7 @@ struct RecordingsListView: View {
             .searchable(text: $searchText, prompt: "Search recordings...")
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
+                    .nativeMacModalSizing(width: 520, height: 440)
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
@@ -114,6 +116,7 @@ struct RecordingsListView: View {
                             showingEnhancedDeleteDialog = false
                         }
                     )
+                    .nativeMacModalSizing(width: 680, height: 620)
                 } else {
                     // Loading or error state
                     VStack(spacing: 20) {
@@ -149,15 +152,12 @@ struct RecordingsListView: View {
                         .padding()
                     }
                     .padding()
+                    .nativeMacModalSizing(width: 680, height: 620)
                 }
             }
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
-            }
-            .sheet(item: $selectedRecordingForPlayer) { recording in
-                AudioPlayerView(recording: recording)
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 680, height: 620)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
@@ -174,6 +174,7 @@ struct RecordingsListView: View {
                         recommendedFirst: recommendedRecording
                     )
                     .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 760, height: 680)
                 }
             }
             .sheet(isPresented: $showingArchiveConfirmation) {
@@ -197,46 +198,14 @@ struct RecordingsListView: View {
                     }
                 )
                 .presentationDetents([.medium, .large])
+                .nativeMacModalSizing(width: 680, height: 620)
             }
-            .sheet(isPresented: $showingArchiveExportPicker) {
-                DocumentExportPicker(urls: archiveExportURLs) { success, exportedURLs in
-                    showingArchiveExportPicker = false
-                    if success {
-                        let archivedCount = RecordingArchiveService.shared.archiveRecordings(
-                            recordingsToArchive,
-                            removeLocal: removeLocalAfterArchive,
-                            exportedURLs: exportedURLs
-                        )
-                        if archivedCount == 0 {
-                            archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
-                        }
-                        isSelectionMode = false
-                        selectedRecordings.removeAll()
-                        loadRecordings()
-                    }
-                    recordingsToArchive = []
-                    archiveExportURLs = []
-                    RecordingArchiveService.shared.cleanupArchiveStaging()
-                }
-            }
-            .sheet(isPresented: $showingAudioExportPicker) {
-                DocumentExportPicker(urls: audioExportURLs) { success, _ in
-                    showingAudioExportPicker = false
-                    if success {
-                        if audioExportSkippedCount > 0 {
-                            let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
-                            archiveRestoreError = "\(skippedText) not exported because the audio is not stored locally. Restore archived audio before exporting it."
-                        }
-                        isSelectionMode = false
-                        selectedRecordings.removeAll()
-                    }
-                    audioExportURLs = []
-                    audioExportSkippedCount = 0
-                    RecordingArchiveService.shared.cleanupAudioExportStaging()
-                }
+            .background {
+                exportMoverPresenters
             }
             .sheet(isPresented: $showingArchiveOlderThan) {
                 archiveOlderThanSheet
+                    .nativeMacModalSizing(width: 520, height: 440)
             }
             .alert("Audio Archived", isPresented: Binding(
                 get: { archiveInfoRecording != nil },
@@ -265,9 +234,11 @@ struct RecordingsListView: View {
                    let transcript = appCoordinator.getTranscriptData(for: recordingId) {
                     EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                         .environmentObject(appCoordinator)
+                        .nativeMacModalSizing(width: 820, height: 720)
                 } else {
                     TranscriptDetailView(recording: entry, transcriptText: "")
                         .environmentObject(appCoordinator)
+                        .nativeMacModalSizing(width: 820, height: 720)
                 }
             }
             .confirmationDialog(
@@ -293,6 +264,12 @@ struct RecordingsListView: View {
             } message: {
                 Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
             }
+        }
+        .sheet(item: $selectedRecordingForPlayer) { recording in
+            AudioPlayerView(recording: recording)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 720, height: 680)
         }
         .onAppear {
             refreshFileRelationships()
@@ -338,7 +315,7 @@ struct RecordingsListView: View {
 
                 Text(recordingsHeaderSubtitle)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .lineLimit(1)
             }
 
@@ -625,7 +602,7 @@ struct RecordingsListView: View {
                         Text(sectionData.section.title)
                             .font(.caption)
                             .fontWeight(.semibold)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.primary)
                             .textCase(.uppercase)
                             .padding(.horizontal, 4)
 
@@ -646,77 +623,82 @@ struct RecordingsListView: View {
     }
 
     private func recordingRow(for recording: AudioRecordingFile) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        // Prefer the indexed id lookup; getRecording(url:) fetches and scans the whole
+        // recordings table, which is O(N) per row (O(N^2) for the list) on every render.
+        let entry = recording.recordingId.flatMap { appCoordinator.getRecording(id: $0) }
+            ?? appCoordinator.getRecording(url: recording.url)
+        let hasTranscript = entry?.transcript != nil || entry?.transcriptId != nil
+        let hasSummary = entry?.summary != nil
+            || entry?.summaryId != nil
+            || entry?.summaryStatus == ProcessingStatus.completed.rawValue
+
+        return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top, spacing: 12) {
                 if isSelectionMode {
+                    recordingSelectionButton(for: recording)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
                     Button(action: {
-                        toggleSelection(for: recording)
-                    }) {
-                        Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
-                            .font(.title2)
-                            .foregroundColor(selectedRecordings.contains(recording.url) ? .accentColor : .secondary)
-                            .frame(width: 32, height: 32)
-                    }
+                        openOrSelectRecording(recording)
+                    }, label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(recording.name)
+                                .font(.headline)
+                                .foregroundColor(.primary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
+
+                            ViewThatFits(in: .horizontal) {
+                                HStack(spacing: 8) {
+                                    recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                    recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                    recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                }
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                    recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                    recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                }
+                            }
+
+                            recordingStatusView(for: recording)
+
+                            if recording.isCloudSyncDisabled {
+                                Label("Keep on This Device", systemImage: "iphone")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.indigo)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.indigo.opacity(0.12), in: Capsule())
+                            }
+
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    })
                     .buttonStyle(.plain)
-                }
+                    .accessibilityCard(
+                        label: AccessibilitySupport.recordingRowLabel(name: recording.name),
+                        value: AccessibilitySupport.recordingRowValue(recordingRowContext(
+                            recording: recording,
+                            hasTranscript: hasTranscript,
+                            hasSummary: hasSummary
+                        )),
+                        hint: isSelectionMode
+                            ? "Double tap to select or deselect this recording."
+                            : "Double tap to open the audio player."
+                    )
+                    .accessibilityIdentifier(
+                        BisonNotesAccessibilityID.recordingRowPrefix
+                            + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent)
+                    )
 
-                Button(action: {
-                    if isSelectionMode {
-                        toggleSelection(for: recording)
-                    } else if recording.isArchived && !recording.hasLocalAudio {
-                        selectedRecordingForPlayer = nil
-                        archiveInfoRecording = recording
-                    } else {
-                        selectedRecordingForPlayer = recording
+                    if let locationData = recording.locationData {
+                        recordingLocationButton(locationData, recordingName: recording.name)
                     }
-                }) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(recording.name)
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-
-                        ViewThatFits(in: .horizontal) {
-                            HStack(spacing: 8) {
-                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
-                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
-                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
-                            }
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
-                                recordingMetaLabel(systemImage: "timer", text: recording.durationString)
-                                recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
-                            }
-                        }
-
-                        recordingStatusView(for: recording)
-
-                        if recording.isCloudSyncDisabled {
-                            Label("Keep on This Device", systemImage: "iphone")
-                                .font(.caption.weight(.medium))
-                                .foregroundColor(.indigo)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.indigo.opacity(0.12), in: Capsule())
-                        }
-
-                        if let locationData = recording.locationData {
-                            Button(action: {
-                                showLocationDetails(locationData)
-                            }) {
-                                Label("View Location", systemImage: "location.fill")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundColor(.accentColor)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider()
@@ -738,14 +720,83 @@ struct RecordingsListView: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .accessibilityIdentifier(BisonNotesAccessibilityID.recordingRowPrefix + (recording.recordingId?.uuidString ?? recording.url.lastPathComponent))
+    }
+
+    private func recordingSelectionButton(for recording: AudioRecordingFile) -> some View {
+        Button(action: {
+            toggleSelection(for: recording)
+        }, label: {
+            Image(systemName: selectedRecordings.contains(recording.url) ? "checkmark.circle.fill" : "circle")
+                .font(.title2)
+                .foregroundColor(selectedRecordings.contains(recording.url) ? .accentColor : .secondary)
+                .frame(width: 32, height: 32)
+        })
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            selectedRecordings.contains(recording.url)
+                ? "Deselect \(recording.name)"
+                : "Select \(recording.name)"
+        )
+        .accessibilityValue(selectedRecordings.contains(recording.url) ? "Selected" : "Not selected")
+    }
+
+    private func recordingLocationButton(
+        _ locationData: LocationData,
+        recordingName: String
+    ) -> some View {
+        Button(action: {
+            showLocationDetails(locationData)
+        }, label: {
+            Label("View Location", systemImage: "location.fill")
+                .font(.caption)
+                .fontWeight(.medium)
+        })
+        .buttonStyle(.plain)
+        .foregroundColor(.accentColor)
+        .accessibilityLabel("View Location for \(recordingName)")
+    }
+
+    private func openOrSelectRecording(_ recording: AudioRecordingFile) {
+        if isSelectionMode {
+            toggleSelection(for: recording)
+        } else if recording.isArchived && !recording.hasLocalAudio {
+            selectedRecordingForPlayer = nil
+            archiveInfoRecording = recording
+        } else {
+            #if os(macOS)
+            guard let recordingID = recording.recordingId else { return }
+            // Route the single player window to this recording, then open/focus it.
+            appCoordinator.macPlayerRecordingID = recordingID
+            openWindow(id: NativeWindowID.recording)
+            #else
+            selectedRecordingForPlayer = recording
+            #endif
+        }
     }
 
     private func recordingMetaLabel(systemImage: String, text: String) -> some View {
         Label(text, systemImage: systemImage)
             .font(.caption)
-            .foregroundColor(.secondary)
+            .foregroundColor(.primary)
             .lineLimit(1)
+    }
+
+    private func recordingRowContext(
+        recording: AudioRecordingFile,
+        hasTranscript: Bool,
+        hasSummary: Bool
+    ) -> AccessibilitySupport.RecordingRowContext {
+        AccessibilitySupport.RecordingRowContext(
+            date: recording.dateString,
+            duration: recording.durationString,
+            fileSize: recording.fileSizeString,
+            isArchived: recording.isArchived,
+            hasLocalAudio: recording.hasLocalAudio,
+            isCloudSyncDisabled: recording.isCloudSyncDisabled,
+            hasTranscript: hasTranscript,
+            hasSummary: hasSummary,
+            hasLocation: recording.locationData != nil
+        )
     }
 
     @ViewBuilder
@@ -783,7 +834,12 @@ struct RecordingsListView: View {
     @ViewBuilder
     private func recordingActionButtons(for recording: AudioRecordingFile) -> some View {
         if recording.hasLocalAudio {
-            recordingIconButton("Export Audio", systemImage: "square.and.arrow.up", tint: .accentColor) {
+            recordingIconButton(
+                "Export Audio",
+                systemImage: "square.and.arrow.up",
+                tint: .accentColor,
+                recordingName: recording.name
+            ) {
                 prepareExport(for: recording)
             }
         }
@@ -804,23 +860,51 @@ struct RecordingsListView: View {
             }
             .buttonStyle(.plain)
             .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
-            .accessibilityLabel("Restore Audio")
+            .accessibilityLabel("Restore Audio for \(recording.name)")
         } else if recording.isArchived && recording.hasLocalAudio {
-            recordingIconButton("Mark Local Archive State Clear", systemImage: "checkmark.circle.fill", tint: .green) {
+            recordingIconButton(
+                "Mark Local Archive State Clear",
+                systemImage: "checkmark.circle.fill",
+                tint: .green,
+                recordingName: recording.name
+            ) {
                 clearLocalArchiveState(recording)
             }
         } else {
-            recordingIconButton("Play Audio", systemImage: "play.fill", tint: .accentColor) {
-                selectedRecordingForPlayer = recording
+            // Open the player the same way tapping the row does (a sheet via
+            // selectedRecordingForPlayer), so both entry points present it consistently.
+            Button {
+                openOrSelectRecording(recording)
+            } label: {
+                playRecordingIcon
             }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play Audio for \(recording.name)")
+            .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
         }
 
         cloudSyncPreferenceButton(for: recording)
 
-        recordingIconButton("Delete Recording", systemImage: "trash", tint: .red) {
+        recordingIconButton(
+            "Delete Recording",
+            systemImage: "trash",
+            tint: .red,
+            recordingName: recording.name
+        ) {
             deletionData.recordingToDelete = recording
             deleteRecording(recording)
         }
+    }
+
+    private var playRecordingIcon: some View {
+        Image(systemName: "play.fill")
+            .font(.headline)
+            .foregroundColor(.accentColor)
+            .frame(width: 44, height: 44)
+            .background(
+                Color.accentColor.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
     }
 
     @ViewBuilder
@@ -830,7 +914,8 @@ struct RecordingsListView: View {
                 recording.isCloudSyncDisabled ? "Allow iCloud Sync" : "Keep on This Device",
                 systemImage: recording.isCloudSyncDisabled ? "iphone" : "icloud",
                 tint: recording.isCloudSyncDisabled ? .indigo : .blue,
-                recordingId: recording.recordingId
+                recordingId: recording.recordingId,
+                recordingName: recording.name
             ) {
                 toggleCloudSyncPreference(for: recording)
             }
@@ -841,16 +926,17 @@ struct RecordingsListView: View {
                                      systemImage: String,
                                      tint: Color,
                                      recordingId: UUID? = nil,
+                                     recordingName: String? = nil,
                                      action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.headline)
                 .foregroundColor(tint)
-                .frame(width: 34, height: 34)
+                .frame(width: 44, height: 44)
                 .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel(recordingName.map { "\(label) for \($0)" } ?? label)
         .accessibilityIdentifier(identifier(forRecordingIconLabel: label, recordingId: recordingId))
     }
 
@@ -862,7 +948,8 @@ struct RecordingsListView: View {
     @ViewBuilder
     private func transcriptActionButton(for recording: AudioRecordingFile) -> some View {
         if recording.hasLocalAudio,
-           let entry = appCoordinator.getRecording(url: recording.url),
+           let entry = recording.recordingId.flatMap({ appCoordinator.getRecording(id: $0) })
+               ?? appCoordinator.getRecording(url: recording.url),
            entry.transcript == nil {
             let recordingId = entry.id ?? UUID()
             let isCleaning = transcriptionStarter.isCleaning(recordingId)
@@ -870,6 +957,14 @@ struct RecordingsListView: View {
             let jobStatus = transcriptionStarter.activeTranscriptionJobStatus(for: entry, appCoordinator: appCoordinator)
             let hasActiveJob = jobStatus != nil
             let isProcessing = isCleaning || isQueuedForCleanup || hasActiveJob
+            let processingLabel = transcriptProcessingLabel(
+                isCleaning: isCleaning,
+                isQueuedForCleanup: isQueuedForCleanup,
+                jobStatus: jobStatus
+            )
+            let accessibilityLabel = isProcessing
+                ? "\(processingLabel) for \(recording.name)"
+                : "Generate Transcript for \(recording.name)"
 
             Button(action: {
                 if !isProcessing {
@@ -882,9 +977,7 @@ struct RecordingsListView: View {
                         ProgressView()
                             .scaleEffect(0.8)
                             .tint(.orange)
-                        Text(transcriptProcessingLabel(isCleaning: isCleaning,
-                                                      isQueuedForCleanup: isQueuedForCleanup,
-                                                      jobStatus: jobStatus))
+                        Text(processingLabel)
                     } else {
                         Image(systemName: "text.bubble")
                         Text("Generate Transcript")
@@ -902,7 +995,8 @@ struct RecordingsListView: View {
             }
             .buttonStyle(.plain)
             .disabled(isProcessing)
-            .accessibilityLabel("Generate Transcript")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityValue(isProcessing ? "In progress" : "Ready")
             .accessibilityIdentifier(BisonNotesAccessibilityID.generateTranscriptPrefix + recordingId.uuidString)
             .id("transcript-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
@@ -956,6 +1050,64 @@ struct RecordingsListView: View {
         }
 
         return result
+    }
+
+    @ViewBuilder
+    private var exportMoverPresenters: some View {
+        // SwiftUI logs and refuses the operation when fileMover is mounted with
+        // an empty files array, even if its presentation binding is false.
+        if !archiveExportURLs.isEmpty {
+            Color.clear
+                .fileMover(isPresented: $showingArchiveExportPicker, files: archiveExportURLs) { result in
+                    completeArchiveExport(exportedURLs: try? result.get())
+                } onCancellation: {
+                    completeArchiveExport(exportedURLs: nil)
+                }
+        }
+
+        if !audioExportURLs.isEmpty {
+            Color.clear
+                .fileMover(isPresented: $showingAudioExportPicker, files: audioExportURLs) { result in
+                    completeAudioExport(success: (try? result.get()) != nil)
+                } onCancellation: {
+                    completeAudioExport(success: false)
+                }
+        }
+    }
+
+    private func completeArchiveExport(exportedURLs: [URL]?) {
+        showingArchiveExportPicker = false
+        if let exportedURLs {
+            let archivedCount = RecordingArchiveService.shared.archiveRecordings(
+                recordingsToArchive,
+                removeLocal: removeLocalAfterArchive,
+                exportedURLs: exportedURLs
+            )
+            if archivedCount == 0 {
+                archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
+            }
+            isSelectionMode = false
+            selectedRecordings.removeAll()
+            loadRecordings()
+        }
+        recordingsToArchive = []
+        archiveExportURLs = []
+        RecordingArchiveService.shared.cleanupArchiveStaging()
+    }
+
+    private func completeAudioExport(success: Bool) {
+        showingAudioExportPicker = false
+        if success {
+            if audioExportSkippedCount > 0 {
+                let skippedText = audioExportSkippedCount == 1 ? "1 selected recording was" : "\(audioExportSkippedCount) selected recordings were"
+                archiveRestoreError = "\(skippedText) not exported because the audio is not stored locally. Restore archived audio before exporting it."
+            }
+            isSelectionMode = false
+            selectedRecordings.removeAll()
+        }
+        audioExportURLs = []
+        audioExportSkippedCount = 0
+        RecordingArchiveService.shared.cleanupAudioExportStaging()
     }
 
     private func loadRecordings() {
@@ -1077,7 +1229,11 @@ struct RecordingsListView: View {
     }
 
     private func showLocationDetails(_ locationData: LocationData) {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.location, value: locationData)
+        #else
         selectedLocationData = locationData
+        #endif
     }
 
     private func toggleCloudSyncPreference(for recording: AudioRecordingFile) {
@@ -1092,6 +1248,11 @@ struct RecordingsListView: View {
                 await MainActor.run {
                     loadRecordings()
                     refreshFileRelationships()
+                    AccessibilitySupport.announce(
+                        recording.isCloudSyncDisabled
+                            ? "\(recording.name) is eligible for iCloud sync."
+                            : "\(recording.name) will stay on this device."
+                    )
                 }
             } catch {
                 await MainActor.run {
@@ -1296,17 +1457,10 @@ struct RecordingsListView: View {
 
         if !issues.isEmpty {
             // Show alert explaining why they can't combine
-            let alert = UIAlertController(
+            PlatformAlert.present(
                 title: "Cannot Combine Recordings",
-                message: "These recordings cannot be combined because:\n\n\(issues.joined(separator: "\n"))\n\nPlease delete the transcripts and/or summaries from both recordings before combining them.",
-                preferredStyle: .alert
+                message: "These recordings cannot be combined because:\n\n\(issues.joined(separator: "\n"))\n\nPlease delete the transcripts and/or summaries from both recordings before combining them."
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-               let rootViewController = windowScene.windows.first?.rootViewController {
-                rootViewController.present(alert, animated: true)
-            }
 
             // Exit selection mode
             isSelectionMode = false
@@ -1341,7 +1495,9 @@ struct RecordingsListView: View {
                 _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
                 loadRecordings()
                 refreshFileRelationships()
-                selectedRecordingForPlayer = recordings.first { $0.recordingId == recordingId }
+                if let restoredRecording = recordings.first(where: { $0.recordingId == recordingId }) {
+                    openOrSelectRecording(restoredRecording)
+                }
             } catch {
                 archiveRestoreError = error.localizedDescription
             }

@@ -37,9 +37,9 @@ class OpenAISummarizationService: ObservableObject {
         self.cachedMessageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
         self.cachedShouldUseResponseFormat = MessageFormatDetector.shouldUseResponseFormat(for: config.baseURL)
     }
-    
+
     // MARK: - Public Methods
-    
+
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
@@ -66,7 +66,7 @@ class OpenAISummarizationService: ObservableObject {
 
         return choice.message.content
     }
-    
+
     func extractTasks(from text: String) async throws -> [TaskItem] {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
@@ -93,7 +93,7 @@ class OpenAISummarizationService: ObservableObject {
 
         return try OpenAIResponseParser.parseTasksFromJSON(choice.message.content)
     }
-    
+
     func extractReminders(from text: String) async throws -> [ReminderItem] {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
@@ -120,19 +120,19 @@ class OpenAISummarizationService: ObservableObject {
 
         return try OpenAIResponseParser.parseRemindersFromJSON(choice.message.content)
     }
-    
+
     func extractTitles(from text: String) async throws -> [TitleItem] {
         // Use the existing processComplete method to get everything in one API call
         // This is more cost-effective than making separate calls
         let result = try await processComplete(text: text)
         return result.titles
     }
-    
+
     func classifyContent(_ text: String) async throws -> ContentType {
         // Use enhanced ContentAnalyzer for classification
         return ContentAnalyzer.classifyContent(text)
     }
-    
+
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // First classify the content
         let contentType = try await classifyContent(text)
@@ -178,7 +178,7 @@ class OpenAISummarizationService: ObservableObject {
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
         return (result.summary, result.tasks, result.reminders, result.titles, contentType)
     }
-    
+
     func testConnection() async -> Bool {
         do {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
@@ -191,7 +191,7 @@ class OpenAISummarizationService: ObservableObject {
             return false
         }
     }
-    
+
     // MARK: - Static Methods
 
     /// Fetch predefined OpenAI models (for official OpenAI API)
@@ -349,17 +349,17 @@ class OpenAISummarizationService: ObservableObject {
         }
 
         AppLog.shared.networking("OpenAI API Configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)", level: .debug)
-        
+
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid OpenAI base URL: \(config.baseURL)")
         }
-        
+
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         		urlRequest.setValue("BisonNotes AI iOS App", forHTTPHeaderField: "User-Agent")
-        
+
         do {
             let encoder = JSONEncoder()
             urlRequest.httpBody = try encoder.encode(request)
@@ -368,7 +368,7 @@ class OpenAISummarizationService: ObservableObject {
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
-        
+
         do {
             AppLog.shared.networking("Making OpenAI API request...", level: .debug)
             let (data, response) = try await session.data(for: urlRequest)
@@ -380,7 +380,7 @@ class OpenAISummarizationService: ObservableObject {
             if PerformanceOptimizer.shouldLogEngineInitialization() {
                 AppLog.shared.networking("OpenAI API Response - Status: \(httpResponse.statusCode), size: \(data.count) bytes", level: .debug)
             }
-            
+
             if httpResponse.statusCode != 200 {
                 // Try to parse error response
                 if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {

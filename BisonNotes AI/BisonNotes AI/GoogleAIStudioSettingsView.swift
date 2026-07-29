@@ -30,7 +30,7 @@ struct GoogleAIStudioSettingsView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 Section(header: Text("API Configuration")) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -122,6 +122,7 @@ struct GoogleAIStudioSettingsView: View {
                     .disabled(apiKey.isEmpty || isTestingConnection)
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Google AI Studio")

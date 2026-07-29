@@ -14,6 +14,7 @@ enum MigrationMode {
 }
 
 struct DataMigrationView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var migrationManager = DataMigrationManager()
     @ObservedObject private var legacyiCloudManager = iCloudStorageManager.shared
@@ -39,7 +40,7 @@ struct DataMigrationView: View {
     @State private var orphanedAudioFiles: [URL] = []
     @State private var showingOrphanedFilesCleanup = false
     @State private var showingOrphanedFilesResults = false
-    @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])? = nil
+    @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])?
     @State private var totalOrphanedSize: Int64 = 0
 
     // Background Processing
@@ -442,7 +443,7 @@ struct DataMigrationView: View {
 
                 // Background Processing
                 Button(action: {
-                    showingBackgroundProcessing = true
+                    presentBackgroundProcessing()
                 }) {
                     HStack {
                         Image(systemName: "gearshape.2")
@@ -593,7 +594,7 @@ struct DataMigrationView: View {
             Button("Recover", role: .destructive) {
                 Task {
                     migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
-                    let _ = await migrationManager.recoverDataFromiCloud()
+                    _ = await migrationManager.recoverDataFromiCloud()
                 }
             }
         } message: {
@@ -626,6 +627,7 @@ struct DataMigrationView: View {
         }
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
+                .nativeMacModalSizing(width: 760, height: 680)
         }
         .alert("iCloud Sync Verification", isPresented: $showingSyncVerification) {
             Button("OK") {
@@ -652,6 +654,14 @@ struct DataMigrationView: View {
                 Text("Verifying sync status...")
             }
         }
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     private var integrityCheckSection: some View {
@@ -899,7 +909,6 @@ struct DataMigrationView: View {
         }
     }
 
-
     // MARK: - Cleanup Functions
 
     // MARK: - Orphaned Audio Files Functions
@@ -1146,17 +1155,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to verify iCloud sync: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Verification Failed",
-                    message: "Could not verify iCloud sync: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not verify iCloud sync: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }
@@ -1186,17 +1188,10 @@ struct DataMigrationView: View {
         } catch {
             AppLog.shared.dataMigration("Failed to sync missing summaries: \(error)", level: .error)
             await MainActor.run {
-                let alert = UIAlertController(
+                PlatformAlert.present(
                     title: "Sync Failed",
-                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)",
-                    preferredStyle: .alert
+                    message: "Could not sync summaries to iCloud: \(error.localizedDescription)"
                 )
-                alert.addAction(UIAlertAction(title: "OK", style: .default))
-
-                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let rootViewController = windowScene.windows.first?.rootViewController {
-                    rootViewController.present(alert, animated: true)
-                }
             }
         }
     }

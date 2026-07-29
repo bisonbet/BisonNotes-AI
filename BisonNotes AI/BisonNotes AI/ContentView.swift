@@ -9,7 +9,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var recorderVM = AudioRecorderViewModel()
+    @EnvironmentObject private var recorderVM: AudioRecorderViewModel
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -44,7 +44,7 @@ struct ContentView: View {
                 }
             }
 
-            if showSplash {
+            if shouldShowSplash {
                 SplashView(isActive: $showSplash)
                     .transition(.opacity)
                     .zIndex(1)
@@ -56,8 +56,16 @@ struct ContentView: View {
             DispatchQueue.main.async {
                 initializeApp()
             }
-            // Check if previous session crashed
-            if AppLog.shared.previousSessionCrashed {
+            // XCTest terminates the app between UI tests without sending the normal
+            // lifecycle callbacks. Do not present a false crash report over the next
+            // deterministic UI-test launch.
+            #if DEBUG
+            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+                && !BisonNotesUITestSupport.isUITesting
+            #else
+            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+            #endif
+            if shouldShowCrashReport {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                     showingCrashReport = true
                 }
@@ -76,6 +84,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UnsupportedFileTypeFromShare"))) { _ in
             showingUnsupportedFileAlert = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: ActionButtonLaunchManager.localNotificationName)) { _ in
+            handleActionButtonLaunchIfNeeded()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             handleActionButtonLaunchIfNeeded()
@@ -89,6 +100,14 @@ struct ContentView: View {
         .task {
             handleActionButtonLaunchIfNeeded()
         }
+    }
+
+    private var shouldShowSplash: Bool {
+        #if DEBUG
+        showSplash && !BisonNotesUITestSupport.isUITesting
+        #else
+        showSplash
+        #endif
     }
 
     // MARK: - Extracted Sub-Views
@@ -113,18 +132,6 @@ struct ContentView: View {
                     .environmentObject(appCoordinator)
             }
         }
-        .overlay(alignment: .topLeading) {
-            #if DEBUG
-            if BisonNotesUITestSupport.isUITesting {
-                Text("Ready")
-                    .font(.caption2)
-                    .opacity(0.01)
-                    .frame(width: 1, height: 1)
-                    .accessibilityIdentifier(BisonNotesAccessibilityID.appReady)
-                    .allowsHitTesting(false)
-            }
-            #endif
-        }
         .alert("Enable Location Services", isPresented: $showingLocationPermission) {
             Button("Continue") {
                 recorderVM.locationManager.requestLocationPermission()
@@ -143,6 +150,7 @@ struct ContentView: View {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -169,6 +177,7 @@ struct ContentView: View {
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            .nativeMacModalSizing(width: 760, height: 700)
         }
         .alert("Download Complete", isPresented: Binding(
             get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },
@@ -297,7 +306,7 @@ struct ContentView: View {
                         AppLog.shared.log("Migration completed", category: .general)
                     } else {
                         // Core Data has existing recordings
-                        
+
                         // Always run URL migration to ensure relative paths
                         AppLog.shared.log("Running URL migration to ensure relative paths...", level: .debug, category: .general)
                         appCoordinator.syncRecordingURLs()
@@ -307,17 +316,17 @@ struct ContentView: View {
                         AppLog.shared.log("Cleaning up orphaned records...", level: .debug, category: .general)
                         let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
                         let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
-                        
+
                         // Also clean up recordings that reference missing files
                         AppLog.shared.log("Cleaning up recordings with missing files...", level: .debug, category: .general)
                         let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
-                        
+
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount
-                        
+
                         if totalCleaned > 0 {
                             AppLog.shared.log("Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)", category: .general)
                         }
-                        
+
                         // Check if any recordings have transcripts in Core Data
                         let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
                         if recordingsWithTranscripts.isEmpty {
@@ -329,21 +338,21 @@ struct ContentView: View {
                             // Core Data has existing transcripts, no migration needed
                         }
                     }
-                    
+
                     // Initialize the recorder view model on main thread
                     await recorderVM.initialize()
-                    
+
                     // Set the app coordinator for the recorder
                     recorderVM.setAppCoordinator(appCoordinator)
-                    
+
                     // Set up the enhanced file manager with the coordinator
                     EnhancedFileManager.shared.setCoordinator(appCoordinator)
-                    
+
                     // Add a small delay to ensure everything is properly set up
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
-                    
+
                     isInitialized = true
-                    
+
                     // Show location permission prompt after initialization (only if not first launch)
                     if !isFirstLaunch && !UserDefaults.standard.bool(forKey: "hasAskedLocationPermission") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -351,7 +360,7 @@ struct ContentView: View {
                             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
                         }
                     }
-                    
+
                     // Check if we need to show Apple Intelligence migration alert
                     if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showAppleIntelligenceMigrationAlert") {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -417,6 +426,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environmentObject(AudioRecorderViewModel())
         .environmentObject(AppDataCoordinator())
         .environmentObject(FileImportManager())
         .environmentObject(TranscriptImportManager())

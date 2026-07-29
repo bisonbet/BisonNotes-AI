@@ -387,10 +387,10 @@ class RecordingArchiveService: ObservableObject {
             locationObject.setValue(Self.statusAvailable, forKey: "status")
 
             // Persist a security-scoped bookmark so sandbox access survives
-            // app launches. Mac Catalyst requires the explicit option; on iOS
-            // the default already retains the picker-granted scope.
+            // app launches. Native macOS requires the
+            // explicit option; on iOS the picker-granted scope is retained.
             let bookmarkOptions: URL.BookmarkCreationOptions = {
-                #if targetEnvironment(macCatalyst)
+                #if os(macOS)
                 return [.withSecurityScope]
                 #else
                 return []
@@ -485,11 +485,10 @@ class RecordingArchiveService: ObservableObject {
     private func resolvedArchiveURL(from locationObject: NSManagedObject) throws -> URL {
         if let bookmarkData = locationObject.value(forKey: "bookmarkData") as? Data {
             var isStale = false
-            // Mac Catalyst stores security-scoped bookmarks; resolution must
-            // pass the matching option for startAccessingSecurityScopedResource()
-            // to grant access on a subsequent launch.
+            // Mac builds store security-scoped bookmarks; resolution must pass
+            // the matching option so access can be restored after relaunch.
             let resolutionOptions: URL.BookmarkResolutionOptions = {
-                #if targetEnvironment(macCatalyst)
+                #if os(macOS)
                 return [.withoutUI, .withSecurityScope]
                 #else
                 return [.withoutUI]
@@ -629,7 +628,9 @@ class RecordingArchiveService: ObservableObject {
     func prepareAudioExportURLs(for recordings: [RecordingFile]) -> [URL] {
         guard let stagingDir = Self.audioExportStagingDirectory else {
             AppLog.shared.recording("Audio export: no Library dir available for staging", level: .error)
-            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+            // Never fall back to live recording URLs: they feed .fileMover, which moves
+            // the file out of the app and orphans its Core Data entry. Fail the export.
+            return []
         }
 
         try? FileManager.default.removeItem(at: stagingDir)
@@ -637,7 +638,8 @@ class RecordingArchiveService: ObservableObject {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
             AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
-            return recordings.map(\.url).filter { FileManager.default.fileExists(atPath: $0.path) }
+            // See above: staging failure must not expose live recording files to the mover.
+            return []
         }
 
         var stagedURLs: [URL] = []
@@ -721,7 +723,9 @@ class RecordingArchiveService: ObservableObject {
     func prepareArchiveExportURLs(for recordings: [RecordingEntry]) -> [URL] {
         guard let stagingDir = Self.archiveStagingDirectory else {
             AppLog.shared.recording("Archive: no Library dir available for staging", level: .error)
-            return audioURLs(for: recordings)
+            // Never fall back to live recording URLs: they feed .fileMover, which moves
+            // the file out of the app and orphans its Core Data entry. Fail the export.
+            return []
         }
         // Clear any leftovers from a prior crashed run before staging.
         try? FileManager.default.removeItem(at: stagingDir)
@@ -729,7 +733,8 @@ class RecordingArchiveService: ObservableObject {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
             AppLog.shared.recording("Archive: failed to create staging dir: \(error.localizedDescription)", level: .error)
-            return audioURLs(for: recordings)
+            // See above: staging failure must not expose live recording files to the mover.
+            return []
         }
 
         var stagedURLs: [URL] = []

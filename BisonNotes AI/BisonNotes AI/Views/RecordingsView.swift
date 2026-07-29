@@ -6,24 +6,41 @@
 //
 
 import SwiftUI
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
+import UniformTypeIdentifiers
 
 struct RecordingsView: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
-    @StateObject private var documentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var textDocumentPickerCoordinator = DocumentPickerCoordinator()
-    @StateObject private var videoPickerCoordinator = DocumentPickerCoordinator()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showingAudioImporter = false
+    @State private var showingTranscriptImporter = false
+    @StateObject private var webImportManager = WebImportManager()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
     @State private var showingRecordingsList = false
     @State private var showingBackgroundProcessing = false
-    @State private var showingHelpDocumentation = false
+    @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
+
+    private struct RecordingActionConfig {
+        let title: String
+        let systemImage: String
+        let tint: Color
+        let accessibilityIdentifier: String
+        let accessibilityHint: String
+    }
+
+    private struct HomeActionConfig {
+        let title: String
+        let subtitle: String
+        let systemImage: String
+        let tint: Color
+        let accessibilityIdentifier: String
+    }
 
     // MARK: - Recording Controls
 
@@ -45,15 +62,32 @@ struct RecordingsView: View {
                     .background(Capsule().fill(Color.secondary.opacity(0.15)))
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Recording timer")
+        .accessibilityValue(
+            AccessibilitySupport.recordingTimerValue(
+                recordingTime: recorderVM.recordingTime,
+                isPaused: recorderVM.isPaused
+            )
+        )
+        .accessibilityIdentifier(BisonNotesAccessibilityID.recordingTimer)
     }
 
     @ViewBuilder
     private var recordingControls: some View {
         HStack(spacing: 12) {
             recordingActionButton(
-                title: recorderVM.isPaused ? "Resume" : "Pause",
-                systemImage: recorderVM.isPaused ? "play.circle.fill" : "pause.circle.fill",
-                tint: .accentColor
+                RecordingActionConfig(
+                    title: recorderVM.isPaused ? "Resume" : "Pause",
+                    systemImage: recorderVM.isPaused ? "play.circle.fill" : "pause.circle.fill",
+                    tint: .accentColor,
+                    accessibilityIdentifier: recorderVM.isPaused
+                        ? BisonNotesAccessibilityID.resumeRecordingButton
+                        : BisonNotesAccessibilityID.pauseRecordingButton,
+                    accessibilityHint: recorderVM.isPaused
+                        ? "Resumes the current recording."
+                        : "Pauses capture without saving the recording."
+                )
             ) {
                 if recorderVM.isPaused {
                     recorderVM.resumeRecording()
@@ -63,9 +97,13 @@ struct RecordingsView: View {
             }
 
             recordingActionButton(
-                title: "Stop",
-                systemImage: "stop.circle.fill",
-                tint: .red
+                RecordingActionConfig(
+                    title: "Stop",
+                    systemImage: "stop.circle.fill",
+                    tint: .red,
+                    accessibilityIdentifier: BisonNotesAccessibilityID.stopRecordingButton,
+                    accessibilityHint: "Stops and saves the current recording."
+                )
             ) {
                 recorderVM.stopRecording()
             }
@@ -91,39 +129,68 @@ struct RecordingsView: View {
             .foregroundColor(.white)
             .frame(height: 56)
             .frame(maxWidth: .infinity)
-            .background(recorderVM.isStartingRecording ? Color.gray : Color.accentColor)
+            .background(
+                recorderVM.isStartingRecording
+                    ? Color.gray
+                    : Color(red: 0.0, green: 0.32, blue: 0.68)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
         .buttonStyle(.plain)
         .disabled(recorderVM.isStartingRecording)
+        .accessibilityLabel(recorderVM.isStartingRecording ? "Starting recording" : "Start Recording")
+        .accessibilityHint("Starts a new audio recording.")
+        .accessibilityValue(recorderVM.isStartingRecording ? "Starting" : "Ready")
         .accessibilityIdentifier(BisonNotesAccessibilityID.startRecordingButton)
     }
 
+    // File-importer URLs are security-scoped; hold access for the whole import.
+    private func handleImport(_ result: Result<[URL], Error>, using importFiles: @escaping ([URL]) async -> Void) {
+        guard case .success(let urls) = result, !urls.isEmpty else { return }
+        Task {
+            let accessedURLs = urls.filter { $0.startAccessingSecurityScopedResource() }
+            defer { accessedURLs.forEach { $0.stopAccessingSecurityScopedResource() } }
+            await importFiles(urls)
+        }
+    }
+
+    private static let transcriptContentTypes: [UTType] = {
+        var types: [UTType] = [.plainText, .text, .pdf]
+        types.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
+        for ext in ["md", "markdown", "docx", "doc"] {
+            if let type = UTType(filenameExtension: ext) {
+                types.append(type)
+            }
+        }
+        return types
+    }()
+
     private func recordingActionButton(
-        title: String,
-        systemImage: String,
-        tint: Color,
+        _ config: RecordingActionConfig,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: systemImage)
+                Image(systemName: config.systemImage)
                     .font(.title3)
-                Text(title)
+                Text(config.title)
                     .font(.headline)
                     .fontWeight(.semibold)
             }
             .foregroundColor(.white)
             .frame(height: 50)
             .frame(maxWidth: .infinity)
-            .background(tint)
+            .background(config.tint)
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(config.title)
+        .accessibilityHint(config.accessibilityHint)
+        .accessibilityIdentifier(config.accessibilityIdentifier)
     }
 
     var body: some View {
-        NavigationStack {
+        AdaptiveNavigationWrapper {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {
@@ -134,13 +201,15 @@ struct RecordingsView: View {
 
                             Text("Capture audio, import files, and pick up previous recordings.")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                         }
 
                         Spacer()
 
                         Button(action: {
-                            showingHelpDocumentation = true
+                            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
+                                openURL(url)
+                            }
                         }) {
                             Image(systemName: "questionmark.circle")
                                 .font(.title3)
@@ -157,6 +226,7 @@ struct RecordingsView: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: 116, height: 116)
+                            .accessibilityHidden(true)
 
                         VStack(spacing: 6) {
                             Text("BisonNotes AI")
@@ -165,7 +235,7 @@ struct RecordingsView: View {
 
                             Text("Ready when you are.")
                                 .font(.subheadline)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -181,48 +251,53 @@ struct RecordingsView: View {
 
                         VStack(spacing: 10) {
                             homeActionButton(
-                                title: "View Recordings",
-                                subtitle: "Browse saved audio",
-                                systemImage: "list.bullet",
-                                tint: .accentColor
+                                HomeActionConfig(
+                                    title: "View Recordings",
+                                    subtitle: "Browse saved audio",
+                                    systemImage: "list.bullet",
+                                    tint: .accentColor,
+                                    accessibilityIdentifier: BisonNotesAccessibilityID.viewRecordingsButton
+                                )
                             ) {
-                                showingRecordingsList = true
+                                presentRecordingsLibrary()
                             }
-                            .accessibilityIdentifier(BisonNotesAccessibilityID.viewRecordingsButton)
 
                             homeActionButton(
-                                title: "Import Audio Files",
-                                subtitle: "Add audio from Files",
-                                systemImage: "plus.circle",
-                                tint: .green
+                                HomeActionConfig(
+                                    title: "Import Audio Files",
+                                    subtitle: "Add audio from Files",
+                                    systemImage: "plus.circle",
+                                    tint: .green,
+                                    accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
+                                )
                             ) {
-                                // Directly trigger document picker for audio files
-                                documentPickerCoordinator.selectAudioFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await importManager.importAudioFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingAudioImporter = true
+                            }
+
+                            homeActionButton(
+                                HomeActionConfig(
+                                    title: "Import From Link",
+                                    subtitle: "Add web audio or captions",
+                                    systemImage: "link.badge.plus",
+                                    tint: .blue,
+                                    accessibilityIdentifier: BisonNotesAccessibilityID.importLinkButton
+                                )
+                            ) {
+                                showingWebImport = true
                             }
 
                             // Video import button hidden — feature not yet ready for users
-                            // videoPickerCoordinator.selectVideoFiles { ... }
 
                             homeActionButton(
-                                title: "Import Transcripts",
-                                subtitle: "Add text files",
-                                systemImage: "doc.text",
-                                tint: .purple
+                                HomeActionConfig(
+                                    title: "Import Transcripts",
+                                    subtitle: "Add text files",
+                                    systemImage: "doc.text",
+                                    tint: .purple,
+                                    accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
+                                )
                             ) {
-                                // Trigger document picker for text files
-                                textDocumentPickerCoordinator.selectTextFiles { urls in
-                                    if !urls.isEmpty {
-                                        Task {
-                                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                                        }
-                                    }
-                                }
+                                showingTranscriptImporter = true
                             }
                         }
 
@@ -242,35 +317,36 @@ struct RecordingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
-            .sheet(isPresented: $showingRecordingsList) {
-                RecordingsListView()
-                    .environmentObject(recorderVM)
+            .fileImporter(
+                isPresented: $showingAudioImporter,
+                allowedContentTypes: [.audio],
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await importManager.importAudioFiles(from: urls)
+                }
             }
-            .sheet(isPresented: $documentPickerCoordinator.isShowingPicker) {
-                AudioDocumentPicker(isPresented: $documentPickerCoordinator.isShowingPicker, coordinator: documentPickerCoordinator)
+            .fileImporter(
+                isPresented: $showingTranscriptImporter,
+                allowedContentTypes: Self.transcriptContentTypes,
+                allowsMultipleSelection: true
+            ) { result in
+                handleImport(result) { urls in
+                    await transcriptImportManager.importTranscriptFiles(from: urls)
+                }
             }
-            .sheet(isPresented: $textDocumentPickerCoordinator.isShowingPicker) {
-                TextDocumentPicker(isPresented: $textDocumentPickerCoordinator.isShowingPicker, coordinator: textDocumentPickerCoordinator)
+            .sheet(isPresented: $showingWebImport) {
+                WebImportSheet(
+                    webImportManager: webImportManager,
+                    fileImportManager: importManager,
+                    transcriptImportManager: transcriptImportManager
+                )
+                .nativeMacModalSizing(width: 700, height: 620)
             }
-            // Video picker sheet hidden — feature not yet ready for users
-            // .sheet(isPresented: $videoPickerCoordinator.isShowingPicker) { ... }
+            // Video import hidden — feature not yet ready for users
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
-            }
-            .sheet(isPresented: $showingHelpDocumentation) {
-                #if !targetEnvironment(macCatalyst)
-                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    SafariView(url: url)
-                }
-                #endif
-            }
-            .onChange(of: showingHelpDocumentation) { _, isShowing in
-                #if targetEnvironment(macCatalyst)
-                if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                    UIApplication.shared.open(url)
-                    showingHelpDocumentation = false
-                }
-                #endif
+                    .nativeMacModalSizing(width: 760, height: 680)
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
@@ -294,22 +370,15 @@ struct RecordingsView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
-                documentPickerCoordinator.selectAudioFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await importManager.importAudioFiles(from: urls)
-                        }
-                    }
-                }
+                showingAudioImporter = true
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
-                textDocumentPickerCoordinator.selectTextFiles { urls in
-                    if !urls.isEmpty {
-                        Task {
-                            await transcriptImportManager.importTranscriptFiles(from: urls)
-                        }
-                    }
-                }
+                showingTranscriptImporter = true
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: NSNotification.Name("ImportFromLinkFromMenu"))
+            ) { _ in
+                showingWebImport = true
             }
             .onChange(of: recorderVM.errorMessage) { _, message in
                 if let message, !message.isEmpty {
@@ -324,6 +393,11 @@ struct RecordingsView: View {
                 Text(recorderErrorMessage)
             }
         }
+        .sheet(isPresented: $showingRecordingsList) {
+            RecordingsListView()
+                .environmentObject(recorderVM)
+                .nativeMacModalSizing(width: 900, height: 720)
+        }
     }
 
     private var recordingStatusPanel: some View {
@@ -335,6 +409,9 @@ struct RecordingsView: View {
                     .foregroundColor(.secondary)
                     .font(.subheadline)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Recording status")
+            .accessibilityValue(statusText(for: recorderVM.recordingState))
 
             // Phase 5: Warning banners
             warningBannersView()
@@ -344,6 +421,7 @@ struct RecordingsView: View {
                 Label("Background recording enabled", systemImage: "arrow.up.circle.fill")
                     .font(.caption)
                     .foregroundColor(.green)
+                    .accessibilityLabel("Background recording enabled")
             }
 
             // Live transcript display
@@ -368,34 +446,37 @@ struct RecordingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(.tertiarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .accessibilityCard(
+                    label: "Live Transcript",
+                    value: recorderVM.liveTranscriptText,
+                    hint: "Updates as speech is recognized during recording."
+                )
+                .accessibilityIdentifier(BisonNotesAccessibilityID.liveTranscript)
             }
         }
     }
 
     private func homeActionButton(
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        tint: Color,
+        _ config: HomeActionConfig,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Image(systemName: systemImage)
+                Image(systemName: config.systemImage)
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(tint)
+                    .foregroundColor(config.tint)
                     .frame(width: 38, height: 38)
-                    .background(tint.opacity(0.14))
+                    .background(config.tint.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 11))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
+                    Text(config.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundColor(.primary)
 
-                    Text(subtitle)
+                    Text(config.subtitle)
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.primary)
                 }
 
                 Spacer()
@@ -409,13 +490,15 @@ struct RecordingsView: View {
             .clipShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(config.title)
+        .accessibilityValue(config.subtitle)
+        .accessibilityHint("Activates \(config.title).")
+        .accessibilityIdentifier(config.accessibilityIdentifier)
     }
-
-
 
     private var backgroundProcessingIndicator: some View {
         Button(action: {
-            showingBackgroundProcessing = true
+            presentBackgroundProcessing()
         }) {
             HStack {
                 Image(systemName: "gear.circle.fill")
@@ -451,6 +534,22 @@ struct RecordingsView: View {
         .buttonStyle(PlainButtonStyle())
     }
 
+    private func presentRecordingsLibrary() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.recordings)
+        #else
+        showingRecordingsList = true
+        #endif
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
+    }
+
     // MARK: - Phase 5: UI Helper Methods
 
     @State private var animationActive = true
@@ -464,8 +563,11 @@ struct RecordingsView: View {
                 Circle()
                     .fill(Color.red)
                     .frame(width: 12, height: 12)
-                    .scaleEffect(animationActive ? 1.2 : 1.0)
-                    .animation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true), value: animationActive)
+                    .scaleEffect(!reduceMotion && animationActive ? 1.2 : 1.0)
+                    .animation(
+                        reduceMotion ? nil : .easeInOut(duration: 0.6).repeatForever(autoreverses: true),
+                        value: animationActive
+                    )
 
             case .waitingForMicrophone:
                 // Orange warning dot
@@ -493,8 +595,9 @@ struct RecordingsView: View {
             }
         }
         .onAppear {
-            animationActive = true
+            animationActive = !reduceMotion
         }
+        .accessibilityHidden(true)
     }
 
     private func statusText(for state: AudioRecorderViewModel.RecordingState) -> String {
@@ -562,6 +665,3 @@ struct RecordingsView: View {
         .cornerRadius(8)
     }
 }
-
-// MARK: - Safari View Wrapper
-// SafariView is now in Views/SafariView.swift

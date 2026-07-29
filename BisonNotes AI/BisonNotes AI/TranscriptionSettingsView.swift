@@ -23,17 +23,36 @@ struct TranscriptionSettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        Group {
             settingsContent
                 .navigationTitle("Transcription Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
+                    #endif
                 }
+            #if os(macOS)
+            .navigationDestination(isPresented: $showingAWSSettings) {
+                AWSSettingsView()
+            }
+            .navigationDestination(isPresented: $showingWhisperSettings) {
+                WhisperSettingsView()
+            }
+            .navigationDestination(isPresented: $showingFluidAudioSettings) {
+                FluidAudioSettingsView()
+            }
+            .navigationDestination(isPresented: $showingOpenAISettings) {
+                OpenAISettingsView()
+            }
+            .navigationDestination(isPresented: $showingMistralTranscribeSettings) {
+                MistralTranscribeSettingsView()
+            }
+            #else
             .sheet(isPresented: $showingAWSSettings) {
                 AWSSettingsView()
             }
@@ -51,10 +70,12 @@ struct TranscriptionSettingsView: View {
             .sheet(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
             }
+            #endif
             .onChange(of: selectedTranscriptionEngine) { _, newValue in
                 handleEngineSelection(newValue)
             }
         }
+        .platformSettingsNavigation()
     }
 
     @ViewBuilder

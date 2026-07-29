@@ -7,7 +7,7 @@ enum ContentType: String, CaseIterable, Codable, Sendable {
     case personalJournal = "Personal Journal"
     case technical = "Technical"
     case general = "General"
-    
+
     var description: String {
         switch self {
         case .meeting:
@@ -31,7 +31,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let timeReference: String?
     let category: TaskCategory
     let confidence: Double
-    
+
     init(text: String, priority: Priority = .medium, timeReference: String? = nil, category: TaskCategory = .general, confidence: Double = 0.5) {
         self.id = UUID()
         self.text = text
@@ -40,12 +40,12 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.category = category
         self.confidence = confidence
     }
-    
+
     enum Priority: String, CaseIterable, Codable, Sendable {
         case high = "High"
         case medium = "Medium"
         case low = "Low"
-        
+
         var color: String {
             switch self {
             case .high: return "red"
@@ -53,7 +53,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             case .low: return "green"
             }
         }
-        
+
         var sortOrder: Int {
             switch self {
             case .high: return 0
@@ -62,7 +62,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             }
         }
     }
-    
+
     enum TaskCategory: String, CaseIterable, Codable, Sendable {
         case call = "Call"
         case meeting = "Meeting"
@@ -72,7 +72,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
         case travel = "Travel"
         case health = "Health"
         case general = "General"
-        
+
         var icon: String {
             switch self {
             case .call: return "phone"
@@ -86,7 +86,7 @@ struct TaskItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             }
         }
     }
-    
+
     var displayText: String {
         if let timeRef = timeReference {
             return "\(text) (\(timeRef))"
@@ -103,7 +103,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let timeReference: TimeReference
     let urgency: Urgency
     let confidence: Double
-    
+
     init(text: String, timeReference: TimeReference, urgency: Urgency = .later, confidence: Double = 0.5) {
         self.id = UUID()
         self.text = text
@@ -111,7 +111,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
         self.urgency = urgency
         self.confidence = confidence
     }
-    
+
     struct TimeReference: Codable, Equatable, Hashable, Sendable {
         let originalText: String
         let parsedDate: Date?
@@ -205,13 +205,13 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             return originalText
         }
     }
-    
+
     enum Urgency: String, CaseIterable, Codable, Sendable {
         case immediate = "Immediate"
         case today = "Today"
         case thisWeek = "This Week"
         case later = "Later"
-        
+
         var color: String {
             switch self {
             case .immediate: return "red"
@@ -220,7 +220,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             case .later: return "blue"
             }
         }
-        
+
         var sortOrder: Int {
             switch self {
             case .immediate: return 0
@@ -229,7 +229,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             case .later: return 3
             }
         }
-        
+
         var icon: String {
             switch self {
             case .immediate: return "exclamationmark.triangle.fill"
@@ -239,7 +239,7 @@ struct ReminderItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             }
         }
     }
-    
+
     var displayText: String {
         return "\(text) - \(timeReference.displayText)"
     }
@@ -252,20 +252,20 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable, Sendable {
     let text: String
     let confidence: Double
     let category: TitleCategory
-    
+
     init(text: String, confidence: Double = 0.5, category: TitleCategory = .general) {
         self.id = UUID()
         self.text = text
         self.confidence = confidence
         self.category = category
     }
-    
+
     enum TitleCategory: String, CaseIterable, Codable, Sendable {
         case meeting = "Meeting"
         case personal = "Personal"
         case technical = "Technical"
         case general = "General"
-        
+
         var icon: String {
             switch self {
             case .meeting: return "person.2"
@@ -275,7 +275,7 @@ struct TitleItem: Codable, Identifiable, Equatable, Hashable, Sendable {
             }
         }
     }
-    
+
     var displayText: String {
         return text
     }
@@ -317,7 +317,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let recordingURL: URL
     let recordingName: String
     let recordingDate: Date
-    
+
     // Core content
     let summary: String
     let tasks: [TaskItem]
@@ -325,7 +325,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let titles: [TitleItem]
     let attachments: [SummaryAttachment]
     let userNotes: String?
-    
+
     // Metadata
     let contentType: ContentType
     let aiEngine: String
@@ -335,11 +335,11 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let wordCount: Int
     let originalLength: Int
     let compressionRatio: Double
-    
+
     // Quality metrics
     let confidence: Double
     let processingTime: TimeInterval
-    
+
     var qualityDescription: String {
         if confidence >= 0.85 {
             return "High"
@@ -351,7 +351,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
             return "Needs Review"
         }
     }
-    
+
     // Legacy initializer for backward compatibility
     init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
@@ -375,14 +375,14 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.originalLength = originalLength
         self.compressionRatio = originalLength > 0 ? Double(self.wordCount) / Double(originalLength) : 0.0
         self.processingTime = processingTime
-        
+
         // Calculate confidence after all properties are initialized
         let taskConfidence = tasks.isEmpty ? 0.5 : tasks.map { $0.confidence }.reduce(0, +) / Double(tasks.count)
         let reminderConfidence = reminders.isEmpty ? 0.5 : reminders.map { $0.confidence }.reduce(0, +) / Double(reminders.count)
         let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
         self.confidence = (taskConfidence + reminderConfidence + titleConfidence) / 3.0
     }
-    
+
     // New initializer for unified architecture
     init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
@@ -406,14 +406,14 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.originalLength = originalLength
         self.compressionRatio = originalLength > 0 ? Double(self.wordCount) / Double(originalLength) : 0.0
         self.processingTime = processingTime
-        
+
         // Calculate confidence after all properties are initialized
         let taskConfidence = tasks.isEmpty ? 0.5 : tasks.map { $0.confidence }.reduce(0, +) / Double(tasks.count)
         let reminderConfidence = reminders.isEmpty ? 0.5 : reminders.map { $0.confidence }.reduce(0, +) / Double(reminders.count)
         let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
         self.confidence = (taskConfidence + reminderConfidence + titleConfidence) / 3.0
     }
-    
+
     // Initializer for Core Data conversion that preserves the original ID
     init(id: UUID, recordingId: UUID?, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
         self.id = id
@@ -444,7 +444,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
             return (taskConfidence + reminderConfidence + titleConfidence) / 3.0
         }()
     }
-    
+
     var formattedCompressionRatio: String {
         return String(format: "%.1f%%", compressionRatio * 100)
     }
@@ -500,11 +500,11 @@ struct SummaryStatistics {
     let totalTasks: Int
     let totalReminders: Int
     let engineUsage: [String: Int]
-    
+
     var formattedAverageConfidence: String {
         return String(format: "%.1f%%", averageConfidence * 100)
     }
-    
+
     var formattedAverageCompressionRatio: String {
         return String(format: "%.1f%%", averageCompressionRatio * 100)
     }

@@ -6,10 +6,6 @@
 //
 
 import SwiftUI
-import UIKit
-#if !targetEnvironment(macCatalyst)
-import SafariServices
-#endif
 
 enum ProcessingOption: String, CaseIterable {
     case openai = "OpenAI"
@@ -72,6 +68,10 @@ enum ProcessingOption: String, CaseIterable {
 
 struct SimpleSettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var selectedOption: ProcessingOption = .chooseLater
@@ -83,7 +83,6 @@ struct SimpleSettingsView: View {
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
     @State private var showingOnDeviceLLMSettings = false
-    @State private var showingHelpDocumentation = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
 
@@ -116,6 +115,8 @@ struct SimpleSettingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
+            .accessibilityLabel("Setup")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupScroll)
             .navigationBarHidden(true)
         }
         .onAppear {
@@ -146,31 +147,20 @@ struct SimpleSettingsView: View {
                 }
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAdvancedSettings) {
             // SettingsView provides its own NavigationStack and Done toolbar.
             SettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
         }
+        #endif
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
                 OnDeviceLLMSettingsView()
             }
-        }
-        .sheet(isPresented: $showingHelpDocumentation) {
-            #if !targetEnvironment(macCatalyst)
-            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                SafariView(url: url)
-            }
-            #endif
-        }
-        .onChange(of: showingHelpDocumentation) { _, isShowing in
-            #if targetEnvironment(macCatalyst)
-            if isShowing, let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                UIApplication.shared.open(url)
-                showingHelpDocumentation = false
-            }
-            #endif
+            .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -180,8 +170,9 @@ struct SimpleSettingsView: View {
                     showingOnDeviceAIDownload = false
                 }
             )
+            .nativeMacModalSizing(width: 700, height: 620)
         }
-        .fullScreenCover(isPresented: $showingMistralOnboarding) {
+        .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
@@ -205,6 +196,7 @@ struct SimpleSettingsView: View {
                     RoundedRectangle(cornerRadius: 14)
                         .fill(Color.accentColor.gradient)
                 )
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("BisonNotes AI")
@@ -213,20 +205,19 @@ struct SimpleSettingsView: View {
 
                 Text("Choose how recordings become transcripts, summaries, tasks, and reminders.")
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 8)
 
-            Button(action: {
-                showingAdvancedSettings = true
-            }) {
+            Button(action: presentAdvancedSettings) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .frame(width: 38, height: 38)
                     .background(Color(.secondarySystemGroupedBackground), in: Circle())
+                    .accessibilityHidden(true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Additional Settings")
@@ -267,6 +258,7 @@ struct SimpleSettingsView: View {
                             selectedOption.tintColor.opacity(0.14),
                             in: RoundedRectangle(cornerRadius: 11)
                         )
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(selectedOption.displayName)
@@ -284,6 +276,7 @@ struct SimpleSettingsView: View {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.caption.weight(.semibold))
                         .foregroundColor(.secondary)
+                        .accessibilityHidden(true)
                 }
                 .padding(12)
                 .background(
@@ -294,6 +287,9 @@ struct SimpleSettingsView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Processing Method: \(selectedOption.displayName)")
+            .accessibilityValue(selectedOption.description)
+            .accessibilityHint("Opens processing method choices.")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupProcessingMethod)
 
             if !deviceSupported {
                 InlineNotice(
@@ -384,7 +380,9 @@ struct SimpleSettingsView: View {
             }
 
             Button(action: {
-                showingHelpDocumentation = true
+                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
+                    openURL(url)
+                }
             }) {
                 Label {
                     Text("Learn More About Processing Options")
@@ -422,9 +420,12 @@ struct SimpleSettingsView: View {
                 .foregroundColor(.white)
             }
             .disabled(isSaving)
+            .accessibilityLabel(isSaving ? "Saving Configuration" : "Save and Configure")
+            .accessibilityValue(selectedOption.displayName)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.setupSaveButton)
 
             // For Mistral, the save button launches the onboarding wizard instead
-            .onChange(of: selectedOption) { _, newValue in
+            .onChange(of: selectedOption) { _, _ in
                 // Reset save result when switching options
                 showingSaveResult = false
             }
@@ -433,6 +434,7 @@ struct SimpleSettingsView: View {
                 HStack {
                     Image(systemName: saveSuccessful ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundColor(saveSuccessful ? .green : .red)
+                        .accessibilityHidden(true)
 
                     Text(saveMessage)
                         .font(.caption)
@@ -481,7 +483,7 @@ struct SimpleSettingsView: View {
 
             Text(subtitle)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
         }
     }
 
@@ -561,7 +563,7 @@ struct SimpleSettingsView: View {
                     // Immediately open the advanced settings page
                     try await Task.sleep(nanoseconds: 500_000_000) // Brief delay to show message
                     await MainActor.run {
-                        showingAdvancedSettings = true
+                        presentAdvancedSettings()
                     }
                 } else if selectedOption == .mistralAI {
                     // Mistral AI with existing key — activate as the selected engine
@@ -582,7 +584,7 @@ struct SimpleSettingsView: View {
                     let localEngines: Set<String> = [
                         AIEngineType.onDeviceLLM.rawValue,
                         AIEngineType.mlxSwift.rawValue,
-                        AIEngineType.appleNative.rawValue,
+                        AIEngineType.appleNative.rawValue
                     ]
 
                     if let currentAI, localEngines.contains(currentAI) {
@@ -659,6 +661,15 @@ struct SimpleSettingsView: View {
             }
         }
     }
+
+    @MainActor
+    private func presentAdvancedSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        showingAdvancedSettings = true
+        #endif
+    }
 }
 
 private struct SetupCard<Content: View>: View {
@@ -696,6 +707,7 @@ private struct SectionHeader: View {
                 .frame(width: 36, height: 36)
                 .background(tint.opacity(0.14))
                 .clipShape(RoundedRectangle(cornerRadius: 11))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -716,7 +728,7 @@ private struct SectionHeader: View {
 
                 Text(subtitle)
                     .font(.subheadline)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -732,7 +744,7 @@ private struct DetailGroup<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
-                .foregroundColor(tint)
+                .foregroundColor(.primary)
 
             content
         }
@@ -751,6 +763,7 @@ private struct InlineNotice<Content: View>: View {
             Image(systemName: systemImage)
                 .foregroundColor(tint)
                 .padding(.top, 1)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -775,10 +788,11 @@ struct FeatureBullet: View {
                 .font(.caption)
                 .foregroundColor(.blue)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -794,10 +808,11 @@ struct LimitationBullet: View {
                 .font(.caption)
                 .foregroundColor(.orange)
                 .padding(.top, 2)
+                .accessibilityHidden(true)
 
             Text(text)
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

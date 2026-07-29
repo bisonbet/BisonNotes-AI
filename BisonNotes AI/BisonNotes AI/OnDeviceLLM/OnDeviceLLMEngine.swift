@@ -8,7 +8,9 @@
 
 import Foundation
 import os.log
+#if canImport(UIKit)
 import UIKit
+#endif
 
 // MARK: - On-Device LLM Engine
 
@@ -44,7 +46,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         return true
     }
-    
+
     var metadataName: String {
         return OnDeviceLLMModelInfo.selectedModel.id
     }
@@ -77,8 +79,14 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     /// iOS kills Metal command buffers submitted from background apps, causing
     /// a fatal crash in llama.cpp's Metal backend (ggml_abort).
     private func setupBackgroundObservers() {
+        // The background/foreground GPU pause is an iOS-only safeguard. On native
+        // macOS, PlatformLifecycle.didEnterBackgroundNotification maps to
+        // NSApplication.didHideNotification (Cmd-H); a hidden Mac app can still run
+        // Metal, so treating a hide as backgrounding would needlessly abort an
+        // in-flight summarization. Only observe these on iOS.
+        #if os(iOS)
         backgroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.didEnterBackgroundNotification,
+            forName: PlatformLifecycle.didEnterBackgroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -87,21 +95,22 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         }
 
         foregroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification,
+            forName: PlatformLifecycle.willEnterForegroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
             self?.service?.setAppBackgrounded(false)
         }
+        #endif
 
-        // On Mac Catalyst, quitting via the menu calls NSApplication.terminate: → exit().
+        // On macOS, quitting via the menu calls NSApplication.terminate: → exit().
         // Static C++ destructors for ggml_metal_device then run before Swift deinits, which
         // triggers GGML_ASSERT([rsets->data count] == 0) if any Metal command buffers are
         // still in flight. Explicitly unloading the model here forces llama_free /
         // llama_model_free to run before exit(), releasing all Metal resources cleanly.
         terminateObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willTerminateNotification,
+            forName: PlatformLifecycle.willTerminateNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
@@ -233,14 +242,14 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let selectedModel = OnDeviceLLMModelInfo.selectedModel
         let deviceContextSize = DeviceCapabilities.onDeviceLLMContextSize
         let maxContextTokens = min(selectedModel.contextWindow, deviceContextSize)
-        
+
         // Reserve space for output tokens
         // OnDeviceLLM.tokenizeAndBatchInput reserves 10% (min 256, max 2048) for output
         // We use a slightly more conservative 15% to account for token estimation inaccuracy
         // and ensure chunks fit even if estimation is off
         let outputReserve = min(2048, max(256, maxContextTokens / 10))
         let effectiveInputLimit = maxContextTokens - outputReserve
-        
+
         // Try to use accurate tokenization if model is loaded, otherwise use estimation
         let tokenCount: Int
         do {
@@ -252,7 +261,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             tokenCount = TokenManager.getTokenCount(text)
             AppLog.shared.summarization("[OnDeviceLLMEngine] Using token estimation: \(tokenCount) tokens", level: .debug)
         }
-        
+
         AppLog.shared.summarization("[OnDeviceLLMEngine] Text token count: \(tokenCount), max context: \(maxContextTokens), output reserve: \(outputReserve), effective input limit: \(effectiveInputLimit)", level: .debug)
 
         do {
@@ -298,7 +307,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         // Ensure model is loaded to use accurate tokenization
         try service.ensureModelLoaded()
-        
+
         // Get accurate tokenizer function from service
         // Use 100 tokens overlap (approximately 75-100 words) to preserve context at boundaries
         let overlapTokens = 100
@@ -311,7 +320,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 return TokenManager.getTokenCount(text)
             }
         }
-        
+
         let chunks = TokenManager.chunkTextWithOverlap(
             text,
             maxTokens: maxTokens,
@@ -319,7 +328,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             tokenizer: tokenizer
         )
         AppLog.shared.summarization("[OnDeviceLLMEngine] Split into \(chunks.count) chunks with \(overlapTokens) token overlap")
-        
+
         // Validate chunk sizes using accurate tokenization
         for (index, chunk) in chunks.enumerated() {
             do {
@@ -348,16 +357,15 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             AppLog.shared.summarization("[OnDeviceLLMEngine] Processing chunk \(index + 1)/\(chunks.count)", level: .debug)
 
             // Check if we are running in background and task is about to expire
-            // Must access UIApplication.shared on MainActor
             let isBackground = await MainActor.run {
-                UIApplication.shared.applicationState == .background
+                PlatformApp.isInBackground
             }
-            
+
             if isBackground {
                 let remaining = await MainActor.run {
-                    UIApplication.shared.backgroundTimeRemaining
+                    PlatformBackgroundTask.remainingTime
                 }
-                
+
                 if remaining < 10 { // Less than 10 seconds remaining
                     AppLog.shared.summarization("[OnDeviceLLMEngine] Background time critical (\(remaining)s), aborting to prevent crash", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
@@ -470,9 +478,9 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         // This ensures the final consolidated summary is proportional to the original transcript,
         // not the already-summarized chunks (which would be much smaller)
         let targetWords = max(200, Int(Double(originalWordCount) * 0.15))
-        
+
         let combinedSummariesText = summaries.joined(separator: "\n\n=== SECTION ===\n\n")
-        
+
         // Create a comprehensive meta-summary prompt that matches the structure of initial summaries
         let metaPromptBase = """
         You are consolidating summaries from different parts of a single recording into ONE unified, comprehensive Structured Outline.
@@ -503,9 +511,9 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
         INPUT SUMMARIES FROM DIFFERENT SECTIONS:
         """
-        
+
         let metaPromptEnd = "\n\nFINAL CONSOLIDATED OUTLINE:\n"
-        
+
         // Use accurate tokenization for size checking
         let getTokenCount: (String) -> Int = { text in
             do {
@@ -514,20 +522,20 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 return TokenManager.getTokenCount(text)
             }
         }
-        
+
         let fullMetaPrompt = metaPromptBase + combinedSummariesText + metaPromptEnd
         let metaPromptTokenCount = getTokenCount(fullMetaPrompt)
         let deviceContextSize = DeviceCapabilities.onDeviceLLMContextSize
         let outputReserve = min(2048, max(256, deviceContextSize / 10))
         let maxInputForMeta = deviceContextSize - outputReserve
-        
+
         AppLog.shared.summarization("[OnDeviceLLMEngine] Meta-summary: \(metaPromptTokenCount) tokens, max: \(maxInputForMeta), target: \(targetWords) words", level: .debug)
-        
+
         // If prompt fits, use it directly
         if metaPromptTokenCount <= maxInputForMeta {
             return try await service.generateSummary(from: fullMetaPrompt, contentType: contentType)
         }
-        
+
         // Otherwise, recursively combine in smaller groups
         AppLog.shared.summarization("[OnDeviceLLMEngine] Meta-summary too large, using hierarchical combination")
         return try await combineSummariesRecursive(
@@ -541,7 +549,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             getTokenCount: getTokenCount
         )
     }
-    
+
     /// Recursively combine summaries in smaller groups until they fit
     private func combineSummariesRecursive(
         _ summaries: [String],
@@ -557,50 +565,50 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         if summaries.count == 1 {
             return summaries.first ?? ""
         }
-        
+
         // Calculate how many summaries we can fit in one prompt
         let promptOverhead = getTokenCount(metaPromptBase + metaPromptEnd)
         let availableTokens = maxInputTokens - promptOverhead
-        
+
         // Try to combine all summaries if they fit
         let combinedText = summaries.joined(separator: "\n\n=== SECTION ===\n\n")
         let fullPrompt = metaPromptBase + combinedText + metaPromptEnd
-        
+
         if getTokenCount(fullPrompt) <= maxInputTokens {
             // All summaries fit, combine them
             return try await service.generateSummary(from: fullPrompt, contentType: contentType)
         }
-        
+
         // Need to split into smaller groups
         // Calculate how many summaries fit per group
         let avgSummaryTokens = getTokenCount(combinedText) / summaries.count
         let summariesPerGroup = max(1, availableTokens / max(avgSummaryTokens, 1))
-        
+
         AppLog.shared.summarization("[OnDeviceLLMEngine] Splitting \(summaries.count) summaries into groups of ~\(summariesPerGroup)", level: .debug)
-        
+
         // Process in groups
         var intermediateSummaries: [String] = []
         var currentGroup: [String] = []
         var currentGroupTokens = 0
-        
+
         for summary in summaries {
             let summaryTokens = getTokenCount(summary)
-            
+
             // Check if adding this summary would exceed the limit
             let groupText = (currentGroup + [summary]).joined(separator: "\n\n=== SECTION ===\n\n")
             let groupPromptTokens = getTokenCount(metaPromptBase + groupText + metaPromptEnd)
-            
+
             if groupPromptTokens > maxInputTokens && !currentGroup.isEmpty {
                 // Finalize current group
                 let groupText = currentGroup.joined(separator: "\n\n=== SECTION ===\n\n")
                 let groupPrompt = metaPromptBase + groupText + metaPromptEnd
                 let combined = try await service.generateSummary(from: groupPrompt, contentType: contentType)
                 intermediateSummaries.append(combined)
-                
+
                 // Start new group
                 currentGroup = [summary]
                 currentGroupTokens = summaryTokens
-                
+
                 // Small delay between groups
                 try await Task.sleep(nanoseconds: 500_000_000)
             } else {
@@ -609,7 +617,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 currentGroupTokens += summaryTokens
             }
         }
-        
+
         // Process remaining group
         if !currentGroup.isEmpty {
             let groupText = currentGroup.joined(separator: "\n\n=== SECTION ===\n\n")
@@ -617,7 +625,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             let combined = try await service.generateSummary(from: groupPrompt, contentType: contentType)
             intermediateSummaries.append(combined)
         }
-        
+
         // Recursively combine intermediate summaries
         return try await combineSummariesRecursive(
             intermediateSummaries,

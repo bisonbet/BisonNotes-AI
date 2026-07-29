@@ -22,7 +22,7 @@ struct WyomingConstants {
 enum WyomingMessageType: String, Codable {
     case info = "info"
     case transcript = "transcript"
-    case transcribe = "transcribe" 
+    case transcribe = "transcribe"
     case audioChunk = "audio-chunk"
     case audioStart = "audio-start"
     case audioStop = "audio-stop"
@@ -36,36 +36,36 @@ struct WyomingMessage: Codable {
     let type: WyomingMessageType
     let data: WyomingAnyCodable?
     let timestamp: Double?
-    
+
     // Binary payload (not included in JSON)
     var payload: Data?
-    
+
     init(type: WyomingMessageType, data: (any WyomingMessageData)? = nil, payload: Data? = nil, includeTimestamp: Bool = false) {
         self.type = type
         self.data = data.map { WyomingAnyCodable($0) }
         self.timestamp = includeTimestamp ? Date().timeIntervalSince1970 : nil
         self.payload = payload
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case type, data, timestamp
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(type, forKey: .type)
-        
+
         // Only encode data if it exists
         if let data = data {
             try container.encode(data, forKey: .data)
         }
-        
+
         // Only encode timestamp if it exists
         if let timestamp = timestamp {
             try container.encode(timestamp, forKey: .timestamp)
         }
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         type = try container.decode(WyomingMessageType.self, forKey: .type)
@@ -82,14 +82,14 @@ protocol WyomingMessageData: Codable {}
 
 struct WyomingAnyCodable: Codable {
     let value: Any
-    
+
     init<T: Codable>(_ value: T) {
         self.value = value
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        
+
         if let intValue = try? container.decode(Int.self) {
             value = intValue
         } else if let doubleValue = try? container.decode(Double.self) {
@@ -104,10 +104,10 @@ struct WyomingAnyCodable: Codable {
             value = dictValue
         }
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        
+
         switch value {
         case let intValue as Int:
             try container.encode(intValue)
@@ -127,11 +127,11 @@ struct WyomingAnyCodable: Codable {
 
 private struct WyomingAnyEncodable: Encodable {
     let value: Encodable
-    
+
     init(_ value: Encodable) {
         self.value = value
     }
-    
+
     func encode(to encoder: Encoder) throws {
         try value.encode(to: encoder)
     }
@@ -185,7 +185,7 @@ struct WyomingTranscriptData: WyomingMessageData {
     let text: String
     let language: String?
     let confidence: Double?
-    
+
     init(text: String, language: String? = nil, confidence: Double? = nil) {
         self.text = text
         self.language = language
@@ -200,7 +200,7 @@ struct WyomingAudioStartData: WyomingMessageData {
     let width: Int
     let channels: Int
     let timestamp: Double?
-    
+
     init(rate: Int = WyomingConstants.audioSampleRate,
          width: Int = WyomingConstants.audioBitDepth,
          channels: Int = WyomingConstants.audioChannels) {
@@ -213,7 +213,7 @@ struct WyomingAudioStartData: WyomingMessageData {
 
 struct WyomingAudioStopData: WyomingMessageData {
     let timestamp: Double?
-    
+
     init() {
         self.timestamp = Date().timeIntervalSince1970
     }
@@ -224,7 +224,7 @@ struct WyomingAudioChunkData: WyomingMessageData {
     let width: Int
     let channels: Int
     let timestamp: Double?
-    
+
     init(rate: Int = WyomingConstants.audioSampleRate, width: Int = WyomingConstants.audioBitDepth, channels: Int = WyomingConstants.audioChannels) {
         self.rate = rate
         self.width = width / 8  // Convert bits to bytes (16 bits = 2 bytes)
@@ -244,31 +244,31 @@ struct WyomingErrorData: WyomingMessageData {
 // MARK: - Message Factory
 
 struct WyomingMessageFactory {
-    
+
     static func createDescribeMessage() -> WyomingMessage {
         return WyomingMessage(type: .describe)
     }
-    
+
     static func createTranscribeMessage(language: String? = nil, model: String? = nil) -> WyomingMessage {
         let data = WyomingTranscribeData(language: language, model: model)
         return WyomingMessage(type: .transcribe, data: data)
     }
-    
+
     static func createAudioStartMessage() -> WyomingMessage {
         let data = WyomingAudioStartData()
         return WyomingMessage(type: .audioStart, data: data)
     }
-    
+
     static func createAudioStopMessage() -> WyomingMessage {
         let data = WyomingAudioStopData()
         return WyomingMessage(type: .audioStop, data: data)
     }
-    
+
     static func createAudioChunkMessage(audioData: Data, rate: Int = WyomingConstants.audioSampleRate, width: Int = WyomingConstants.audioBitDepth, channels: Int = WyomingConstants.audioChannels) -> WyomingMessage {
         let data = WyomingAudioChunkData(rate: rate, width: width, channels: channels)
         return WyomingMessage(type: .audioChunk, data: data, payload: audioData)
     }
-    
+
     static func createErrorMessage(code: String, message: String, details: String? = nil) -> WyomingMessage {
         let data = WyomingErrorData(code: code, message: message, details: details)
         return WyomingMessage(type: .error, data: data)
@@ -278,15 +278,15 @@ struct WyomingMessageFactory {
 // MARK: - Message Parsing
 
 extension WyomingMessage {
-    
+
     func parseData<T: WyomingMessageData>(as type: T.Type) -> T? {
         guard let anyCodableData = self.data else { return nil }
-        
+
         // Try to decode the WyomingAnyCodable value as the requested type
         if let codableValue = anyCodableData.value as? T {
             return codableValue
         }
-        
+
         // If direct casting fails, try JSON round-trip decoding
         do {
             let jsonData = try JSONEncoder().encode(anyCodableData)
@@ -301,39 +301,39 @@ extension WyomingMessage {
 // MARK: - JSON Encoding/Decoding
 
 extension WyomingMessage {
-    
+
     func toJSON() throws -> Data {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
-        
+
         // Create a reference for adding payload_length
         let mutableSelf = self
-        
+
         // Add payload_length to the JSON if we have a payload
         if let payload = self.payload, !payload.isEmpty {
             // We need to manually create the dictionary to add payload_length
             var eventDict: [String: Any] = [:]
-            
+
             eventDict["type"] = self.type.rawValue
-            
+
             if let data = self.data {
                 let dataJSON = try JSONEncoder().encode(data)
                 let dataDict = try JSONSerialization.jsonObject(with: dataJSON) as? [String: Any]
                 eventDict["data"] = dataDict
             }
-            
+
             if let timestamp = self.timestamp {
                 eventDict["timestamp"] = timestamp
             }
-            
+
             eventDict["payload_length"] = payload.count
-            
+
             return try JSONSerialization.data(withJSONObject: eventDict)
         }
-        
+
         return try encoder.encode(mutableSelf)
     }
-    
+
     func toJSONString() throws -> String {
         let data = try toJSON()
         guard let string = String(data: data, encoding: .utf8) else {
@@ -341,13 +341,13 @@ extension WyomingMessage {
         }
         return string
     }
-    
+
     static func fromJSON(_ data: Data) throws -> WyomingMessage {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         return try decoder.decode(WyomingMessage.self, from: data)
     }
-    
+
     static func fromJSONString(_ string: String) throws -> WyomingMessage {
         guard let data = string.data(using: .utf8) else {
             throw WyomingError.decodingFailed
@@ -365,7 +365,7 @@ enum WyomingError: Error, LocalizedError {
     case invalidMessage
     case serverError(String)
     case timeout
-    
+
     var errorDescription: String? {
         switch self {
         case .connectionFailed:

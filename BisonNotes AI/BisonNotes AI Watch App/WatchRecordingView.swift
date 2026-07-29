@@ -27,6 +27,7 @@ private enum WatchTheme {
 
 @MainActor
 struct WatchRecordingView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var viewModel: WatchRecordingViewModel
     @State private var showingErrorAlert = false
 
@@ -77,8 +78,8 @@ struct WatchRecordingView: View {
                     .padding(.horizontal, 6)
                     .padding(.bottom, 2)
                 }
-                .animation(.easeInOut(duration: 0.25), value: viewModel.recordingState)
-                .animation(.easeInOut(duration: 0.25), value: viewModel.isTransferringAudio)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: viewModel.recordingState)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: viewModel.isTransferringAudio)
             }
             .navigationTitle {
                 Text("BisonNotes")
@@ -110,8 +111,8 @@ struct WatchRecordingView: View {
     private func recorderCircle(diameter: CGFloat) -> some View {
         Button(action: circleTapped) {
             ZStack {
-                if viewModel.recordingState == .recording {
-                    PulsingRings(diameter: diameter)
+                if viewModel.recordingState == .recording && !reduceMotion {
+                    PulsingRings(diameter: diameter, reduceMotion: reduceMotion)
                         .transition(.opacity)
                 }
 
@@ -135,6 +136,8 @@ struct WatchRecordingView: View {
         .disabled(circleDisabled)
         .opacity(circleDisabled ? 0.55 : 1.0)
         .accessibilityLabel(circleAccessibilityLabel)
+        .accessibilityValue(circleAccessibilityValue)
+        .accessibilityHint(circleAccessibilityHint)
     }
 
     private var circleFill: Color {
@@ -229,6 +232,32 @@ struct WatchRecordingView: View {
         }
     }
 
+    private var circleAccessibilityValue: String {
+        switch viewModel.recordingState {
+        case .idle:
+            return viewModel.canStartRecording ? "Ready" : "Unavailable"
+        case .error:
+            return viewModel.errorMessage ?? "Error"
+        case .recording:
+            return "Recording, \(viewModel.formattedRecordingTime)"
+        case .paused:
+            return "Muted, \(viewModel.formattedRecordingTime)"
+        case .stopping, .processing:
+            return "Saving"
+        }
+    }
+
+    private var circleAccessibilityHint: String {
+        switch viewModel.recordingState {
+        case .idle, .error:
+            return "Starts a new watch recording."
+        case .recording, .paused:
+            return "Stops, saves, and transfers the recording to iPhone when available."
+        case .stopping, .processing:
+            return "Recording is being saved."
+        }
+    }
+
     private func circleTapped() {
         switch viewModel.recordingState {
         case .idle, .error:
@@ -263,6 +292,12 @@ struct WatchRecordingView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(viewModel.recordingState == .paused ? "Unmute" : "Mute")
+        .accessibilityValue(viewModel.recordingState == .paused ? "Muted" : "Recording")
+        .accessibilityHint(
+            viewModel.recordingState == .paused
+                ? "Resumes audio capture."
+                : "Pauses audio capture without saving yet."
+        )
     }
 
     // MARK: - Bottom Leading Status Chips
@@ -300,6 +335,9 @@ struct WatchRecordingView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.white.opacity(0.10), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Transfer to iPhone")
+        .accessibilityValue("\(Int(viewModel.transferProgress * 100)) percent")
     }
 
     private var showLowBatteryChip: Bool {
@@ -320,6 +358,9 @@ struct WatchRecordingView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.white.opacity(0.10), in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Low Battery")
+        .accessibilityValue(viewModel.formattedBatteryLevel)
     }
 
     // MARK: - Error State Overlay
@@ -376,8 +417,12 @@ struct WatchRecordingView: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(WatchTheme.accent.opacity(0.35), lineWidth: 1)
                 )
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Recording Error")
+                .accessibilityValue(viewModel.errorMessage ?? "An unknown error occurred")
             }
             .transition(.opacity)
+            .accessibilityAddTraits(.isModal)
         }
     }
 }
@@ -389,6 +434,7 @@ struct WatchRecordingView: View {
 /// cleanly on any state change.
 private struct PulsingRings: View {
     let diameter: CGFloat
+    let reduceMotion: Bool
     @State private var animate = false
 
     var body: some View {
@@ -400,14 +446,14 @@ private struct PulsingRings: View {
                     .scaleEffect(animate ? 1.55 : 1.0)
                     .opacity(animate ? 0.0 : 0.6)
                     .animation(
-                        .easeOut(duration: 2.4)
+                        reduceMotion ? nil : .easeOut(duration: 2.4)
                             .repeatForever(autoreverses: false)
                             .delay(Double(index) * 0.8),
                         value: animate
                     )
             }
         }
-        .onAppear { animate = true }
+        .onAppear { animate = !reduceMotion }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }

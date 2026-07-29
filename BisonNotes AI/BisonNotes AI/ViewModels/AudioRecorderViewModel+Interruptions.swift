@@ -7,13 +7,16 @@
 
 import Foundation
 @preconcurrency import AVFoundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 
 extension AudioRecorderViewModel {
 
 	// MARK: - Audio Interruption Handling
 
+	#if os(iOS)
 	func handleAudioInterruption(_ notification: Notification) {
 		// Forward to session manager for logging and restoration
 		enhancedAudioSessionManager.handleAudioInterruption(notification)
@@ -56,7 +59,6 @@ extension AudioRecorderViewModel {
 
 			// Check if CallKit deferred a long-call decision while we were backgrounded.
 			// If so, prompt the user instead of auto-resuming.
-			#if !targetEnvironment(macCatalyst)
 			if let callDuration = deferredCallDuration, callDuration >= SHORT_CALL_THRESHOLD {
 				AppLog.shared.audioSession("Deferred long call detected (\(callDuration)s >= \(SHORT_CALL_THRESHOLD)s threshold) - asking user whether to resume")
 				deferredCallDuration = nil
@@ -67,7 +69,6 @@ extension AudioRecorderViewModel {
 				return
 			}
 			deferredCallDuration = nil // Clear for short or no-duration calls
-			#endif
 
 			if let options = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
 				let interruptionOptions = AVAudioSession.InterruptionOptions(rawValue: options)
@@ -109,6 +110,11 @@ extension AudioRecorderViewModel {
 			break
 		}
 	}
+	#else
+	// macOS: AVAudioSession interruptions do not exist. Device-change handling
+	// arrives with Core Audio listeners in Phase 2.3.
+	func handleAudioInterruption(_ notification: Notification) {}
+	#endif
 
 	/// Attempt to resume recording after an unexpected stop (e.g., declined call without interruption notification)
 	@MainActor
@@ -320,6 +326,7 @@ extension AudioRecorderViewModel {
 
 	// MARK: - Route Change Handling
 
+	#if os(iOS)
 	func handleRouteChange(_ notification: Notification) {
 		guard let userInfo = notification.userInfo,
 				let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
@@ -366,6 +373,9 @@ extension AudioRecorderViewModel {
 			break
 		}
 	}
+	#else
+	func handleRouteChange(_ notification: Notification) {}
+	#endif
 
 	@MainActor
 	func handleMicrophoneUnavailableDuringRecording() async {
@@ -791,8 +801,8 @@ extension AudioRecorderViewModel {
 		let body = "Found and saved your recording from when the app was in background: \(filename.prefix(30))..."
 
 		// Check app state for notification timing
-		let appState = await MainActor.run { UIApplication.shared.applicationState }
-		AppLog.shared.audioSession("App state when sending recovery notification: \(appState.rawValue)", level: .debug)
+		let appIsActive = await MainActor.run { PlatformApp.isActive }
+		AppLog.shared.audioSession("App active when sending recovery notification: \(appIsActive)", level: .debug)
 
 		// Use the proven BackgroundProcessingManager notification system
 		_ = await MainActor.run {

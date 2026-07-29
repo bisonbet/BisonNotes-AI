@@ -11,42 +11,46 @@ struct AudioScrubber: View {
     let currentTime: TimeInterval
     let duration: TimeInterval
     let onSeek: (TimeInterval) -> Void
-    
+
     @State private var isDragging = false
     @State private var dragValue: Double = 0
-    
+
     private var progress: Double {
         guard duration > 0 else { return 0 }
         let rawProgress = isDragging ? dragValue : currentTime / duration
         return min(max(rawProgress, 0), 1) // Clamp between 0 and 1
     }
-    
+
     private var currentTimeString: String {
         formatTime(isDragging ? dragValue * duration : currentTime)
     }
-    
+
     private var remainingTimeString: String {
         let remaining = duration - (isDragging ? dragValue * duration : currentTime)
         return "-\(formatTime(remaining))"
     }
-    
+
+    private var effectiveCurrentTime: TimeInterval {
+        isDragging ? dragValue * duration : currentTime
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             // Time labels
             HStack {
                 Text(currentTimeString)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .monospacedDigit()
-                
+
                 Spacer()
-                
+
                 Text(remainingTimeString)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .monospacedDigit()
             }
-            
+
             // Progress bar and scrubber
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
@@ -55,13 +59,13 @@ struct AudioScrubber: View {
                         .fill(Color.secondary.opacity(0.3))
                         .frame(height: 4)
                         .cornerRadius(2)
-                    
+
                     // Progress track
                     Rectangle()
                         .fill(Color.accentColor)
                         .frame(width: geometry.size.width * progress, height: 4)
                         .cornerRadius(2)
-                    
+
                     // Scrubber handle
                     Circle()
                         .fill(Color.accentColor)
@@ -80,7 +84,7 @@ struct AudioScrubber: View {
                             if !isDragging {
                                 isDragging = true
                             }
-                            
+
                             let newValue = min(max(value.location.x / geometry.size.width, 0), 1)
                             dragValue = newValue
                         }
@@ -99,13 +103,39 @@ struct AudioScrubber: View {
             }
             .frame(height: 20)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(
+            AccessibilitySupport.playbackValue(
+                currentTime: effectiveCurrentTime,
+                totalDuration: duration
+            )
+        )
+        .accessibilityHint("Swipe up or down to seek by 15 seconds.")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment:
+                seekBy(AccessibilitySupport.seekStep)
+            case .decrement:
+                seekBy(-AccessibilitySupport.seekStep)
+            @unknown default:
+                break
+            }
+        }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.audioScrubber)
     }
-    
+
+    private func seekBy(_ offset: TimeInterval) {
+        guard duration > 0 else { return }
+        let seekTime = min(max(effectiveCurrentTime + offset, 0), duration)
+        onSeek(seekTime)
+    }
+
     private func formatTime(_ time: TimeInterval) -> String {
         let totalSeconds = Int(max(time, 0))
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
-        
+
         if minutes >= 60 {
             let hours = minutes / 60
             let remainingMinutes = minutes % 60
@@ -126,7 +156,7 @@ struct AudioScrubber: View {
             }
         )
         .padding()
-        
+
         AudioScrubber(
             currentTime: 0,
             duration: 3725, // Over 1 hour

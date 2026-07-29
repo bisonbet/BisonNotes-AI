@@ -6,11 +6,11 @@
 import Foundation
 
 enum ShareImportAuthorization {
-    static let tokenFileName = ".share-import-token"
+    static let tokenFileName = ShareExtensionContract.tokenFileName
 
     static func isShareImportURL(_ url: URL) -> Bool {
-        url.scheme?.lowercased() == "bisonnotes"
-            && url.host?.lowercased() == "share-import"
+        url.scheme?.lowercased() == ShareExtensionContract.importURLScheme
+            && url.host?.lowercased() == ShareExtensionContract.importURLHost
     }
 
     static func token(from url: URL) -> String? {
@@ -45,6 +45,14 @@ enum ShareImportAuthorization {
 
     static func removeToken(in inboxURL: URL) {
         try? FileManager.default.removeItem(at: tokenFileURL(in: inboxURL))
+    }
+
+    /// Re-arms a pending-import token after a scan consumed one but deferred the
+    /// import (e.g. an importer was busy). Lets a later activation scan retry the
+    /// staged files instead of leaving them orphaned once the original token is gone.
+    static func rearmToken(in inboxURL: URL) {
+        let token = UUID().uuidString
+        try? Data(token.utf8).write(to: tokenFileURL(in: inboxURL), options: .atomic)
     }
 
     static func tokenFileURL(in inboxURL: URL) -> URL {

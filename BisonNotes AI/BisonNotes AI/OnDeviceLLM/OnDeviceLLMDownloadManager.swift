@@ -56,7 +56,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
         downloadSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
 
         startNetworkMonitoring()
-        
+
         // Initialize selectedModel from UserDefaults without triggering migration
         // Check UserDefaults directly first to avoid accessing selectedModel computed property
         if let savedModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId),
@@ -82,7 +82,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
                 isModelReady = false
             }
         }
-        
+
         // Don't call refreshModelStatus() here - it's safe to call explicitly when needed
     }
 
@@ -203,7 +203,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
     public func refreshModelStatus() {
         // First, check UserDefaults directly to avoid triggering migration in selectedModel
         let savedModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-        
+
         // If we have a saved model ID, check if that model is downloaded
         if let modelId = savedModelId, let model = OnDeviceLLMModelInfo.model(withId: modelId) {
             if model.isDownloaded {
@@ -212,7 +212,7 @@ public class OnDeviceLLMDownloadManager: NSObject, ObservableObject {
                 return
             }
         }
-        
+
         // If saved model is not downloaded, check if any model is downloaded
         if let availableModel = OnDeviceLLMModelInfo.allModels.first(where: { $0.isDownloaded }) {
             selectedModel = availableModel

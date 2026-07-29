@@ -14,11 +14,11 @@ struct AWSCredentials: Equatable, Codable {
     let accessKeyId: String
     let secretAccessKey: String
     let region: String
-    
+
     var isValid: Bool {
         return !accessKeyId.isEmpty && !secretAccessKey.isEmpty && !region.isEmpty
     }
-    
+
     static let `default` = AWSCredentials(
         accessKeyId: "",
         secretAccessKey: "",
@@ -30,11 +30,11 @@ struct AWSCredentials: Equatable, Codable {
 
 class AWSCredentialsManager: ObservableObject {
     @Published var credentials: AWSCredentials
-    
+
     private let userDefaults = UserDefaults.standard
     private let keychain = KeychainSecretStore.shared
     private let credentialsKey = KeychainSecretStore.awsCredentials
-    
+
     init() {
         self.credentials = .default
         migrateLegacyCredentials()
@@ -48,13 +48,13 @@ class AWSCredentialsManager: ObservableObject {
         }
         clearCredentialEnvironment()
     }
-    
+
     func updateCredentials(_ newCredentials: AWSCredentials) {
         self.credentials = newCredentials
         saveCredentials()
         clearCredentialEnvironment()
     }
-    
+
     func updateAccessKey(_ accessKey: String) {
         let updated = AWSCredentials(
             accessKeyId: accessKey,
@@ -63,7 +63,7 @@ class AWSCredentialsManager: ObservableObject {
         )
         updateCredentials(updated)
     }
-    
+
     func updateSecretKey(_ secretKey: String) {
         let updated = AWSCredentials(
             accessKeyId: credentials.accessKeyId,
@@ -72,7 +72,7 @@ class AWSCredentialsManager: ObservableObject {
         )
         updateCredentials(updated)
     }
-    
+
     func updateRegion(_ region: String) {
         let updated = AWSCredentials(
             accessKeyId: credentials.accessKeyId,
@@ -81,7 +81,7 @@ class AWSCredentialsManager: ObservableObject {
         )
         updateCredentials(updated)
     }
-    
+
     private func saveCredentials() {
         if let data = try? JSONEncoder().encode(credentials) {
             keychain.setData(data, forKey: credentialsKey)
@@ -118,14 +118,14 @@ class AWSCredentialsManager: ObservableObject {
         userDefaults.removeObject(forKey: "awsSecretKey")
         userDefaults.removeObject(forKey: "awsRegion")
     }
-    
+
     func clearCredentialEnvironment() {
         unsetenv("AWS_ACCESS_KEY_ID")
         unsetenv("AWS_SECRET_ACCESS_KEY")
         unsetenv("AWS_SESSION_TOKEN")
         unsetenv("AWS_DEFAULT_REGION")
     }
-    
+
 }
 
 // MARK: - Global Shared Instance

@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 
 struct DeviceCapabilities {
 
@@ -38,9 +40,9 @@ struct DeviceCapabilities {
 
     /// Action Button is only available on supported iPhone hardware. Apple
     /// does not expose a direct capability API, so gate the setup guidance by
-    /// known device identifier families and keep Mac Catalyst/iPad hidden.
+    /// known device identifier families and keep Mac/iPad hidden.
     static var supportsActionButton: Bool {
-        #if targetEnvironment(macCatalyst)
+        #if os(macOS)
         return false
         #else
         guard UIDevice.current.userInterfaceIdiom == .phone else {
@@ -72,7 +74,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 4.0 // 4GB minimum for small models
         let deviceRAM = totalRAMInGB
 
-
         return deviceRAM >= minimumRAM
     }
 
@@ -82,7 +83,6 @@ struct DeviceCapabilities {
         let minimumRAM: Double = 6.0 // 6GB minimum for large models
         let deviceRAM = totalRAMInGB
 
-
         return deviceRAM >= minimumRAM
     }
 
@@ -91,7 +91,6 @@ struct DeviceCapabilities {
     static var supports8GBModels: Bool {
         let minimumRAM: Double = 8.0 // 8GB minimum for larger models
         let deviceRAM = totalRAMInGB
-
 
         return deviceRAM >= minimumRAM
     }
@@ -130,11 +129,15 @@ struct DeviceCapabilities {
         report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
         report += "Action Button Support: \(supportsActionButton ? "✅" : "❌")\n"
 
+        #if os(macOS)
+        report += "macOS Version: \(ProcessInfo.processInfo.operatingSystemVersionString)\n"
+        #else
         if #available(iOS 16.0, *) {
             report += "iOS Version: ✅ (16.0+)\n"
         } else {
             report += "iOS Version: ❌ (< 16.0)\n"
         }
+        #endif
 
         return report
     }

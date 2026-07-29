@@ -12,54 +12,54 @@ import SwiftUI
 
 @MainActor
 class SummaryRegenerationManager: ObservableObject {
-    
+
     @Published var isRegenerating = false
     @Published var regenerationProgress: Double = 0.0
     @Published var currentlyProcessing: String = ""
     @Published var regenerationResults: RegenerationResults?
     @Published var showingRegenerationAlert = false
-    
+
     private let summaryManager: SummaryManager
     private let transcriptManager: TranscriptManager
     private let appCoordinator: AppDataCoordinator
-    
+
     init(summaryManager: SummaryManager, transcriptManager: TranscriptManager, appCoordinator: AppDataCoordinator) {
         self.summaryManager = summaryManager
         self.transcriptManager = transcriptManager
         self.appCoordinator = appCoordinator
     }
-    
+
     func setEngine(_ engineName: String) {
         summaryManager.setEngine(engineName)
     }
-    
+
     // MARK: - Regeneration Methods
-    
+
     func regenerateAllSummaries() async {
         guard !isRegenerating else { return }
-        
+
         isRegenerating = true
         regenerationProgress = 0.0
         currentlyProcessing = "Preparing..."
-        
+
         // Get all recordings with summaries from Core Data
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         let summariesToRegenerate = recordingsWithData.compactMap { $0.summary }
         let totalCount = summariesToRegenerate.count
-        
+
         guard totalCount > 0 else {
             completeRegeneration(with: RegenerationResults(total: 0, successful: 0, failed: 0, errors: []))
             return
         }
-        
+
         var successful = 0
         var failed = 0
         var errors: [String] = []
-        
+
         for (index, summary) in summariesToRegenerate.enumerated() {
             currentlyProcessing = "Processing \(summary.recordingName)..."
             regenerationProgress = Double(index) / Double(totalCount)
-            
+
             // Get complete recording data
             guard let recordingId = summary.recordingId,
                   let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
@@ -68,7 +68,7 @@ class SummaryRegenerationManager: ObservableObject {
                 errors.append("\(summary.recordingName): No transcript found")
                 continue
             }
-            
+
             do {
                 // Generate new summary using the current AI engine
                 let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
@@ -77,12 +77,12 @@ class SummaryRegenerationManager: ObservableObject {
                     recordingName: summary.recordingName,
                     recordingDate: summary.recordingDate
                 )
-                
+
                 // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
 
                 // Debug: Show what names we're comparing (bulk regeneration)
                 AppLog.shared.summarization("Bulk regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
-                
+
                 // Update the recording name if it changed during regeneration
                 if newEnhancedSummary.recordingName != summary.recordingName {
                     AppLog.shared.summarization("Bulk regeneration: Recording name was updated by AI")
@@ -94,7 +94,7 @@ class SummaryRegenerationManager: ObservableObject {
                 } else {
                     AppLog.shared.summarization("Bulk regeneration: Recording name did not change", level: .debug)
                 }
-                
+
                 // Create new summary entry in Core Data with the updated name
                 let newSummaryId = appCoordinator.workflowManager.createSummary(
                     for: recordingId,
@@ -109,7 +109,7 @@ class SummaryRegenerationManager: ObservableObject {
                     originalLength: newEnhancedSummary.originalLength,
                     processingTime: newEnhancedSummary.processingTime
                 )
-                
+
                 if newSummaryId != nil {
                     successful += 1
                     AppLog.shared.summarization("Regenerated summary for recording \(recordingId)")
@@ -117,29 +117,29 @@ class SummaryRegenerationManager: ObservableObject {
                     failed += 1
                     errors.append("Recording \(recordingId): Failed to save new summary")
                 }
-                
+
             } catch {
                 failed += 1
                 errors.append("Recording \(recordingId): \(error.localizedDescription)")
             }
-            
+
             // Small delay to show progress
             try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
         }
-        
+
         regenerationProgress = 1.0
         currentlyProcessing = "Complete"
-        
+
         let results = RegenerationResults(
             total: totalCount,
             successful: successful,
             failed: failed,
             errors: errors
         )
-        
+
         completeRegeneration(with: results)
     }
-    
+
     func regenerateSummary(for recordingURL: URL) async -> Bool {
         // Find the recording by URL
         guard let recording = appCoordinator.getRecording(url: recordingURL),
@@ -150,10 +150,10 @@ class SummaryRegenerationManager: ObservableObject {
             AppLog.shared.summarization("No summary or transcript found for recording URL", level: .error)
             return false
         }
-        
+
         do {
             AppLog.shared.summarization("Regenerating summary for recording \(recordingId)")
-            
+
             // Generate new summary using the current AI engine
             let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
                 from: transcript.textForSummarization,
@@ -161,11 +161,11 @@ class SummaryRegenerationManager: ObservableObject {
                 recordingName: summary.recordingName,
                 recordingDate: summary.recordingDate
             )
-            
+
             // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
-            
+
             AppLog.shared.summarization("Regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
-            
+
             // Update the recording name if it changed during regeneration
             if newEnhancedSummary.recordingName != summary.recordingName {
                 AppLog.shared.summarization("Recording name was updated by AI for recording \(recordingId)")
@@ -177,7 +177,7 @@ class SummaryRegenerationManager: ObservableObject {
             } else {
                 AppLog.shared.summarization("Recording name did not change during regeneration", level: .debug)
             }
-            
+
             // Create new summary entry in Core Data with the updated name
             let newSummaryId = appCoordinator.workflowManager.createSummary(
                 for: recordingId,
@@ -192,7 +192,7 @@ class SummaryRegenerationManager: ObservableObject {
                 originalLength: newEnhancedSummary.originalLength,
                 processingTime: newEnhancedSummary.processingTime
             )
-            
+
             if newSummaryId != nil {
                 AppLog.shared.summarization("Successfully regenerated summary for recording \(recordingId)")
                 return true
@@ -200,34 +200,34 @@ class SummaryRegenerationManager: ObservableObject {
                 AppLog.shared.summarization("Failed to save new summary for recording \(recordingId)", level: .error)
                 return false
             }
-            
+
         } catch {
             AppLog.shared.summarization("Failed to regenerate summary for recording \(recordingId): \(error.localizedDescription)", level: .error)
             return false
         }
     }
-    
+
     func shouldPromptForRegeneration(oldEngine: String, newEngine: String) -> Bool {
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         let summariesCount = recordingsWithData.compactMap { $0.summary }.count
         return oldEngine != newEngine && summariesCount > 0
     }
-    
+
     private func completeRegeneration(with results: RegenerationResults) {
         regenerationResults = results
         isRegenerating = false
         showingRegenerationAlert = true
     }
-    
+
     // MARK: - Progress Tracking
-    
+
     var progressText: String {
         if isRegenerating {
             return "\(Int(regenerationProgress * 100))% - \(currentlyProcessing)"
         }
         return ""
     }
-    
+
     var canRegenerate: Bool {
         let recordingsWithData = appCoordinator.getAllRecordingsWithData()
         let summariesCount = recordingsWithData.compactMap { $0.summary }.count
@@ -242,15 +242,15 @@ struct RegenerationResults {
     let successful: Int
     let failed: Int
     let errors: [String]
-    
+
     var successRate: Double {
         return total > 0 ? Double(successful) / Double(total) : 0.0
     }
-    
+
     var formattedSuccessRate: String {
         return String(format: "%.1f%%", successRate * 100)
     }
-    
+
     var summary: String {
         if total == 0 {
             return "No summaries to regenerate"
@@ -266,14 +266,14 @@ struct RegenerationResults {
 
 struct RegenerationProgressView: View {
     @ObservedObject var regenerationManager: SummaryRegenerationManager
-    
+
     var body: some View {
         VStack(spacing: 16) {
             if regenerationManager.isRegenerating {
                 VStack(spacing: 12) {
                     ProgressView(value: regenerationManager.regenerationProgress)
                         .progressViewStyle(LinearProgressViewStyle())
-                    
+
                     Text(regenerationManager.progressText)
                         .font(.caption)
                         .foregroundColor(.secondary)
@@ -289,28 +289,28 @@ struct RegenerationProgressView: View {
 struct RegenerationAlertView: View {
     let results: RegenerationResults
     @Binding var isPresented: Bool
-    
+
     var body: some View {
         VStack(spacing: 16) {
             Text("Regeneration Complete")
                 .font(.headline)
-            
+
             Text(results.summary)
                 .font(.body)
                 .multilineTextAlignment(.center)
-            
+
             if !results.errors.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Errors:")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                    
+
                     ForEach(results.errors.prefix(3), id: \.self) { error in
                         Text("• \(error)")
                             .font(.caption)
                             .foregroundColor(.red)
                     }
-                    
+
                     if results.errors.count > 3 {
                         Text("... and \(results.errors.count - 3) more")
                             .font(.caption)
@@ -321,7 +321,7 @@ struct RegenerationAlertView: View {
                 .background(Color.red.opacity(0.1))
                 .cornerRadius(8)
             }
-            
+
             Button("OK") {
                 isPresented = false
             }
@@ -340,27 +340,27 @@ struct EngineChangePromptView: View {
     @Binding var isPresented: Bool
     let onRegenerate: () -> Void
     let onSkip: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 16) {
             Text("AI Engine Changed")
                 .font(.headline)
-            
+
             Text("You've switched from \(oldEngine) to \(newEngine).")
                 .font(.body)
                 .multilineTextAlignment(.center)
-            
+
             Text("Would you like to regenerate your \(summaryCount) existing summaries with the new AI engine?")
                 .font(.body)
                 .multilineTextAlignment(.center)
-            
+
             HStack(spacing: 12) {
                 Button("Skip") {
                     onSkip()
                     isPresented = false
                 }
                 .buttonStyle(.bordered)
-                
+
                 Button("Regenerate") {
                     onRegenerate()
                     isPresented = false

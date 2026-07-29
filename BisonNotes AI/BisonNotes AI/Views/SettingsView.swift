@@ -8,12 +8,13 @@
 import SwiftUI
 import AVFoundation
 import CoreLocation
-#if targetEnvironment(macCatalyst)
+#if os(macOS)
 import CoreGraphics
 #endif
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
@@ -64,10 +65,30 @@ struct SettingsView: View {
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { dismiss() }
                     }
+                    #endif
                 }
+                #if os(macOS)
+                .navigationDestination(isPresented: $showingAISettings) {
+                    AISettingsView()
+                        .environmentObject(recorderVM)
+                }
+                .navigationDestination(isPresented: $showingTranscriptionSettings) {
+                    TranscriptionSettingsView()
+                }
+                .navigationDestination(isPresented: $showingBackgroundProcessing) {
+                    BackgroundProcessingView()
+                }
+                .navigationDestination(isPresented: $showingPreferences) {
+                    PreferencesView()
+                }
+                .navigationDestination(isPresented: $showingAcknowledgements) {
+                    AcknowledgementsView()
+                }
+                #endif
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -100,7 +121,12 @@ struct SettingsView: View {
             case .denied:
                 Alert(
                     title: Text("Screen Recording Permission Needed"),
-                    message: Text("macOS did not grant Screen Recording permission, so BisonNotes will keep recording microphone audio only. Enable BisonNotes in System Settings > Privacy & Security > Screen & System Audio Recording, then return to BisonNotes. You may need to restart the app after changing this setting."),
+                    message: Text(
+                        "macOS did not grant Screen & System Audio Recording permission, " +
+                            "so BisonNotes will keep recording microphone audio only. " +
+                            "Enable BisonNotes in System Settings > Privacy & Security > " +
+                            "Screen & System Audio Recording, then quit and reopen BisonNotes."
+                    ),
                     primaryButton: .default(Text("Open System Settings")) {
                         openMacScreenCapturePrivacySettings()
                     },
@@ -108,11 +134,22 @@ struct SettingsView: View {
                         recorderVM.setMacSystemAudioCaptureEnabled(false)
                     }
                 )
+            case .restartRequired:
+                Alert(
+                    title: Text("Restart BisonNotes to Finish"),
+                    message: Text(
+                        "macOS granted Screen & System Audio Recording permission. " +
+                            "Quit BisonNotes completely and reopen it before recording meeting audio."
+                    ),
+                    dismissButton: .default(Text("OK"))
+                )
             }
         }
         .sheet(isPresented: $showingCloudReview) {
             CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
                 .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 780, height: 700)
+                .nativeMacModalDismissControl()
         }
         .onAppear {
             refreshEngineStatuses()
@@ -149,6 +186,7 @@ struct SettingsView: View {
                 SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
@@ -159,15 +197,18 @@ struct SettingsView: View {
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
         }
-        .sheet(isPresented: $showingDataMigration) {
-            DataMigrationView()
-                .environmentObject(appCoordinator)
-        }
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
         }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
+        }
+        #endif
+        .sheet(isPresented: $showingDataMigration) {
+            DataMigrationView()
+                .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 800, height: 700)
+                .nativeMacModalDismissControl("Cancel")
         }
         .overlay {
             if isPreparingLogs {
@@ -189,6 +230,7 @@ struct SettingsView: View {
                             .fill(Color(.systemBackground))
                             .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 2)
                     )
+                    .accessibilityModalProgress(label: "Preparing logs")
                 }
                 .transition(.opacity)
             }
@@ -229,7 +271,7 @@ struct SettingsView: View {
 
             Text("Configure processing, privacy, sync, and diagnostics.")
                 .font(.subheadline)
-                .foregroundColor(.secondary)
+                .foregroundColor(.primary)
         }
     }
 
@@ -262,40 +304,11 @@ struct SettingsView: View {
                 action: { showingTranscriptionSettings = true }
             )
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsConfigurationSection)
     }
 
     private var modernRecordingSection: some View {
         ModernSettingsCard(title: "Recording", systemImage: "mic", tint: .green) {
-            #if targetEnvironment(macCatalyst)
-            ModernInlineStatus(
-                title: "Using Mac system microphone",
-                subtitle: "BisonNotes uses the current macOS Sound input. Change it in System Settings if needed.",
-                systemImage: "mic.fill",
-                tint: .green
-            )
-
-            Toggle(isOn: Binding(
-                get: { recorderVM.isMacSystemAudioCaptureEnabled },
-                set: { handleMacSystemAudioCaptureToggle($0) }
-            )) {
-                ModernSettingsLabel(
-                    title: "Record Meeting Audio",
-                    subtitle: "Capture audio playing from other Mac apps while recording",
-                    systemImage: "macwindow.on.rectangle",
-                    tint: .purple
-                )
-            }
-            .disabled(recorderVM.isRecording)
-
-            if recorderVM.isMacSystemAudioCaptureEnabled {
-                ModernInlineStatus(
-                    title: "Meeting audio capture is enabled",
-                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
-                    systemImage: "rectangle.dashed.badge.record",
-                    tint: .orange
-                )
-            }
-            #else
             if recorderVM.availableInputs.isEmpty {
                 ModernInlineStatus(
                     title: "No microphones found",
@@ -330,6 +343,32 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
 
             Divider()
+
+            #if os(macOS)
+            Toggle(isOn: Binding(
+                get: { recorderVM.isMacSystemAudioCaptureEnabled },
+                set: { handleMacSystemAudioCaptureToggle($0) }
+            )) {
+                ModernSettingsLabel(
+                    title: "Record Meeting Audio",
+                    subtitle: "Capture audio playing from other Mac apps while recording",
+                    systemImage: "macwindow.on.rectangle",
+                    tint: .purple
+                )
+            }
+            .disabled(recorderVM.isRecording)
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isMacSystemAudioCaptureEnabled))
+
+            if recorderVM.isMacSystemAudioCaptureEnabled {
+                ModernInlineStatus(
+                    title: "Meeting audio capture is enabled",
+                    subtitle: "If macOS permission changes later, BisonNotes saves microphone audio only.",
+                    systemImage: "rectangle.dashed.badge.record",
+                    tint: .orange
+                )
+            }
+
+            Divider()
             #endif
 
             Toggle(isOn: Binding(
@@ -343,6 +382,8 @@ struct SettingsView: View {
                     tint: .blue
                 )
             }
+            .foregroundStyle(.primary)
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isLocationTrackingEnabled))
 
             if recorderVM.isLocationTrackingEnabled {
                 ModernInlineStatus(
@@ -353,6 +394,7 @@ struct SettingsView: View {
                 )
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsRecordingSection)
     }
 
     private var moderniCloudSection: some View {
@@ -365,12 +407,19 @@ struct SettingsView: View {
             }
         ) {
             Toggle("Enable iCloud Sync", isOn: iCloudSyncToggleBinding)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudManager.isEnabled))
+                .accessibilityHint("Shows a privacy notice before enabling iCloud sync.")
                 .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudEnableToggle)
 
             if iCloudManager.isEnabled {
                 Toggle("Include audio files in backup", isOn: $iCloudBackupIncludeAudioFiles)
+                    .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeAudioFiles))
                 Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
+                    .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeSettings))
                 Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
+                    .accessibilityValue(
+                        AccessibilitySupport.statusValue(isOn: iCloudBackupIncludeSensitiveSettings)
+                    )
                     .disabled(!iCloudBackupIncludeSettings)
 
                 Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
@@ -487,6 +536,7 @@ struct SettingsView: View {
     private var modernBehaviorSection: some View {
         ModernSettingsCard(title: "App Behavior", systemImage: "wand.and.stars", tint: .purple) {
             Toggle("Comedy Mode", isOn: $comedyModeEnabled)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: comedyModeEnabled))
 
             if comedyModeEnabled {
                 Picker("Style", selection: $comedyModeStyle) {
@@ -503,10 +553,12 @@ struct SettingsView: View {
             Divider()
 
             Toggle("Experimental features", isOn: $enableExperimentalModels)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: enableExperimentalModels))
             Text("Exposes experimental on-device models. Experimental models are less reliable and may produce empty summaries.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
     }
 
     private var modernMaintenanceSection: some View {
@@ -529,7 +581,7 @@ struct SettingsView: View {
                 subtitle: "Manage transcription and summarization jobs",
                 systemImage: "gearshape.2",
                 tint: .blue,
-                action: { showingBackgroundProcessing = true }
+                action: { presentBackgroundProcessing() }
             )
 
             Button {
@@ -553,6 +605,8 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
             .disabled(isPreparingLogs)
+            .accessibilityLabel(isPreparingLogs ? "Preparing Diagnostic Logs" : "Export Diagnostic Logs")
+            .accessibilityValue(isPreparingLogs ? "In progress" : "")
 
             if let logExportError {
                 Text("Error: \(logExportError)")
@@ -583,6 +637,7 @@ struct SettingsView: View {
                 Text("These tools can delete data. Use with caution.")
             }
         }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsMaintenanceSection)
     }
 
     private var preferencesSection: some View {
@@ -614,18 +669,6 @@ struct SettingsView: View {
 
     private var microphoneSection: some View {
         Section {
-            #if targetEnvironment(macCatalyst)
-            HStack {
-                Image(systemName: "mic.fill")
-                    .foregroundColor(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Using Mac system microphone")
-                    Text("Change the input device in macOS System Settings.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            #else
             if recorderVM.availableInputs.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle")
@@ -656,22 +699,18 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
-            #endif
         } header: {
             HStack {
                 Text("Microphone Selection")
                 Spacer()
-                #if !targetEnvironment(macCatalyst)
                 Button {
                     Task { await recorderVM.fetchInputs() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                #endif
             }
         }
     }
-
 
     private var aiEngineSection: some View {
         Section("AI Processing") {
@@ -731,8 +770,6 @@ struct SettingsView: View {
             .buttonStyle(.plain)
         }
     }
-
-
 
     private var locationSection: some View {
         Section {
@@ -863,54 +900,39 @@ struct SettingsView: View {
 
                             if !cloudOnlySummaries.isEmpty {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "iCloud Data Found",
                                         message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                                        preferredStyle: .alert
-                                    )
-                                    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                                    alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                                        Task {
-                                            do {
-                                                let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                                AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                            } catch {
-                                                AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        actions: [
+                                            PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                            PlatformAlert.Action(title: "Download") {
+                                                Task {
+                                                    do {
+                                                        let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                                        AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                                    } catch {
+                                                        AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                                    }
+                                                }
                                             }
-                                        }
-                                    })
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
+                                        ]
+                                    )
                                 }
                             } else {
                                 await MainActor.run {
-                                    let alert = UIAlertController(
+                                    PlatformAlert.present(
                                         title: "No iCloud Data",
-                                        message: "No summaries were found in your iCloud account.",
-                                        preferredStyle: .alert
+                                        message: "No summaries were found in your iCloud account."
                                     )
-                                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                       let rootViewController = windowScene.windows.first?.rootViewController {
-                                        rootViewController.present(alert, animated: true)
-                                    }
                                 }
                             }
                         } catch {
                             AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                             await MainActor.run {
-                                let alert = UIAlertController(
+                                PlatformAlert.present(
                                     title: "Check Failed",
-                                    message: "Could not check for iCloud data: \(error.localizedDescription)",
-                                    preferredStyle: .alert
+                                    message: "Could not check for iCloud data: \(error.localizedDescription)"
                                 )
-                                alert.addAction(UIAlertAction(title: "OK", style: .default))
-                                if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                                   let rootViewController = windowScene.windows.first?.rootViewController {
-                                    rootViewController.present(alert, animated: true)
-                                }
                             }
                         }
                     }
@@ -985,7 +1007,7 @@ struct SettingsView: View {
             }
 
             Button {
-                showingBackgroundProcessing = true
+                presentBackgroundProcessing()
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1060,6 +1082,14 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
         }
+    }
+
+    private func presentBackgroundProcessing() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.backgroundProcessing)
+        #else
+        showingBackgroundProcessing = true
+        #endif
     }
 
     private var aboutSection: some View {
@@ -1147,6 +1177,7 @@ struct SettingsView: View {
         }
     }
 
+    #if os(iOS)
     private func microphoneTypeDescription(for portType: AVAudioSession.Port) -> String {
         switch portType {
         case .builtInMic:
@@ -1171,9 +1202,10 @@ struct SettingsView: View {
             return portType.rawValue.capitalized
         }
     }
+    #endif
 
     private func handleMacSystemAudioCaptureToggle(_ enabled: Bool) {
-        #if targetEnvironment(macCatalyst)
+        #if os(macOS)
         guard enabled else {
             recorderVM.setMacSystemAudioCaptureEnabled(false)
             return
@@ -1191,28 +1223,30 @@ struct SettingsView: View {
     }
 
     private func requestMacSystemAudioCapturePermissionAndEnable() {
-        #if targetEnvironment(macCatalyst)
-        let granted = CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess()
-        recorderVM.setMacSystemAudioCaptureEnabled(granted)
-        if !granted {
-            macSystemAudioPermissionAlert = .denied
+        #if os(macOS)
+        if CGPreflightScreenCaptureAccess() {
+            recorderVM.setMacSystemAudioCaptureEnabled(true)
+            return
         }
+
+        let granted = CGRequestScreenCaptureAccess()
+        recorderVM.setMacSystemAudioCaptureEnabled(granted)
+        macSystemAudioPermissionAlert = granted ? .restartRequired : .denied
         #endif
     }
 
     private func openMacScreenCapturePrivacySettings() {
-        #if targetEnvironment(macCatalyst)
+        #if os(macOS)
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") else {
             return
         }
-        UIApplication.shared.open(url)
+        PlatformApp.open(url)
         #endif
     }
 
     private func clearAllSummaries() {
         // This function is no longer needed as summaries are managed by the coordinator
     }
-
 
     // MARK: - iCloud Sync Functions
 
@@ -1331,54 +1365,39 @@ struct SettingsView: View {
 
                 if !cloudOnlySummaries.isEmpty {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "iCloud Data Found",
                             message: "We found \(cloudOnlySummaries.count) summaries in your iCloud that aren't on this device. Would you like to download them?",
-                            preferredStyle: .alert
-                        )
-                        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
-                        alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                            Task {
-                                do {
-                                    let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
-                                    AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
-                                } catch {
-                                    AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                            actions: [
+                                PlatformAlert.Action(title: "Cancel", isCancel: true),
+                                PlatformAlert.Action(title: "Download") {
+                                    Task {
+                                        do {
+                                            let count = try await iCloudManager.downloadSummariesFromCloud(appCoordinator: appCoordinator, forRecovery: true)
+                                            AppLog.shared.log("Downloaded \(count) summaries from iCloud", category: .general)
+                                        } catch {
+                                            AppLog.shared.log("Failed to download summaries: \(error)", level: .error, category: .general)
+                                        }
+                                    }
                                 }
-                            }
-                        })
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
+                            ]
+                        )
                     }
                 } else {
                     await MainActor.run {
-                        let alert = UIAlertController(
+                        PlatformAlert.present(
                             title: "No iCloud Data",
-                            message: "No summaries were found in your iCloud account.",
-                            preferredStyle: .alert
+                            message: "No summaries were found in your iCloud account."
                         )
-                        alert.addAction(UIAlertAction(title: "OK", style: .default))
-                        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                           let rootViewController = windowScene.windows.first?.rootViewController {
-                            rootViewController.present(alert, animated: true)
-                        }
                     }
                 }
             } catch {
                 AppLog.shared.log("Failed to check for iCloud data: \(error)", level: .error, category: .general)
                 await MainActor.run {
-                    let alert = UIAlertController(
+                    PlatformAlert.present(
                         title: "Check Failed",
-                        message: "Could not check for iCloud data: \(error.localizedDescription)",
-                        preferredStyle: .alert
+                        message: "Could not check for iCloud data: \(error.localizedDescription)"
                     )
-                    alert.addAction(UIAlertAction(title: "OK", style: .default))
-                    if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                       let rootViewController = windowScene.windows.first?.rootViewController {
-                        rootViewController.present(alert, animated: true)
-                    }
                 }
             }
         }
@@ -1449,6 +1468,7 @@ struct SettingsView: View {
 private enum MacSystemAudioPermissionAlert: Identifiable {
     case rationale
     case denied
+    case restartRequired
 
     var id: String {
         switch self {
@@ -1456,6 +1476,8 @@ private enum MacSystemAudioPermissionAlert: Identifiable {
             return "rationale"
         case .denied:
             return "denied"
+        case .restartRequired:
+            return "restartRequired"
         }
     }
 }
@@ -1669,6 +1691,7 @@ private struct ModernSettingsCard<Content: View, Trailing: View>: View {
                 Text(title)
                     .font(.headline)
                     .foregroundColor(.primary)
+                    .accessibilityAddTraits(.isHeader)
 
                 Spacer()
 
@@ -1754,6 +1777,15 @@ private struct ModernSettingsNavigationRow<Trailing: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)
+        .accessibilityCard(
+            label: title,
+            value: subtitle,
+            hint: "Opens \(title)."
+        )
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            action()
+        }
     }
 }
 
@@ -1794,7 +1826,7 @@ private struct ModernSelectableRow: View {
 
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
             }
 
             Spacer()
@@ -1806,6 +1838,11 @@ private struct ModernSelectableRow: View {
         .padding(14)
         .background(isSelected ? tint.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 15))
+        .accessibilityCard(
+            label: title,
+            value: "\(subtitle), \(isSelected ? "selected" : "not selected")",
+            hint: "Selects this microphone."
+        )
     }
 }
 
@@ -1826,7 +1863,7 @@ private struct ModernSettingsLabel: View {
 
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
             }
         }
     }
@@ -1868,6 +1905,7 @@ private struct ModernInlineStatus: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .accessibilityCard(label: title, value: subtitle)
     }
 }
 
@@ -1883,6 +1921,8 @@ private struct ModernStatusPill: View {
             .padding(.vertical, 4)
             .background(tint.opacity(0.14))
             .clipShape(Capsule())
+            .accessibilityLabel("Status")
+            .accessibilityValue(text)
     }
 }
 

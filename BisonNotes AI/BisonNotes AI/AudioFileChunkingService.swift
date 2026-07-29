@@ -10,35 +10,35 @@ import AVFoundation
 
 @MainActor
 class AudioFileChunkingService: ObservableObject {
-    
+
     // MARK: - Published Properties
-    
+
     @Published var isChunking = false
     @Published var currentStatus = ""
     @Published var progress: Double = 0.0
-    
+
     // MARK: - Private Properties
-    
+
     private let fileManager = FileManager.default
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let minimumStandaloneChunkDuration: TimeInterval = 1.0
-    
+
     // MARK: - Public Methods
-    
+
     /// Determines if a file needs chunking based on the transcription service
     func shouldChunkFile(_ url: URL, for engine: TranscriptionEngine) async throws -> Bool {
         AppLog.shared.chunking("shouldChunkFile - Checking: \(url.lastPathComponent) for engine: \(engine.rawValue)", level: .debug)
-        
+
         guard fileManager.fileExists(atPath: url.path) else {
             AppLog.shared.chunking("shouldChunkFile - File not found: \(url.path)", level: .error)
             throw AudioChunkingError.fileNotFound
         }
-        
+
         let config = ChunkingConfig.config(for: engine)
         AppLog.shared.chunking("shouldChunkFile - Using strategy: \(config.strategy.description)", level: .debug)
-        
+
         let fileInfo = try await AudioFileInfo.create(from: url)
-        
+
         let needsChunking: Bool
         switch config.strategy {
         case .fileSize(let maxBytes):
@@ -53,17 +53,17 @@ class AudioFileChunkingService: ObservableObject {
             needsChunking = exceedsSize || exceedsDuration
             AppLog.shared.chunking("shouldChunkFile - Combined check: size(\(exceedsSize)) || duration(\(exceedsDuration)) = \(needsChunking)", level: .debug)
         }
-        
+
         AppLog.shared.chunking("shouldChunkFile - Decision: \(needsChunking)")
         return needsChunking
     }
-    
+
     /// Chunks an audio file based on the transcription service requirements with streaming optimization
     func chunkAudioFile(_ url: URL, for engine: TranscriptionEngine) async throws -> ChunkingResult {
         guard fileManager.fileExists(atPath: url.path) else {
             throw AudioChunkingError.fileNotFound
         }
-        
+
         // Prevent recursive chunking - if this is already a chunk file, don't chunk it again
         if url.lastPathComponent.contains("chunk_") {
             AppLog.shared.chunking("Skipping chunking for already chunked file: \(url.lastPathComponent)")
@@ -76,37 +76,37 @@ class AudioFileChunkingService: ObservableObject {
                 endTime: fileInfo.duration,
                 fileSize: fileInfo.fileSize
             )
-            
+
             let result = ChunkingResult(
                 chunks: [singleChunk],
                 totalDuration: fileInfo.duration,
                 totalSize: fileInfo.fileSize,
                 chunkingTime: 0.0
             )
-            
+
             return result
         }
-        
+
         isChunking = true
         currentStatus = "Analyzing audio file..."
         progress = 0.0
-        
+
         let startTime = Date()
-        
+
         do {
             let config = ChunkingConfig.config(for: engine)
             let fileInfo = try await AudioFileInfo.create(from: url)
-            
+
             EnhancedLogger.shared.logChunkingStart(url, strategy: config.strategy)
             EnhancedLogger.shared.logChunking("Duration: \(fileInfo.duration)s, Size: \(fileInfo.fileSize) bytes", level: .debug)
-            
+
             currentStatus = "Checking if chunking is needed..."
             progress = 0.1
-            
+
             // Check if chunking is needed
             let needsChunking = try await shouldChunkFile(url, for: engine)
             AppLog.shared.chunking("Chunking decision - Needs chunking: \(needsChunking)", level: .debug)
-            
+
             if !needsChunking {
                 EnhancedLogger.shared.logChunking("File doesn't need chunking", level: .info)
                 AppLog.shared.chunking("Creating single chunk for file - Duration: \(fileInfo.duration)s, Size: \(fileInfo.fileSize) bytes", level: .debug)
@@ -119,33 +119,33 @@ class AudioFileChunkingService: ObservableObject {
                     endTime: fileInfo.duration,
                     fileSize: fileInfo.fileSize
                 )
-                
+
                 AppLog.shared.chunking("Single chunk created - ID: \(singleChunk.id), Duration: \(singleChunk.duration)s")
-                
+
                 let result = ChunkingResult(
                     chunks: [singleChunk],
                     totalDuration: fileInfo.duration,
                     totalSize: fileInfo.fileSize,
                     chunkingTime: Date().timeIntervalSince(startTime)
                 )
-                
+
                 isChunking = false
                 currentStatus = "No chunking needed"
                 progress = 1.0
-                
+
                 return result
             }
-            
+
             EnhancedLogger.shared.logChunking("File needs chunking for \(engine.rawValue)", level: .info)
-            
+
             // Create temp directory
             try createTempDirectory(config.tempDirectory)
-            
+
             currentStatus = "Preparing to chunk file with streaming optimization..."
             progress = 0.2
-            
+
             let chunks: [AudioChunk]
-            
+
             switch config.strategy {
             case .fileSize(let maxBytes):
                 chunks = try await chunkByFileSizeWithStreaming(url, maxBytes: maxBytes, config: config, fileInfo: fileInfo)
@@ -154,24 +154,24 @@ class AudioFileChunkingService: ObservableObject {
             case .combined(let maxBytes, let maxSeconds):
                 chunks = try await chunkByCombinedStrategy(url, maxBytes: maxBytes, maxSeconds: maxSeconds, config: config, fileInfo: fileInfo)
             }
-            
+
             let chunkingTime = Date().timeIntervalSince(startTime)
-            
+
             AppLog.shared.chunking("Chunking complete: \(chunks.count) chunks created in \(chunkingTime)s")
-            
+
             let result = ChunkingResult(
                 chunks: chunks,
                 totalDuration: fileInfo.duration,
                 totalSize: fileInfo.fileSize,
                 chunkingTime: chunkingTime
             )
-            
+
             isChunking = false
             currentStatus = "Chunking complete"
             progress = 1.0
-            
+
             return result
-            
+
         } catch {
             isChunking = false
             currentStatus = "Chunking failed"
@@ -179,31 +179,31 @@ class AudioFileChunkingService: ObservableObject {
             throw error
         }
     }
-    
+
     /// Reassembles transcript chunks into a complete TranscriptData object
     func reassembleTranscript(from chunks: [TranscriptChunk], originalURL: URL, recordingName: String, recordingDate: Date, recordingId: UUID) async throws -> ReassemblyResult {
         let startTime = Date()
-        
+
         AppLog.shared.chunking("Reassembling transcript from \(chunks.count) chunks")
-        
+
         guard !chunks.isEmpty else {
             throw AudioChunkingError.reassemblyFailed("No transcript chunks provided")
         }
-        
+
         // Sort chunks by sequence number
         let sortedChunks = chunks.sorted { $0.sequenceNumber < $1.sequenceNumber }
-        
+
         // Validate sequence numbers are continuous
         for (index, chunk) in sortedChunks.enumerated() {
             guard chunk.sequenceNumber == index else {
                 throw AudioChunkingError.reassemblyFailed("Missing chunk sequence number \(index)")
             }
         }
-        
+
         // Combine all segments with time offset adjustments
         var allSegments: [TranscriptSegment] = []
         var speakerMappings: [String: String] = [:]
-        
+
         for chunk in sortedChunks {
             for segment in chunk.segments {
                 // Adjust segment times based on chunk start time
@@ -214,17 +214,17 @@ class AudioFileChunkingService: ObservableObject {
                     endTime: segment.endTime + chunk.startTime
                 )
                 allSegments.append(adjustedSegment)
-                
+
                 // Merge speaker mappings (preserve existing mappings)
                 if speakerMappings[segment.speaker] == nil {
                     speakerMappings[segment.speaker] = segment.speaker
                 }
             }
         }
-        
+
         // Remove duplicate segments that might occur due to overlap
         allSegments = removeDuplicateSegments(allSegments)
-        
+
         // Create the complete transcript with recording ID
         let transcriptData = TranscriptData(
             recordingId: recordingId,
@@ -234,11 +234,11 @@ class AudioFileChunkingService: ObservableObject {
             segments: allSegments,
             speakerMappings: speakerMappings
         )
-        
+
         let reassemblyTime = Date().timeIntervalSince(startTime)
-        
+
         AppLog.shared.chunking("Transcript reassembly complete: \(allSegments.count) segments in \(reassemblyTime)s")
-        
+
         return ReassemblyResult(
             transcriptData: transcriptData,
             totalSegments: allSegments.count,
@@ -246,7 +246,7 @@ class AudioFileChunkingService: ObservableObject {
             chunks: sortedChunks
         )
     }
-    
+
     /// Creates transcript chunks from transcription results
     func createTranscriptChunk(from transcriptText: String, audioChunk: AudioChunk, segments: [TranscriptSegment] = []) -> TranscriptChunk {
         // If no segments provided, create a single segment from the transcript text
@@ -258,7 +258,7 @@ class AudioFileChunkingService: ObservableObject {
                 endTime: audioChunk.duration
             )
         ] : segments
-        
+
         return TranscriptChunk(
             chunkId: audioChunk.id,
             sequenceNumber: audioChunk.sequenceNumber,
@@ -268,14 +268,14 @@ class AudioFileChunkingService: ObservableObject {
             endTime: audioChunk.endTime
         )
     }
-    
+
     /// Cleans up temporary chunk files
     func cleanupChunks(_ chunks: [AudioChunk]) async throws {
         AppLog.shared.chunking("Cleaning up \(chunks.count) chunk files")
-        
+
         var errors: [Error] = []
         var deletedCount = 0
-        
+
         for chunk in chunks {
             // Don't delete the original file
             if chunk.chunkURL != chunk.originalURL {
@@ -291,7 +291,7 @@ class AudioFileChunkingService: ObservableObject {
                 }
             }
         }
-        
+
         // Also try to clean up the temp directory if it's empty
         if deletedCount > 0 {
             let tempDir = chunks.first?.chunkURL.deletingLastPathComponent()
@@ -299,44 +299,44 @@ class AudioFileChunkingService: ObservableObject {
                 try? cleanupTempDirectory(tempDir)
             }
         }
-        
+
         if !errors.isEmpty {
             let errorMessages = errors.map { $0.localizedDescription }.joined(separator: ", ")
             throw AudioChunkingError.cleanupFailed(errorMessages)
         }
-        
+
         AppLog.shared.chunking("Chunk cleanup complete: \(deletedCount) files deleted")
     }
-    
+
     /// Gets information about an audio file without chunking
     func getAudioFileInfo(_ url: URL) async throws -> AudioFileInfo {
         guard fileManager.fileExists(atPath: url.path) else {
             throw AudioChunkingError.fileNotFound
         }
-        
+
         return try await AudioFileInfo.create(from: url)
     }
-    
+
     /// Validates that all chunks exist and are accessible
     func validateChunks(_ chunks: [AudioChunk]) async throws -> Bool {
         for chunk in chunks {
             guard fileManager.fileExists(atPath: chunk.chunkURL.path) else {
                 throw AudioChunkingError.chunkingFailed("Chunk file not found: \(chunk.chunkURL.lastPathComponent)")
             }
-            
+
             // Verify chunk is readable
             do {
-                let _ = try Data(contentsOf: chunk.chunkURL)
+                _ = try Data(contentsOf: chunk.chunkURL)
             } catch {
                 throw AudioChunkingError.chunkingFailed("Chunk file not readable: \(chunk.chunkURL.lastPathComponent)")
             }
         }
-        
+
         return true
     }
-    
+
     // MARK: - Private Methods
-    
+
     private func createTempDirectory(_ url: URL) throws {
         if !fileManager.fileExists(atPath: url.path) {
             do {
@@ -348,30 +348,30 @@ class AudioFileChunkingService: ObservableObject {
             }
         }
     }
-    
+
     private func cleanupTempDirectory(_ tempDir: URL) throws {
         // Only delete if directory is empty or only contains our chunk files
         let contents = try fileManager.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
-        
+
         // Check if all files are chunk files
         let allChunkFiles = contents.allSatisfy { url in
             url.lastPathComponent.hasPrefix("chunk_") && url.pathExtension.lowercased() == "m4a"
         }
-        
+
         if contents.isEmpty || allChunkFiles {
             try fileManager.removeItem(at: tempDir)
             AppLog.shared.chunking("Cleaned up temp directory: \(tempDir.lastPathComponent)", level: .debug)
         }
     }
-    
+
     private func removeDuplicateSegments(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
         var uniqueSegments: [TranscriptSegment] = []
         var seenTexts: Set<String> = []
-        
+
         for segment in segments {
             // Use a combination of text and approximate time to identify duplicates
             let key = "\(segment.text.prefix(50))_\(Int(segment.startTime))"
-            
+
             if !seenTexts.contains(key) {
                 seenTexts.insert(key)
                 uniqueSegments.append(segment)
@@ -379,7 +379,7 @@ class AudioFileChunkingService: ObservableObject {
                 AppLog.shared.chunking("Removed duplicate segment at startTime=\(Int(segment.startTime))s", level: .debug)
             }
         }
-        
+
         return uniqueSegments
     }
 
@@ -402,53 +402,53 @@ class AudioFileChunkingService: ObservableObject {
 
         return endTime
     }
-    
+
     // MARK: - Streaming Chunking Methods
-    
+
     private func chunkByFileSizeWithStreaming(_ url: URL, maxBytes: Int64, config: ChunkingConfig, fileInfo: AudioFileInfo) async throws -> [AudioChunk] {
         currentStatus = "Chunking by file size with streaming..."
         progress = 0.3
-        
+
         let asset = AVURLAsset(url: url)
         let duration = fileInfo.duration
         let totalSize = fileInfo.fileSize
-        
+
         // Calculate bytes per second to estimate duration limits
         let bytesPerSecond = Double(totalSize) / duration
-        
+
         // Use a very conservative approach: target 60% of maxBytes to ensure we stay under limit
         let targetBytesPerChunk = Int64(Double(maxBytes) * 0.6)
         let maxDurationPerChunk = Double(targetBytesPerChunk) / bytesPerSecond
-        
+
         AppLog.shared.chunking("File analysis: \(bytesPerSecond) bytes/second, targeting \(targetBytesPerChunk / 1024 / 1024)MB chunks", level: .debug)
         AppLog.shared.chunking("Max duration per chunk: \(maxDurationPerChunk)s", level: .debug)
-        
+
         var chunks: [AudioChunk] = []
         var currentTime: TimeInterval = 0
         var sequenceNumber = 0
         var adaptiveDuration = maxDurationPerChunk
-        
+
         while currentTime < duration {
             let chunkStartTime = currentTime
             let chunkEndTime = min(currentTime + adaptiveDuration, duration)
-            
+
             currentStatus = "Creating chunk \(sequenceNumber + 1)..."
             progress = 0.3 + (0.6 * (currentTime / duration))
-            
+
             let chunkURL = config.tempDirectory.appendingPathComponent("chunk_\(sequenceNumber).m4a")
-            
+
             // Use streaming export for memory efficiency
             try await exportAudioChunkWithStreaming(from: asset, startTime: chunkStartTime, endTime: chunkEndTime, outputURL: chunkURL)
-            
+
             // Get actual chunk size
             let chunkAttributes = try fileManager.attributesOfItem(atPath: chunkURL.path)
             let chunkSize = chunkAttributes[.size] as? Int64 ?? 0
-            
+
             // Verify chunk size is under limit and adjust if needed
             if chunkSize > maxBytes {
                 AppLog.shared.chunking("Chunk \(sequenceNumber) is too large (\(chunkSize) bytes > \(maxBytes) bytes)", level: .debug)
                 AppLog.shared.chunking("Chunk duration was \(chunkEndTime - chunkStartTime)s", level: .debug)
-                
+
                 // Reduce duration for future chunks by 40% (more aggressive)
                 adaptiveDuration = adaptiveDuration * 0.6
                 AppLog.shared.chunking("Adjusting chunk duration to \(adaptiveDuration)s for future chunks", level: .debug)
@@ -463,7 +463,7 @@ class AudioFileChunkingService: ObservableObject {
                 adaptiveDuration = min(adaptiveDuration * 1.1, maxDurationPerChunk)
                 AppLog.shared.chunking("Chunk smaller than expected, increasing duration to \(adaptiveDuration)s", level: .debug)
             }
-            
+
             let chunk = AudioChunk(
                 originalURL: url,
                 chunkURL: chunkURL,
@@ -472,34 +472,34 @@ class AudioFileChunkingService: ObservableObject {
                 endTime: chunkEndTime,
                 fileSize: chunkSize
             )
-            
+
             chunks.append(chunk)
-            
+
             AppLog.shared.chunking("Chunk \(sequenceNumber) created: \(chunkSize) bytes, \(chunkEndTime - chunkStartTime)s duration", level: .debug)
-            
+
             currentTime = chunkEndTime
             sequenceNumber += 1
-            
+
             // Battery-aware processing delay
             if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
                 try await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
             }
         }
-        
+
         return chunks
     }
-    
+
     private func chunkByDurationWithStreaming(_ url: URL, maxSeconds: TimeInterval, config: ChunkingConfig, fileInfo: AudioFileInfo) async throws -> [AudioChunk] {
         currentStatus = "Chunking by duration with streaming..."
         progress = 0.3
-        
+
         let asset = AVURLAsset(url: url)
         let duration = fileInfo.duration
-        
+
         var chunks: [AudioChunk] = []
         var currentTime: TimeInterval = 0
         var sequenceNumber = 0
-        
+
         while currentTime < duration {
             let chunkStartTime = currentTime
             let chunkEndTime = chunkEndTime(
@@ -508,20 +508,20 @@ class AudioFileChunkingService: ObservableObject {
                 totalDuration: duration,
                 sequenceNumber: sequenceNumber
             )
-            
+
             currentStatus = "Creating chunk \(sequenceNumber + 1)..."
             progress = 0.3 + (0.6 * (currentTime / duration))
-            
+
             let chunkURL = config.tempDirectory.appendingPathComponent("chunk_\(sequenceNumber).m4a")
-            
+
             // Use streaming export for memory efficiency
             try await exportAudioChunkWithStreaming(from: asset, startTime: chunkStartTime, endTime: chunkEndTime, outputURL: chunkURL)
-            
+
             // Get actual chunk size and duration
             let chunkAttributes = try fileManager.attributesOfItem(atPath: chunkURL.path)
             let chunkSize = chunkAttributes[.size] as? Int64 ?? 0
             let actualEndTime = chunkEndTime
-            
+
             let chunk = AudioChunk(
                 originalURL: url,
                 chunkURL: chunkURL,
@@ -530,29 +530,29 @@ class AudioFileChunkingService: ObservableObject {
                 endTime: actualEndTime,
                 fileSize: chunkSize
             )
-            
+
             chunks.append(chunk)
-            
+
             AppLog.shared.chunking("Chunk \(sequenceNumber) created: \(chunkSize) bytes, \(actualEndTime - chunkStartTime)s duration", level: .debug)
-            
+
             currentTime = chunkEndTime
             sequenceNumber += 1
-            
+
             // Battery-aware processing delay
             if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
                 try await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
             }
         }
-        
+
         return chunks
     }
-    
+
     private func exportAudioChunkWithStreaming(from asset: AVAsset, startTime: TimeInterval, endTime: TimeInterval, outputURL: URL) async throws {
         // Remove existing file if it exists
         if fileManager.fileExists(atPath: outputURL.path) {
             try fileManager.removeItem(at: outputURL)
         }
-        
+
         // Create export session with optimized settings
         guard let exportSession = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A) else {
             AppLog.shared.chunking("Failed to create export session for output: \(outputURL)", level: .error)
@@ -592,67 +592,67 @@ class AudioFileChunkingService: ObservableObject {
             throw AudioChunkingError.chunkingFailed("Exported file is empty")
         }
     }
-    
+
     private func chunkByCombinedStrategy(_ url: URL, maxBytes: Int64, maxSeconds: TimeInterval, config: ChunkingConfig, fileInfo: AudioFileInfo) async throws -> [AudioChunk] {
         currentStatus = "Chunking with combined size and duration limits..."
         progress = 0.3
-        
+
         let asset = AVURLAsset(url: url)
         let duration = fileInfo.duration
         let totalSize = fileInfo.fileSize
-        
+
         // Calculate bytes per second to estimate chunk sizes
         let bytesPerSecond = Double(totalSize) / duration
-        
+
         // Determine the more restrictive limit
         let maxDurationFromSize = Double(maxBytes) / bytesPerSecond
         let effectiveMaxSeconds = min(maxSeconds, maxDurationFromSize)
-        
+
         AppLog.shared.chunking("Combined strategy: Duration limit \(maxSeconds)s, Size-based duration limit \(maxDurationFromSize)s", level: .debug)
         AppLog.shared.chunking("Using effective limit: \(effectiveMaxSeconds)s", level: .debug)
-        
+
         var chunks: [AudioChunk] = []
         var currentTime: TimeInterval = 0
         var sequenceNumber = 0
         var adaptiveDuration = effectiveMaxSeconds
-        
+
         while currentTime < duration {
             let chunkStartTime = currentTime
             let chunkEndTime = min(currentTime + adaptiveDuration, duration)
-            
+
             currentStatus = "Creating chunk \(sequenceNumber + 1) with combined limits..."
             progress = 0.3 + (0.6 * (currentTime / duration))
-            
+
             let chunkURL = config.tempDirectory.appendingPathComponent("chunk_\(sequenceNumber).m4a")
-            
+
             // Export chunk with streaming
             try await exportAudioChunkWithStreaming(from: asset, startTime: chunkStartTime, endTime: chunkEndTime, outputURL: chunkURL)
-            
+
             // Get actual chunk size and validate against both limits
             let chunkAttributes = try fileManager.attributesOfItem(atPath: chunkURL.path)
             let chunkSize = chunkAttributes[.size] as? Int64 ?? 0
             let chunkDuration = chunkEndTime - chunkStartTime
-            
+
             // Check if chunk violates either limit
             if chunkSize > maxBytes {
                 AppLog.shared.chunking("Chunk \(sequenceNumber) exceeds size limit (\(chunkSize) bytes > \(maxBytes) bytes)", level: .debug)
                 adaptiveDuration = adaptiveDuration * 0.7 // Reduce by 30%
                 AppLog.shared.chunking("Reducing chunk duration to \(adaptiveDuration)s", level: .debug)
-                
+
                 // Remove the oversized chunk and try again
                 try? fileManager.removeItem(at: chunkURL)
                 continue
-                
+
             } else if chunkDuration > maxSeconds {
                 AppLog.shared.chunking("Chunk \(sequenceNumber) exceeds duration limit (\(chunkDuration)s > \(maxSeconds)s)", level: .debug)
                 adaptiveDuration = min(adaptiveDuration * 0.8, maxSeconds) // Reduce but cap at maxSeconds
                 AppLog.shared.chunking("Reducing chunk duration to \(adaptiveDuration)s", level: .debug)
-                
+
                 // Remove the oversized chunk and try again
                 try? fileManager.removeItem(at: chunkURL)
                 continue
             }
-            
+
             // Chunk is within both limits
             let chunk = AudioChunk(
                 originalURL: url,
@@ -662,29 +662,29 @@ class AudioFileChunkingService: ObservableObject {
                 endTime: chunkEndTime,
                 fileSize: chunkSize
             )
-            
+
             chunks.append(chunk)
-            
+
             AppLog.shared.chunking("Chunk \(sequenceNumber) created: \(chunkSize) bytes, \(chunkDuration)s duration", level: .debug)
-            
+
             currentTime = chunkEndTime
             sequenceNumber += 1
-            
+
             // Optimize chunk size for next iteration
             let sizeUtilization = Double(chunkSize) / Double(maxBytes)
             let durationUtilization = chunkDuration / maxSeconds
-            
+
             if sizeUtilization < 0.6 && durationUtilization < 0.6 {
                 // Chunk is much smaller than limits, can increase slightly
                 adaptiveDuration = min(adaptiveDuration * 1.1, effectiveMaxSeconds)
             }
-            
+
             // Battery-aware processing delay
             if performanceOptimizer.batteryInfo.shouldOptimizeForBattery {
                 try await Task.sleep(nanoseconds: 50_000_000) // 50ms delay
             }
         }
-        
+
         return chunks
     }
 }

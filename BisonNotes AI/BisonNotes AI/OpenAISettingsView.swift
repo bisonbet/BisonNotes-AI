@@ -26,7 +26,7 @@ struct OpenAISettingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        PlatformSettingsNavigationStack {
             Form {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
@@ -181,6 +181,7 @@ struct OpenAISettingsView: View {
                     .foregroundColor(.red)
                 }
             }
+            .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("OpenAI Settings")

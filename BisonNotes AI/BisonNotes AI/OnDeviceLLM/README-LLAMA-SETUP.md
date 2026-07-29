@@ -105,7 +105,7 @@ The `llama.xcframework` contains binaries for:
 
 - **ios-arm64**: Physical iOS devices (iPhone, iPad)
 - **ios-arm64_x86_64-simulator**: iOS Simulator
-- **macos-arm64_x86_64**: macOS (for Mac Catalyst)
+- **macos-arm64_x86_64**: native macOS
 
 ## Supported Features
 
@@ -158,47 +158,9 @@ Track framework versions here for reference:
 | 2026-03-23 | b8495 | Updated from prebuilt release |
 | 2025-01-10 | b4000+ | Initial setup from OLMoE.swift |
 
-### Mac Catalyst Slice Creation (Required After Each Update)
+### Native macOS Slice
 
-The upstream llama.cpp xcframework does NOT include a Mac Catalyst slice. You must create it manually from the macOS arm64 binary:
-
-```bash
-# 1. Extract the arm64 slice from the macOS fat binary
-lipo -thin arm64 \
-  Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/llama \
-  -output /tmp/llama-arm64
-
-# 2. Create versioned macOS-style framework layout (Catalyst requires this)
-CATALYST=Frameworks/llama.xcframework/ios-arm64-maccatalyst/llama.framework
-mkdir -p $CATALYST/Versions/A/Resources
-mkdir -p $CATALYST/Versions/A/Headers
-mkdir -p $CATALYST/Versions/A/Modules
-
-# 3. Copy headers, modules, and Info.plist from the macOS framework
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Headers/* \
-   $CATALYST/Versions/A/Headers/
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Modules/* \
-   $CATALYST/Versions/A/Modules/
-cp Frameworks/llama.xcframework/macos-arm64_x86_64/llama.framework/Versions/A/Resources/Info.plist \
-   $CATALYST/Versions/A/Resources/Info.plist
-
-# 4. Place the thin binary
-cp /tmp/llama-arm64 $CATALYST/Versions/A/llama
-
-# 5. Patch the Mach-O platform header from MACOS to MACCATALYST (CRITICAL)
-vtool -set-build-version maccatalyst 14.0 15.5 -replace \
-  -output $CATALYST/Versions/A/llama \
-          $CATALYST/Versions/A/llama
-
-# 6. Create symlinks
-ln -s A                        $CATALYST/Versions/Current
-ln -s Versions/Current/llama    $CATALYST/llama
-ln -s Versions/Current/Headers  $CATALYST/Headers
-ln -s Versions/Current/Modules  $CATALYST/Modules
-ln -s Versions/Current/Resources $CATALYST/Resources
-```
-
-**Step 5 is critical** — without the `vtool` patch, the linker warns "built for macOS" and may fail codesigning.
+The native Mac target consumes the upstream `macos-arm64_x86_64` framework directly. Mac Catalyst support was removed in v2.2; do not create an `ios-arm64-maccatalyst` slice or add one to `Frameworks/llama.xcframework/Info.plist`.
 
 ---
 

@@ -14,17 +14,17 @@ protocol SummarizationEngine {
     var description: String { get }
     var isAvailable: Bool { get }
     var version: String { get }
-    
+
     /// The name to display in metadata (e.g., specific model name)
     /// Defaults to `name` if not implemented
     var metadataName: String { get }
-    
+
     func generateSummary(from text: String, contentType: ContentType) async throws -> String
     func extractTasks(from text: String) async throws -> [TaskItem]
     func extractReminders(from text: String) async throws -> [ReminderItem]
     func extractTitles(from text: String) async throws -> [TitleItem]
     func classifyContent(_ text: String) async throws -> ContentType
-    
+
     // Optional: Full processing in one call for efficiency
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
 }
@@ -33,7 +33,7 @@ extension SummarizationEngine {
     var metadataName: String {
         return name
     }
-    
+
     var engineType: String {
         return "AI Assistant"
     }
@@ -49,7 +49,7 @@ struct SummarizationConfig {
     let minConfidenceThreshold: Double
     let timeoutInterval: TimeInterval
     let enableParallelProcessing: Bool
-    
+
     static let `default` = SummarizationConfig(
         maxSummaryLength: 500,
         maxTasks: 5,
@@ -59,7 +59,7 @@ struct SummarizationConfig {
         timeoutInterval: 180.0,
         enableParallelProcessing: true
     )
-    
+
     static let conservative = SummarizationConfig(
         maxSummaryLength: 300,
         maxTasks: 5,
@@ -69,7 +69,7 @@ struct SummarizationConfig {
         timeoutInterval: 180.0,
         enableParallelProcessing: false
     )
-    
+
     static let onDeviceUnlimited = SummarizationConfig(
         maxSummaryLength: 500,
         maxTasks: 5,
@@ -90,13 +90,13 @@ struct SummarizationTimeouts {
     static let maximumTimeout: TimeInterval = 600.0
     // NOTE: The timeout value is read when configs are created. Updates apply to new requests,
     // while in-flight operations continue with their originally captured timeout.
-    
+
     static func current() -> TimeInterval {
         let storedValue = UserDefaults.standard.double(forKey: storageKey)
         guard storedValue > 0 else { return defaultTimeout }
         return clamp(storedValue)
     }
-    
+
     static func clamp(_ value: TimeInterval) -> TimeInterval {
         return min(max(value, minimumTimeout), maximumTimeout)
     }
@@ -121,12 +121,12 @@ func withTimeout<T>(
         group.addTask {
             try await operation()
         }
-        
+
         group.addTask {
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             throw timeoutError
         }
-        
+
         guard let result = try await group.next() else {
             throw SummarizationError.processingTimeout
         }

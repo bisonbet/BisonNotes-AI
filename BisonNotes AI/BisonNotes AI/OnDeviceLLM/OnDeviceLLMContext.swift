@@ -48,7 +48,7 @@ public class LLMContext {
         lastDecodeError = nil
 
         let ret = llama_decode(pointer, batch)
-        
+
         if ret < 0 {
             lastDecodeError = .decodeFailed(code: ret)
             AppLog.shared.summarization("[LLMContext] llama_decode failed with code: \(ret)", level: .error)

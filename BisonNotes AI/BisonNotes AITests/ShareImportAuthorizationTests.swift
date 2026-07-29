@@ -54,4 +54,56 @@ final class ShareImportAuthorizationTests: XCTestCase {
         XCTAssertTrue(ShareImportAuthorization.consumePendingToken(in: inboxURL))
         XCTAssertFalse(ShareImportAuthorization.consumePendingToken(in: inboxURL))
     }
+
+    func testSharedExtensionContractBuildsAcceptedImportURL() throws {
+        let token = UUID().uuidString
+        let url = try XCTUnwrap(ShareExtensionContract.importURL(for: token))
+
+        XCTAssertTrue(ShareImportAuthorization.isShareImportURL(url))
+        XCTAssertEqual(ShareImportAuthorization.token(from: url), token)
+        XCTAssertEqual(
+            ShareImportAuthorization.tokenFileName,
+            ShareExtensionContract.tokenFileName
+        )
+    }
+
+    func testSharedExtensionContractMatchesAppImportTypes() {
+        let expectedExtensions: Set<String> = [
+            "m4a", "mp3", "wav", "caf", "aiff", "aif",
+            "txt", "text", "md", "markdown", "pdf", "doc", "docx"
+        ]
+
+        XCTAssertEqual(ShareExtensionContract.supportedExtensions, expectedExtensions)
+    }
+
+    func testSharedExtensionContractUsesSuggestedNameForExtensionlessTemporaryURL() throws {
+        let provider = NSItemProvider()
+        provider.suggestedName = "Meeting Recording.M4A"
+
+        let destinationName = try XCTUnwrap(
+            ShareExtensionContract.destinationFileName(
+                sourceURL: URL(fileURLWithPath: "/tmp/provider-file"),
+                provider: provider,
+                typeIdentifier: "com.apple.m4a-audio"
+            )
+        )
+
+        XCTAssertTrue(destinationName.hasSuffix("_Meeting Recording.M4A"))
+    }
+
+    func testSharedExtensionContractSanitizesSuggestedFileName() throws {
+        let provider = NSItemProvider()
+        provider.suggestedName = "../../shared-notes.txt"
+
+        let destinationName = try XCTUnwrap(
+            ShareExtensionContract.destinationFileName(
+                sourceURL: URL(fileURLWithPath: "/tmp/provider-file"),
+                provider: provider,
+                typeIdentifier: "public.plain-text"
+            )
+        )
+
+        XCTAssertTrue(destinationName.hasSuffix("_shared-notes.txt"))
+        XCTAssertFalse(destinationName.contains(".."))
+    }
 }

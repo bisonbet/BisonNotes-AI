@@ -2,7 +2,9 @@ import SwiftUI
 @preconcurrency import MapKit
 import Contacts
 @preconcurrency import CoreLocation
+#if canImport(UIKit)
 import UIKit
+#endif
 import LinkPresentation
 import UniformTypeIdentifiers
 import PDFKit
@@ -28,6 +30,7 @@ private actor SummaryGeocodeCache {
 private let summaryGeocodeCache = SummaryGeocodeCache()
 
 struct SummaryDetailView: View {
+    @Environment(\.openWindow) private var openWindow
     let recording: RecordingFile
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
@@ -107,25 +110,29 @@ struct SummaryDetailView: View {
     }
 
     var body: some View {
-        // NavigationStack { Form } is the only sheet pattern that scrolls reliably
-        // on Mac Catalyst. See feedback_mac_catalyst_scrollview.md.
         NavigationStack {
-            Form {
-                Section { locationSection }
-                Section { headerSection }
-                Section { summarySection }
-                Section { tasksSection }
-                Section { remindersSection }
-                Section { titlesSection }
-                Section { attachmentsSection }
-                Section { dateTimeEditorSection }
-                Section { metadataSection }
-                Section { regenerateSection }
+            Group {
+                #if os(macOS)
+                // Native Form can size itself to all rows when hosted in a
+                // separate window. List supplies an explicit scrolling
+                // viewport while retaining Section styling and semantics.
+                List {
+                    summarySections
+                }
+                .listStyle(.inset)
+                #else
+                // NavigationStack { Form } is the only sheet pattern that
+                // scrolls reliably on Mac.
+                Form {
+                    summarySections
+                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Summary")
             .navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryDetail)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -143,6 +150,8 @@ struct SummaryDetailView: View {
                         }
                     }
                     .disabled(isExporting)
+                    .accessibilityLabel(activeExportFormat.map { "Exporting \($0.displayName)" } ?? "Export Summary")
+                    .accessibilityHint("Choose PDF or RTF export format.")
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
@@ -153,6 +162,12 @@ struct SummaryDetailView: View {
             showingTranscriptionWarning: .constant(false),
             showingAIWarning: $showingAIWarning,
             onSettingsRequested: {}
+        )
+        .focusedSceneValue(
+            \.summaryExportAction,
+            SummaryExportAction {
+                showingExportFormatPicker = true
+            }
         )
         .onAppear {
             // Debug summary data being displayed
@@ -214,6 +229,7 @@ struct SummaryDetailView: View {
         .sheet(isPresented: $showingLocationDetail) {
             if let locationData = recording.locationData {
                 LocationDetailView(locationData: locationData)
+                    .nativeMacModalSizing(width: 680, height: 620)
             }
         }
         .sheet(isPresented: $showingLocationPicker) {
@@ -222,6 +238,7 @@ struct SummaryDetailView: View {
                     updateRecordingLocation(location)
                 }
             )
+            .nativeMacModalSizing(width: 700, height: 620)
         }
         .sheet(isPresented: $showingShareSheet) {
             Group {
@@ -243,6 +260,7 @@ struct SummaryDetailView: View {
                         }
                 }
             }
+            .nativeMacModalSizing(width: 560, height: 440)
         }
         .alert("Export Error", isPresented: .constant(exportError != nil)) {
             Button("OK") {
@@ -296,6 +314,7 @@ struct SummaryDetailView: View {
                     }
                 }
             }
+            .nativeMacModalSizing(width: 760, height: 680)
         }
         .sheet(isPresented: $showingPDFAttachment) {
             if let selectedAttachmentPDFURL {
@@ -311,12 +330,14 @@ struct SummaryDetailView: View {
                             }
                         }
                 }
+                .nativeMacModalSizing(width: 800, height: 700)
             }
         }
         .sheet(isPresented: $showingNoteEditor) {
             NoteEditorSheet(text: $noteDraft) {
                 saveUserNotes()
             }
+            .nativeMacModalSizing(width: 680, height: 600)
         }
         .quickLookPreview($selectedAttachmentGenericURL)
         .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
@@ -326,6 +347,20 @@ struct SummaryDetailView: View {
         } message: {
             Text(attachmentError ?? "")
         }
+    }
+
+    @ViewBuilder
+    private var summarySections: some View {
+        Section { locationSection }
+        Section { headerSection }
+        Section { summarySection }
+        Section { tasksSection }
+        Section { remindersSection }
+        Section { titlesSection }
+        Section { attachmentsSection }
+        Section { dateTimeEditorSection }
+        Section { metadataSection }
+        Section { regenerateSection }
     }
 
     // MARK: - Geocoding Helpers
@@ -471,15 +506,23 @@ struct SummaryDetailView: View {
                                 .foregroundColor(.green)
                         }
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel("Edit Recording Location")
 
                         // Button to open full map view
                         Button(action: {
+                            #if os(macOS)
+                            if let locationData = recording.locationData {
+                                openWindow(id: NativeWindowID.location, value: locationData)
+                            }
+                            #else
                             showingLocationDetail = true
+                            #endif
                         }) {
                             Image(systemName: "arrow.up.right.circle.fill")
                                 .font(.title3)
                                 .foregroundColor(.accentColor)
                         }
+                        .accessibilityLabel("Open Recording Location Map")
                     }
                     .padding(.horizontal)
                     .padding(.vertical, 12)
@@ -500,7 +543,7 @@ struct SummaryDetailView: View {
 
                             Text("Add a location to remember where this recording was made")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.primary)
                                 .multilineTextAlignment(.leading)
                         }
 
@@ -528,6 +571,7 @@ struct SummaryDetailView: View {
                         .cornerRadius(8)
                     }
                     .disabled(isUpdatingLocation)
+                    .accessibilityLabel(isUpdatingLocation ? "Adding Location" : "Add Location")
                 }
                 .padding()
                 .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
@@ -547,6 +591,7 @@ struct SummaryDetailView: View {
                 .font(.title2)
                 .fontWeight(.bold)
                 .foregroundColor(.primary)
+                .accessibilityAddTraits(.isHeader)
 
             // Prominent date/time display
             VStack(alignment: .leading, spacing: 8) {
@@ -558,7 +603,7 @@ struct SummaryDetailView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Recording Date & Time")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.primary)
                             .fontWeight(.medium)
 
                         Text(formatFullDateTime(summaryData.recordingDate))
@@ -585,16 +630,21 @@ struct SummaryDetailView: View {
                 .padding(.horizontal, 12)
                 .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Recording Date and Time")
+                .accessibilityValue(
+                    "\(formatFullDateTime(summaryData.recordingDate))\(isCustomDate ? ", custom" : "")"
+                )
             }
 
             // Duration info
             HStack {
                 Image(systemName: "clock")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                 Text("Duration: \(recording.durationString)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
 
                 Spacer()
             }
@@ -610,6 +660,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.blue)
                 Text("Metadata")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.bottom, 8)
@@ -656,6 +707,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.accentColor)
                 Text("Summary")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer()
             }
             .padding(.bottom, 8)
@@ -677,6 +729,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.green)
                 Text("Tasks")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.tasks.count > 0 {
                     Text("(\(summaryData.tasks.count))")
                         .font(.subheadline)
@@ -708,6 +761,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.orange)
                 Text("Reminders")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.reminders.count > 0 {
                     Text("(\(summaryData.reminders.count))")
                         .font(.subheadline)
@@ -739,6 +793,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(Color.purple)
                 Text("Titles")
                     .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 if summaryData.titles.count > 0 {
                     Text("(\(summaryData.titles.count))")
                         .font(.subheadline)
@@ -760,6 +815,7 @@ struct SummaryDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .disabled(isUpdatingRecordingName)
+                .accessibilityLabel("Change Recording Title")
             }
             .padding(.bottom, 8)
 
@@ -825,6 +881,7 @@ struct SummaryDetailView: View {
                     updateRecordingName(to: customTitle)
                 }
             )
+            .nativeMacModalSizing(width: 620, height: 560)
         }
         .alert("Edit Title", isPresented: Binding(
             get: { editingTitle != nil },
@@ -877,6 +934,7 @@ struct SummaryDetailView: View {
                             showingNoteEditor = true
                         }
                         .font(.caption)
+                        .accessibilityLabel("Edit Note")
                     }
 
                     Text(noteDraft)
@@ -917,6 +975,7 @@ struct SummaryDetailView: View {
                                 openAttachment(attachment)
                             }
                             .font(.caption)
+                            .accessibilityLabel("Open attachment \(attachment.fileName)")
 
                             Button(role: .destructive) {
                                 removeAttachment(attachment)
@@ -924,6 +983,7 @@ struct SummaryDetailView: View {
                                 Image(systemName: "trash")
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Remove attachment \(attachment.fileName)")
                         }
                         .padding(10)
                         .background(Color(.secondarySystemGroupedBackground))
@@ -979,6 +1039,7 @@ struct SummaryDetailView: View {
                     .cornerRadius(10)
                 }
                 .disabled(isUpdatingDate)
+                .accessibilityLabel(isUpdatingDate ? "Updating Date and Time" : "Set Custom Date and Time")
             }
         }
         .sheet(isPresented: $showingDateEditor) {
@@ -988,6 +1049,7 @@ struct SummaryDetailView: View {
                     updateRecordingDateTime(to: newDateTime)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
     }
 
@@ -1036,6 +1098,7 @@ struct SummaryDetailView: View {
                 }
                 .buttonStyle(.borderless)
                 .disabled(isRegenerating)
+                .accessibilityLabel(isRegenerating ? "Regenerating Summary" : "Regenerate Summary")
             }
 
             // Location Editor Section
@@ -1105,6 +1168,7 @@ struct SummaryDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel(isUpdatingLocation ? "Updating Location" : "Edit Location")
                     }
                 } else {
                     // Show add location option
@@ -1136,6 +1200,7 @@ struct SummaryDetailView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(isUpdatingLocation)
+                        .accessibilityLabel(isUpdatingLocation ? "Adding Location" : "Add Location")
                     }
                 }
             }
@@ -1175,6 +1240,8 @@ struct SummaryDetailView: View {
                     .cornerRadius(10)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("Delete Summary for \(summaryData.recordingName)")
+                .accessibilityHint("Deletes this summary and related notes while keeping the audio and transcript.")
             }
         }
     }
@@ -1799,6 +1866,8 @@ struct EnhancedTaskRowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .disabled(integrationManager.isProcessing)
+                    .accessibilityLabel("Add task to system")
+                    .accessibilityHint("Choose Reminders, Calendar, or Google Calendar.")
                 }
             }
 
@@ -1840,6 +1909,7 @@ struct EnhancedTaskRowView: View {
                     integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }
@@ -1853,6 +1923,11 @@ struct EnhancedTaskRowView: View {
         }
         .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Task")
+        .accessibilityValue(
+            "\(task.text.sanitizedPlainText()), \(task.priority.rawValue) priority, \(task.category.rawValue)"
+        )
     }
 
     private var priorityColor: Color {
@@ -1942,6 +2017,8 @@ struct EnhancedReminderRowView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .disabled(integrationManager.isProcessing)
+                    .accessibilityLabel("Add reminder to system")
+                    .accessibilityHint("Choose Reminders, Calendar, or Google Calendar.")
                 }
             }
 
@@ -1983,6 +2060,7 @@ struct EnhancedReminderRowView: View {
                     integrationManager.addReminderToGoogleCalendar(reminder, recordingName: recordingName)
                 }
             )
+            .nativeMacModalSizing(width: 560, height: 500)
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }
@@ -1994,6 +2072,11 @@ struct EnhancedReminderRowView: View {
         } message: {
             Text(integrationManager.lastError ?? "Failed to add reminder to system.")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Reminder")
+        .accessibilityValue(
+            "\(reminder.text.sanitizedPlainText()), \(reminder.urgency.rawValue), \(reminder.timeReference.displayText)"
+        )
     }
 
     private var urgencyColor: Color {
@@ -2025,6 +2108,7 @@ struct SelectableTitleRowView: View {
                     .foregroundColor(isCurrentTitle ? .green : .gray)
             }
             .disabled(isCurrentTitle)
+            .accessibilityLabel(isCurrentTitle ? "Current title selected" : "Use this title")
 
             VStack(alignment: .leading, spacing: 4) {
                 // Title text - sanitized for display (includes quote stripping)
@@ -2068,11 +2152,15 @@ struct SelectableTitleRowView: View {
                     .font(.caption)
                     .foregroundColor(.accentColor)
             }
+            .accessibilityLabel("Edit title \(title.text.sanitizedForTitle())")
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
         .background(isCurrentTitle ? Color.green.opacity(0.05) : Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title.text.sanitizedForTitle())
+        .accessibilityValue(isCurrentTitle ? "Current title, \(title.category.rawValue)" : title.category.rawValue)
     }
 }
 
@@ -2264,6 +2352,8 @@ struct TitleOptionRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title.text.sanitizedForTitle())
+        .accessibilityValue(isSelected ? "Selected, \(title.category.rawValue)" : title.category.rawValue)
     }
 }
 
@@ -3021,6 +3111,7 @@ struct LocationResultRow: View {
 
 // MARK: - Static Location Map View
 
+#if os(iOS)
 private final class MapSnapshotCache {
     static let shared = MapSnapshotCache()
     private let cache = NSCache<NSString, UIImage>()
@@ -3297,7 +3388,7 @@ private struct StaticLocationMapView: View {
 
             if let imageData = image.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, imageData] in
-                    let _ = MapSnapshotStorage.saveImageData(
+                    _ = MapSnapshotStorage.saveImageData(
                         imageData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3326,7 +3417,7 @@ private struct StaticLocationMapView: View {
 
             if let fallbackData = fallback.pngData() {
                 Task.detached(priority: .utility) { [summaryId, signature, fallbackData] in
-                    let _ = MapSnapshotStorage.saveImageData(
+                    _ = MapSnapshotStorage.saveImageData(
                         fallbackData,
                         summaryId: summaryId,
                         locationSignature: signature
@@ -3366,9 +3457,38 @@ private struct StaticLocationMapView: View {
         }
     }
 }
+#else
+/// Native macOS variant: a live (non-interactive) SwiftUI Map replaces the
+/// UIGraphicsImageRenderer-based static snapshot pipeline.
+private struct StaticLocationMapView: View {
+    let summaryId: UUID
+    let locationData: LocationData
+    let size: CGSize
+
+    private var coordinate: CLLocationCoordinate2D {
+        CLLocationCoordinate2D(
+            latitude: locationData.latitude,
+            longitude: locationData.longitude
+        )
+    }
+
+    var body: some View {
+        Map(initialPosition: .region(MKCoordinateRegion(
+            center: coordinate,
+            span: MKCoordinateSpan(latitudeDelta: 0.005, longitudeDelta: 0.005)
+        ))) {
+            Marker("", coordinate: coordinate)
+        }
+        .allowsHitTesting(false)
+        .frame(width: size.width, height: size.height)
+        .clipped()
+    }
+}
+#endif
 
 // MARK: - Attachment Preview
 
+#if os(iOS)
 private struct SummaryAttachmentPDFView: UIViewRepresentable {
     let url: URL
 
@@ -3387,9 +3507,30 @@ private struct SummaryAttachmentPDFView: UIViewRepresentable {
         }
     }
 }
+#else
+private struct SummaryAttachmentPDFView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displayDirection = .vertical
+        view.document = PDFDocument(url: url)
+        return view
+    }
+
+    func updateNSView(_ nsView: PDFView, context: Context) {
+        if nsView.document?.documentURL != url {
+            nsView.document = PDFDocument(url: url)
+        }
+    }
+}
+#endif
 
 // MARK: - Share Sheet
 
+#if os(iOS)
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
     let subject: String?
@@ -3491,6 +3632,98 @@ private final class ExportActivityItem: NSObject, UIActivityItemSource {
         }
     }
 }
+#else
+/// macOS twin of the iOS UIActivityItemSource: writes the export payload to a
+/// temporary file that can be passed to NSSharingServicePicker.
+final class ExportActivityItem {
+    let fileURL: URL?
+
+    init(data: Data, fileName: String, iconSystemName: String) {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try data.write(to: destination, options: .atomic)
+            self.fileURL = destination
+        } catch {
+            AppLog.shared.summarization("Failed to write temporary export for sharing: \(error)", level: .error)
+            self.fileURL = nil
+        }
+    }
+}
+
+struct ShareSheet: View {
+    let activityItems: [Any]
+    let subject: String?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var didRequestSharing = false
+    @State private var shareUnavailable = false
+
+    init(activityItems: [Any], subject: String? = nil) {
+        self.activityItems = activityItems
+        self.subject = subject
+    }
+
+    private var fileURLs: [URL] {
+        activityItems.compactMap { item -> URL? in
+            if let url = item as? URL, url.isFileURL { return url }
+            if let export = item as? ExportActivityItem { return export.fileURL }
+            return nil
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Share Export")
+                .font(.headline)
+            if fileURLs.isEmpty {
+                Text("The exported file could not be prepared for sharing.")
+                    .foregroundColor(.secondary)
+            } else if shareUnavailable {
+                Text("The sharing picker could not open. You can show the file in Finder instead.")
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Choose a Mac sharing service for the exported file.")
+                    .foregroundColor(.secondary)
+            }
+            HStack {
+                Button("Close") { dismiss() }
+                if !fileURLs.isEmpty {
+                    Button("Share…") {
+                        presentSharingPicker()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    Button("Show in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting(fileURLs)
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 380)
+        .onAppear {
+            guard !didRequestSharing, !fileURLs.isEmpty else { return }
+            didRequestSharing = true
+            DispatchQueue.main.async {
+                presentSharingPicker()
+            }
+        }
+    }
+
+    @MainActor
+    private func presentSharingPicker() {
+        let presented = PlatformSharingPresenter.shared.present(
+            items: fileURLs,
+            subject: subject,
+            onDismiss: { dismiss() }
+        )
+        shareUnavailable = !presented
+    }
+}
+#endif
 
 // MARK: - Note Editor Sheet
 

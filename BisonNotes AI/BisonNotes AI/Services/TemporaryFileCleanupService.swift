@@ -41,6 +41,12 @@ final class TemporaryFileCleanupService {
         }
 
         cleanupAudioChunksDirectory(cutoff: cutoff, deletedCount: &deletedCount, reclaimedBytes: &reclaimedBytes, errors: &errors)
+        cleanupWebImportsDirectory(
+            cutoff: cutoff,
+            deletedCount: &deletedCount,
+            reclaimedBytes: &reclaimedBytes,
+            errors: &errors
+        )
 
         if deletedCount > 0 {
             AppLog.shared.fileManagement("Cleaned up \(deletedCount) stale temporary file(s), reclaimed \(formatBytes(reclaimedBytes))")
@@ -103,6 +109,30 @@ final class TemporaryFileCleanupService {
         removeDirectoryIfEmpty(chunksRoot)
     }
 
+    private func cleanupWebImportsDirectory(
+        cutoff: Date,
+        deletedCount: inout Int,
+        reclaimedBytes: inout Int64,
+        errors: inout [String]
+    ) {
+        let importsRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        guard isSafeChild(importsRoot, of: fileManager.temporaryDirectory) else { return }
+
+        for url in directChildren(of: importsRoot) where isOlderThanCutoff(url, cutoff: cutoff) {
+            let size = fileSize(url)
+            do {
+                try fileManager.removeItem(at: url)
+                deletedCount += 1
+                reclaimedBytes += size
+            } catch {
+                errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        removeDirectoryIfEmpty(importsRoot)
+    }
+
     private func directChildren(of directory: URL) -> [URL] {
         (try? fileManager.contentsOfDirectory(
             at: directory,
@@ -116,7 +146,17 @@ final class TemporaryFileCleanupService {
         let ext = url.pathExtension.lowercased()
 
         if name.hasPrefix("fluidaudio_input_") && ext == "caf" { return true }
+        // Mac scratch recordings (raw PCM) staged in temp during native macOS capture.
+        // Normally removed on finalize/retry, but a crash or kill mid-capture orphans
+        // large .caf files named after the final recording, e.g.
+        // apprecording-<ts>-<uuid>.caf and apprecording-<ts>-<uuid>-input-<N>.caf.
+        // The age gate protects an in-progress recording's live scratch file.
+        if name.hasPrefix("apprecording-") && ext == "caf" { return true }
         if name.hasPrefix("cleaned_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_export_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_segments_") && ext == "m4a" { return true }
+        if name.hasPrefix("mac_meeting_mix_") && ext == "m4a" { return true }
+        // Retain legacy prefixes so upgrades clean temporary files left by Catalyst builds.
         if name.hasPrefix("catalyst_export_") && ext == "m4a" { return true }
         if name.hasPrefix("catalyst_mic_export_") && ext == "m4a" { return true }
         if name.hasPrefix("catalyst_meeting_mix_") && ext == "m4a" { return true }

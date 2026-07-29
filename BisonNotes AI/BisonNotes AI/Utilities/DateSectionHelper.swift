@@ -163,7 +163,7 @@ struct CollapsibleDateSectionHeader: View {
             HStack(spacing: 12) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .font(.subheadline.weight(.bold))
-                    .foregroundColor(isAlwaysExpanded ? .secondary : .accentColor)
+                    .foregroundColor(.primary)
                     .frame(width: 22)
 
                 Text(title)
@@ -175,7 +175,7 @@ struct CollapsibleDateSectionHeader: View {
 
                 Text("\(count)")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                     .background(Color(.tertiarySystemGroupedBackground), in: Capsule())

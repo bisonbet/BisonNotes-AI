@@ -12,33 +12,33 @@ import AWSClientRuntime
 // MARK: - AWS Bedrock Service
 
 class AWSBedrockService: ObservableObject {
-    
+
     // MARK: - Properties
-    
+
     @Published var config: AWSBedrockConfig
     private var bedrockClient: BedrockRuntimeClient?
-    
+
     // MARK: - Initialization
-    
+
     init(config: AWSBedrockConfig) {
         self.config = config
         // Client will be initialized lazily when first needed
         self.bedrockClient = nil
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     private func getBedrockClient() async throws -> BedrockRuntimeClient {
         if let client = bedrockClient {
             return client
         }
-        
+
         // Use shared AWS credentials for all services
         let sharedCredentials = AWSCredentialsManager.shared.credentials
         guard config.useProfile || sharedCredentials.isValid else {
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock credentials are not configured")
         }
-        
+
         do {
             let clientConfig: BedrockRuntimeClient.BedrockRuntimeClientConfig
             if config.useProfile {
@@ -55,7 +55,7 @@ class AWSBedrockService: ObservableObject {
                     region: config.region
                 )
             }
-            
+
             let client = BedrockRuntimeClient(config: clientConfig)
             self.bedrockClient = client
             return client
@@ -64,9 +64,9 @@ class AWSBedrockService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to initialize AWS Bedrock client: \(error.localizedDescription)")
         }
     }
-    
+
     // MARK: - Public Methods
-    
+
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
         // Check if text needs chunking for this individual method
         let tokenCount = TokenManager.getTokenCount(text)
@@ -185,7 +185,7 @@ class AWSBedrockService: ObservableObject {
             return parseRemindersFromResponse(response)
         }
     }
-    
+
     func extractTitles(from text: String) async throws -> [TitleItem] {
         // Check if text needs chunking
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
@@ -224,22 +224,22 @@ class AWSBedrockService: ObservableObject {
             return parseTitlesFromResponse(response)
         }
     }
-    
+
     func classifyContent(_ text: String) async throws -> ContentType {
         // Use enhanced ContentAnalyzer for classification
         return ContentAnalyzer.classifyContent(text)
     }
-    
+
     func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // First classify the content
         let contentType = try await classifyContent(text)
-        
+
         // Check if text needs chunking based on model's context window
         let tokenCount = TokenManager.getTokenCount(text)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8) // Leave 20% buffer for response
-        
+
         AppLog.shared.networking("AWS Bedrock: Text token count: \(tokenCount), max allowed: \(maxTokens)", level: .debug)
-        
+
         if TokenManager.needsChunking(text, maxTokens: maxTokens) {
             AppLog.shared.networking("AWS Bedrock: Large transcript detected (\(tokenCount) tokens), using chunked processing")
             return try await processCompleteChunked(text: text, contentType: contentType, maxTokens: maxTokens)
@@ -254,7 +254,7 @@ class AWSBedrockService: ObservableObject {
             }
         }
     }
-    
+
     func testConnection() async -> Bool {
         do {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
@@ -272,15 +272,15 @@ class AWSBedrockService: ObservableObject {
             return false
         }
     }
-    
+
     func listAvailableModels() async throws -> [AWSBedrockModel] {
         // For now, return the predefined models
         // In a full implementation, you could query the AWS Bedrock API
         return AWSBedrockModel.allCases
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     private func invokeModel(
         prompt: String,
         systemPrompt: String? = nil,
@@ -292,9 +292,9 @@ class AWSBedrockService: ObservableObject {
             AppLog.shared.networking("AWS Bedrock configuration is invalid", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock configuration is invalid")
         }
-        
+
         AppLog.shared.networking("AWS Bedrock API Configuration - Model: \(config.model.rawValue), Region: \(config.region)", level: .debug)
-        
+
         // Create the model request payload
         let modelRequest = AWSBedrockModelFactory.createRequest(
             for: config.model,
@@ -303,7 +303,7 @@ class AWSBedrockService: ObservableObject {
             maxTokens: maxTokens,
             temperature: temperature
         )
-        
+
         // Encode the request body
         let requestBody: Data
         do {
@@ -312,13 +312,13 @@ class AWSBedrockService: ObservableObject {
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
-        
+
         do {
             AppLog.shared.networking("Making AWS Bedrock API request using official SDK...", level: .debug)
-            
+
             // Get the Bedrock client (initialize if needed)
             let client = try await getBedrockClient()
-            
+
             // Use the official AWS SDK to invoke the model
             let invokeRequest = InvokeModelInput(
                 accept: "application/json",
@@ -326,7 +326,7 @@ class AWSBedrockService: ObservableObject {
                 contentType: "application/json",
                 modelId: config.model.rawValue
             )
-            
+
             let response: InvokeModelOutput
             do {
                 // Wrap SDK call to honor the user-configured timeout even if the SDK has its own limits.
@@ -341,11 +341,11 @@ class AWSBedrockService: ObservableObject {
                 }
                 throw error
             }
-            
+
             guard let responseBody = response.body else {
                 throw SummarizationError.aiServiceUnavailable(service: "Empty response from AWS Bedrock")
             }
-            
+
             // Convert response body to Data
             let responseData = Data(responseBody)
             let responseLimit = config.model.maxResponseLength
@@ -354,20 +354,20 @@ class AWSBedrockService: ObservableObject {
                 AppLog.shared.networking("AWS Bedrock response rejected: \(responseData.count) bytes exceeds \(responseLimit) byte limit", level: .error)
                 throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock response exceeded the maximum allowed size")
             }
-            
+
             // Log the raw response only when verbose logging is enabled
             if PerformanceOptimizer.shouldLogEngineInitialization() {
                 AppLog.shared.networking("AWS Bedrock API Response received, size: \(responseData.count) bytes", level: .debug)
             }
-            
+
             // Parse the model-specific response
             let sanitizedResponseData = sanitizeResponseData(responseData)
             let modelResponse = try AWSBedrockModelFactory.parseResponse(for: config.model, data: sanitizedResponseData)
-            
+
             AppLog.shared.networking("AWS Bedrock API Success - Model: \(config.model.rawValue), response: \(modelResponse.content.count) chars")
-            
+
             return modelResponse.content
-            
+
         } catch {
             AppLog.shared.networking("AWS Bedrock API request failed: \(error)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock API request failed: \(error.localizedDescription)")
@@ -392,59 +392,59 @@ class AWSBedrockService: ObservableObject {
 
         return sanitized.data(using: .utf8) ?? data
     }
-    
+
     private func processCompleteStructured(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
-        
+
         let response = try await invokeModel(
             prompt: userPrompt,
             systemPrompt: systemPrompt,
             maxTokens: config.maxTokens,
             temperature: config.temperature
         )
-        
+
         // Parse the structured response
         let result = try parseCompleteResponseFromJSON(response)
         return (result.summary, result.tasks, result.reminders, result.titles, contentType)
     }
-    
+
     private func processCompleteIndividual(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Process requests sequentially to avoid overwhelming the API
         let summary = try await generateSummary(from: text, contentType: contentType)
-        
+
         // Small delay between requests
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-        
+
         let tasks = try await extractTasks(from: text)
-        
+
         // Small delay between requests
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-        
+
         let reminders = try await extractReminders(from: text)
-        
+
         // Small delay between requests
         try await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-        
+
         let titles = try await extractTitles(from: text)
-        
+
         return (summary, tasks, reminders, titles, contentType)
     }
-    
+
     private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
         // Split text into chunks
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
         AppLog.shared.networking("AWS Bedrock: Split text into \(chunks.count) chunks", level: .debug)
-        
+
         // Process each chunk
         var allSummaries: [String] = []
         var allTasks: [TaskItem] = []
         var allReminders: [ReminderItem] = []
         var allTitles: [TitleItem] = []
-        
+
         for (index, chunk) in chunks.enumerated() {
             AppLog.shared.networking("AWS Bedrock: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
-            
+
             do {
                 if config.model.supportsStructuredOutput {
                     let chunkResult = try await processCompleteStructured(text: chunk, contentType: contentType)
@@ -459,7 +459,7 @@ class AWSBedrockService: ObservableObject {
                     allReminders.append(contentsOf: chunkResult.reminders)
                     allTitles.append(contentsOf: chunkResult.titles)
                 }
-                
+
                 // Small delay between chunks to prevent overwhelming the API
                 if index < chunks.count - 1 {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
@@ -469,51 +469,51 @@ class AWSBedrockService: ObservableObject {
                 throw error
             }
         }
-        
+
         // Combine all summaries into a cohesive meta-summary
         let combinedSummary = try await generateMetaSummary(from: allSummaries, contentType: contentType)
-        
+
         // Deduplicate tasks and reminders
         let deduplicatedTasks = deduplicateTasks(allTasks)
         let deduplicatedReminders = deduplicateReminders(allReminders)
         let deduplicatedTitles = deduplicateTitles(allTitles)
-        
+
         AppLog.shared.networking("AWS Bedrock: Final summary: \(combinedSummary.count) chars, tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
-        
+
         return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
     }
-    
+
     private func generateMetaSummary(from summaries: [String], contentType: ContentType) async throws -> String {
         guard !summaries.isEmpty else { return "" }
-        
+
         // If only one summary, return it directly
         if summaries.count == 1 {
             return summaries[0]
         }
-        
+
         // Combine all summaries for meta-summarization
         let combinedText = summaries.joined(separator: "\n\n")
-        
+
         // Check if combined text fits within context window
         let combinedTokens = TokenManager.getTokenCount(combinedText)
         let maxTokens = Int(Double(config.model.contextWindow) * 0.8)
-        
+
         if combinedTokens <= maxTokens {
             // Generate meta-summary directly
             let systemPrompt = """
-            You are an AI assistant that creates cohesive summaries from multiple text segments. 
+            You are an AI assistant that creates cohesive summaries from multiple text segments.
             Combine the following summaries into one comprehensive, well-structured summary that captures all key information without redundancy.
             Use proper Markdown formatting with **bold**, *italic*, ## headers, and • bullet points.
             """
-            
+
             let userPrompt = """
             Please create a comprehensive summary by combining these segments:
-            
+
             \(combinedText)
-            
+
             Create a single, cohesive summary that captures all important information while eliminating redundancy.
             """
-            
+
             return try await invokeModel(
                 prompt: userPrompt,
                 systemPrompt: systemPrompt,
@@ -524,84 +524,84 @@ class AWSBedrockService: ObservableObject {
             // Recursively chunk and summarize if still too large
             let chunks = TokenManager.chunkText(combinedText, maxTokens: maxTokens)
             var intermediateSummaries: [String] = []
-            
+
             for chunk in chunks {
                 let summary = try await generateSummary(from: chunk, contentType: contentType)
                 intermediateSummaries.append(summary)
             }
-            
+
             // Recursively generate meta-summary
             return try await generateMetaSummary(from: intermediateSummaries, contentType: contentType)
         }
     }
-    
+
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
         var uniqueTasks: [TaskItem] = []
-        
+
         for task in tasks {
             let isDuplicate = uniqueTasks.contains { existingTask in
                 let similarity = calculateTextSimilarity(task.text, existingTask.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueTasks.append(task)
             }
         }
-        
+
         return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
     }
-    
+
     private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
         var uniqueReminders: [ReminderItem] = []
-        
+
         for reminder in reminders {
             let isDuplicate = uniqueReminders.contains { existingReminder in
                 let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueReminders.append(reminder)
             }
         }
-        
+
         return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
     }
-    
+
     private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
         var uniqueTitles: [TitleItem] = []
-        
+
         for title in titles {
             let isDuplicate = uniqueTitles.contains { existingTitle in
                 let similarity = calculateTextSimilarity(title.text, existingTitle.text)
                 return similarity > 0.8
             }
-            
+
             if !isDuplicate {
                 uniqueTitles.append(title)
             }
         }
-        
+
         return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
     }
-    
+
     private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
         let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
         let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        
+
         let intersection = words1.intersection(words2)
         let union = words1.union(words2)
-        
+
         return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
     }
     // MARK: - Response Parsers
-    
+
     private func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
         // Reuse the existing OpenAI response parser since the JSON structure is the same
         return try OpenAIResponseParser.parseCompleteResponseFromJSON(jsonString)
     }
-    
+
     private func parseTasksFromResponse(_ response: String) -> [TaskItem] {
         do {
             return try OpenAIResponseParser.parseTasksFromJSON(response)
@@ -610,7 +610,7 @@ class AWSBedrockService: ObservableObject {
             return parseTasksFromPlainText(response)
         }
     }
-    
+
     private func parseRemindersFromResponse(_ response: String) -> [ReminderItem] {
         do {
             return try OpenAIResponseParser.parseRemindersFromJSON(response)
@@ -619,7 +619,7 @@ class AWSBedrockService: ObservableObject {
             return parseRemindersFromPlainText(response)
         }
     }
-    
+
     private func parseTitlesFromResponse(_ response: String) -> [TitleItem] {
         do {
             return try OpenAIResponseParser.parseTitlesFromJSON(response)
@@ -628,26 +628,26 @@ class AWSBedrockService: ObservableObject {
             return parseTitlesFromPlainText(response)
         }
     }
-    
+
     private func parseTasksFromPlainText(_ text: String) -> [TaskItem] {
         let lines = text.components(separatedBy: .newlines)
         var tasks: [TaskItem] = []
-        
+
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().contains("task") || 
+            if trimmed.lowercased().contains("task") ||
                trimmed.lowercased().contains("todo") ||
                trimmed.lowercased().contains("action") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                
+
                 let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
-                
+
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     tasks.append(TaskItem(
                         text: cleanText,
@@ -659,28 +659,28 @@ class AWSBedrockService: ObservableObject {
                 }
             }
         }
-        
+
         return tasks
     }
-    
+
     private func parseRemindersFromPlainText(_ text: String) -> [ReminderItem] {
         let lines = text.components(separatedBy: .newlines)
         var reminders: [ReminderItem] = []
-        
+
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.lowercased().contains("reminder") || 
+            if trimmed.lowercased().contains("reminder") ||
                trimmed.lowercased().contains("remember") ||
                (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) {
-                
+
                 let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 let cleanText = RecordingNameGenerator.cleanAIOutput(rawText)
-                
+
                 if !cleanText.isEmpty && cleanText.count > 5 {
                     reminders.append(ReminderItem(
                         text: cleanText,
@@ -691,25 +691,25 @@ class AWSBedrockService: ObservableObject {
                 }
             }
         }
-        
+
         return reminders
     }
-    
+
     private func parseTitlesFromPlainText(_ text: String) -> [TitleItem] {
         let lines = text.components(separatedBy: .newlines)
         var titles: [TitleItem] = []
-        
+
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) && 
+            if (trimmed.hasPrefix("•") || trimmed.hasPrefix("-") || trimmed.hasPrefix("*")) &&
                trimmed.count > 10 && trimmed.count < 80 {
-                
+
                 let rawText = trimmed
                     .replacingOccurrences(of: "•", with: "")
                     .replacingOccurrences(of: "-", with: "")
                     .replacingOccurrences(of: "*", with: "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                
+
                 if !rawText.isEmpty {
                     // Apply standardized title cleaning
                     let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(rawText)
@@ -723,7 +723,7 @@ class AWSBedrockService: ObservableObject {
                 }
             }
         }
-        
+
         return Array(titles.prefix(5)) // Limit to 5 titles
     }
 }

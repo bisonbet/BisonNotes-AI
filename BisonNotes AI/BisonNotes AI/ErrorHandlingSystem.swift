@@ -12,25 +12,25 @@ import os.log
 // MARK: - Error Handler
 
 class ErrorHandler: ObservableObject {
-    
+
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
     @Published var errorHistory: [ErrorLogEntry] = []
-    
+
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "ErrorHandler")
     private let maxHistoryCount = 100
-    
+
     // MARK: - Error Handling Methods
-    
+
     func handle(_ error: Error, context: String = "", showToUser: Bool = true) {
         let appError = AppError.from(error, context: context)
-        
+
         // Log the error
         logError(appError, context: context)
-        
+
         // Add to history
         addToHistory(appError, context: context)
-        
+
         // Show to user if requested
         if showToUser {
             DispatchQueue.main.async {
@@ -39,95 +39,95 @@ class ErrorHandler: ObservableObject {
             }
         }
     }
-    
+
     func handleSummarizationError(_ error: SummarizationError, recordingName: String = "", showToUser: Bool = true) {
         let context = recordingName.isEmpty ? "Summarization" : "Summarization for \(recordingName)"
         handle(error, context: context, showToUser: showToUser)
     }
-    
+
     func clearCurrentError() {
         currentError = nil
         showingErrorAlert = false
     }
-    
+
     func clearErrorHistory() {
         errorHistory.removeAll()
     }
-    
+
     // MARK: - Validation Methods
-    
+
     func validateTranscriptForSummarization(_ text: String) -> ValidationResult {
         var issues: [ValidationIssue] = []
         var warnings: [ValidationWarning] = []
-        
+
         AppLog.shared.errorRecovery("Validating transcript for summarization, length: \(text.count) characters", level: .debug)
-        
+
         // Check if text is empty
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             AppLog.shared.errorRecovery("Transcript is empty", level: .error)
             issues.append(.emptyTranscript)
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
-        
+
         // Check minimum length
         let wordCount = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
         AppLog.shared.errorRecovery("Word count: \(wordCount)", level: .debug)
-        
+
         // If transcript has 50 words or less, it's valid (will be shown as-is)
         if wordCount <= 50 {
             AppLog.shared.errorRecovery("Transcript has \(wordCount) words - will be shown as-is", level: .debug)
             return ValidationResult(isValid: true, issues: issues, warnings: warnings)
         }
-        
+
         // For longer transcripts, check minimum length
         if wordCount < 10 {
             AppLog.shared.errorRecovery("Transcript too short: \(wordCount) words", level: .error)
             issues.append(.transcriptTooShort(wordCount: wordCount))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
-        
+
         // Check maximum length - increased to allow chunking system to handle large transcripts
         if wordCount > 50000 {
             AppLog.shared.errorRecovery("Transcript too long: \(wordCount) words", level: .error)
             issues.append(.transcriptTooLong(wordCount: wordCount, maxWords: 50000))
             return ValidationResult(isValid: false, issues: issues, warnings: warnings)
         }
-        
+
         // Add warnings for potential issues (only for transcripts longer than 50 words)
         if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
             AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
         }
-        
+
         if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
             AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
         }
-        
+
         // Check for repetitive content
         let isRepetitive = isContentRepetitive(text)
         if isRepetitive {
             warnings.append(.repetitiveContent)
             AppLog.shared.errorRecovery("Content appears repetitive", level: .debug)
         }
-        
+
         // Check for low-quality transcription indicators
         let hasLowQuality = hasLowQualityIndicators(text)
         if hasLowQuality {
             warnings.append(.lowQualityTranscription)
             AppLog.shared.errorRecovery("Low quality transcription indicators detected", level: .debug)
         }
-        
+
         let result = ValidationResult(isValid: true, issues: issues, warnings: warnings)
         AppLog.shared.errorRecovery("Validation passed with \(warnings.count) warnings")
         return result
     }
-    
+
     func validateSummaryQuality(_ summary: EnhancedSummaryData) -> SummaryQualityReport {
         var issues: [SummaryQualityIssue] = []
         var suggestions: [SummaryImprovement] = []
         var score: Double = 1.0
-        
+
         // Check summary length
         if summary.summary.isEmpty {
             issues.append(.emptySummary)
@@ -136,7 +136,7 @@ class ErrorHandler: ObservableObject {
             issues.append(.summaryTooShort(length: summary.summary.count))
             score -= 0.2
         }
-        
+
         // Check confidence score
         if summary.confidence < 0.3 {
             issues.append(.lowConfidence(confidence: summary.confidence))
@@ -145,32 +145,32 @@ class ErrorHandler: ObservableObject {
             suggestions.append(.improveConfidence)
             score -= 0.1
         }
-        
+
         // Check compression ratio
         if summary.compressionRatio > 0.8 {
             issues.append(.poorCompression(ratio: summary.compressionRatio))
             score -= 0.2
         }
-        
+
         // Check task and reminder extraction
         if summary.tasks.isEmpty && summary.reminders.isEmpty {
             suggestions.append(.noActionItemsFound)
             score -= 0.1
         }
-        
+
         // Check processing time
         if summary.processingTime > 30.0 {
             suggestions.append(.slowProcessing(time: summary.processingTime))
         }
-        
+
         // Check for duplicate content
         if hasDuplicateContent(summary) {
             issues.append(.duplicateContent)
             score -= 0.2
         }
-        
+
         let qualityLevel = determineQualityLevel(score: max(0.0, score))
-        
+
         return SummaryQualityReport(
             qualityLevel: qualityLevel,
             score: score,
@@ -179,9 +179,9 @@ class ErrorHandler: ObservableObject {
             summary: summary
         )
     }
-    
+
     // MARK: - Recovery Methods
-    
+
     func suggestRecoveryActions(for error: AppError) -> [RecoveryAction] {
         switch error {
         case .summarization(let summaryError):
@@ -196,12 +196,12 @@ class ErrorHandler: ObservableObject {
             return suggestSystemRecovery(systemError)
         }
     }
-    
+
     // MARK: - Private Helper Methods
-    
+
     private func logError(_ error: AppError, context: String) {
         let logMessage = "[\(context)] \(error.localizedDescription)"
-        
+
         switch error.severity {
         case .low:
             logger.info("\(logMessage)")
@@ -213,66 +213,66 @@ class ErrorHandler: ObservableObject {
             logger.fault("\(logMessage)")
         }
     }
-    
+
     private func addToHistory(_ error: AppError, context: String) {
         let entry = ErrorLogEntry(
             error: error,
             context: context,
             timestamp: Date()
         )
-        
+
         errorHistory.insert(entry, at: 0)
-        
+
         // Limit history size
         if errorHistory.count > maxHistoryCount {
             errorHistory.removeLast()
         }
     }
-    
+
     private func isContentRepetitive(_ text: String) -> Bool {
         let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        
+
         guard sentences.count > 3 else { return false }
-        
+
         let uniqueSentences = Set(sentences.map { $0.lowercased() })
         let repetitionRatio = Double(uniqueSentences.count) / Double(sentences.count)
-        
+
         return repetitionRatio < 0.7 // If less than 70% of sentences are unique
     }
-    
+
     private func hasLowQualityIndicators(_ text: String) -> Bool {
         let lowercased = text.lowercased()
         let indicators = ["um", "uh", "like", "you know", "[inaudible]", "[unclear]", "..."]
-        
+
         var indicatorCount = 0
         for indicator in indicators {
             indicatorCount += lowercased.components(separatedBy: indicator).count - 1
         }
-        
+
         let wordCount = text.components(separatedBy: .whitespacesAndNewlines).count
         let indicatorRatio = Double(indicatorCount) / Double(wordCount)
-        
+
         return indicatorRatio > 0.1 // If more than 10% of content is low-quality indicators
     }
-    
+
     private func hasDuplicateContent(_ summary: EnhancedSummaryData) -> Bool {
         // Check for duplicate tasks
         let taskTexts = summary.tasks.map { $0.text.lowercased() }
         if Set(taskTexts).count != taskTexts.count {
             return true
         }
-        
+
         // Check for duplicate reminders
         let reminderTexts = summary.reminders.map { $0.text.lowercased() }
         if Set(reminderTexts).count != reminderTexts.count {
             return true
         }
-        
+
         return false
     }
-    
+
     private func determineQualityLevel(score: Double) -> SummaryQualityLevel {
         switch score {
         case 0.9...1.0: return .excellent
@@ -282,9 +282,9 @@ class ErrorHandler: ObservableObject {
         default: return .unacceptable
         }
     }
-    
+
     // MARK: - Recovery Suggestion Methods
-    
+
     private func suggestSummarizationRecovery(_ error: SummarizationError) -> [RecoveryAction] {
         switch error {
         case .transcriptTooShort:
@@ -337,7 +337,7 @@ class ErrorHandler: ObservableObject {
             ]
         }
     }
-    
+
     private func suggestValidationRecovery(_ error: ValidationError) -> [RecoveryAction] {
         return [
             .checkInput,
@@ -345,7 +345,7 @@ class ErrorHandler: ObservableObject {
             .retryOperation
         ]
     }
-    
+
     private func suggestNetworkRecovery(_ error: NetworkError) -> [RecoveryAction] {
         return [
             .checkNetworkConnection,
@@ -353,7 +353,7 @@ class ErrorHandler: ObservableObject {
             .tryOfflineMode
         ]
     }
-    
+
     private func suggestStorageRecovery(_ error: StorageError) -> [RecoveryAction] {
         return [
             .freeUpSpace,
@@ -361,7 +361,7 @@ class ErrorHandler: ObservableObject {
             .restartApp
         ]
     }
-    
+
     private func suggestSystemRecovery(_ error: SystemError) -> [RecoveryAction] {
         return [
             .restartApp,
@@ -379,11 +379,11 @@ enum AppError: LocalizedError, Identifiable {
     case network(NetworkError)
     case storage(StorageError)
     case system(SystemError)
-    
+
     var id: String {
         return "\(type(of: self))_\(UUID().uuidString)"
     }
-    
+
     var errorDescription: String? {
         switch self {
         case .summarization(let error):
@@ -398,7 +398,7 @@ enum AppError: LocalizedError, Identifiable {
             return error.localizedDescription
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .summarization(let error):
@@ -413,7 +413,7 @@ enum AppError: LocalizedError, Identifiable {
             return error.recoverySuggestion
         }
     }
-    
+
     var severity: ErrorSeverity {
         switch self {
         case .summarization(let error):
@@ -428,7 +428,7 @@ enum AppError: LocalizedError, Identifiable {
             return .critical
         }
     }
-    
+
     static func from(_ error: Error, context: String = "") -> AppError {
         if let summaryError = error as? SummarizationError {
             return .summarization(summaryError)
@@ -449,7 +449,7 @@ enum ValidationError: LocalizedError {
     case invalidFormat
     case missingRequiredField(field: String)
     case valueOutOfRange(value: Any, range: String)
-    
+
     var errorDescription: String? {
         switch self {
         case .emptyInput:
@@ -462,7 +462,7 @@ enum ValidationError: LocalizedError {
             return "Value '\(value)' is outside valid range: \(range)"
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .emptyInput:
@@ -482,7 +482,7 @@ enum NetworkError: LocalizedError {
     case timeout
     case serverError(code: Int)
     case invalidResponse
-    
+
     var errorDescription: String? {
         switch self {
         case .noConnection:
@@ -495,7 +495,7 @@ enum NetworkError: LocalizedError {
             return "Invalid response from server"
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .noConnection:
@@ -515,7 +515,7 @@ enum StorageError: LocalizedError {
     case permissionDenied
     case corruptedData
     case fileNotFound(path: String)
-    
+
     var errorDescription: String? {
         switch self {
         case .insufficientSpace:
@@ -528,7 +528,7 @@ enum StorageError: LocalizedError {
             return "File not found: \(path)"
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .insufficientSpace:
@@ -550,7 +550,7 @@ enum SystemError: LocalizedError {
     case storageError
     case unknown(underlying: Error, context: String)
     case configurationError(message: String)
-    
+
     var errorDescription: String? {
         switch self {
         case .memoryPressure:
@@ -567,7 +567,7 @@ enum SystemError: LocalizedError {
             return "Configuration error: \(message)"
         }
     }
-    
+
     var recoverySuggestion: String? {
         switch self {
         case .memoryPressure:
@@ -591,7 +591,7 @@ enum ErrorSeverity: Int, CaseIterable {
     case medium = 2
     case high = 3
     case critical = 4
-    
+
     var description: String {
         switch self {
         case .low: return "Low"
@@ -600,7 +600,7 @@ enum ErrorSeverity: Int, CaseIterable {
         case .critical: return "Critical"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .low: return .blue
@@ -617,11 +617,11 @@ struct ValidationResult {
     let isValid: Bool
     let issues: [ValidationIssue]
     let warnings: [ValidationWarning]
-    
+
     var hasWarnings: Bool {
         return !warnings.isEmpty
     }
-    
+
     var summary: String {
         if !isValid {
             return "Validation failed: \(issues.count) issue(s)"
@@ -637,7 +637,7 @@ enum ValidationIssue: LocalizedError {
     case emptyTranscript
     case transcriptTooShort(wordCount: Int)
     case transcriptTooLong(wordCount: Int, maxWords: Int)
-    
+
     var errorDescription: String? {
         switch self {
         case .emptyTranscript:
@@ -655,7 +655,7 @@ enum ValidationWarning {
     case longTranscript(wordCount: Int)
     case repetitiveContent
     case lowQualityTranscription
-    
+
     var description: String {
         switch self {
         case .shortTranscript(let count):
@@ -678,11 +678,11 @@ struct SummaryQualityReport {
     let issues: [SummaryQualityIssue]
     let suggestions: [SummaryImprovement]
     let summary: EnhancedSummaryData
-    
+
     var formattedScore: String {
         return String(format: "%.1f%%", score * 100)
     }
-    
+
     var overallAssessment: String {
         return "\(qualityLevel.description) (\(formattedScore))"
     }
@@ -694,7 +694,7 @@ enum SummaryQualityLevel: CaseIterable {
     case fair
     case poor
     case unacceptable
-    
+
     var description: String {
         switch self {
         case .excellent: return "Excellent"
@@ -704,7 +704,7 @@ enum SummaryQualityLevel: CaseIterable {
         case .unacceptable: return "Unacceptable"
         }
     }
-    
+
     var color: Color {
         switch self {
         case .excellent: return .green
@@ -722,7 +722,7 @@ enum SummaryQualityIssue {
     case lowConfidence(confidence: Double)
     case poorCompression(ratio: Double)
     case duplicateContent
-    
+
     var description: String {
         switch self {
         case .emptySummary:
@@ -743,7 +743,7 @@ enum SummaryImprovement {
     case improveConfidence
     case noActionItemsFound
     case slowProcessing(time: TimeInterval)
-    
+
     var description: String {
         switch self {
         case .improveConfidence:
@@ -778,7 +778,7 @@ enum RecoveryAction: CaseIterable {
     case updateApp
     case manualSummary
     case contactSupport
-    
+
     var title: String {
         switch self {
         case .retryOperation: return "Retry"
@@ -802,7 +802,7 @@ enum RecoveryAction: CaseIterable {
         case .contactSupport: return "Contact Support"
         }
     }
-    
+
     var description: String {
         switch self {
         case .retryOperation: return "Try the operation again"
@@ -835,7 +835,7 @@ struct ErrorLogEntry: Identifiable {
     let error: AppError
     let context: String
     let timestamp: Date
-    
+
     var formattedTimestamp: String {
         let formatter = DateFormatter()
         formatter.dateStyle = .short

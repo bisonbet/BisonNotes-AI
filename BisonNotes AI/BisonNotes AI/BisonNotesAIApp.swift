@@ -6,8 +6,12 @@
 //
 
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#endif
+#if canImport(BackgroundTasks)
 import BackgroundTasks
+#endif
 import UserNotifications
 import AppIntents
 import WidgetKit
@@ -20,12 +24,18 @@ import Darwin
 struct BisonNotesAIApp: App {
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
+    @StateObject private var recorderVM = AudioRecorderViewModel()
     @StateObject private var fileImportManager = FileImportManager()
     @StateObject private var transcriptImportManager = TranscriptImportManager()
     @State private var hasQueuedParakeetStartupRepair = false
+    @FocusedValue(\.summaryExportAction) private var summaryExportAction
 
     // Phase 6: Register AppDelegate for notification handling
+    #if canImport(UIKit)
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #else
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    #endif
 
     /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
     /// This ensures UserDefaults is updated rather than migrating on every access
@@ -103,7 +113,7 @@ struct BisonNotesAIApp: App {
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
-    
+
     /// Migrates users off WhisperKit, which has been removed in v1.8.
     /// Deletes downloaded Whisper model files, clears settings, switches the engine to
     /// Parakeet (FluidAudio), sets the default Parakeet model to v2 (English), and
@@ -175,29 +185,29 @@ struct BisonNotesAIApp: App {
     private func migrateAppleIntelligenceToOnDeviceLLM() {
         let aiEngineKey = "SelectedAIEngine"
         let migrationKey = "appleIntelligenceToOnDeviceLLMMigrated_v1.4"
-        
+
         // Check if migration has already been performed
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
         }
-        
+
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
-        
+
         // Check if user was using Apple Intelligence (check all possible variations)
         let appleIntelligenceVariants = [
             "Apple Intelligence",
             "Enhanced Apple Intelligence",
             "enhancedAppleIntelligence"
         ]
-        
+
         if let engine = currentAIEngine, appleIntelligenceVariants.contains(engine) {
             // Mark that we need to show the migration alert
             UserDefaults.standard.set(true, forKey: "showAppleIntelligenceMigrationAlert")
-            
+
             // Migrate to On-Device AI
             UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
             UserDefaults.standard.set(true, forKey: "enableOnDeviceLLM")
-            
+
             // Also update transcription if it was using Apple Intelligence
             let transcriptionEngineKey = "selectedTranscriptionEngine"
             let currentTranscription = UserDefaults.standard.string(forKey: transcriptionEngineKey)
@@ -206,14 +216,14 @@ struct BisonNotesAIApp: App {
                 UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
                 UserDefaults.standard.set(true, forKey: "showParakeetMigrationSettings")
             }
-            
+
             NSLog("✅ Migrated from Apple Intelligence (\(engine)) to On-Device AI")
         }
-        
+
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
-    
+
     /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
     /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
     /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
@@ -271,20 +281,20 @@ struct BisonNotesAIApp: App {
     private func migrateOnDeviceLLMNameToOnDeviceAI() {
         let aiEngineKey = "SelectedAIEngine"
         let migrationKey = "onDeviceLLMNameMigration_v1.5"
-        
+
         // Check if migration has already been performed
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
         }
-        
+
         let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
-        
+
         // If the stored value is the old name, update it to the new name
         if currentAIEngine == "On-Device LLM" {
             UserDefaults.standard.set("On-Device AI", forKey: aiEngineKey)
             NSLog("✅ Migrated AI engine name from 'On-Device LLM' to 'On-Device AI'")
         }
-        
+
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
@@ -379,7 +389,7 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        guard UIApplication.shared.isProtectedDataAvailable else {
+        guard PlatformApp.isProtectedDataAvailable else {
             return
         }
 
@@ -418,13 +428,14 @@ struct BisonNotesAIApp: App {
         migrateLegacyOnDeviceUsersOffSubSixGB()
         migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
+        ActionButtonLaunchManager.startObservingRecordingRequests()
     }
 
     /// Registers a Darwin notification observer so the Share Extension can signal
     /// the main app to scan the shared container immediately (works when the app
     /// is suspended or backgrounded).
     private func setupDarwinNotificationObserver() {
-        let name = "com.bisonnotesai.shareExtensionDidSaveFile" as CFString
+        let name = ShareExtensionContract.darwinNotificationName as CFString
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
             nil,
@@ -522,19 +533,18 @@ struct BisonNotesAIApp: App {
             && path.usesInterfaceType(.wifi)
             && !path.isExpensive
     }
-    
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .environmentObject(fileImportManager)
                 .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didFinishLaunchingNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didFinishLaunchingNotification)) { _ in
                     requestBackgroundAppRefreshPermission()
-                    #if !targetEnvironment(macCatalyst)
                     setupWatchConnectivity()
-                    #endif
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
@@ -543,13 +553,20 @@ struct BisonNotesAIApp: App {
                     appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+                #if os(iOS)
+                // iOS can kill a backgrounded app without ever sending willTerminate, so
+                // entering the background is the last reliable clean-shutdown checkpoint.
+                // On macOS this notification maps to NSApplication.didHideNotification (Cmd-H),
+                // which is NOT a shutdown — a crash while hidden must still be detected — so
+                // macOS relies on willTerminate below instead.
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.willTerminateNotification)) { _ in
+                #endif
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willTerminateNotification)) { _ in
                     AppLog.shared.markCleanShutdown()
                 }
-                .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
@@ -570,26 +587,45 @@ struct BisonNotesAIApp: App {
                     NSLog("📎 Darwin notification received from Share Extension")
                     scanSharedContainerForImports(trigger: .pendingToken)
                 }
+                .nativeMainWindowSizing()
         }
+        #if os(macOS)
+        .defaultSize(width: 1_100, height: 720)
+        .windowResizability(.contentMinSize)
+        #endif
         .commands {
             // MARK: - Mac Menu Bar Commands
+            // Keep the system undo/redo and pasteboard groups untouched so
+            // focused TextField/TextEditor controls retain standard Edit-menu behavior.
             CommandGroup(replacing: .newItem) {
                 Button("New Recording") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ToggleRecording"), object: nil)
+                    postRecordingCommand(named: "ToggleRecording")
                 }
-                .keyboardShortcut("r", modifiers: .command)
+                .keyboardShortcut("n", modifiers: .command)
 
                 Divider()
 
                 Button("Import Audio...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportAudioFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportAudioFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: .command)
 
                 Button("Import Transcript...") {
-                    NotificationCenter.default.post(name: NSNotification.Name("ImportTranscriptFromMenu"), object: nil)
+                    postRecordingCommand(named: "ImportTranscriptFromMenu")
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
+
+                Button("Import From Link...") {
+                    postRecordingCommand(named: "ImportFromLinkFromMenu")
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export Summary...") {
+                    summaryExportAction?.perform()
+                }
+                .disabled(summaryExportAction == nil)
             }
 
             CommandGroup(after: .sidebar) {
@@ -610,6 +646,110 @@ struct BisonNotesAIApp: App {
                 }
                 .keyboardShortcut("3", modifiers: .command)
             }
+        }
+
+        #if os(macOS)
+        Settings {
+            SettingsView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 680, minHeight: 600)
+        }
+        .defaultSize(width: 760, height: 700)
+
+        WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeSummaryWindowView(recordingID: recordingID)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            } else {
+                ContentUnavailableView(
+                    "Summary Not Available",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Choose a summary from the main window.")
+                )
+            }
+        }
+        .defaultSize(width: 760, height: 700)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Transcript", id: NativeWindowID.transcript, for: UUID.self) { $recordingID in
+            if let recordingID {
+                NativeTranscriptWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            }
+        }
+        .defaultSize(width: 820, height: 720)
+        .windowResizability(.contentMinSize)
+
+        // Single player window by design — the app supports only one open
+        // recording player at a time. A singleton Window (driven by
+        // appCoordinator.macPlayerRecordingID) prevents multiple player windows
+        // from fighting over the shared AudioRecorderViewModel playback state.
+        Window("Recording", id: NativeWindowID.recording) {
+            if let recordingID = appCoordinator.macPlayerRecordingID {
+                NativeRecordingWindowView(recordingID: recordingID)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+            } else {
+                ContentUnavailableView(
+                    "No Recording Selected",
+                    systemImage: "waveform",
+                    description: Text("Choose a recording from the library to play it here.")
+                )
+            }
+        }
+        .defaultSize(width: 720, height: 680)
+        .windowResizability(.contentMinSize)
+
+        Window("Recordings", id: NativeWindowID.recordings) {
+            RecordingsListView()
+                .environment(\.isEmbeddedInSplitView, false)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                .frame(minWidth: 720, minHeight: 520)
+        }
+        .defaultSize(width: 900, height: 720)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Location", id: NativeWindowID.location, for: LocationData.self) { $locationData in
+            if let locationData {
+                LocationDetailView(locationData: locationData)
+                    .frame(minWidth: 560, minHeight: 480)
+            }
+        }
+        .defaultSize(width: 680, height: 620)
+        .windowResizability(.contentMinSize)
+
+        Window("Background Processing", id: NativeWindowID.backgroundProcessing) {
+            BackgroundProcessingView()
+                .frame(minWidth: 620, minHeight: 500)
+        }
+        .defaultSize(width: 760, height: 680)
+        .windowResizability(.contentMinSize)
+
+        WindowGroup("Processing Job", id: NativeWindowID.processingJob, for: UUID.self) { $jobID in
+            if let jobID {
+                NativeProcessingJobWindowView(jobID: jobID)
+            }
+        }
+        .defaultSize(width: 620, height: 540)
+        .windowResizability(.contentMinSize)
+        #endif
+    }
+
+    private func postRecordingCommand(named name: String) {
+        NotificationCenter.default.post(
+            name: NSNotification.Name("SwitchToRecordTabForImport"),
+            object: nil
+        )
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: NSNotification.Name(name), object: nil)
         }
     }
 
@@ -674,8 +814,8 @@ struct BisonNotesAIApp: App {
 
     // MARK: - Share Extension Import (App Group Container)
 
-    private let appGroupID = "group.bisonnotesai.shared"
-    private let shareInboxFolder = "ShareInbox"
+    private let appGroupID = ShareExtensionContract.appGroupIdentifier
+    private let shareInboxFolder = ShareExtensionContract.inboxFolderName
 
     private enum SharedContainerImportTrigger {
         case url(URL)
@@ -719,11 +859,22 @@ struct BisonNotesAIApp: App {
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
 
         Task { @MainActor in
+            // If an import is already running, importAudioFiles/importTranscriptFiles
+            // would silently no-op and the cleanup below would still delete every staged
+            // file — discarding the share. Re-arm the token and leave the inbox intact so
+            // a later activation scan retries once the importer is free.
+            if fileImportManager.isImporting || transcriptImportManager.isImporting {
+                NSLog("📎 Shared container scan deferred: an import is already in progress")
+                ShareImportAuthorization.rearmToken(in: containerURL)
+                return
+            }
+
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
 
             let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
-            let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
+            let textExtensions = ShareExtensionContract.supportedExtensions
+                .subtracting(audioExtensions)
 
             for file in files {
                 // Strip UUID prefix to get the original extension
@@ -781,6 +932,15 @@ struct BisonNotesAIApp: App {
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
 
         Task { @MainActor in
+            // If an import is already running, importAudioFiles/importTranscriptFiles
+            // would silently no-op and the cleanup below would still delete every Inbox
+            // file — discarding the share. Leave the files so the next activation scan
+            // retries (this Inbox scan runs unconditionally, so no token is needed).
+            if fileImportManager.isImporting || transcriptImportManager.isImporting {
+                NSLog("📎 Inbox scan deferred: an import is already in progress")
+                return
+            }
+
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
             var unsupported: [URL] = []
@@ -854,24 +1014,32 @@ struct BisonNotesAIApp: App {
               url.path.hasPrefix(inboxPath.path) else { return }
         try? FileManager.default.removeItem(at: url)
     }
-    
+
     private func setupBackgroundTasks() {
+        #if os(iOS)
         // Register background task identifiers
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.audio-processing", using: nil) { task in
             handleBackgroundProcessing(task: task as! BGProcessingTask)
         }
-        
+
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.app-refresh", using: nil) { task in
             handleAppRefresh(task: task as! BGAppRefreshTask)
         }
+        #endif
+        // macOS: no BGTaskScheduler — the app keeps running; jobs continue in-process.
     }
-    
+
     private func requestBackgroundAppRefreshPermission() {
+        #if os(iOS)
         // Background app refresh is now handled via BGTaskScheduler in setupBackgroundTasks()
         // No need for the deprecated setMinimumBackgroundFetchInterval
         AppLog.shared.general("Background app refresh configured via BGTaskScheduler")
+        #else
+        AppLog.shared.general("Mac background jobs continue in-process", level: .debug)
+        #endif
     }
-    
+
+    #if os(iOS)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
@@ -880,7 +1048,7 @@ struct BisonNotesAIApp: App {
             AppLog.shared.general("Background processing task expired", level: .error)
             task.setTaskCompleted(success: false)
         }
-        
+
         // Check for pending transcription/summarization jobs
         Task {
             let backgroundManager = BackgroundProcessingManager.shared
@@ -890,7 +1058,7 @@ struct BisonNotesAIApp: App {
                 task.setTaskCompleted(success: true)
                 return
             }
-            
+
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {
                 AppLog.shared.general("Processing queued jobs in background")
@@ -903,7 +1071,7 @@ struct BisonNotesAIApp: App {
             }
         }
     }
-    
+
     private func handleAppRefresh(task: BGAppRefreshTask) {
         AppLog.shared.general("Background app refresh started")
 
@@ -911,18 +1079,19 @@ struct BisonNotesAIApp: App {
             AppLog.shared.general("Background app refresh expired", level: .error)
             task.setTaskCompleted(success: false)
         }
-        
+
         // Quick refresh of app state
         Task {
             // Clean up any stale jobs
             let backgroundManager = BackgroundProcessingManager.shared
             await backgroundManager.cleanupStaleJobs()
-            
+
             AppLog.shared.general("Background app refresh completed")
             task.setTaskCompleted(success: true)
         }
     }
-    
+    #endif
+
     private func setupWatchConnectivity() {
         AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
 
@@ -959,14 +1128,14 @@ struct BisonNotesAIApp: App {
 
         AppLog.shared.general("iPhone watch connectivity initialized for background sync")
     }
-    
+
     private func setupAppShortcuts() {
         // Update app shortcuts to include our recording intent
         Task {
             AppShortcuts.updateAppShortcutParameters()
         }
 
-        #if !targetEnvironment(macCatalyst)
+        #if os(iOS)
         if #available(iOS 18.0, *) {
             if let plugInsURL = Bundle.main.builtInPlugInsURL,
                let _ = try? FileManager.default.contentsOfDirectory(at: plugInsURL, includingPropertiesForKeys: nil) {
@@ -979,7 +1148,7 @@ struct BisonNotesAIApp: App {
             Task {
                 do {
                     let controls = try await ControlCenter.shared.currentControls()
-                    let _ = controls.map { $0.kind }
+                    _ = controls.map { $0.kind }
                 } catch {
                     AppLog.shared.general("Failed to fetch current controls: \(error)", level: .error)
                 }
@@ -987,7 +1156,7 @@ struct BisonNotesAIApp: App {
         }
         #endif
     }
-    
+
 #if DEBUG
     private static func configureCoverageOutputIfNeeded() {
         guard ProcessInfo.processInfo.environment["LLVM_PROFILE_FILE"] == nil else { return }
@@ -998,4 +1167,15 @@ struct BisonNotesAIApp: App {
         AppLog.shared.general("Code coverage output redirected to \(destination)", level: .debug)
     }
 #endif
+}
+
+private extension View {
+    @ViewBuilder
+    func nativeMainWindowSizing() -> some View {
+        #if os(macOS)
+        frame(minWidth: 860, minHeight: 560)
+        #else
+        self
+        #endif
+    }
 }

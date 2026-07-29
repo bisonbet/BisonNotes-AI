@@ -6,15 +6,17 @@
 //
 
 import Foundation
-#if !targetEnvironment(macCatalyst)
+#if os(iOS)
 @preconcurrency import WatchConnectivity
 #endif
 import Combine
+#if canImport(UIKit)
 import UIKit
+#endif
 
-#if targetEnvironment(macCatalyst)
-// MARK: - Mac Catalyst Stub
-/// Minimal stub for Mac Catalyst where WatchConnectivity is not available
+#if os(macOS)
+// MARK: - Mac Stub
+/// Minimal stub for native macOS where WatchConnectivity is not available
 @MainActor
 class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var connectionState: WatchConnectionState = .disconnected
@@ -503,7 +505,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
     }
 }
-#endif // !targetEnvironment(macCatalyst)
+#endif // os(macOS)
 
 // MARK: - Extensions
 

@@ -25,8 +25,8 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    private let supportedTextExtensions = ["txt", "text", "md", "markdown"]
-    private let supportedDocumentExtensions = ["pdf", "doc", "docx"]
+    nonisolated static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
+    nonisolated static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
     // MARK: - Constants
 
@@ -47,14 +47,14 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     // File size limits (security)
-    private enum FileSizeLimits {
+    enum FileSizeLimits {
         static let maxTextFileSize: Int64 = 10 * 1024 * 1024      // 10 MB for text files
         static let maxPDFFileSize: Int64 = 50 * 1024 * 1024       // 50 MB for PDFs
         static let maxDOCXFileSize: Int64 = 50 * 1024 * 1024      // 50 MB for DOCX files
     }
 
     var supportedExtensions: [String] {
-        return supportedTextExtensions + supportedDocumentExtensions
+        return Self.supportedTextExtensions + Self.supportedDocumentExtensions
     }
 
     override init() {
@@ -205,7 +205,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         }
 
         let maxSize: Int64
-        if supportedTextExtensions.contains(fileExtension) {
+        if Self.supportedTextExtensions.contains(fileExtension) {
             maxSize = FileSizeLimits.maxTextFileSize
         } else if fileExtension == "pdf" {
             maxSize = FileSizeLimits.maxPDFFileSize
@@ -235,9 +235,15 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Extract text based on file type
         let text: String
         do {
-            if supportedTextExtensions.contains(fileExtension) {
+            if Self.supportedTextExtensions.contains(fileExtension) {
                 // Plain text files
-                text = try String(contentsOf: sourceURL, encoding: .utf8)
+                let rawText = try String(contentsOf: sourceURL, encoding: .utf8)
+                if fileExtension == "vtt" || fileExtension == "srt"
+                    || TranscriptCaptionTextCleaner.looksLikeCaptionFormat(rawText) {
+                    text = TranscriptCaptionTextCleaner.plainText(from: rawText)
+                } else {
+                    text = rawText
+                }
             } else if fileExtension == "pdf" {
                 // PDF files
                 text = try await extractTextFromPDF(url: sourceURL)
@@ -494,7 +500,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let bufferSize = 1024 * 64  // 64KB buffer
         var decompressed = Data()
 
-        data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) -> Void in
+        data.withUnsafeBytes { (sourcePtr: UnsafeRawBufferPointer) in
             guard let baseAddress = sourcePtr.baseAddress else { return }
 
             var stream = z_stream()
@@ -564,6 +570,18 @@ class TranscriptImportManager: NSObject, ObservableObject {
         return cleanedLines.joined(separator: "\n")
     }
 
+    /// Strips path-separator and other filesystem-unsafe characters from a user-facing transcript
+    /// name (e.g. a YouTube video title, which may contain "/") before it's used to build a file
+    /// URL via `appendingPathComponent`. Only affects the on-disk filename, not the display name
+    /// stored in Core Data.
+    private func sanitizedFilenameComponent(_ name: String) -> String {
+        let invalid = CharacterSet(charactersIn: "/\\:*?\"<>|")
+        let stripped = name.components(separatedBy: invalid).joined(separator: "_")
+        let trimmed = stripped.trimmingCharacters(in: CharacterSet(charactersIn: " ._-"))
+        let limited = String(trimmed.prefix(120))
+        return limited.isEmpty ? "Imported Transcript" : limited
+    }
+
     /// Creates a minimal dummy audio file (~1KB) for the imported transcript
     /// Note: This generates a silent audio file programmatically WITHOUT using the microphone
     private func createDummyAudioFile(name: String) async throws -> URL {
@@ -573,7 +591,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        let filename = "\(name)_\(timestamp)_transcript.m4a"
+        let filename = "\(sanitizedFilenameComponent(name))_\(timestamp)_transcript.m4a"
         let fileURL = documentsPath.appendingPathComponent(filename)
 
         // Create silent audio file programmatically (no microphone needed)
@@ -935,7 +953,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         return url.lastPathComponent
     }
 
-    private func completeImport(with results: TranscriptImportResults) {
+    func completeImport(with results: TranscriptImportResults) {
         importResults = results
         isImporting = false
         showingImportAlert = true
@@ -953,7 +971,7 @@ enum TranscriptImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedFormat(let format):
-            return "Unsupported format: \(format). Supported formats: txt, md, markdown, pdf, docx"
+            return "Unsupported format: \(format). Supported formats: txt, md, markdown, vtt, srt, pdf, docx"
         case .readFailed(let reason):
             return "Failed to read file: \(reason)"
         case .dummyAudioCreationFailed(let reason):

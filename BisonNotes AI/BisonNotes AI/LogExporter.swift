@@ -8,9 +8,15 @@
 
 import Foundation
 import OSLog
+#if canImport(UIKit)
 import UIKit
+#else
+import AppKit
+#endif
 import SwiftUI
+#if canImport(MessageUI)
 import MessageUI
+#endif
 
 // MARK: - Log Exporter
 
@@ -23,6 +29,7 @@ struct LogExporter {
     /// 2. Persistent breadcrumb buffer (survives crashes)
     /// 3. Persistent error buffer (survives crashes)
     /// 4. MetricKit crash/hang diagnostics (if any)
+    /// 5. Recording recovery inventory (if any)
     static func exportLogs() async throws -> URL {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
@@ -30,10 +37,17 @@ struct LogExporter {
         var sections = [String]()
 
         // ── Header ──
+        #if canImport(UIKit)
         // Capture UIDevice info on the main thread (UIKit is main-thread-only)
         let (deviceModel, systemVersion) = await MainActor.run {
             (UIDevice.current.model, UIDevice.current.systemVersion)
         }
+        let platformName = "iOS"
+        #else
+        let deviceModel = "Mac"
+        let systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        let platformName = "macOS"
+        #endif
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         let previousCrash = AppLog.shared.previousSessionCrashed
@@ -41,7 +55,7 @@ struct LogExporter {
         let header = """
         BisonNotes AI Diagnostic Log
         App Version: \(appVersion) (\(buildNumber))
-        Device: \(deviceModel), iOS \(systemVersion)
+        Device: \(deviceModel), \(platformName) \(systemVersion)
         Exported: \(formatter.string(from: Date()))
         Previous session crashed: \(previousCrash ? "YES" : "No")
         """
@@ -94,6 +108,12 @@ struct LogExporter {
             sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\nNo MetricKit diagnostics available yet. iOS may deliver crash and hang payloads on a later launch.")
         }
 
+        // ── Section 5: Recording Recovery Inventory ──
+        sections.append(
+            "\n" + sectionHeader("RECORDING RECOVERY INVENTORY") + "\n" +
+            RecordingRecoveryStore.diagnosticInventory()
+        )
+
         // ── Write to file ──
         let text = sections.joined(separator: "\n")
 
@@ -127,6 +147,7 @@ struct LogExporter {
 
 // MARK: - Log Email Presenter
 
+#if os(iOS)
 /// Presents MFMailComposeViewController directly from the UIKit window,
 /// bypassing SwiftUI's sheet stack to avoid "only a single sheet" conflicts.
 /// Falls back to UIActivityViewController if Mail is not configured.
@@ -207,3 +228,29 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         return vc
     }
 }
+#else
+/// Presents diagnostic logs through the native macOS sharing-service picker.
+@MainActor
+final class LogEmailPresenter: NSObject {
+    static let shared = LogEmailPresenter()
+
+    func presentLogEmail(
+        logFileURL: URL,
+        onPresented: @escaping () -> Void = {},
+        onDismiss: @escaping () -> Void
+    ) {
+        let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let didPresent = PlatformSharingPresenter.shared.present(
+            items: [logFileURL],
+            subject: "BisonNotes AI Diagnostic Report - v\(appVersion)",
+            onPresented: onPresented,
+            onDismiss: onDismiss
+        )
+        if !didPresent {
+            NSWorkspace.shared.activateFileViewerSelecting([logFileURL])
+            onPresented()
+            onDismiss()
+        }
+    }
+}
+#endif

@@ -82,7 +82,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.1</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationQueriesSchemes</key>
@@ -101,6 +101,8 @@
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires access to the microphone to record audio notes.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>BisonNotes uses screen capture access only to record audio playing from other Mac apps during a meeting. It does not save screen video.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>This app uses reminders access to add tasks and reminders from your audio recordings.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>

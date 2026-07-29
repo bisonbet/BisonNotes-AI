@@ -13,66 +13,66 @@ import SwiftUI
 
 class GoogleAIStudioService: ObservableObject {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
-    
+
     @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
     @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
     @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 8192
     @AppStorage("enableGoogleAIStudio") private var enableGoogleAIStudio: Bool = false
-    
+
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta"
     private var apiKey: String {
         KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
     }
-    
+
     // MARK: - API Response Models
-    
+
     struct GeminiRequest: Codable {
         let contents: [Content]
         let generationConfig: GenerationConfig
     }
-    
+
     struct Content: Codable {
         let parts: [Part]
     }
-    
+
     struct Part: Codable {
         let text: String
     }
-    
+
     struct GenerationConfig: Codable {
         let responseMimeType: String
         let responseSchema: Schema
         let temperature: Double?
         let maxOutputTokens: Int?
     }
-    
+
     struct Schema: Codable {
         let type: String
         let properties: [String: SchemaProperty]
         let required: [String]
         let propertyOrdering: [String]
     }
-    
+
     struct SchemaProperty: Codable {
         let type: String
         let description: String?
         let maxItems: Int?
-        
+
         init(type: String, description: String? = nil, maxItems: Int? = nil) {
             self.type = type
             self.description = description
             self.maxItems = maxItems
         }
     }
-    
+
     struct GeminiResponse: Codable {
         let candidates: [Candidate]
     }
-    
+
     struct Candidate: Codable {
         let content: Content
     }
-    
+
     struct SummaryResponse: Codable {
         let summary: String
         let tasks: [String]
@@ -80,9 +80,9 @@ class GoogleAIStudioService: ObservableObject {
         let titles: [String]
         let contentType: String
     }
-    
+
     // MARK: - Initialization
-    
+
     init() {
         // Ensure enableGoogleAIStudio has a default value in UserDefaults
         if UserDefaults.standard.object(forKey: "enableGoogleAIStudio") == nil {
@@ -90,9 +90,9 @@ class GoogleAIStudioService: ObservableObject {
             logger.info("GoogleAIStudioService: Initialized enableGoogleAIStudio to false in UserDefaults")
         }
     }
-    
+
     // MARK: - Configuration
-    
+
     func updateConfiguration() {
         logger.info("GoogleAIStudioService: Updating configuration")
         logger.info("API Key: \(self.apiKey.isEmpty ? "Not set" : "Set")")
@@ -101,15 +101,15 @@ class GoogleAIStudioService: ObservableObject {
         logger.info("Max Tokens: \(self.maxTokens)")
         logger.info("Enabled: \(self.enableGoogleAIStudio)")
     }
-    
+
     // MARK: - Connection Testing
-    
+
     func testConnection() async -> Bool {
         guard !apiKey.isEmpty else {
             logger.error("GoogleAIStudioService: API key not set")
             return false
         }
-        
+
         do {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
             let response = try await generateContent(prompt: testPrompt, useStructuredOutput: false)
@@ -121,26 +121,26 @@ class GoogleAIStudioService: ObservableObject {
             return false
         }
     }
-    
+
     // MARK: - Content Generation
-    
+
     func generateContent(prompt: String, useStructuredOutput: Bool = true) async throws -> String {
         guard !apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio")
         }
-        
+
         let url = URL(string: "\(baseURL)/models/\(selectedModel):generateContent")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-        
+
         if useStructuredOutput {
             request.httpBody = try createStructuredRequest(prompt: prompt)
         } else {
             request.httpBody = try createSimpleRequest(prompt: prompt)
         }
-        
+
         // Create a URLSession with timeout configuration
         let config = URLSessionConfiguration.default
         let timeout = SummarizationTimeouts.current()
@@ -148,7 +148,7 @@ class GoogleAIStudioService: ObservableObject {
         // Allow extra time for larger responses to fully download when the request succeeds near the timeout threshold.
         config.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: config)
-        
+
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
@@ -158,26 +158,26 @@ class GoogleAIStudioService: ObservableObject {
             }
             throw error
         }
-        
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
         }
-        
+
         if httpResponse.statusCode != 200 {
             let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
             logger.error("GoogleAIStudioService: API error - \(httpResponse.statusCode): \(errorMessage)")
             throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(errorMessage)"]))
         }
-        
+
         if useStructuredOutput {
             return try parseStructuredResponse(data: data)
         } else {
             return try parseSimpleResponse(data: data)
         }
     }
-    
+
     // MARK: - Request Creation
-    
+
     private func createStructuredRequest(prompt: String) throws -> Data {
         // Create schema manually as JSON to avoid recursive struct issues
         let schemaDict: [String: Any] = [
@@ -219,7 +219,7 @@ class GoogleAIStudioService: ObservableObject {
             "required": ["summary", "tasks", "reminders", "titles", "contentType"],
             "propertyOrdering": ["summary", "tasks", "reminders", "titles", "contentType"]
         ]
-        
+
         // Create a custom GenerationConfig that accepts JSON data
         let requestDict: [String: Any] = [
             "contents": [
@@ -238,10 +238,10 @@ class GoogleAIStudioService: ObservableObject {
                 "maxOutputTokens": maxTokens
             ]
         ]
-        
+
         return try JSONSerialization.data(withJSONObject: requestDict)
     }
-    
+
     private func createSimpleRequest(prompt: String) throws -> Data {
         let request = GeminiRequest(
             contents: [Content(parts: [Part(text: prompt)])],
@@ -257,16 +257,16 @@ class GoogleAIStudioService: ObservableObject {
                 maxOutputTokens: maxTokens
             )
         )
-        
+
         return try JSONEncoder().encode(request)
     }
-    
+
     private func createStructuredPrompt(_ text: String) -> String {
         return """
         Analyze the following text and extract key information in a structured format:
-        
+
         \(text)
-        
+
         Please provide:
         1. A comprehensive summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
            - Use **bold** for key points and important information
@@ -317,19 +317,19 @@ class GoogleAIStudioService: ObservableObject {
         \(ComedyMode.current.promptModifier ?? "")
         """
     }
-    
+
     // MARK: - Response Parsing
-    
+
     private func parseStructuredResponse(data: Data) throws -> String {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
-        
+
         guard let candidate = response.candidates.first,
               let textPart = candidate.content.parts.first else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
-        
+
         logger.info("GoogleAIStudioService: Raw response length: \(textPart.text.count) characters")
-        
+
         // Try to parse as JSON first
         if let jsonData = textPart.text.data(using: .utf8) {
             do {
@@ -339,41 +339,41 @@ class GoogleAIStudioService: ObservableObject {
             } catch {
                 logger.warning("GoogleAIStudioService: Failed to parse JSON response: \(error)")
                 logger.warning("GoogleAIStudioService: Raw response length: \(textPart.text.count) chars, starts with valid JSON: \(textPart.text.hasPrefix("{"))")
-                
+
                 // Check if the response is truncated
                 if textPart.text.contains("\"summary\"") && !textPart.text.hasSuffix("}") {
                     logger.error("GoogleAIStudioService: Response appears to be truncated")
-                    
+
                     // Try to extract partial information from truncated JSON
                     if let partialResponse = extractPartialResponse(from: textPart.text) {
                         logger.info("GoogleAIStudioService: Successfully extracted partial response")
                         return formatStructuredResponse(partialResponse)
                     }
-                    
+
                     throw SummarizationError.processingFailed(reason: "Response was truncated by API")
                 }
-                
+
                 return textPart.text
             }
         }
-        
+
         return textPart.text
     }
-    
+
     private func parseSimpleResponse(data: Data) throws -> String {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
-        
+
         guard let candidate = response.candidates.first,
               let textPart = candidate.content.parts.first else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
-        
+
         return textPart.text
     }
-    
+
     private func formatStructuredResponse(_ response: SummaryResponse) -> String {
         var formatted = "SUMMARY:\n\(response.summary)\n\n"
-        
+
         if !response.tasks.isEmpty {
             formatted += "TASKS:\n"
             for task in response.tasks {
@@ -381,7 +381,7 @@ class GoogleAIStudioService: ObservableObject {
             }
             formatted += "\n"
         }
-        
+
         if !response.reminders.isEmpty {
             formatted += "REMINDERS:\n"
             for reminder in response.reminders {
@@ -389,7 +389,7 @@ class GoogleAIStudioService: ObservableObject {
             }
             formatted += "\n"
         }
-        
+
         if !response.titles.isEmpty {
             formatted += "SUGGESTED TITLES:\n"
             for title in response.titles {
@@ -397,24 +397,24 @@ class GoogleAIStudioService: ObservableObject {
             }
             formatted += "\n"
         }
-        
+
         formatted += "CONTENT TYPE: \(response.contentType)"
-        
+
         return formatted
     }
-    
+
     // MARK: - Partial Response Extraction
-    
+
     private func extractPartialResponse(from truncatedJSON: String) -> SummaryResponse? {
         logger.info("GoogleAIStudioService: Attempting to extract partial response from truncated JSON")
-        
+
         // Try to find and extract the summary field
         var summary = ""
         var tasks: [String] = []
         var reminders: [String] = []
         var titles: [String] = []
         var contentType = "general"
-        
+
         // Extract summary using regex
         if let summaryMatch = truncatedJSON.range(of: "\"summary\":\\s*\"([^\"]*)\"", options: .regularExpression) {
             let summaryStart = truncatedJSON.index(summaryMatch.lowerBound, offsetBy: 11) // Skip "summary":"
@@ -423,25 +423,25 @@ class GoogleAIStudioService: ObservableObject {
                 summary = String(truncatedJSON[summaryEnd..<closingQuote])
             }
         }
-        
+
         // Extract tasks using regex
         if let tasksMatch = truncatedJSON.range(of: "\"tasks\":\\s*\\[([^\\]]*)\\]", options: .regularExpression) {
             let tasksContent = String(truncatedJSON[tasksMatch])
             tasks = extractArrayItems(from: tasksContent)
         }
-        
+
         // Extract reminders using regex
         if let remindersMatch = truncatedJSON.range(of: "\"reminders\":\\s*\\[([^\\]]*)\\]", options: .regularExpression) {
             let remindersContent = String(truncatedJSON[remindersMatch])
             reminders = extractArrayItems(from: remindersContent)
         }
-        
+
         // Extract titles using regex
         if let titlesMatch = truncatedJSON.range(of: "\"titles\":\\s*\\[([^\\]]*)\\]", options: .regularExpression) {
             let titlesContent = String(truncatedJSON[titlesMatch])
             titles = extractArrayItems(from: titlesContent)
         }
-        
+
         // Extract content type using regex
         if let contentTypeMatch = truncatedJSON.range(of: "\"contentType\":\\s*\"([^\"]*)\"", options: .regularExpression) {
             let contentTypeStart = truncatedJSON.index(contentTypeMatch.lowerBound, offsetBy: 14) // Skip "contentType":"
@@ -450,7 +450,7 @@ class GoogleAIStudioService: ObservableObject {
                 contentType = String(truncatedJSON[contentTypeEnd..<closingQuote])
             }
         }
-        
+
         // Only return if we have at least a summary
         if !summary.isEmpty {
             logger.info("GoogleAIStudioService: Extracted partial response - Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)")
@@ -462,17 +462,17 @@ class GoogleAIStudioService: ObservableObject {
                 contentType: contentType
             )
         }
-        
+
         return nil
     }
-    
+
     private func extractArrayItems(from arrayString: String) -> [String] {
         var items: [String] = []
-        
+
         // Find all quoted strings in the array
         let pattern = "\"([^\"]*)\""
         let regex = try? NSRegularExpression(pattern: pattern)
-        
+
         if let matches = regex?.matches(in: arrayString, range: NSRange(arrayString.startIndex..., in: arrayString)) {
             for match in matches {
                 if let range = Range(match.range(at: 1), in: arrayString) {
@@ -483,15 +483,15 @@ class GoogleAIStudioService: ObservableObject {
                 }
             }
         }
-        
+
         return items
     }
-    
+
     // MARK: - Title Extraction
-    
+
     func extractTitles(from text: String) async throws -> [TitleItem] {
         AppLog.shared.networking("GoogleAIStudioService: Starting title extraction")
-        
+
         let prompt = """
         Analyze the following transcript and extract 4 high-quality titles or headlines. Focus on:
         - Main topics or themes discussed
@@ -520,7 +520,7 @@ class GoogleAIStudioService: ObservableObject {
         Transcript:
         \(text)
         """
-        
+
         do {
             let response = try await generateContent(prompt: prompt, useStructuredOutput: false)
             return try parseTitlesFromJSON(response)
@@ -529,27 +529,27 @@ class GoogleAIStudioService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio title extraction failed: \(error.localizedDescription)")
         }
     }
-    
+
     private func parseTitlesFromJSON(_ jsonString: String) throws -> [TitleItem] {
         let cleanedJSON = extractJSONFromResponse(jsonString)
-        
+
         guard let data = cleanedJSON.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
         }
-        
+
         struct TitleResponse: Codable {
             let text: String
             let category: String?
             let confidence: Double?
         }
-        
+
         struct TitlesResponse: Codable {
             let titles: [TitleResponse]
         }
-        
+
         do {
             let response = try JSONDecoder().decode(TitlesResponse.self, from: data)
-            
+
             return response.titles.map { titleResponse in
                 let category = TitleItem.TitleCategory(rawValue: titleResponse.category?.lowercased() ?? "general") ?? .general
                 return TitleItem(
@@ -575,11 +575,11 @@ class GoogleAIStudioService: ObservableObject {
             }
         }
     }
-    
+
     private func extractJSONFromResponse(_ response: String) -> String {
         // Remove markdown code blocks if present
         var cleaned = response
-        
+
         if cleaned.contains("```json") {
             if let start = cleaned.range(of: "```json") {
                 cleaned = String(cleaned[start.upperBound...])
@@ -595,12 +595,12 @@ class GoogleAIStudioService: ObservableObject {
                 cleaned = String(cleaned[..<end.lowerBound])
             }
         }
-        
+
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    
+
     // MARK: - Model Loading
-    
+
     func loadAvailableModels() async throws -> [String] {
         // Return only the specific Gemini models
         return [
@@ -608,4 +608,4 @@ class GoogleAIStudioService: ObservableObject {
             "gemini-3.1-flash-lite-preview"
         ]
     }
-} 
+}

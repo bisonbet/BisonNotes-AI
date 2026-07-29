@@ -84,7 +84,7 @@ struct OpenAISummarizationConfig: Equatable {
             dynamicModelId: nil
         )
     }
-    
+
     var effectiveModelId: String {
         return dynamicModelId ?? model.rawValue
     }
@@ -510,7 +510,7 @@ struct Choice: Codable {
     let index: Int
     let message: ChatMessage
     let finishReason: String?
-    
+
     enum CodingKeys: String, CodingKey {
         case index
         case message
@@ -522,7 +522,7 @@ struct Usage: Codable {
     let promptTokens: Int
     let completionTokens: Int
     let totalTokens: Int
-    
+
     enum CodingKeys: String, CodingKey {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
@@ -535,19 +535,19 @@ struct Usage: Codable {
 struct ResponseFormat: Codable {
     let type: String
     let jsonSchema: JSONSchema?
-    
+
     enum CodingKeys: String, CodingKey {
         case type
         case jsonSchema = "json_schema"
     }
-    
+
     static func jsonSchema(name: String, schema: [String: Any], strict: Bool = true) -> ResponseFormat {
         return ResponseFormat(
             type: "json_schema",
             jsonSchema: JSONSchema(name: name, schema: schema, strict: strict)
         )
     }
-    
+
     static let json = ResponseFormat(type: "json_object", jsonSchema: nil)
 }
 
@@ -555,24 +555,24 @@ struct JSONSchema: Codable {
     let name: String
     let schema: [String: Any]
     let strict: Bool?
-    
+
     enum CodingKeys: String, CodingKey {
         case name
         case schema
         case strict
     }
-    
+
     init(name: String, schema: [String: Any], strict: Bool? = true) {
         self.name = name
         self.schema = schema
         self.strict = strict
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encode(strict, forKey: .strict)
-        
+
         // Encode the schema as a raw JSON object
         let jsonData = try JSONSerialization.data(withJSONObject: schema, options: [])
         if let jsonObject = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
@@ -581,12 +581,12 @@ struct JSONSchema: Codable {
             try container.encode(schema.mapValues { AnyCodable($0) }, forKey: .schema)
         }
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
         strict = try container.decodeIfPresent(Bool.self, forKey: .strict)
-        
+
         let anyCodable = try container.decode(AnyCodable.self, forKey: .schema)
         schema = anyCodable.value as? [String: Any] ?? [:]
     }
@@ -595,14 +595,14 @@ struct JSONSchema: Codable {
 // Helper for encoding Any types
 struct AnyCodable: Codable {
     let value: Any
-    
+
     init(_ value: Any) {
         self.value = value
     }
-    
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        
+
         if let intVal = value as? Int {
             try container.encode(intVal)
         } else if let stringVal = value as? String {
@@ -617,10 +617,10 @@ struct AnyCodable: Codable {
             throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Invalid type for AnyCodable"))
         }
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        
+
         if let intVal = try? container.decode(Int.self) {
             value = intVal
         } else if let stringVal = try? container.decode(String.self) {
@@ -699,7 +699,7 @@ extension ResponseFormat {
             "required": ["summary", "tasks", "reminders", "titles"],
             "additionalProperties": false
         ]
-        
+
         return ResponseFormat.jsonSchema(name: "complete_response", schema: schema)
     }
 }
@@ -724,4 +724,3 @@ struct OpenAIModelInfo: Codable {
 }
 
 // OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
-

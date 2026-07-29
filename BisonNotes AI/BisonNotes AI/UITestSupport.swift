@@ -13,6 +13,7 @@ enum BisonNotesUITestSupport {
     static let resetDataArgument = "--reset-test-data"
     static let seedSampleRecordingArgument = "--seed-sample-recording"
     static let disableCloudServicesArgument = "--disable-cloud-services"
+    static let showFirstSetupArgument = "--show-first-setup"
 
     private static let preparedFlagKey = "BisonNotesUITestSupportPreparedThisLaunch"
     private static let sampleRecordingName = "UI Test Recording"
@@ -26,8 +27,9 @@ enum BisonNotesUITestSupport {
         guard isUITesting else { return }
 
         let defaults = UserDefaults.standard
-        defaults.set(true, forKey: "hasCompletedFirstSetup")
-        defaults.set(true, forKey: "hasCompletedInitialSetup")
+        let shouldShowFirstSetup = ProcessInfo.processInfo.arguments.contains(showFirstSetupArgument)
+        defaults.set(!shouldShowFirstSetup, forKey: "hasCompletedFirstSetup")
+        defaults.set(!shouldShowFirstSetup, forKey: "hasCompletedInitialSetup")
         defaults.set(true, forKey: "hasAskedLocationPermission")
         defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
         defaults.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")

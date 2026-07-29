@@ -6,7 +6,9 @@
 //
 
 import Foundation
+#if canImport(UIKit)
 import UIKit
+#endif
 import UserNotifications
 
 // MARK: - Phase 3: Comprehensive Warning System
@@ -93,9 +95,10 @@ extension AudioRecorderViewModel {
 
 		// 4. BATTERY CHECK
 		// Skip on Mac — UIDevice.batteryLevel returns -1 / unreliable values under
-		// both Mac Catalyst and "Designed for iPad" on Apple Silicon, and enabling
+		// both native Mac and "Designed for iPad" on Apple Silicon, and enabling
 		// monitoring spams "Error retrieving battery status" to the log.
-		if !UIDevice.isRunningOnMac {
+		#if canImport(UIKit)
+		if !PlatformDevice.isRunningOnMac {
 			UIDevice.current.isBatteryMonitoringEnabled = true
 			let batteryLevel = UIDevice.current.batteryLevel
 
@@ -119,6 +122,7 @@ extension AudioRecorderViewModel {
 				)
 			}
 		}
+		#endif
 	}
 
 	/// Get available storage on device
