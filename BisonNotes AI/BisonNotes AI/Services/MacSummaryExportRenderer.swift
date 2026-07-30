@@ -2,6 +2,7 @@
 import AppKit
 import CoreText
 import Foundation
+
 enum MacSummaryExportRenderer {
     enum RenderError: LocalizedError {
         case invalidDocument
@@ -20,6 +21,7 @@ enum MacSummaryExportRenderer {
     }
     private static let pageRect = CGRect(x: 0, y: 0, width: 612, height: 792)
     private static let textRect = CGRect(x: 50, y: 52, width: 512, height: 688)
+
     static func rtfData(
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
@@ -37,10 +39,12 @@ enum MacSummaryExportRenderer {
         guard !data.isEmpty else { throw RenderError.invalidDocument }
         return data
     }
+    @MainActor
     static func pdfData(
         summaryData: EnhancedSummaryData,
         locationData: LocationData?,
-        locationAddress: String?
+        locationAddress: String?,
+        mapImages: MapImages? = nil
     ) throws -> Data {
         let document = try attributedDocument(
             summaryData: summaryData,
@@ -80,6 +84,13 @@ enum MacSummaryExportRenderer {
             location += visibleRange.length
             pageNumber += 1
         }
+        appendMapPageIfNeeded(
+            mapImages,
+            locationData: locationData,
+            locationAddress: locationAddress,
+            page: (generatedAt: summaryData.generatedAt, number: pageNumber),
+            context: context
+        )
         context.closePDF()
         guard output.length > 0 else { throw RenderError.invalidDocument }
         return output as Data
@@ -359,42 +370,5 @@ private extension MacSummaryExportRenderer {
         }
     }
 
-    private static func drawHeader(in context: CGContext, generatedAt: Date) {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        drawLine(
-            "BisonNotes AI · Summary Export · \(formatter.string(from: generatedAt))",
-            at: CGPoint(x: 50, y: 760),
-            font: .systemFont(ofSize: 8),
-            color: .darkGray,
-            in: context
-        )
-    }
-
-    private static func drawFooter(in context: CGContext, pageNumber: Int) {
-        drawLine(
-            "— \(pageNumber) —",
-            at: CGPoint(x: 287, y: 28),
-            font: .systemFont(ofSize: 8),
-            color: .darkGray,
-            in: context
-        )
-    }
-
-    private static func drawLine(
-        _ text: String,
-        at point: CGPoint,
-        font: NSFont,
-        color: NSColor,
-        in context: CGContext
-    ) {
-        let line = CTLineCreateWithAttributedString(NSAttributedString(
-            string: text,
-            attributes: [.font: font, .foregroundColor: color]
-        ))
-        context.textPosition = point
-        CTLineDraw(line, context)
-    }
 }
 #endif

@@ -986,7 +986,6 @@ class PDFExportService {
 #else
 class PDFExportService {
     static let shared = PDFExportService()
-
     @MainActor
     func generatePDF(
         summaryData: EnhancedSummaryData,
@@ -994,10 +993,11 @@ class PDFExportService {
         locationAddress: String?
     ) async throws -> Data {
         AppLog.shared.fileManagement("PDFExportService: Starting native Mac PDF generation")
+        let maps = await MacSummaryExportRenderer.buildMapImages(summaryId: summaryData.id, locationData: locationData)
         let data = try MacSummaryExportRenderer.pdfData(
             summaryData: summaryData,
             locationData: locationData,
-            locationAddress: locationAddress
+            locationAddress: locationAddress, mapImages: maps
         )
         AppLog.shared.fileManagement("PDFExportService: Generated native Mac PDF (\(data.count) bytes)")
         return data

@@ -935,19 +935,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.isUsingLiveTranscription = false
 				self.liveTranscriptionService = nil
 				self.errorMessage = "Live transcription unavailable: \(error.localizedDescription). Starting standard recording."
-				// Fall back to standard recording
-				let selectedQuality = AudioQuality.whisperOptimized
-				let settings = selectedQuality.settings
-				do {
-					self.audioRecorder = try AVAudioRecorder(url: url, settings: settings)
-					self.audioRecorder?.delegate = self
-					self.audioRecorder?.isMeteringEnabled = true
-					self.audioRecorder?.record()
-					self.markRecordingStarted()
-				} catch {
-					self.finishRecordingStartup()
-					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
-				}
+
+				// Keep the diagnostic and fallback action tied to the same selected backend.
+				// Native macOS must never re-enter the unreliable AVAudioRecorder path.
+				let fallbackBackend = Self.liveTranscriptionFallbackBackend
+				AppLog.shared.recording("Live transcription failed; starting \(fallbackBackend) fallback", level: .error)
+				await self.startFallbackRecordingAfterLiveTranscriptionFailure(
+					at: url, backend: fallbackBackend)
 			}
 		}
 	}

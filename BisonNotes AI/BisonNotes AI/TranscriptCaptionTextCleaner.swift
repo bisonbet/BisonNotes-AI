@@ -103,10 +103,8 @@ struct TranscriptCaptionTextCleaner {
     }
 
     private static func isCueIdentifier(_ line: String, at index: Int, in lines: [String]) -> Bool {
-        guard Int(line) != nil else { return false }
-
-        let nextMeaningfulLine = lines.dropFirst(index + 1).first { !$0.isEmpty }
-        return nextMeaningfulLine?.contains("-->") == true
+        guard !line.contains("-->"), lines.indices.contains(index + 1) else { return false }
+        return lines[index + 1].contains("-->")
     }
 
     private static func isCaptionMetadataLine(_ line: String) -> Bool {
