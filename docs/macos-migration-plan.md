@@ -195,7 +195,7 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 4. AWS SDK for Swift was updated from 1.6.113 to 1.7.46. The old pin addressed a Catalyst-only archive staging collision and is no longer required.
 5. The `textual` fork cleanup remains a separate repository task for its next rebase; its historical Catalyst guards are harmless here.
 6. Dead `targetEnvironment(macCatalyst)` source branches were purged, and the Mac recorder/system-audio files were renamed for native macOS.
-7. `CLAUDE.md`, `README.md`, the WordPress user guide, the v2.2 release guide, and the testing regimen were updated.
+7. `CLAUDE.md`, `README.md`, the WordPress user guide, the v2.3 release guide, and the testing regimen were updated.
 - Review verification: native macOS and generic iOS Simulator Debug builds succeeded. The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization. iOS/macOS archives and signed-app tests remain deferred.
 
 ---
