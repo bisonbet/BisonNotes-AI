@@ -52,6 +52,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var interruptionObserver: NSObjectProtocol?
 	var routeChangeObserver: NSObjectProtocol?
 	var willEnterForegroundObserver: NSObjectProtocol?
+	var didEnterBackgroundObserver: NSObjectProtocol?
+	var checkForUnprocessedRecordingsObserver: NSObjectProtocol?
+	private var notificationObserversConfigured = false
 	let preferredInputDefaultsKey = "PreferredAudioInputUID"
 
 	// Live transcription service (used when live transcription setting is enabled)
@@ -231,12 +234,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	/// Initialize the view model asynchronously to ensure proper setup
 	func initialize() async {
-		// Ensure we're on the main actor for UI updates
-		await MainActor.run {
-			// Initialize any required components
-			setupNotificationObservers()
-		}
-
 		// Initialize location manager only if tracking is enabled
 		await MainActor.run {
 			if isLocationTrackingEnabled {
@@ -265,21 +262,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		enhancedAudioSessionManager.stopInputDeviceMonitoring()
 		#endif
 
-		// Remove observers synchronously since deinit cannot be async
-		if let observer = interruptionObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = routeChangeObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = willEnterForegroundObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
+		removeNotificationObservers()
 	}
 
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
+		guard !notificationObserversConfigured else { return }
+		notificationObserversConfigured = true
+
 		#if os(iOS)
 		// AVAudioSession interruption/route notifications use Mach ports that don't
 		// exist on Mac — registering for them floods the log with "cannot add handler".
@@ -404,7 +395,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		// Add observer for app backgrounding
-		NotificationCenter.default.addObserver(
+		didEnterBackgroundObserver = NotificationCenter.default.addObserver(
 			forName: PlatformLifecycle.didEnterBackgroundNotification,
 			object: nil,
 			queue: .main
@@ -421,7 +412,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		// Listen for BackgroundProcessingManager's request to check for unprocessed recordings
-		NotificationCenter.default.addObserver(
+		checkForUnprocessedRecordingsObserver = NotificationCenter.default.addObserver(
 			forName: NSNotification.Name("CheckForUnprocessedRecordings"),
 			object: nil,
 			queue: .main
@@ -434,15 +425,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func removeNotificationObservers() {
-		if let observer = interruptionObserver {
+		let observers = [
+			interruptionObserver,
+			routeChangeObserver,
+			willEnterForegroundObserver,
+			didEnterBackgroundObserver,
+			checkForUnprocessedRecordingsObserver
+		]
+		observers.compactMap { $0 }.forEach { observer in
 			NotificationCenter.default.removeObserver(observer)
 		}
-		if let observer = routeChangeObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = willEnterForegroundObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
+
+		interruptionObserver = nil
+		routeChangeObserver = nil
+		willEnterForegroundObserver = nil
+		didEnterBackgroundObserver = nil
+		checkForUnprocessedRecordingsObserver = nil
+		notificationObserversConfigured = false
 	}
 
 	// MARK: - Call Observer Setup (Phase 1)
