@@ -129,7 +129,7 @@ struct TestHelpers {
         hasRecording: Bool = true,
         transcriptExists: Bool = true,
         summaryExists: Bool = true,
-        iCloudSynced: Bool = false
+        iCloudSyncEligible: Bool = false
     ) -> FileRelationships {
         let recordingURL = hasRecording ? URL(fileURLWithPath: "/test/recording.m4a") : nil
         
@@ -139,7 +139,7 @@ struct TestHelpers {
             recordingDate: Date(),
             transcriptExists: transcriptExists,
             summaryExists: summaryExists,
-            iCloudSynced: iCloudSynced
+            iCloudSyncEligible: iCloudSyncEligible
         )
     }
     

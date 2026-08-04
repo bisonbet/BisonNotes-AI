@@ -222,13 +222,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         return ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         AppLog.shared.summarization("[OnDeviceLLMEngine] Starting complete processing")
 
         updateConfiguration()
@@ -296,13 +290,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         _ text: String,
         service: OnDeviceLLMService,
         maxTokens: Int
-    ) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) async throws -> SummarizationResult {
         let startTime = Date()
 
         // Ensure model is loaded to use accurate tokenization
@@ -424,7 +412,13 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let processingTime = Date().timeIntervalSince(startTime)
         AppLog.shared.summarization("[OnDeviceLLMEngine] Chunked processing completed in \(String(format: "%.1f", processingTime))s")
 
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: uniqueTasks,
+            reminders: uniqueReminders,
+            titles: uniqueTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateItems<T>(_ items: [T], limit: Int, getText: (T) -> String) -> [T] {

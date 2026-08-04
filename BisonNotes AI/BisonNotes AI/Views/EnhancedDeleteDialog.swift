@@ -225,7 +225,7 @@ struct FileStatusRow: View {
         recordingDate: Date(),
         transcriptExists: true,
         summaryExists: true,
-        iCloudSynced: false
+        iCloudSyncEligible: false
     )
 
     let sampleRecording = AudioRecordingFile(

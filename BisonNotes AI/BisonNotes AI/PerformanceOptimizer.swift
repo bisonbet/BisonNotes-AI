@@ -384,7 +384,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Enhanced Chunked Processing with Streaming
 
-    func processLargeTranscriptWithStreaming(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processLargeTranscriptWithStreaming(_ text: String, using engine: SummarizationEngine) async throws -> SummarizationResult {
 
         let startTime = Date()
         processingStartTime = startTime
@@ -458,7 +458,13 @@ class PerformanceOptimizer: ObservableObject {
 
         let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
 
-        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
+        let result = SummarizationResult(
+            summary: finalSummary,
+            tasks: finalTasks,
+            reminders: finalReminders,
+            titles: finalTitles,
+            contentType: finalContentType
+        )
         cacheResult(key: cacheKey, result: result, cost: text.count)
 
         return result
@@ -519,7 +525,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Chunked Processing
 
-    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> SummarizationResult {
 
         let startTime = Date()
         processingStartTime = startTime
@@ -604,7 +610,13 @@ class PerformanceOptimizer: ObservableObject {
 
         let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
 
-        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
+        let result = SummarizationResult(
+            summary: finalSummary,
+            tasks: finalTasks,
+            reminders: finalReminders,
+            titles: finalTitles,
+            contentType: finalContentType
+        )
         cacheResult(key: cacheKey, result: result, cost: text.count)
 
         return result
@@ -643,7 +655,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Private Helper Methods
 
-    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> SummarizationResult {
 
         var lastError: Error?
 
@@ -767,11 +779,11 @@ class PerformanceOptimizer: ObservableObject {
         return "\(engine)_\(textHash)"
     }
 
-    private func getCachedResult(key: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func getCachedResult(key: String) -> SummarizationResult? {
         return summaryCache.object(forKey: NSString(string: key))?.result
     }
 
-    private func cacheResult(key: String, result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), cost: Int) {
+    private func cacheResult(key: String, result: SummarizationResult, cost: Int) {
         let cachedResult = CachedSummaryResult(result: result, timestamp: Date())
         summaryCache.setObject(cachedResult, forKey: NSString(string: key), cost: cost)
     }
@@ -784,11 +796,6 @@ class PerformanceOptimizer: ObservableObject {
                 await self?.updateMemoryUsage()
             }
         }
-    }
-
-    private func stopMemoryMonitoring() {
-        memoryMonitorTimer?.invalidate()
-        memoryMonitorTimer = nil
     }
 
     private func updateMemoryUsage() async {
@@ -938,10 +945,10 @@ struct PerformanceMetrics {
 }
 
 class CachedSummaryResult: NSObject {
-    let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+    let result: SummarizationResult
     let timestamp: Date
 
-    init(result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), timestamp: Date) {
+    init(result: SummarizationResult, timestamp: Date) {
         self.result = result
         self.timestamp = timestamp
         super.init()

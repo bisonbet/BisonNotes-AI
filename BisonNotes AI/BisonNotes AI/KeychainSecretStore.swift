@@ -9,6 +9,26 @@ import Foundation
 import Security
 import SwiftUI
 
+enum KeychainSecretStoreError: Equatable, LocalizedError {
+    enum Operation: String {
+        case add
+        case update
+        case delete
+    }
+
+    case invalidString
+    case operationFailed(operation: Operation, status: OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidString:
+            return "The secure value could not be encoded."
+        case .operationFailed(let operation, let status):
+            return "Keychain \(operation.rawValue) failed with status \(status)."
+        }
+    }
+}
+
 final class KeychainSecretStore {
     static let shared = KeychainSecretStore()
 
@@ -38,15 +58,17 @@ final class KeychainSecretStore {
         return String(data: data, encoding: .utf8)
     }
 
-    func setString(_ value: String, forKey key: String) {
+    @discardableResult
+    func setString(_ value: String, forKey key: String) -> Result<Void, KeychainSecretStoreError> {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty else {
-            delete(forKey: key)
-            return
+            return delete(forKey: key)
         }
 
-        guard let data = trimmedValue.data(using: .utf8) else { return }
-        setData(data, forKey: key)
+        guard let data = trimmedValue.data(using: .utf8) else {
+            return report(.failure(.invalidString))
+        }
+        return setData(data, forKey: key)
     }
 
     func data(forKey key: String) -> Data? {
@@ -60,7 +82,8 @@ final class KeychainSecretStore {
         return result as? Data
     }
 
-    func setData(_ data: Data, forKey key: String) {
+    @discardableResult
+    func setData(_ data: Data, forKey key: String) -> Result<Void, KeychainSecretStoreError> {
         var query = baseQuery(forKey: key)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -68,32 +91,70 @@ final class KeychainSecretStore {
         ]
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        guard status != errSecSuccess else { return }
-
-        if status != errSecItemNotFound {
-            SecItemDelete(query as CFDictionary)
+        switch status {
+        case errSecSuccess:
+            return .success(())
+        case errSecItemNotFound:
+            query.merge(attributes) { _, new in new }
+            let addStatus = SecItemAdd(query as CFDictionary, nil)
+            switch addStatus {
+            case errSecSuccess:
+                return .success(())
+            case errSecDuplicateItem:
+                let retryStatus = SecItemUpdate(
+                    baseQuery(forKey: key) as CFDictionary,
+                    attributes as CFDictionary
+                )
+                if retryStatus == errSecSuccess {
+                    return .success(())
+                }
+                return report(.failure(.operationFailed(operation: .update, status: retryStatus)))
+            default:
+                return report(.failure(.operationFailed(operation: .add, status: addStatus)))
+            }
+        default:
+            return report(.failure(.operationFailed(operation: .update, status: status)))
         }
-
-        query.merge(attributes) { _, new in new }
-        SecItemAdd(query as CFDictionary, nil)
     }
 
-    func delete(forKey key: String) {
-        SecItemDelete(baseQuery(forKey: key) as CFDictionary)
+    @discardableResult
+    func delete(forKey key: String) -> Result<Void, KeychainSecretStoreError> {
+        let status = SecItemDelete(baseQuery(forKey: key) as CFDictionary)
+        switch status {
+        case errSecSuccess, errSecItemNotFound:
+            return .success(())
+        default:
+            return report(.failure(.operationFailed(operation: .delete, status: status)))
+        }
     }
 
-    func migrateLegacySecretsFromUserDefaults(_ defaults: UserDefaults = .standard) {
+    @discardableResult
+    func migrateLegacySecretsFromUserDefaults(_ defaults: UserDefaults = .standard) -> [KeychainSecretStoreError] {
+        var failures: [KeychainSecretStoreError] = []
+
         for key in Self.stringSecretKeys {
             if data(forKey: key) == nil, let legacyValue = defaults.string(forKey: key), !legacyValue.isEmpty {
-                setString(legacyValue, forKey: key)
+                let result = setString(legacyValue, forKey: key)
+                if case .failure(let error) = result {
+                    failures.append(error)
+                    continue
+                }
             }
             defaults.removeObject(forKey: key)
         }
 
         if data(forKey: Self.awsCredentials) == nil, let legacyData = defaults.data(forKey: Self.awsCredentials) {
-            setData(legacyData, forKey: Self.awsCredentials)
+            let result = setData(legacyData, forKey: Self.awsCredentials)
+            if case .failure(let error) = result {
+                failures.append(error)
+            } else {
+                defaults.removeObject(forKey: Self.awsCredentials)
+            }
+        } else if data(forKey: Self.awsCredentials) != nil {
+            defaults.removeObject(forKey: Self.awsCredentials)
         }
-        defaults.removeObject(forKey: Self.awsCredentials)
+
+        return failures
     }
 
     private func baseQuery(forKey key: String) -> [String: Any] {
@@ -102,6 +163,18 @@ final class KeychainSecretStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key
         ]
+    }
+
+    private func report(
+        _ result: Result<Void, KeychainSecretStoreError>
+    ) -> Result<Void, KeychainSecretStoreError> {
+        if case .failure(let error) = result {
+            AppLog.shared.general(
+                "Secure credential storage operation failed: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+        return result
     }
 }
 
@@ -128,7 +201,13 @@ struct SecureStorage: DynamicProperty {
         get { value }
         nonmutating set {
             value = newValue
-            KeychainSecretStore.shared.setString(newValue, forKey: key)
+            let result = KeychainSecretStore.shared.setString(newValue, forKey: key)
+            if case .failure(let error) = result {
+                AppLog.shared.general(
+                    "Secure setting persistence failed: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
         }
     }
 

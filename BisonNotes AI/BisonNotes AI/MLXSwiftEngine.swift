@@ -174,13 +174,7 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
         ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         guard isAvailable else {
             throw SummarizationError.configurationRequired(
                 message: "MLX Swift is not enabled. Enable it in AI Settings before using it."
@@ -391,13 +385,7 @@ private actor MLXSwiftService {
         }
     }
 
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         ensureMemoryObserver()
         receivedMemoryWarning = false
 
@@ -412,7 +400,7 @@ private actor MLXSwiftService {
 
         AppLog.shared.summarization("[MLXSwift] Transcript: \(tokenCount) tokens, input limit: \(inputLimit) tokens/chunk")
 
-        let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+        let result: SummarizationResult
         if tokenCount > inputLimit {
             AppLog.shared.summarization("[MLXSwift] Chunking transcript into ~\(inputLimit)-token pieces", level: .debug)
             result = try await processChunked(text: text, maxTokens: inputLimit)
@@ -426,13 +414,7 @@ private actor MLXSwiftService {
         return result
     }
 
-    private func processChunked(text: String, maxTokens: Int) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    private func processChunked(text: String, maxTokens: Int) async throws -> SummarizationResult {
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
         var chunkResults: [MLXSwiftStructuredResponse] = []
 
@@ -459,13 +441,7 @@ private actor MLXSwiftService {
         return try await consolidate(chunkResults: chunkResults, originalContentType: ContentAnalyzer.classifyContent(text))
     }
 
-    private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> SummarizationResult {
         let wordCount = transcript.split(separator: " ").count
         let targetWords = max(200, Int(Double(wordCount) * 0.15))
 
@@ -524,13 +500,7 @@ private actor MLXSwiftService {
     private func consolidate(
         chunkResults: [MLXSwiftStructuredResponse],
         originalContentType: ContentType
-    ) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) async throws -> SummarizationResult {
         let encodedChunks = chunkResults.enumerated().map { index, result in
             """
             Chunk \(index + 1):
@@ -799,13 +769,7 @@ enum MLXSwiftResponseParser {
     static func parse(
         _ rawResponse: String,
         fallbackText: String
-    ) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) -> SummarizationResult {
         let cleaned = stripThinking(from: rawResponse)
         if let data = extractJSONObject(from: cleaned).data(using: .utf8),
            let decoded = try? JSONDecoder().decode(CompleteResponse.self, from: data) {
@@ -814,7 +778,7 @@ enum MLXSwiftResponseParser {
 
         AppLog.shared.summarization("[MLXSwift] Could not parse structured JSON, using raw response as summary", level: .error)
         let fallbackSummary = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (
+        return SummarizationResult(
             summary: fallbackSummary.isEmpty ? "## Summary\n\nNo summary was generated." : fallbackSummary,
             tasks: [],
             reminders: [],
@@ -828,13 +792,7 @@ enum MLXSwiftResponseParser {
     static func parseMarkdown(
         _ rawResponse: String,
         fallbackText: String
-    ) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) -> SummarizationResult {
         let cleaned = stripThinking(from: rawResponse)
         let contentType = ContentAnalyzer.classifyContent(fallbackText)
 
@@ -886,7 +844,7 @@ enum MLXSwiftResponseParser {
             return parse(cleaned, fallbackText: fallbackText)
         }
 
-        return (
+        return SummarizationResult(
             summary: summary,
             tasks: tasks,
             reminders: reminders,
@@ -971,13 +929,7 @@ private struct CompleteResponse: Decodable {
     var titles: [TitleDTO]?
     var contentType: String?
 
-    func toSummaryResult(fallbackText: String) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func toSummaryResult(fallbackText: String) -> SummarizationResult {
         let parsedContentType = ContentType(rawValue: contentType ?? "")
             ?? ContentAnalyzer.classifyContent(fallbackText)
         let parsedTasks = (tasks ?? []).compactMap { $0.toTaskItem() }
@@ -985,7 +937,7 @@ private struct CompleteResponse: Decodable {
         let parsedTitles = (titles ?? []).compactMap { $0.toTitleItem() }
         let trimmedSummary = (summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return (
+        return SummarizationResult(
             summary: trimmedSummary.isEmpty ? "## Summary\n\nNo summary was generated." : trimmedSummary,
             tasks: parsedTasks,
             reminders: parsedReminders,

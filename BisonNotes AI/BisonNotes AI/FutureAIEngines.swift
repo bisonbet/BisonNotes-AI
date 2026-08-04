@@ -165,7 +165,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         AppLog.shared.networking("AWSBedrockEngine: Starting complete processing")
 
         updateConfiguration()
@@ -199,7 +199,6 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
     private func updateConfiguration() {
         // Use unified credentials manager instead of separate UserDefaults keys
         let credentials = AWSCredentialsManager.shared.credentials
-        let sessionToken = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.awsBedrockSessionToken)
         let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
         // Migrate legacy model identifiers
         let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
@@ -214,7 +213,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
             region: credentials.region,
             accessKeyId: credentials.accessKeyId,
             secretAccessKey: credentials.secretAccessKey,
-            sessionToken: sessionToken,
+            sessionToken: credentials.sessionToken,
             model: model,
             temperature: temperature > 0 ? temperature : 0.1,
             maxTokens: maxTokens > 0 ? maxTokens : 4096,
@@ -242,7 +241,7 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
 
     // MARK: - Chunked Processing
 
-    private func processChunkedText(_ text: String, service: AWSBedrockService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: AWSBedrockService) async throws -> SummarizationResult {
         let startTime = Date()
 
         // Initialize Ollama service for meta-summary generation
@@ -303,7 +302,13 @@ class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.networking("AWSBedrockEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         AppLog.shared.networking("AWSBedrockEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
 
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: uniqueTasks,
+            reminders: uniqueReminders,
+            titles: uniqueTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -679,7 +684,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         return contentType
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // Update configuration with latest settings
         updateConfiguration()
 
@@ -730,7 +735,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> SummarizationResult {
         AppLog.shared.networking("LocalLLMEngine: Processing single chunk with Ollama using complete processing", level: .debug)
 
         do {
@@ -749,7 +754,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> SummarizationResult {
         AppLog.shared.networking("LocalLLMEngine: Using fallback individual processing", level: .debug)
 
         // Process requests sequentially to avoid overwhelming the Ollama server
@@ -792,10 +797,16 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.networking("LocalLLMEngine: Fallback processing completed")
         AppLog.shared.networking("LocalLLMEngine: Result - summary: \(summary.count) chars, tasks: \(tasks.count), reminders: \(reminders.count), titles: \(titles.count)", level: .debug)
 
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
-    private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> SummarizationResult {
         let startTime = Date()
 
         // Split text into chunks
@@ -851,7 +862,13 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.networking("LocalLLMEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         AppLog.shared.networking("LocalLLMEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
 
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: uniqueTasks,
+            reminders: uniqueReminders,
+            titles: uniqueTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -1164,7 +1181,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         return parseContentTypeFromResponse(response)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         guard isAvailable else {
             throw SummarizationError.aiServiceUnavailable(service: name)
         }
@@ -1193,7 +1210,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         }
     }
 
-    private func processSingleChunk(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunk(_ text: String) async throws -> SummarizationResult {
         // Create a comprehensive prompt for complete processing
         let prompt = createCompleteProcessingPrompt(text: text)
 
@@ -1203,7 +1220,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         // Parse the structured response
         let components = parseStructuredResponse(response)
 
-        return (
+        return SummarizationResult(
             summary: components.summary,
             tasks: components.tasks,
             reminders: components.reminders,
@@ -1214,7 +1231,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
     // MARK: - Chunked Processing
 
-    private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String) async throws -> SummarizationResult {
         let startTime = Date()
 
         AppLog.shared.networking("GoogleAI: Starting chunked processing")
@@ -1287,7 +1304,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         AppLog.shared.networking("GoogleAI: Chunked processing completed in \(processingTime)s")
         AppLog.shared.networking("GoogleAI: Final results - tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
 
-        return (
+        return SummarizationResult(
             summary: finalSummary,
             tasks: deduplicatedTasks,
             reminders: deduplicatedReminders,
@@ -1506,7 +1523,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         """
     }
 
-    private func parseStructuredResponse(_ response: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseStructuredResponse(_ response: String) -> SummarizationResult {
         logger.info("GoogleAIStudioEngine: Parsing structured response")
         logger.info("Response length: \(response.count) characters")
 
@@ -1529,7 +1546,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 let titles = summaryResponse.titles.map { TitleItem(text: RecordingNameGenerator.cleanStandardizedTitleResponse($0), confidence: 0.8) }
                 let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
 
-                return (
+                return SummarizationResult(
                     summary: summaryResponse.summary,
                     tasks: tasks,
                     reminders: reminders,
@@ -1608,7 +1625,13 @@ class GoogleAIStudioEngine: SummarizationEngine {
             }
         }
 
-        return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 }
 

@@ -235,13 +235,7 @@ public class OnDeviceLLMService: ObservableObject {
     // MARK: - Complete Processing
 
     /// Process transcript with all extractions in one call
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         try ensureModelLoaded()
         guard let llm = llm else { throw OnDeviceLLMError.modelNotLoaded }
 
@@ -273,7 +267,7 @@ public class OnDeviceLLMService: ObservableObject {
         let parsed = parseCompleteResponse(result)
 
         // For non-small models, return full results
-        return (
+        return SummarizationResult(
             summary: parsed.summary.isEmpty ? cleanupResponse(result) : parsed.summary,
             tasks: parsed.tasks,
             reminders: parsed.reminders,

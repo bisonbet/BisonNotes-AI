@@ -24,7 +24,8 @@ enum AWSClientCredentialResolver {
     static func staticResolver(credentials: AWSCredentials) -> StaticAWSCredentialIdentityResolver {
         staticResolver(
             accessKeyId: credentials.accessKeyId,
-            secretAccessKey: credentials.secretAccessKey
+            secretAccessKey: credentials.secretAccessKey,
+            sessionToken: credentials.sessionToken
         )
     }
 }

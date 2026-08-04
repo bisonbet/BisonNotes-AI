@@ -2021,7 +2021,14 @@ struct EditableTranscriptView: View {
                     // Get the currently configured transcription engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
 
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: recordingURL, using: selectedEngine)
+                    guard let recordingId = recording.id else {
+                        throw BackgroundProcessingError.recordingIdentityUnavailable(recordingURL)
+                    }
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(
+                        at: recordingURL,
+                        using: selectedEngine,
+                        recordingId: recordingId
+                    )
 
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 

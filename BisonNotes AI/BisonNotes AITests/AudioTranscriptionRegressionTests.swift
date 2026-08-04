@@ -82,6 +82,69 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testMissingRecordingIdentityFailsBeforeTranscriptPersistence() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: persistence)
+        let audioURL = tempDirectory.appendingPathComponent("missing-identity.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = coordinator.addRecording(
+            url: audioURL,
+            name: "Missing Identity",
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
+
+        let transcriptData = TranscriptData(
+            recordingURL: audioURL,
+            recordingName: "Missing Identity",
+            recordingDate: Date(),
+            segments: [TranscriptSegment(speaker: "Speaker", text: "Unsaved transcript", startTime: 0, endTime: 1)]
+        )
+
+        XCTAssertThrowsError(try persistBackgroundTranscript(transcriptData, using: coordinator)) { error in
+            guard case .recordingIdentityUnavailable(let failedURL) = error as? BackgroundProcessingError else {
+                return XCTFail("Expected a typed recording identity error")
+            }
+            XCTAssertEqual(failedURL, audioURL)
+        }
+        XCTAssertNil(coordinator.getTranscriptData(for: recordingId))
+    }
+
+    @MainActor
+    func testBackgroundTranscriptPersistenceReturnsSavedIdentity() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: persistence)
+        let audioURL = tempDirectory.appendingPathComponent("persisted-transcript.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = coordinator.addRecording(
+            url: audioURL,
+            name: "Persisted Transcript",
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
+        let transcriptData = TranscriptData(
+            recordingId: recordingId,
+            recordingURL: audioURL,
+            recordingName: "Persisted Transcript",
+            recordingDate: Date(),
+            segments: [TranscriptSegment(speaker: "Speaker", text: "Persist this transcript", startTime: 0, endTime: 1)],
+            engine: .openAI,
+            processingTime: 0.5,
+            confidence: 0.9
+        )
+
+        let transcriptId = try persistBackgroundTranscript(transcriptData, using: coordinator)
+
+        XCTAssertEqual(coordinator.getTranscript(for: recordingId)?.id, transcriptId)
+        XCTAssertEqual(coordinator.getTranscriptData(for: recordingId)?.recordingId, recordingId)
+        XCTAssertEqual(coordinator.getTranscriptData(for: recordingId)?.plainText, "Persist this transcript")
+    }
+
+    @MainActor
     func testActiveTranscriptionJobDetectionUsesFilenameWithoutDiskIO() throws {
         let persistence = PersistenceController(inMemory: true)
         let coordinator = AppDataCoordinator(persistenceController: persistence)

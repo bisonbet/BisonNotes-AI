@@ -9,6 +9,35 @@ import Foundation
 import CoreData
 import CoreLocation
 
+enum SummaryUpsertError: LocalizedError {
+    case recordingNotFound(UUID)
+    case recordingIdentityUnavailable
+    case summaryIDBelongsToAnotherRecording(UUID)
+    case encodingFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .recordingNotFound(let recordingId):
+            return "Recording not found for summary migration: \(recordingId.uuidString)"
+        case .recordingIdentityUnavailable:
+            return "Recording identity is unavailable for summary upsert"
+        case .summaryIDBelongsToAnotherRecording(let summaryId):
+            return "Summary ID belongs to another recording: \(summaryId.uuidString)"
+        case .encodingFailed:
+            return "Summary structured data could not be encoded"
+        }
+    }
+}
+
+enum SummaryUpsertIdentityPolicy: Equatable {
+    /// Local generation and editing retain the existing Core Data UUID so supplemental
+    /// notes and attachments remain associated with the same summary.
+    case preserveExisting
+
+    /// Restore operations treat the incoming summary UUID as authoritative.
+    case incomingSummary
+}
+
 /// Core Data manager that provides clean access to recordings, transcripts, and summaries
 /// Replaces the legacy registry system with proper Core Data operations
 @MainActor
@@ -256,16 +285,15 @@ class CoreDataManager: ObservableObject {
 
     func getRecording(url: URL) -> RecordingEntry? {
         let filename = url.lastPathComponent
+        let normalizedTargetPath = normalizedURLPath(url)
 
-        // Get all recordings and check if any resolve to this URL
-        let allRecordings = getAllRecordings()
-
-        for recording in allRecordings {
-            if let recordingURL = getAbsoluteURL(for: recording) {
-                if recordingURL.path == url.path || recordingURL.lastPathComponent == filename {
-                    return recording
-                }
+        if let exactMatch = getAllRecordings().first(where: { recording in
+            guard let recordingURL = getAbsoluteURL(for: recording) else {
+                return false
             }
+            return normalizedURLPath(recordingURL) == normalizedTargetPath
+        }) {
+            return exactMatch
         }
 
         // If no match found, try legacy URL matching for migration cases
@@ -285,6 +313,10 @@ class CoreDataManager: ObservableObject {
         }
 
         return nil
+    }
+
+    private func normalizedURLPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     func getRecording(name: String) -> RecordingEntry? {
@@ -517,6 +549,223 @@ class CoreDataManager: ObservableObject {
 
     // MARK: - Summary Operations
 
+    /// Inserts or updates one summary while preserving the legacy summary ID when possible.
+    /// The recording UUID is the authoritative identity; the recording URL is not accepted here
+    /// as a substitute because callers must resolve it before writing.
+    @discardableResult
+    func upsertSummary(
+        _ summary: EnhancedSummaryData,
+        for recordingId: UUID,
+        transcriptId: UUID? = nil,
+        identityPolicy: SummaryUpsertIdentityPolicy = .preserveExisting
+    ) throws -> UUID {
+        guard let recordingEntry = getRecording(id: recordingId) else {
+            throw SummaryUpsertError.recordingNotFound(recordingId)
+        }
+
+        if let embeddedRecordingId = summary.recordingId, embeddedRecordingId != recordingId {
+            throw SummaryUpsertError.summaryIDBelongsToAnotherRecording(summary.id)
+        }
+
+        let summaryByIDRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        summaryByIDRequest.predicate = NSPredicate(format: "id == %@", summary.id as CVarArg)
+        let summaryByID = try context.fetch(summaryByIDRequest).first
+        if let summaryByID,
+           let existingRecordingId = summaryByID.recordingId ?? summaryByID.recording?.id,
+           existingRecordingId != recordingId {
+            throw SummaryUpsertError.summaryIDBelongsToAnotherRecording(summary.id)
+        }
+
+        let summariesForRecordingRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        summariesForRecordingRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        summariesForRecordingRequest.sortDescriptors = [NSSortDescriptor(key: "generatedAt", ascending: false)]
+        let summariesForRecording = try context.fetch(summariesForRecordingRequest)
+        let summaryEntry: SummaryEntry
+        let previousSummaryId: UUID?
+        switch identityPolicy {
+        case .preserveExisting:
+            summaryEntry = summaryByID ?? summariesForRecording.first ?? SummaryEntry(context: context)
+            previousSummaryId = nil
+        case .incomingSummary:
+            if let summaryByID {
+                summaryEntry = summaryByID
+                previousSummaryId = nil
+            } else if let existingSummary = summariesForRecording.first {
+                summaryEntry = existingSummary
+                previousSummaryId = existingSummary.id
+            } else {
+                summaryEntry = SummaryEntry(context: context)
+                previousSummaryId = nil
+            }
+        }
+
+        let summaryId: UUID
+        switch identityPolicy {
+        case .preserveExisting:
+            summaryId = summaryEntry.id ?? summary.id
+        case .incomingSummary:
+            summaryId = summary.id
+        }
+        summaryEntry.id = summaryId
+
+        guard let tasksData = try? JSONEncoder().encode(summary.tasks),
+              let tasksString = String(data: tasksData, encoding: .utf8),
+              let remindersData = try? JSONEncoder().encode(summary.reminders),
+              let remindersString = String(data: remindersData, encoding: .utf8),
+              let titlesData = try? JSONEncoder().encode(summary.titles),
+              let titlesString = String(data: titlesData, encoding: .utf8) else {
+            throw SummaryUpsertError.encodingFailed
+        }
+
+        summaryEntry.recordingId = recordingId
+        summaryEntry.summary = summary.summary
+        summaryEntry.tasks = tasksString
+        summaryEntry.reminders = remindersString
+        summaryEntry.titles = titlesString
+        summaryEntry.contentType = summary.contentType.rawValue
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
+        summaryEntry.generatedAt = summary.generatedAt
+        summaryEntry.version = Int32(summary.version)
+        summaryEntry.wordCount = Int32(summary.wordCount)
+        summaryEntry.originalLength = Int32(summary.originalLength)
+        summaryEntry.compressionRatio = summary.compressionRatio
+        summaryEntry.confidence = summary.confidence
+        summaryEntry.processingTime = summary.processingTime
+        summaryEntry.recording = recordingEntry
+        recordingEntry.summary = summaryEntry
+        recordingEntry.summaryId = summaryId
+        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+        recordingEntry.lastModified = summary.generatedAt
+
+        try linkTranscript(to: summaryEntry, id: transcriptId ?? summary.transcriptId, policy: identityPolicy)
+
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        // Keep one authoritative summary per recording after the save succeeds.
+        let duplicateSummaries = summariesForRecording.filter { $0.objectID != summaryEntry.objectID }
+        if !duplicateSummaries.isEmpty {
+            duplicateSummaries.forEach(context.delete)
+            do {
+                try context.save()
+            } catch {
+                context.rollback()
+                throw error
+            }
+        }
+
+        if let previousSummaryId, previousSummaryId != summaryId {
+            do {
+                try SummaryAttachmentStore.shared.migrate(from: previousSummaryId, to: summaryId)
+            } catch {
+                AppLog.shared.coreData(
+                    "Summary identity updated, but supplemental data migration failed: \(error)",
+                    level: .error
+                )
+            }
+        }
+
+        return summaryId
+    }
+
+    private func linkTranscript(
+        to summaryEntry: SummaryEntry,
+        id transcriptId: UUID?,
+        policy identityPolicy: SummaryUpsertIdentityPolicy
+    ) throws {
+        guard let transcriptId else {
+            if identityPolicy == .incomingSummary {
+                summaryEntry.transcriptId = nil
+                summaryEntry.transcript = nil
+            }
+            return
+        }
+
+        let transcriptRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        transcriptRequest.predicate = NSPredicate(format: "id == %@", transcriptId as CVarArg)
+        let transcript = try context.fetch(transcriptRequest).first
+        if transcript != nil || identityPolicy == .incomingSummary {
+            summaryEntry.transcriptId = transcriptId
+            summaryEntry.transcript = transcript
+        }
+    }
+
+    /// Persists a cloud summary that has no matching local recording by creating a stable
+    /// summary-only recording anchor. Repeated restores return the existing summary instead
+    /// of creating another anchor.
+    @discardableResult
+    func upsertOrphanedSummary(_ summary: EnhancedSummaryData) throws -> UUID {
+        if let existingSummary = getSummary(id: summary.id) {
+            guard let recordingEntry = existingSummary.recording,
+                  let recordingId = recordingEntry.id else {
+                throw SummaryUpsertError.recordingIdentityUnavailable
+            }
+
+            recordingEntry.recordingName = summary.recordingName
+            recordingEntry.recordingDate = summary.recordingDate
+            recordingEntry.lastModified = summary.generatedAt
+            return try upsertSummary(
+                summary,
+                for: recordingId,
+                transcriptId: summary.transcriptId,
+                identityPolicy: .incomingSummary
+            )
+        }
+
+        let tasksData = try JSONEncoder().encode(summary.tasks)
+        let remindersData = try JSONEncoder().encode(summary.reminders)
+        let titlesData = try JSONEncoder().encode(summary.titles)
+        guard let tasks = String(data: tasksData, encoding: .utf8),
+              let reminders = String(data: remindersData, encoding: .utf8),
+              let titles = String(data: titlesData, encoding: .utf8) else {
+            throw SummaryUpsertError.encodingFailed
+        }
+
+        let recordingEntry = RecordingEntry(context: context)
+        recordingEntry.id = summary.recordingId ?? UUID()
+        recordingEntry.recordingName = summary.recordingName
+        recordingEntry.recordingDate = summary.recordingDate
+        recordingEntry.recordingURL = nil
+        recordingEntry.duration = 0
+        recordingEntry.fileSize = 0
+        recordingEntry.summaryId = summary.id
+        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+        recordingEntry.lastModified = summary.generatedAt
+
+        let summaryEntry = SummaryEntry(context: context)
+        summaryEntry.id = summary.id
+        summaryEntry.recordingId = recordingEntry.id
+        summaryEntry.transcriptId = summary.transcriptId
+        summaryEntry.generatedAt = summary.generatedAt
+        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
+        summaryEntry.processingTime = summary.processingTime
+        summaryEntry.confidence = summary.confidence
+        summaryEntry.summary = summary.summary
+        summaryEntry.contentType = summary.contentType.rawValue
+        summaryEntry.wordCount = Int32(summary.wordCount)
+        summaryEntry.originalLength = Int32(summary.originalLength)
+        summaryEntry.compressionRatio = summary.compressionRatio
+        summaryEntry.version = Int32(summary.version)
+        summaryEntry.tasks = tasks
+        summaryEntry.reminders = reminders
+        summaryEntry.titles = titles
+        summaryEntry.recording = recordingEntry
+        recordingEntry.summary = summaryEntry
+
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        return summary.id
+    }
+
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
@@ -559,6 +808,35 @@ class CoreDataManager: ObservableObject {
         } catch {
             AppLog.shared.coreData("Error fetching summaries: \(error)", level: .error)
             return []
+        }
+    }
+
+    /// Returns the complete summary value objects represented by the Core Data store.
+    /// SummaryEntry is the authoritative source; this method is the only conversion path
+    /// callers should use when they need all summaries for display or cloud backup.
+    func getAllSummaryData() -> [EnhancedSummaryData] {
+        getAllSummaries().compactMap { summaryEntry in
+            guard let recordingId = summaryEntry.recordingId ?? summaryEntry.recording?.id,
+                  let recordingEntry = getRecording(id: recordingId) else {
+                AppLog.shared.coreData(
+                    "Skipping summary \(summaryEntry.id?.uuidString ?? "nil") without a resolvable recording",
+                    level: .error
+                )
+                return nil
+            }
+            return convertToEnhancedSummaryData(summaryEntry: summaryEntry, recordingEntry: recordingEntry)
+        }
+    }
+
+    func getSummary(id: UUID) -> SummaryEntry? {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+
+        do {
+            return try context.fetch(fetchRequest).first
+        } catch {
+            AppLog.shared.coreData("Error fetching summary \(id): \(error)", level: .error)
+            return nil
         }
     }
 

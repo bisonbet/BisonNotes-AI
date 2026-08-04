@@ -133,7 +133,7 @@ class MistralAISummarizationService {
         return ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         let contentType = try await classifyContent(text)
 
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
@@ -162,7 +162,13 @@ class MistralAISummarizationService {
         }
 
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
-        return (result.summary, result.tasks, result.reminders, result.titles, contentType)
+        return SummarizationResult(
+            summary: result.summary,
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Private Helper Methods

@@ -28,6 +28,7 @@ class AppDataCoordinator: ObservableObject {
 
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
+        SummaryManager.shared.configure(with: self)
 
         Task {
             await initializeSystem()
@@ -37,6 +38,16 @@ class AppDataCoordinator: ObservableObject {
     private func initializeSystem() async {
         // Core Data system initialization
         isInitialized = true
+
+        let migrationReport = SummaryManager.shared.migrateLegacySummariesIfNeeded(using: self)
+        if migrationReport.decodedCount > 0 || migrationReport.failedCount > 0 || migrationReport.unresolvedCount > 0 {
+            let message = "Legacy summary migration: decoded=\(migrationReport.decodedCount), migrated=\(migrationReport.migratedCount), preserved=\(migrationReport.preservedExistingCount), unresolved=\(migrationReport.unresolvedCount), failed=\(migrationReport.failedCount)"
+            if migrationReport.didComplete {
+                AppLog.shared.coreData(message, level: .debug)
+            } else {
+                AppLog.shared.coreData(message, level: .error)
+            }
+        }
     }
 
     // MARK: - Public Interface
@@ -145,6 +156,29 @@ class AppDataCoordinator: ObservableObject {
     /// Gets all summaries
     func getAllSummaries() -> [SummaryEntry] {
         return coreDataManager.getAllSummaries()
+    }
+
+    func getAllSummaryData() -> [EnhancedSummaryData] {
+        return coreDataManager.getAllSummaryData()
+    }
+
+    @discardableResult
+    func upsertSummary(
+        _ summary: EnhancedSummaryData,
+        for recordingId: UUID? = nil,
+        transcriptId: UUID? = nil,
+        identityPolicy: SummaryUpsertIdentityPolicy = .preserveExisting
+    ) throws -> UUID {
+        let resolvedRecordingId = recordingId ?? summary.recordingId ?? coreDataManager.getRecording(url: summary.recordingURL)?.id
+        guard let resolvedRecordingId else {
+            throw SummaryUpsertError.recordingIdentityUnavailable
+        }
+        return try coreDataManager.upsertSummary(
+            summary,
+            for: resolvedRecordingId,
+            transcriptId: transcriptId,
+            identityPolicy: identityPolicy
+        )
     }
 
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {

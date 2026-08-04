@@ -415,7 +415,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     // MARK: - Public Methods
 
-    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil) async throws -> TranscriptionResult {
+    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil, recordingId: UUID) async throws -> TranscriptionResult {
 
         // Check if already transcribing
         guard !isTranscribing else {
@@ -476,7 +476,7 @@ if durationMinutes > 120 { // 2 hours max
                 throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxAWSDuration)
             }
 
-return try await transcribeWithAWS(url: url, config: config)
+            return try await transcribeWithAWS(url: url, config: config, recordingId: recordingId)
 
         case .whisper:
             switchToWhisperTranscription()
@@ -485,35 +485,35 @@ return try await transcribeWithAWS(url: url, config: config)
             if !isWhisperProperlyConfigured() {
                 AppLog.shared.transcription("Whisper not properly configured, falling back to native speech recognition")
                 switchToNativeSpeechTranscription()
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
             let isWhisperAvailable = await validateWhisperService()
 if isWhisperAvailable {
                 if let config = whisperConfig {
-                    return try await transcribeWithWhisper(url: url, config: config)
+                    return try await transcribeWithWhisper(url: url, config: config, recordingId: recordingId)
                 } else {
                     switchToNativeSpeechTranscription()
-                    return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                    return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
                 }
             } else {
                 switchToNativeSpeechTranscription()
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .openAI:
             switchToNativeSpeechTranscription() // OpenAI doesn't need background checking
 
             // Validate OpenAI configuration
-if let config = openAIConfig {
-                return try await transcribeWithOpenAI(url: url, config: config)
+            if let config = openAIConfig {
+                return try await transcribeWithOpenAI(url: url, config: config, recordingId: recordingId)
             } else {
                 // Ensure speech recognizer is available for fallback
                 guard let recognizer = speechRecognizer, recognizer.isAvailable else {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
 
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                    return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .mistralAI:
@@ -521,23 +521,23 @@ if let config = openAIConfig {
 
             // Validate Mistral configuration
             if let config = mistralTranscribeConfig {
-                return try await transcribeWithMistral(url: url, config: config)
+                return try await transcribeWithMistral(url: url, config: config, recordingId: recordingId)
             } else {
                 // Ensure speech recognizer is available for fallback
                 guard let recognizer = speechRecognizer, recognizer.isAvailable else {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .openAIAPICompatible:
 // These are not implemented yet, fall back to native speech recognition
             switchToNativeSpeechTranscription()
-            return try await transcribeWithNativeSpeech(url: url, duration: duration)
+            return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
         }
     }
 
-    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {
         // Ensure transcription state is properly initialized
         await MainActor.run {
             isTranscribing = true
@@ -595,7 +595,7 @@ if let config = openAIConfig {
             return try await transcribeSingleChunk(url: url)
         } else {
             AppLog.shared.transcription("Using large file transcription (duration: \(duration)s > \(maxChunkDuration)s)")
-            return try await transcribeLargeFile(url: url, duration: duration)
+            return try await transcribeLargeFile(url: url, duration: duration, recordingId: recordingId)
         }
     }
 
@@ -807,7 +807,7 @@ if transcriptText.isEmpty {
         }
     }
 
-private func transcribeLargeFile(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeLargeFile(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {
         let startTime = Date()
         isTranscribing = true
         currentStatus = "Processing large file..."
@@ -860,7 +860,7 @@ do {
             throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
         }
 
-        var allSegments: [TranscriptSegment] = []
+        var transcriptChunks: [TranscriptChunk] = []
         var allText: [String] = []
         var currentOffset: TimeInterval = 0
 
@@ -900,10 +900,28 @@ for (index, chunk) in chunks.enumerated() {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
 
+                let chunkURL = try await extractAudioChunk(
+                    from: url,
+                    startTime: chunk.start,
+                    endTime: chunk.end
+                )
+                defer {
+                    try? FileManager.default.removeItem(at: chunkURL)
+                }
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunkURL.path)[.size] as? Int64) ?? 0
+                let audioChunk = AudioChunk(
+                    originalURL: url,
+                    chunkURL: chunkURL,
+                    sequenceNumber: transcriptChunks.count,
+                    startTime: chunk.start,
+                    endTime: chunk.end,
+                    fileSize: fileSize
+                )
+
                 // Add timeout for individual chunk processing
                 let chunkResult = try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
                     group.addTask {
-                        try await self.transcribeChunk(url: url, startTime: chunk.start, endTime: chunk.end)
+                        try await self.transcribeChunkInternal(url: chunkURL, startTime: Date())
                     }
 
                     group.addTask {
@@ -923,17 +941,12 @@ for (index, chunk) in chunks.enumerated() {
                 if chunkResult.fullText.isEmpty {
                     AppLog.shared.transcription("Chunk \(index + 1) was silent/empty, skipping", level: .debug)
                 } else {
-                    // Adjust segment timestamps
-                    let adjustedSegments = chunkResult.segments.map { segment in
-                        TranscriptSegment(
-                            speaker: segment.speaker,
-                            text: segment.text,
-                            startTime: segment.startTime + currentOffset,
-                            endTime: segment.endTime + currentOffset
-                        )
-                    }
-
-                    allSegments.append(contentsOf: adjustedSegments)
+                    let transcriptChunk = chunkingService.createTranscriptChunk(
+                        from: chunkResult.fullText,
+                        audioChunk: audioChunk,
+                        segments: chunkResult.segments
+                    )
+                    transcriptChunks.append(transcriptChunk)
                     allText.append(chunkResult.fullText)
                 }
 
@@ -1017,32 +1030,28 @@ for (index, chunk) in chunks.enumerated() {
             AppLog.shared.transcription("Transcript contains 'loading' text -- may indicate placeholder text in output")
         }
 
+        guard !transcriptChunks.isEmpty else {
+            throw TranscriptionError.noSpeechDetected
+        }
+
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+        let reassembly = try await chunkingService.reassembleTranscript(
+            from: transcriptChunks,
+            originalURL: url,
+            recordingName: url.deletingPathExtension().lastPathComponent,
+            recordingDate: recordingDate,
+            recordingId: recordingId
+        )
+
         return TranscriptionResult(
-            fullText: fullText,
-            segments: allSegments,
+            fullText: reassembly.transcriptData.plainText,
+            segments: reassembly.transcriptData.segments,
             processingTime: processingTime,
-            chunkCount: chunks.count,
+            chunkCount: transcriptChunks.count,
             success: true,
             error: nil
         )
-    }
-
-    private func transcribeChunk(url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Extracting chunk from \(startTime/60) to \(endTime/60) minutes", level: .debug)
-
-        // Create a temporary audio file for the chunk
-        let chunkURL = try await extractAudioChunk(from: url, startTime: startTime, endTime: endTime)
-        AppLog.shared.transcription("Chunk extracted to: \(chunkURL.lastPathComponent)", level: .debug)
-
-        defer {
-            try? FileManager.default.removeItem(at: chunkURL)
-            AppLog.shared.transcription("Cleaned up temporary chunk file", level: .debug)
-        }
-
-        AppLog.shared.transcription("Transcribing chunk", level: .debug)
-        // Use internal method that doesn't manage isTranscribing flag
-        let chunkStartTime = Date()
-        return try await transcribeChunkInternal(url: chunkURL, startTime: chunkStartTime)
     }
 
     /// Internal method for transcribing a chunk without managing the isTranscribing flag
@@ -1315,7 +1324,7 @@ for (index, chunk) in chunks.enumerated() {
 
     // MARK: - AWS Transcription
 
-private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
+private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
 
         let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
 
@@ -1464,7 +1473,7 @@ if status.isCompleted {
 
     // MARK: - Whisper Transcription
 
-    private func transcribeWithWhisper(url: URL, config: WhisperConfig) async throws -> TranscriptionResult {
+    private func transcribeWithWhisper(url: URL, config: WhisperConfig, recordingId: UUID) async throws -> TranscriptionResult {
         beginBackgroundTask()
         defer { endBackgroundTask() }
 
@@ -1480,11 +1489,15 @@ if status.isCompleted {
             // Get audio duration to determine if we need chunking
             let duration = try await getAudioDuration(url: url)
 
-let result: TranscriptionResult
+            let result: TranscriptionResult
             if duration > maxChunkDuration && enableEnhancedTranscription {
-                result = try await whisperService.transcribeAudioInChunks(url: url, chunkDuration: maxChunkDuration)
+                result = try await whisperService.transcribeAudioInChunks(
+                    url: url,
+                    chunkDuration: maxChunkDuration,
+                    recordingId: recordingId
+                )
             } else {
-                result = try await whisperService.transcribeAudio(url: url)
+                result = try await whisperService.transcribeAudio(url: url, recordingId: recordingId)
             }
 
 return result
@@ -1536,7 +1549,7 @@ return result
 
     // MARK: - OpenAI Transcription
 
-private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
+private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
 
         let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
 
@@ -1551,10 +1564,10 @@ private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) asyn
             let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
 
 if fileSize > maxSize {
-                return try await transcribeWithChunkedOpenAI(url: url)
+                return try await transcribeWithChunkedOpenAI(url: url, recordingId: recordingId)
             }
 
-let openAIResult = try await openAIService.transcribeAudioFile(at: url)
+            let openAIResult = try await openAIService.transcribeAudioFile(at: url, recordingId: recordingId)
 
             // Convert OpenAI result to our TranscriptionResult format
             let transcriptionResult = TranscriptionResult(
@@ -1574,7 +1587,7 @@ return transcriptionResult
         }
     }
 
-private func transcribeWithChunkedOpenAI(url: URL) async throws -> TranscriptionResult {
+private func transcribeWithChunkedOpenAI(url: URL, recordingId: UUID) async throws -> TranscriptionResult {
 
         guard let openAIConfig = openAIConfig else {
             throw TranscriptionError.openAITranscriptionFailed(TranscriptionError.fileNotFound)
@@ -1588,43 +1601,37 @@ private func transcribeWithChunkedOpenAI(url: URL) async throws -> Transcription
             let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
             let chunks = chunkingResult.chunks
 
-            var allTranscripts: [String] = []
-            var allSegments: [TranscriptSegment] = []
-            var totalProcessingTime: TimeInterval = 0
-            var chunkIndex = 0
+            var transcriptChunks: [TranscriptChunk] = []
 
 for chunk in chunks {
-                chunkIndex += 1
-
-                let startTime = Date()
-                let openAIResult = try await openAIService.transcribeAudioFile(at: chunk.chunkURL)
-                let processingTime = Date().timeIntervalSince(startTime)
-                totalProcessingTime += processingTime
-
-                // Add the transcript text
-                allTranscripts.append(openAIResult.transcriptText)
-
-                // Adjust segment timestamps to account for chunk start time
-                let adjustedSegments = openAIResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: "Speaker",
-                        text: segment.text,
-                        startTime: segment.startTime + chunk.startTime,
-                        endTime: segment.endTime + chunk.startTime
-                    )
-                }
-                allSegments.append(contentsOf: adjustedSegments)
+                let openAIResult = try await openAIService.transcribeAudioFile(
+                    at: chunk.chunkURL,
+                    recordingId: recordingId
+                )
+                let transcriptChunk = chunkingService.createTranscriptChunk(
+                    from: openAIResult.transcriptText,
+                    audioChunk: chunk,
+                    segments: openAIResult.segments
+                )
+                transcriptChunks.append(transcriptChunk)
 
             }
 
-            // Combine all transcripts
-            let fullTranscript = allTranscripts.joined(separator: " ")
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: recordingDate,
+                recordingId: recordingId
+            )
 
             let transcriptionResult = TranscriptionResult(
-                fullText: fullTranscript,
-                segments: allSegments,
-                processingTime: totalProcessingTime,
-                chunkCount: chunks.count,
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: reassembly.reassemblyTime,
+                chunkCount: transcriptChunks.count,
                 success: true,
                 error: nil
             )
@@ -1639,7 +1646,7 @@ return transcriptionResult
 
     // MARK: - Mistral Transcription
 
-    private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig) async throws -> TranscriptionResult {
+    private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
         let mistralService = MistralTranscribeService(config: config, chunkingService: chunkingService)
 
         do {
@@ -1652,10 +1659,10 @@ return transcriptionResult
             let maxSize: Int64 = 24 * 1024 * 1024 // 24MB conservative limit
 
             if fileSize > maxSize {
-                return try await transcribeWithChunkedMistral(url: url)
+                return try await transcribeWithChunkedMistral(url: url, recordingId: recordingId)
             }
 
-            let mistralResult = try await mistralService.transcribeAudioFile(at: url)
+            let mistralResult = try await mistralService.transcribeAudioFile(at: url, recordingId: recordingId)
 
             // Convert Mistral result to our TranscriptionResult format
             return TranscriptionResult(
@@ -1672,7 +1679,7 @@ return transcriptionResult
         }
     }
 
-    private func transcribeWithChunkedMistral(url: URL) async throws -> TranscriptionResult {
+    private func transcribeWithChunkedMistral(url: URL, recordingId: UUID) async throws -> TranscriptionResult {
         guard let mistralConfig = mistralTranscribeConfig else {
             throw TranscriptionError.mistralTranscriptionFailed(TranscriptionError.engineNotConfigured)
         }
@@ -1684,37 +1691,36 @@ return transcriptionResult
             let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .mistralAI)
             let chunks = chunkingResult.chunks
 
-            var allTranscripts: [String] = []
-            var allSegments: [TranscriptSegment] = []
-            var totalProcessingTime: TimeInterval = 0
+            var transcriptChunks: [TranscriptChunk] = []
 
             for chunk in chunks {
-                let startTime = Date()
-                let mistralResult = try await mistralService.transcribeAudioFile(at: chunk.chunkURL)
-                let processingTime = Date().timeIntervalSince(startTime)
-                totalProcessingTime += processingTime
-
-                allTranscripts.append(mistralResult.transcriptText)
-
-                // Adjust segment timestamps to account for chunk start time
-                let adjustedSegments = mistralResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text,
-                        startTime: segment.startTime + chunk.startTime,
-                        endTime: segment.endTime + chunk.startTime
-                    )
-                }
-                allSegments.append(contentsOf: adjustedSegments)
+                let mistralResult = try await mistralService.transcribeAudioFile(
+                    at: chunk.chunkURL,
+                    recordingId: recordingId
+                )
+                let transcriptChunk = chunkingService.createTranscriptChunk(
+                    from: mistralResult.transcriptText,
+                    audioChunk: chunk,
+                    segments: mistralResult.segments
+                )
+                transcriptChunks.append(transcriptChunk)
             }
 
-            let fullTranscript = allTranscripts.joined(separator: " ")
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: recordingDate,
+                recordingId: recordingId
+            )
 
             return TranscriptionResult(
-                fullText: fullTranscript,
-                segments: allSegments,
-                processingTime: totalProcessingTime,
-                chunkCount: chunks.count,
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: reassembly.reassemblyTime,
+                chunkCount: transcriptChunks.count,
                 success: true,
                 error: nil
             )

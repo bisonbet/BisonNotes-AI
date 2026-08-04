@@ -230,7 +230,7 @@ class AWSBedrockService: ObservableObject {
         return ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // First classify the content
         let contentType = try await classifyContent(text)
 
@@ -393,7 +393,7 @@ class AWSBedrockService: ObservableObject {
         return sanitized.data(using: .utf8) ?? data
     }
 
-    private func processCompleteStructured(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processCompleteStructured(text: String, contentType: ContentType) async throws -> SummarizationResult {
         let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
 
@@ -406,10 +406,16 @@ class AWSBedrockService: ObservableObject {
 
         // Parse the structured response
         let result = try parseCompleteResponseFromJSON(response)
-        return (result.summary, result.tasks, result.reminders, result.titles, contentType)
+        return SummarizationResult(
+            summary: result.summary,
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles,
+            contentType: contentType
+        )
     }
 
-    private func processCompleteIndividual(text: String, contentType: ContentType) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processCompleteIndividual(text: String, contentType: ContentType) async throws -> SummarizationResult {
         // Process requests sequentially to avoid overwhelming the API
         let summary = try await generateSummary(from: text, contentType: contentType)
 
@@ -428,10 +434,16 @@ class AWSBedrockService: ObservableObject {
 
         let titles = try await extractTitles(from: text)
 
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
-    private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processCompleteChunked(text: String, contentType: ContentType, maxTokens: Int) async throws -> SummarizationResult {
         // Split text into chunks
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
         AppLog.shared.networking("AWS Bedrock: Split text into \(chunks.count) chunks", level: .debug)
@@ -480,7 +492,13 @@ class AWSBedrockService: ObservableObject {
 
         AppLog.shared.networking("AWS Bedrock: Final summary: \(combinedSummary.count) chars, tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
 
-        return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: deduplicatedTasks,
+            reminders: deduplicatedReminders,
+            titles: deduplicatedTitles,
+            contentType: contentType
+        )
     }
 
     private func generateMetaSummary(from summaries: [String], contentType: ContentType) async throws -> String {

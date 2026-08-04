@@ -217,6 +217,9 @@ class OpenAITranscribeService: NSObject, ObservableObject {
             // Use chunking service to check if chunking is needed
             let needsChunking = try await chunkingService.shouldChunkFile(url, for: .openAI)
             if needsChunking {
+                guard let recordingId else {
+                    throw OpenAITranscribeError.recordingIdentityRequired
+                }
                 currentStatus = "Chunking audio file..."
                 progress = 0.05
                 let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
@@ -251,7 +254,7 @@ class OpenAITranscribeService: NSObject, ObservableObject {
                     originalURL: url,
                     recordingName: url.deletingPathExtension().lastPathComponent,
                     recordingDate: creationDate,
-                    recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
+                    recordingId: recordingId
                 )
                 // Clean up chunk files
                 try await chunkingService.cleanupChunks(chunks)
@@ -452,6 +455,7 @@ enum OpenAITranscribeError: LocalizedError {
     case apiError(String)
     case invalidResponse(String)
     case networkError(Error)
+    case recordingIdentityRequired
 
     var errorDescription: String? {
         switch self {
@@ -469,6 +473,8 @@ enum OpenAITranscribeError: LocalizedError {
             return "Invalid response from OpenAI: \(message)"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .recordingIdentityRequired:
+            return "A recording ID is required for chunked transcription."
         }
     }
 }

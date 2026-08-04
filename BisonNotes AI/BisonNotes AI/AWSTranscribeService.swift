@@ -264,6 +264,9 @@ class AWSTranscribeService: NSObject, ObservableObject {
         // Check if chunking is needed for AWS (2 hour limit)
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .awsTranscribe)
         if needsChunking {
+            guard let recordingId else {
+                throw AWSTranscribeError.recordingIdentityRequired
+            }
             currentStatus = "Chunking audio file..."
             progress = 0.05
             let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .awsTranscribe)
@@ -301,7 +304,7 @@ class AWSTranscribeService: NSObject, ObservableObject {
                 originalURL: url,
                 recordingName: url.deletingPathExtension().lastPathComponent,
                 recordingDate: creationDate,
-                recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
+                recordingId: recordingId
             )
             // Clean up chunk files
             try await chunkingService.cleanupChunks(chunks)
@@ -682,6 +685,7 @@ enum AWSTranscribeError: LocalizedError {
     case noTranscriptAvailable
     case invalidTranscriptURI
     case invalidTranscriptFormat
+    case recordingIdentityRequired
 
     var errorDescription: String? {
         switch self {
@@ -705,6 +709,8 @@ enum AWSTranscribeError: LocalizedError {
             return "Invalid transcript URI"
         case .invalidTranscriptFormat:
             return "Invalid transcript format"
+        case .recordingIdentityRequired:
+            return "A recording ID is required for chunked transcription."
         }
     }
 }

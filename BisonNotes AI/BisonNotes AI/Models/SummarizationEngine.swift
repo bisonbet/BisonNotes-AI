@@ -8,6 +8,14 @@ protocol ConnectionTestable {
 
 // MARK: - Summarization Engine Protocol
 
+struct SummarizationResult: Sendable {
+    let summary: String
+    let tasks: [TaskItem]
+    let reminders: [ReminderItem]
+    let titles: [TitleItem]
+    let contentType: ContentType
+}
+
 protocol SummarizationEngine {
     var name: String { get }
     var engineType: String { get }
@@ -26,7 +34,7 @@ protocol SummarizationEngine {
     func classifyContent(_ text: String) async throws -> ContentType
 
     // Optional: Full processing in one call for efficiency
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+    func processComplete(text: String) async throws -> SummarizationResult
 }
 
 extension SummarizationEngine {

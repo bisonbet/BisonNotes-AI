@@ -133,7 +133,7 @@ class OpenAISummarizationService: ObservableObject {
         return ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // First classify the content
         let contentType = try await classifyContent(text)
 
@@ -176,7 +176,13 @@ class OpenAISummarizationService: ObservableObject {
         // Parse the JSON response with flexible format handling
         // Supports: standard format, wrapped format, markdown code blocks, plain text fallback
         let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
-        return (result.summary, result.tasks, result.reminders, result.titles, contentType)
+        return SummarizationResult(
+            summary: result.summary,
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles,
+            contentType: contentType
+        )
     }
 
     func testConnection() async -> Bool {

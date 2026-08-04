@@ -365,6 +365,7 @@ enum WyomingError: Error, LocalizedError {
     case invalidMessage
     case serverError(String)
     case timeout
+    case recordingIdentityRequired
 
     var errorDescription: String? {
         switch self {
@@ -380,6 +381,8 @@ enum WyomingError: Error, LocalizedError {
             return "Wyoming server error: \(message)"
         case .timeout:
             return "Wyoming operation timed out"
+        case .recordingIdentityRequired:
+            return "A recording ID is required for chunked transcription."
         }
     }
 }

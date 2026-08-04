@@ -718,8 +718,9 @@ class iCloudStorageManager: ObservableObject {
     /// This should only be called manually or during initial setup
     func syncAllSummaries() async throws {
         AppLog.shared.iCloudSync("Manual full sync requested")
-        // Load summaries from the local store
-        let allSummaries = SummaryManager.shared.enhancedSummaries
+        // Core Data is the authoritative local summary store. SummaryManager only exposes
+        // this read-through for callers that do not already have an AppDataCoordinator.
+        let allSummaries = SummaryManager.shared.getAuthoritativeSummaryData()
         try await syncAllSummaries(allSummaries)
     }
 
@@ -1453,115 +1454,43 @@ class iCloudStorageManager: ObservableObject {
     /// Returns `true` when a Core Data row was actually persisted.
     @discardableResult
     private func createCoreDataSummary(from cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws -> Bool {
-        var didPersist = false
+        let localRecordingId: UUID?
+        if let cloudRecordingId = cloudSummary.recordingId {
+            // A cloud recording UUID is authoritative. Do not map it to another local
+            // recording by filename when the UUID is present.
+            localRecordingId = appCoordinator.getRecording(id: cloudRecordingId)?.id
+        } else {
+            localRecordingId = appCoordinator.getRecording(url: cloudSummary.recordingURL)?.id
+        }
 
-        if let recordingId = cloudSummary.recordingId,
-           appCoordinator.coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled == true {
+        if let localRecordingId,
+           appCoordinator.coreDataManager.getRecording(id: localRecordingId)?.isCloudSyncDisabled == true {
             AppLog.shared.iCloudSync("Skipping cloud summary for a recording marked Keep on This Device", level: .debug)
             return false
         }
 
-        // First, try to link to existing local recording/transcript if they exist
-        if let recordingId = cloudSummary.recordingId,
-           let transcriptId = cloudSummary.transcriptId,
-           appCoordinator.coreDataManager.getRecording(id: recordingId) != nil,
-           appCoordinator.coreDataManager.getTranscript(for: recordingId) != nil {
-
-            // Full linking possible - use the workflow manager
-            let summaryId = appCoordinator.addSummary(
+        if let recordingId = localRecordingId {
+            // Upsert by the cloud summary UUID so restore is idempotent and does not create a
+            // second summary for a recording that already has one.
+            try appCoordinator.upsertSummary(
+                cloudSummary,
                 for: recordingId,
-                transcriptId: transcriptId,
-                summary: cloudSummary.summary,
-                tasks: cloudSummary.tasks,
-                reminders: cloudSummary.reminders,
-                titles: cloudSummary.titles,
-                contentType: cloudSummary.contentType,
-                aiEngine: cloudSummary.aiEngine,
-                aiModel: cloudSummary.aiModel,
-                originalLength: cloudSummary.originalLength,
-                processingTime: cloudSummary.processingTime
+                transcriptId: cloudSummary.transcriptId,
+                identityPolicy: .incomingSummary
             )
-
-            if summaryId != nil {
-                didPersist = true
-                AppLog.shared.iCloudSync("Created linked Core Data entry for cloud summary")
-            } else {
-                AppLog.shared.iCloudSync("addSummary returned nil for cloud summary", level: .error)
-            }
+            AppLog.shared.iCloudSync("Upserted linked Core Data entry for cloud summary")
+            return true
         } else {
             // Create orphaned summary entry (similar to "summary-only recordings")
             AppLog.shared.iCloudSync("Creating orphaned Core Data summary entry (no local recording/transcript)", level: .debug)
             try await createOrphanedSummaryEntry(cloudSummary, appCoordinator: appCoordinator)
-            didPersist = true
+            return true
         }
-
-        // Only update SummaryManager when Core Data write was confirmed
-        if didPersist {
-            await MainActor.run {
-                SummaryManager.shared.enhancedSummaries.append(cloudSummary)
-            }
-        }
-
-        return didPersist
     }
 
     /// Creates an orphaned summary entry in Core Data (without recording/transcript links)
     private func createOrphanedSummaryEntry(_ cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws {
-        let context = PersistenceController.shared.container.viewContext
-
-        // Create the Core Data SummaryEntry
-        let summaryEntry = SummaryEntry(context: context)
-        summaryEntry.id = cloudSummary.id
-        summaryEntry.recordingId = cloudSummary.recordingId
-        summaryEntry.transcriptId = cloudSummary.transcriptId
-        summaryEntry.generatedAt = cloudSummary.generatedAt
-        summaryEntry.aiMethod = SummaryMetadataCodec.encode(
-            aiEngine: cloudSummary.aiEngine,
-            aiModel: cloudSummary.aiModel
-        )
-        summaryEntry.processingTime = cloudSummary.processingTime
-        summaryEntry.confidence = cloudSummary.confidence
-        summaryEntry.summary = cloudSummary.summary
-        summaryEntry.contentType = cloudSummary.contentType.rawValue
-        summaryEntry.wordCount = Int32(cloudSummary.wordCount)
-        summaryEntry.originalLength = Int32(cloudSummary.originalLength)
-        summaryEntry.compressionRatio = cloudSummary.compressionRatio
-        summaryEntry.version = Int32(cloudSummary.version)
-
-        // Store structured data as JSON
-        if let titlesData = try? JSONEncoder().encode(cloudSummary.titles),
-           let titlesString = String(data: titlesData, encoding: .utf8) {
-            summaryEntry.titles = titlesString
-        }
-        if let tasksData = try? JSONEncoder().encode(cloudSummary.tasks),
-           let tasksString = String(data: tasksData, encoding: .utf8) {
-            summaryEntry.tasks = tasksString
-        }
-        if let remindersData = try? JSONEncoder().encode(cloudSummary.reminders),
-           let remindersString = String(data: remindersData, encoding: .utf8) {
-            summaryEntry.reminders = remindersString
-        }
-
-        // Create a "summary-only" recording entry to maintain the pattern
-        let recordingEntry = RecordingEntry(context: context)
-        recordingEntry.id = cloudSummary.recordingId ?? UUID()
-        recordingEntry.recordingName = cloudSummary.recordingName
-        recordingEntry.recordingDate = cloudSummary.recordingDate
-        recordingEntry.recordingURL = nil // No URL since there's no local audio file
-        recordingEntry.duration = 0 // Unknown duration
-        recordingEntry.fileSize = 0
-        recordingEntry.summaryId = cloudSummary.id
-        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
-        recordingEntry.lastModified = Date()
-
-        // Link them together
-        summaryEntry.recording = recordingEntry
-        recordingEntry.summary = summaryEntry
-
-        // Note: transcript remains nil since we don't have local transcript
-
-        // Save to Core Data
-        try context.save()
+        _ = try appCoordinator.coreDataManager.upsertOrphanedSummary(cloudSummary)
 
         AppLog.shared.iCloudSync("Created orphaned Core Data summary entry")
     }

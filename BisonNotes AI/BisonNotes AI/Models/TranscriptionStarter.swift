@@ -168,21 +168,25 @@ final class TranscriptionStarter: ObservableObject {
                         return
                     }
 
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: transcriptionURL, using: selectedEngine)
+                    guard let recordingId = recording.id else {
+                        throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptionURL)
+                    }
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(
+                        at: transcriptionURL,
+                        using: selectedEngine,
+                        recordingId: recordingId
+                    )
                     AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
                         let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
                         let transcriptData = TranscriptData(
+                            recordingId: recordingId,
                             recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
                             segments: result.segments
                         )
-                        guard let recordingId = transcriptData.recordingId else {
-                            AppLog.shared.transcription("Transcript data missing recording ID", level: .error)
-                            return
-                        }
                         let transcriptId = appCoordinator.addTranscript(
                             for: recordingId,
                             segments: transcriptData.segments,

@@ -122,7 +122,7 @@ final class AppleNativeEngine: SummarizationEngine {
         return .general
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // Run all extractions concurrently to minimise total latency.
         async let summaryResult = generateSummary(from: text, contentType: .general)
         async let tasksResult = extractTasks(from: text)
@@ -135,7 +135,13 @@ final class AppleNativeEngine: SummarizationEngine {
         let contentType = try await contentTypeResult
 
         let titles = [TitleItem(text: summaryTitle(from: summary), confidence: 0.7, category: .general)]
-        return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Private helpers

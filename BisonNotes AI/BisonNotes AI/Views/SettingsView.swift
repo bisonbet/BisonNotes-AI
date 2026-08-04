@@ -1244,10 +1244,6 @@ struct SettingsView: View {
         #endif
     }
 
-    private func clearAllSummaries() {
-        // This function is no longer needed as summaries are managed by the coordinator
-    }
-
     // MARK: - iCloud Sync Functions
 
     private func syncAllSummaries() async {

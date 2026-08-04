@@ -34,7 +34,16 @@ swiftlint lint                    # Full lint with all details
 swiftlint lint --reporter summary # Summary table only
 ```
 
-SwiftLint runs with default rules (no `.swiftlint.yml` exists in the repo). The codebase has ~9,000 pre-existing violations (mostly `trailing_whitespace` and `line_length`), so lint errors from these rules are expected and not introduced by agents.
+SwiftLint uses the committed configuration at `BisonNotes AI/BisonNotes AI/.swiftlint.yml`, which points to `SwiftLintBaseline.json`. Existing baseline violations remain recorded there; report current summary counts honestly and do not treat a zero exit as proof of zero violations.
+
+### Repository security owner actions
+
+- Repository owners should review GitHub Secret Scanning and Push Protection in repository settings and enable them as appropriate. This file does not claim either feature is enabled.
+- Do not add third-party scanning actions or configuration without explicit approval and official-source verification.
+
+### End-of-session handoff
+
+Before handoff, inspect modified files for newly unused declarations, stale commented-out implementation, duplicate helpers, placeholder behavior, and accidentally introduced secrets. Remove code only after call-site verification. Run `git diff --check` and relevant lint/tests, and report anything intentionally retained.
 
 ### Running Swift syntax checks
 

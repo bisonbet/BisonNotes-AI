@@ -53,6 +53,13 @@ Icon?
 BisonNotes AI/TEST_PLAN.md
 
 .gemini/
+# Local secrets and credential files
+.env
+.env.*
+*.env
+*.pem
+*.p12
+*.key
 gha-creds-*.json
 
 # Local AI model packages

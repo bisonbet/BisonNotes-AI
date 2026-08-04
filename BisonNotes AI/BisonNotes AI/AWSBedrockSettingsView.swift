@@ -9,7 +9,7 @@ import SwiftUI
 
 struct AWSBedrockSettingsView: View {
     @ObservedObject private var credentialsManager = AWSCredentialsManager.shared
-    @SecureStorage(KeychainSecretStore.awsBedrockSessionToken) private var sessionToken: String = ""
+    @State private var sessionToken: String = ""
     @AppStorage("awsBedrockModel") private var selectedModel: String = AWSBedrockModel.llama4Maverick.rawValue
     @AppStorage("awsBedrockTemperature") private var temperature: Double = 0.1
     @AppStorage("awsBedrockMaxTokens") private var maxTokens: Int = 4096
@@ -72,12 +72,16 @@ struct AWSBedrockSettingsView: View {
             editingAccessKey = credentialsManager.credentials.accessKeyId
             editingSecretKey = credentialsManager.credentials.secretAccessKey
             editingRegion = credentialsManager.credentials.region
+            sessionToken = credentialsManager.credentials.sessionToken ?? ""
 
             // Validate and fix invalid stored model selection
             if AWSBedrockModel(rawValue: selectedModel) == nil {
                 AppLog.shared.general("Invalid stored model, resetting to default")
                 selectedModel = AWSBedrockModel.llama4Maverick.rawValue
             }
+        }
+        .onChange(of: sessionToken) { _, newValue in
+            _ = credentialsManager.updateSessionToken(newValue)
         }
     }
 
@@ -522,7 +526,7 @@ struct AWSBedrockSettingsView: View {
             region: credentialsManager.credentials.region,
             accessKeyId: credentialsManager.credentials.accessKeyId,
             secretAccessKey: credentialsManager.credentials.secretAccessKey,
-            sessionToken: sessionToken.isEmpty ? nil : sessionToken,
+            sessionToken: credentialsManager.credentials.sessionToken,
             model: selectedModelEnum,
             temperature: temperature,
             maxTokens: maxTokens,

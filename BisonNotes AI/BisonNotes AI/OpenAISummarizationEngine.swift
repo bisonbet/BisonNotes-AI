@@ -153,7 +153,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         AppLog.shared.summarization("OpenAISummarizationEngine: Starting complete processing")
 
         updateConfiguration()
@@ -228,7 +228,7 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
 
     // MARK: - Chunked Processing
 
-    private func processChunkedText(_ text: String, service: OpenAISummarizationService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OpenAISummarizationService) async throws -> SummarizationResult {
         let startTime = Date()
 
         // Initialize Ollama service for meta-summary generation
@@ -283,7 +283,13 @@ class OpenAISummarizationEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.summarization("Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         AppLog.shared.summarization("Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
 
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: uniqueTasks,
+            reminders: uniqueReminders,
+            titles: uniqueTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -524,7 +530,7 @@ class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         updateConfiguration()
 
         guard let service = service else {

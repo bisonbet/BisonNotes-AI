@@ -625,11 +625,6 @@ class OllamaService: ObservableObject {
         return cleaned
     }
 
-    private func cleanTitleResponse(_ response: String) -> String {
-        // Use the centralized title cleaning function from RecordingNameGenerator
-        return RecordingNameGenerator.cleanStandardizedTitleResponse(response)
-    }
-
     private func cleanSummaryResponse(_ response: String) -> String {
         var cleaned = response
 
@@ -663,7 +658,7 @@ class OllamaService: ObservableObject {
 
     // MARK: - AI Processing
 
-    func processComplete(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(from text: String) async throws -> SummarizationResult {
         AppLog.shared.networking("OllamaService: Starting processComplete with model: \(config.modelName)")
 
         // Try tool calling first for models that support it
@@ -759,7 +754,13 @@ class OllamaService: ObservableObject {
             AppLog.shared.networking("OllamaService: Successfully parsed complete result")
             AppLog.shared.networking("OllamaService: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
 
-            return (rawResult.summary, tasks, reminders, titles, contentType)
+            return SummarizationResult(
+                summary: rawResult.summary,
+                tasks: tasks,
+                reminders: reminders,
+                titles: titles,
+                contentType: contentType
+            )
 
         } catch {
             AppLog.shared.networking("OllamaService: JSON parsing failed for complete processing: \(error.localizedDescription)", level: .error)
@@ -815,7 +816,13 @@ class OllamaService: ObservableObject {
                     let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
 
                     AppLog.shared.networking("OllamaService: Successfully parsed cleaned JSON for complete processing")
-                    return (rawResult.summary, tasks, reminders, titles, contentType)
+                    return SummarizationResult(
+                        summary: rawResult.summary,
+                        tasks: tasks,
+                        reminders: reminders,
+                        titles: titles,
+                        contentType: contentType
+                    )
 
                 } catch {
                     AppLog.shared.networking("OllamaService: Cleaned JSON parsing also failed: \(error.localizedDescription)", level: .error)
@@ -971,81 +978,6 @@ class OllamaService: ObservableObject {
                         )
                     ],
                     required: ["summary", "tasks", "reminders", "titles", "contentType"]
-                )
-            )
-        )
-    }
-
-    private func createTasksAndRemindersTool() -> OllamaTool {
-        return OllamaTool(
-            type: "function",
-            function: OllamaFunction(
-                name: "extract_tasks_reminders",
-                description: "Extract actionable tasks and time-sensitive reminders from the transcript",
-                parameters: OllamaFunctionParameters(
-                    type: "object",
-                    properties: [
-                        "tasks": OllamaProperty.array(
-                            "array",
-                            "Array of actionable tasks",
-                            items: OllamaProperty.object(
-                                "object",
-                                "Task object",
-                                properties: [
-                                    "text": OllamaProperty.simple("string", "Task description"),
-                                    "priority": OllamaProperty.simple("string", "Priority: High, Medium, or Low"),
-                                    "category": OllamaProperty.simple("string", "Category: Call, Email, Meeting, Purchase, Research, Travel, Health, or General"),
-                                    "timeReference": OllamaProperty.simple("string", "Time reference or null")
-                                ],
-                                required: ["text", "priority", "category"]
-                            )
-                        ),
-                        "reminders": OllamaProperty.array(
-                            "array",
-                            "Array of time-sensitive reminders",
-                            items: OllamaProperty.object(
-                                "object",
-                                "Reminder object",
-                                properties: [
-                                    "text": OllamaProperty.simple("string", "Reminder description"),
-                                    "urgency": OllamaProperty.simple("string", "Urgency: Immediate, Today, This Week, or Later"),
-                                    "timeReference": OllamaProperty.simple("string", "Specific time/date or null")
-                                ],
-                                required: ["text", "urgency"]
-                            )
-                        )
-                    ],
-                    required: ["tasks", "reminders"]
-                )
-            )
-        )
-    }
-
-    private func createTitlesTool() -> OllamaTool {
-        return OllamaTool(
-            type: "function",
-            function: OllamaFunction(
-                name: "generate_titles",
-                description: "Generate descriptive titles for the transcript content",
-                parameters: OllamaFunctionParameters(
-                    type: "object",
-                    properties: [
-                        "titles": OllamaProperty.array(
-                            "array",
-                            "Array of 3-4 descriptive titles",
-                            items: OllamaProperty.object(
-                                "object",
-                                "Title object",
-                                properties: [
-                                    "text": OllamaProperty.simple("string", "Title text (40-60 characters)"),
-                                    "category": OllamaProperty.simple("string", "Category: Meeting, Personal, Technical, or General"),
-                                    "confidence": OllamaProperty.simple("number", "Confidence score (0.0-1.0)")
-                                ],
-                                required: ["text", "category", "confidence"]
-                            )
-                        )
-                    ],
-                    required: ["titles"]
                 )
             )
         )
@@ -1434,7 +1366,7 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func processCompleteWithTools(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func processCompleteWithTools(from text: String) async throws -> SummarizationResult? {
         // Check model type and use appropriate tool calling method
         if isQwenModel(config.modelName) {
             return try await processCompleteWithQwenTools(from: text)
@@ -1471,7 +1403,7 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func parseCompleteAnalysisResult(data: Data) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseCompleteAnalysisResult(data: Data) throws -> SummarizationResult {
         do {
             let rawResult = try JSONDecoder().decode(RawCompleteResult.self, from: data)
 
@@ -1514,7 +1446,13 @@ class OllamaService: ObservableObject {
             let contentType = ContentType(rawValue: rawResult.contentType) ?? .general
 
             AppLog.shared.networking("OllamaService: Successfully parsed complete analysis from tool calling")
-            return (rawResult.summary, tasks, reminders, titles, contentType)
+            return SummarizationResult(
+                summary: rawResult.summary,
+                tasks: tasks,
+                reminders: reminders,
+                titles: titles,
+                contentType: contentType
+            )
 
         } catch {
             AppLog.shared.networking("OllamaService: Failed to parse tool calling result: \(error.localizedDescription)", level: .error)
@@ -1576,7 +1514,7 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func processCompleteWithQwenTools(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func processCompleteWithQwenTools(from text: String) async throws -> SummarizationResult? {
         let prompt = createQwenToolPrompt(for: "complete", text: text)
 
         do {
@@ -1608,11 +1546,23 @@ class OllamaService: ObservableObject {
 
                             AppLog.shared.networking("OllamaService: Successfully created complete result from high-quality summary")
                             AppLog.shared.networking("OllamaService: Final result: Summary: \(summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
-                            return (summary, tasks, reminders, titles, contentType)
+                            return SummarizationResult(
+                                summary: summary,
+                                tasks: tasks,
+                                reminders: reminders,
+                                titles: titles,
+                                contentType: contentType
+                            )
                         } catch {
                             AppLog.shared.networking("OllamaService: Failed to extract tasks/reminders from excellent summary: \(error.localizedDescription)")
                             // Still return just the excellent summary with minimal metadata
-                            return (summary, [], [], [], .general)
+                            return SummarizationResult(
+                                summary: summary,
+                                tasks: [],
+                                reminders: [],
+                                titles: [],
+                                contentType: .general
+                            )
                         }
                     } else {
                         AppLog.shared.networking("OllamaService: Summary too short (\(summary.count) chars), falling back")
@@ -1810,7 +1760,7 @@ class OllamaService: ObservableObject {
         return nil
     }
 
-    private func parseQwenCompleteAnalysisResult(arguments: [String: Any]) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseQwenCompleteAnalysisResult(arguments: [String: Any]) throws -> SummarizationResult {
 
         let summary = arguments["summary"] as? String ?? ""
 
@@ -1871,7 +1821,13 @@ class OllamaService: ObservableObject {
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
 
         AppLog.shared.networking("OllamaService: Successfully parsed Qwen complete analysis")
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Helper Methods for High-Quality Summary Processing
@@ -1961,7 +1917,7 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func processCompleteWithGPTOSSTools(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func processCompleteWithGPTOSSTools(from text: String) async throws -> SummarizationResult? {
         let prompt = createGPTOSSToolPrompt(for: "complete", text: text)
 
         do {
@@ -2074,7 +2030,7 @@ class OllamaService: ObservableObject {
         return nil
     }
 
-    private func parseGPTOSSCompleteAnalysisResult(arguments: [String: Any]) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseGPTOSSCompleteAnalysisResult(arguments: [String: Any]) throws -> SummarizationResult {
         // Same parsing logic as Qwen but with different confidence levels
         let summary = arguments["summary"] as? String ?? ""
 
@@ -2134,7 +2090,13 @@ class OllamaService: ObservableObject {
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
 
         AppLog.shared.networking("OllamaService: Successfully parsed GPT-OSS complete analysis")
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Magistral Specific Tool Calling
@@ -2164,7 +2126,7 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func processCompleteWithMagistralTools(from text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func processCompleteWithMagistralTools(from text: String) async throws -> SummarizationResult? {
         let prompt = createMagistralToolPrompt(for: "complete", text: text)
 
         do {
@@ -2353,7 +2315,7 @@ class OllamaService: ObservableObject {
         return nil
     }
 
-    private func parseMagistralCompleteAnalysisResult(arguments: [String: Any]) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseMagistralCompleteAnalysisResult(arguments: [String: Any]) throws -> SummarizationResult {
         // Same parsing logic as other models but with Magistral-specific confidence levels
         let summary = arguments["summary"] as? String ?? ""
 
@@ -2413,7 +2375,13 @@ class OllamaService: ObservableObject {
         let contentType = ContentType(rawValue: contentTypeString) ?? .general
 
         AppLog.shared.networking("OllamaService: Successfully parsed Magistral complete analysis")
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Tool Calling Core Method
@@ -2723,7 +2691,7 @@ class OllamaService: ObservableObject {
         """
     }
 
-    private func parseStructuredCompleteResponse(_ response: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseStructuredCompleteResponse(_ response: String) throws -> SummarizationResult {
         guard let data = response.data(using: .utf8) else {
             throw OllamaError.parsingError("Failed to convert structured response to data")
         }
@@ -2841,7 +2809,13 @@ class OllamaService: ObservableObject {
             AppLog.shared.networking("OllamaService: Successfully parsed structured complete result")
             AppLog.shared.networking("OllamaService: Final: Summary: \(rawResult.summary.count) chars, Tasks: \(tasks.count), Reminders: \(reminders.count), Titles: \(titles.count)", level: .debug)
 
-            return (rawResult.summary, tasks, reminders, titles, contentType)
+            return SummarizationResult(
+                summary: rawResult.summary,
+                tasks: tasks,
+                reminders: reminders,
+                titles: titles,
+                contentType: contentType
+            )
 
         } catch {
             AppLog.shared.networking("OllamaService: Structured JSON parsing failed: \(error.localizedDescription)", level: .error)

@@ -105,6 +105,88 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingLocalOnlyRemovalCountForTesting, 0)
     }
 
+    func testSummaryManagerReadsAuthoritativeSummariesFromCoreData() throws {
+        let recordingId = try createCompleteRecording(named: "Core Data Summary Source")
+        let expectedSummaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
+
+        let summaries = SummaryManager.shared.getAuthoritativeSummaryData()
+        XCTAssertEqual(summaries.map(\.id), [expectedSummaryId])
+
+        let statistics = SummaryManager.shared.getSummaryStatistics()
+        XCTAssertEqual(statistics.totalSummaries, 1)
+    }
+
+    func testOrphanedSummaryUpsertIsIdempotent() throws {
+        let summary = EnhancedSummaryData(
+            recordingURL: tempDirectory.appendingPathComponent("cloud-only.m4a"),
+            recordingName: "Cloud-only summary",
+            recordingDate: Date(timeIntervalSince1970: 1_770_000_000),
+            summary: "A cloud-only summary retained locally until its recording can be restored.",
+            aiEngine: "Fixture",
+            aiModel: "cloud-fixture",
+            originalLength: 80
+        )
+
+        let firstID = try appCoordinator.coreDataManager.upsertOrphanedSummary(summary)
+        let updatedSummary = EnhancedSummaryData(
+            id: summary.id,
+            recordingId: summary.recordingId,
+            recordingURL: summary.recordingURL,
+            recordingName: "Updated cloud-only summary",
+            recordingDate: summary.recordingDate.addingTimeInterval(60),
+            summary: "Updated cloud content must replace the prior orphaned summary without creating another row.",
+            aiEngine: "Fixture",
+            aiModel: "cloud-fixture-v2",
+            originalLength: 90,
+            generatedAt: summary.generatedAt.addingTimeInterval(60)
+        )
+        let secondID = try appCoordinator.coreDataManager.upsertOrphanedSummary(updatedSummary)
+
+        XCTAssertEqual(firstID, summary.id)
+        XCTAssertEqual(secondID, summary.id)
+        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(appCoordinator.getAllSummaries().first?.id, summary.id)
+        XCTAssertEqual(appCoordinator.getAllSummaries().first?.summary, updatedSummary.summary)
+        let storedMethod = try XCTUnwrap(appCoordinator.getAllSummaries().first?.aiMethod)
+        let decodedMethod = SummaryMetadataCodec.decode(storedMethod)
+        XCTAssertEqual(decodedMethod.engine, "Fixture")
+        XCTAssertEqual(decodedMethod.model, "cloud-fixture-v2")
+        XCTAssertEqual(appCoordinator.getAllSummaries().first?.recording?.recordingName, "Updated cloud-only summary")
+    }
+
+    func testIncomingCloudIdentityReplacesExistingLocalSummaryIdentity() throws {
+        let recordingId = try createCompleteRecording(named: "Cloud Identity")
+        let existingSummaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let recordingURL = tempDirectory.appendingPathComponent("cloud-identity.m4a")
+        let cloudSummaryId = UUID()
+        let cloudSummary = EnhancedSummaryData(
+            id: cloudSummaryId,
+            recordingId: recordingId,
+            transcriptId: recording.transcriptId,
+            recordingURL: recordingURL,
+            recordingName: recording.recordingName ?? "Cloud Identity",
+            recordingDate: recording.recordingDate ?? Date(),
+            summary: "The restored cloud summary should become the authoritative local identity and content.",
+            aiEngine: "Cloud",
+            aiModel: "cloud-authoritative",
+            originalLength: 100
+        )
+
+        let restoredId = try appCoordinator.upsertSummary(
+            cloudSummary,
+            for: recordingId,
+            transcriptId: recording.transcriptId,
+            identityPolicy: .incomingSummary
+        )
+
+        XCTAssertEqual(restoredId, cloudSummaryId)
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: existingSummaryId))
+        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.id, cloudSummaryId)
+        XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.summary, cloudSummary.summary)
+    }
+
     private func createCompleteRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)

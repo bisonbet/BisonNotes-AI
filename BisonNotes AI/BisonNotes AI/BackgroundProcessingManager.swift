@@ -228,6 +228,23 @@ enum JobType: Codable {
     }
 }
 
+enum BackgroundSummarizationRoute: Equatable {
+    case openAI
+    case ollama
+    case selectedEngine
+
+    init(engineName: String) {
+        switch engineName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "openai", "gpt-4", "gpt-3.5":
+            self = .openAI
+        case "ollama", "local", "local llm (ollama)":
+            self = .ollama
+        default:
+            self = .selectedEngine
+        }
+    }
+}
+
 enum JobProcessingStatus: Codable, Equatable {
     case ready
     case queued
@@ -453,7 +470,8 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         // Ensure recording exists in Core Data (always use the original recording URL)
-        await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
+        let recordingId = await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
+        _ = try requiredRecordingID(recordingId, for: recordingURL)
 
         let job = ProcessingJob(
             type: .transcription(engine: engine),
@@ -898,6 +916,9 @@ class BackgroundProcessingManager: ObservableObject {
 
         try Task.checkCancellation()
 
+        // Resolve the original recording before any transcription work can produce data to save.
+        let recordingId = try resolveRecordingID(for: job.recordingURL)
+
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
         let audioURL = job.audioSourceURL
         if job.sourceAudioPath != nil {
@@ -969,7 +990,7 @@ class BackgroundProcessingManager: ObservableObject {
             }
 
             // Transcribe the chunk
-            let transcriptResult = try await transcribeChunk(chunk, engine: engine)
+            let transcriptResult = try await transcribeChunk(chunk, engine: engine, recordingId: recordingId)
 
             // Create transcript chunk
             let transcriptChunk = chunkingService.createTranscriptChunk(
@@ -987,27 +1008,6 @@ class BackgroundProcessingManager: ObservableObject {
         if transcriptChunks.count > 1 {
             EnhancedLogger.shared.logBackgroundProcessing("Reassembling transcript from \(transcriptChunks.count) chunks", level: .info)
 
-            // Get the recording ID first
-            let recordingId: UUID
-            if let appCoordinator = enhancedFileManager.getCoordinator() {
-                // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
-                // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
-
-                // Use the new Core Data system
-
-                if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
-                   let entryId = recordingEntry.id {
-                    recordingId = entryId
-                    AppLog.shared.backgroundProcessing("Found recording ID for reassembly", level: .debug)
-                } else {
-                    AppLog.shared.backgroundProcessing("No recording found for reassembly, using new UUID", level: .error)
-                    recordingId = UUID()
-                }
-            } else {
-                AppLog.shared.backgroundProcessing("AppCoordinator not available for reassembly", level: .error)
-                recordingId = UUID()
-            }
-
             let reassemblyResult = try await chunkingService.reassembleTranscript(
                 from: transcriptChunks,
                 originalURL: job.recordingURL,
@@ -1017,30 +1017,9 @@ class BackgroundProcessingManager: ObservableObject {
             )
 
             // Save the complete transcript
-            await saveTranscript(reassemblyResult.transcriptData)
+            try saveTranscript(reassemblyResult.transcriptData)
         } else if let firstChunk = transcriptChunks.first {
-            // Single chunk, save directly
-            // Get the recording ID first
-            let recordingId: UUID
-            if let appCoordinator = enhancedFileManager.getCoordinator() {
-                // print("🔍 DEBUG: Looking for recording with URL: \(job.recordingURL)")
-                // print("🔍 DEBUG: URL absoluteString: \(job.recordingURL.absoluteString)")
-
-                // Use the new Core Data system
-
-                if let recordingEntry = appCoordinator.getRecording(url: job.recordingURL),
-                   let entryId = recordingEntry.id {
-                    recordingId = entryId
-                    AppLog.shared.backgroundProcessing("Found recording ID for single chunk", level: .debug)
-                } else {
-                    AppLog.shared.backgroundProcessing("No recording found for single chunk, using new UUID", level: .error)
-                    recordingId = UUID()
-                }
-            } else {
-                AppLog.shared.backgroundProcessing("AppCoordinator not available for single chunk", level: .error)
-                recordingId = UUID()
-            }
-
+            // Single chunk, save directly using the already-resolved recording identity.
             let transcriptData = TranscriptData(
                 recordingId: recordingId,
                 recordingURL: job.recordingURL,
@@ -1050,7 +1029,7 @@ class BackgroundProcessingManager: ObservableObject {
                 engine: engine
             )
 
-            await saveTranscript(transcriptData)
+            try saveTranscript(transcriptData)
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
@@ -1091,7 +1070,7 @@ class BackgroundProcessingManager: ObservableObject {
         AppLog.shared.backgroundProcessing("Transcription job completed with valid content")
     }
 
-    private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine) async throws -> TranscriptionResult {
+    private func transcribeChunk(_ chunk: AudioChunk, engine: TranscriptionEngine, recordingId: UUID) async throws -> TranscriptionResult {
         AppLog.shared.backgroundProcessing("Starting transcription of chunk with engine: \(engine.rawValue)", level: .debug)
         AppLog.shared.backgroundProcessing("Chunk details: seq=\(chunk.sequenceNumber), duration=\(chunk.duration)s, size=\(chunk.fileSize) bytes, isWholeFile=\(chunk.originalURL == chunk.chunkURL)", level: .debug)
 
@@ -1110,18 +1089,6 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         AppLog.shared.backgroundProcessing("Chunk file verified: \(fileSize) bytes, duration: \(chunk.duration)s", level: .debug)
-
-        // Get the recording ID for this chunk
-        let recordingId: UUID
-        if let appCoordinator = enhancedFileManager.getCoordinator(),
-           let recordingEntry = appCoordinator.getRecording(url: chunk.chunkURL),
-           let entryId = recordingEntry.id {
-            recordingId = entryId
-        } else {
-            // Fallback to new UUID if recording not found
-            recordingId = UUID()
-            AppLog.shared.backgroundProcessing("Recording not found in Core Data for chunk, using fallback UUID", level: .debug)
-        }
 
         let startTime = Date()
         do {
@@ -1155,7 +1122,11 @@ class BackgroundProcessingManager: ObservableObject {
 
             case .awsTranscribe:
                 let manager = EnhancedTranscriptionManager()
-                result = try await manager.transcribeAudioFile(at: chunk.chunkURL, using: .awsTranscribe)
+                result = try await manager.transcribeAudioFile(
+                    at: chunk.chunkURL,
+                    using: .awsTranscribe,
+                    recordingId: recordingId
+                )
 
             case .fluidAudio:
                 AppLog.shared.backgroundProcessing("Using FluidAudio (Parakeet) for transcription")
@@ -1283,12 +1254,12 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
 
-    private func ensureRecordingExists(recordingURL: URL, recordingName: String) async {
+    private func ensureRecordingExists(recordingURL: URL, recordingName: String) async -> UUID? {
         if let appCoordinator = enhancedFileManager.getCoordinator() {
             // Check if recording already exists
-            if appCoordinator.getRecording(url: recordingURL) != nil {
+            if let recording = appCoordinator.getRecording(url: recordingURL), let recordingId = recording.id {
                 AppLog.shared.backgroundProcessing("Recording already exists in Core Data")
-                return
+                return recordingId
             }
 
             // Create recording entry if it doesn't exist
@@ -1298,7 +1269,7 @@ class BackgroundProcessingManager: ObservableObject {
             let fileSize = getFileSize(url: recordingURL)
             let duration = await getAudioDuration(url: recordingURL)
 
-            await MainActor.run {
+            return await MainActor.run {
                 let recordingId = appCoordinator.addRecording(
                     url: recordingURL,
                     name: recordingName,
@@ -1310,10 +1281,17 @@ class BackgroundProcessingManager: ObservableObject {
                 )
 
                 AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
+                return recordingId
             }
         } else {
             AppLog.shared.backgroundProcessing("AppCoordinator not available for recording creation", level: .error)
+            return nil
         }
+    }
+
+    private func resolveRecordingID(for recordingURL: URL) throws -> UUID {
+        let recordingId = enhancedFileManager.getCoordinator()?.getRecording(url: recordingURL)?.id
+        return try requiredRecordingID(recordingId, for: recordingURL)
     }
 
     private func getFileSize(url: URL) -> Int64 {
@@ -1337,53 +1315,18 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    private func saveTranscript(_ transcriptData: TranscriptData) async {
-        // Save transcript using the Core Data coordinator
-        await MainActor.run {
-
-            // Use the new Core Data system
-            if let appCoordinator = enhancedFileManager.getCoordinator() {
-                // print("✅ DEBUG: AppCoordinator available")
-
-                // Use the new Core Data system
-
-                // Get the recording ID from the URL
-                guard let recordingEntry = appCoordinator.getRecording(url: transcriptData.recordingURL),
-                      let recordingId = recordingEntry.id else {
-                    AppLog.shared.backgroundProcessing("No recording found for transcript save", level: .error)
-                    // print("❌ DEBUG: URL absoluteString: \(transcriptData.recordingURL.absoluteString)")
-                    return
-                }
-
-                AppLog.shared.backgroundProcessing("Found recording ID for transcript save", level: .debug)
-
-                let transcriptId = appCoordinator.addTranscript(
-                    for: recordingId,
-                    segments: transcriptData.segments,
-                    speakerMappings: [:], // No speaker mappings needed
-                    engine: transcriptData.engine,
-                    processingTime: transcriptData.processingTime,
-                    confidence: transcriptData.confidence
-                )
-                if transcriptId != nil {
-                    AppLog.shared.backgroundProcessing("Transcript saved to Core Data")
-                } else {
-                    AppLog.shared.backgroundProcessing("Failed to save transcript to Core Data", level: .error)
-                }
-            } else {
-                AppLog.shared.backgroundProcessing("AppCoordinator not available for transcript saving", level: .error)
-            }
-        }
+    private func saveTranscript(_ transcriptData: TranscriptData) throws {
+        let transcriptId = try persistBackgroundTranscript(
+            transcriptData,
+            using: enhancedFileManager.getCoordinator()
+        )
+        AppLog.shared.backgroundProcessing("Transcript saved to Core Data with ID: \(transcriptId)")
         AppLog.shared.backgroundProcessing("Saved transcript: \(transcriptData.segments.count) segments, \(transcriptData.fullText.count) characters", level: .debug)
 
         // Call completion handler if set
-        if let completionHandler = onTranscriptionCompleted {
-            await MainActor.run {
-                // Find the current job to pass to the completion handler
-                if let currentJob = self.currentJob {
-                    completionHandler(transcriptData, currentJob)
-                }
-            }
+        if let completionHandler = onTranscriptionCompleted,
+           let currentJob {
+            completionHandler(transcriptData, currentJob)
         }
     }
 
@@ -1408,6 +1351,8 @@ class BackgroundProcessingManager: ObservableObject {
             throw BackgroundProcessingError.processingFailed("No transcript found for \(job.recordingName). Transcribe the recording first.")
         }
 
+        let resolvedRecordingDate = recording?.recordingDate ?? recordingDate(for: job)
+
         // Parse transcript to get text for summarization
         let transcriptText: String
         if let segmentsJSON = transcriptEntry.segments,
@@ -1423,7 +1368,7 @@ class BackgroundProcessingManager: ObservableObject {
             let transcriptData = TranscriptData(
                 recordingURL: job.recordingURL,
                 recordingName: job.recordingName,
-                recordingDate: recording?.recordingDate ?? Date(),
+                recordingDate: resolvedRecordingDate,
                 segments: segments,
                 speakerMappings: speakerMappings
             )
@@ -1444,15 +1389,33 @@ class BackgroundProcessingManager: ObservableObject {
 
         try Task.checkCancellation()
 
+        let route = BackgroundSummarizationRoute(engineName: engine)
+        let engineValidation = SummaryManager.shared.validateEngineAvailability(
+            route == .ollama ? AIEngineType.localLLM.rawValue : engine
+        )
+        guard engineValidation.isValid, engineValidation.isAvailable else {
+            throw BackgroundProcessingError.processingFailed(
+                engineValidation.errorMessage ?? "Selected summarization engine is unavailable"
+            )
+        }
+
+        if route == .ollama {
+            let connection = await SummaryManager.shared.checkEngineAvailability(AIEngineType.localLLM.rawValue)
+            guard connection.isAvailable else {
+                throw BackgroundProcessingError.processingFailed(
+                    connection.errorMessage ?? "Ollama server is unavailable"
+                )
+            }
+        }
+
         // Generate summary using SummaryManager (same path as SummariesView)
-        let recordingDate = recording?.recordingDate ?? Date()
         let enhancedSummary: EnhancedSummaryData
         do {
             enhancedSummary = try await SummaryManager.shared.generateEnhancedSummary(
                 from: transcriptText,
                 for: job.recordingURL,
                 recordingName: job.recordingName,
-                recordingDate: recordingDate,
+                recordingDate: resolvedRecordingDate,
                 engineName: engine
             )
         } catch {
@@ -1519,47 +1482,72 @@ class BackgroundProcessingManager: ObservableObject {
         AppLog.shared.backgroundProcessing("Summarization job completed")
     }
 
-    private func generateSummary(_ transcriptText: String, engine: String, recordingURL: URL, recordingName: String) async throws -> EnhancedSummaryData {
+    private func generateSummary(
+        _ transcriptText: String,
+        engine: String,
+        recordingURL: URL,
+        recordingName: String,
+        recordingDate: Date
+    ) async throws -> EnhancedSummaryData {
         let startTime = Date()
 
         // Determine content type
-        let contentType = await classifyContent(transcriptText)
+        var contentType = await classifyContent(transcriptText)
 
         var summary: String
         var tasks: [TaskItem] = []
         var reminders: [ReminderItem] = []
         var titles: [TitleItem] = []
 
-        switch engine {
-        case "OpenAI", "openai", "gpt-4", "gpt-3.5":
+        switch BackgroundSummarizationRoute(engineName: engine) {
+        case .openAI:
             let config = getOpenAISummarizationConfig()
             let service = OpenAISummarizationService(config: config)
 
-            // Generate summary
-            summary = try await service.generateSummary(from: transcriptText, contentType: contentType)
+            let result = try await service.processComplete(text: transcriptText)
+            summary = result.summary
+            tasks = result.tasks
+            reminders = result.reminders
+            titles = result.titles
+            contentType = result.contentType
 
-            // Extract tasks, reminders, and titles
-            tasks = try await service.extractTasks(from: transcriptText)
-            reminders = try await service.extractReminders(from: transcriptText)
-            titles = try await service.extractTitles(from: transcriptText)
+        case .ollama:
+            let selectedEngine = AIEngineType.localLLM.rawValue
+            let availability = await SummaryManager.shared.checkEngineAvailability(selectedEngine)
+            guard availability.isAvailable else {
+                throw SummarizationError.aiServiceUnavailable(
+                    service: availability.errorMessage ?? selectedEngine
+                )
+            }
 
-        case "Local LLM (Ollama)", "ollama", "local":
-            // TODO: Integrate with Ollama service when available
-            summary = "Summary generated using local Ollama service (not yet implemented)"
+            let result = try await SummaryManager.shared.generateEnhancedSummary(
+                from: transcriptText,
+                for: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                engineName: selectedEngine
+            )
+            summary = result.summary
+            tasks = result.tasks
+            reminders = result.reminders
+            titles = result.titles
+            contentType = result.contentType
 
-        default:
+        case .selectedEngine:
             // Use the SummaryManager's currently selected engine
             let summaryManager = SummaryManager.shared
             let result = try await summaryManager.generateEnhancedSummary(
                 from: transcriptText,
                 for: recordingURL,
                 recordingName: recordingName,
-                recordingDate: Date()
+                recordingDate: recordingDate,
+                engineName: engine
             )
             summary = result.summary
             tasks = result.tasks
             reminders = result.reminders
             titles = result.titles
+            contentType = result.contentType
         }
 
         let processingTime = Date().timeIntervalSince(startTime)
@@ -1586,7 +1574,7 @@ class BackgroundProcessingManager: ObservableObject {
         return EnhancedSummaryData(
             recordingURL: recordingURL,
             recordingName: recordingName,
-            recordingDate: Date(), // TODO: Get actual recording date from file metadata
+            recordingDate: recordingDate,
             summary: summary,
             tasks: tasks,
             reminders: reminders,
@@ -1653,10 +1641,10 @@ class BackgroundProcessingManager: ObservableObject {
         await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
             recordingURL: job.recordingURL,
             recordingName: job.recordingName,
-            recordingDate: job.startTime,
+            recordingDate: recordingDate(for: job),
             transcriptExists: true,
             summaryExists: false,
-            iCloudSynced: false
+            iCloudSyncEligible: isCloudSyncEligible(for: job.recordingURL)
         ))
     }
 
@@ -1667,11 +1655,31 @@ class BackgroundProcessingManager: ObservableObject {
         await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
             recordingURL: job.recordingURL,
             recordingName: job.recordingName,
-            recordingDate: job.startTime,
+            recordingDate: recordingDate(for: job),
             transcriptExists: true,
             summaryExists: false,
-            iCloudSynced: false
+            iCloudSyncEligible: isCloudSyncEligible(for: job.recordingURL)
         ))
+    }
+
+    private func recordingDate(for job: ProcessingJob) -> Date {
+        if let recording = enhancedFileManager.getCoordinator()?.getRecording(url: job.recordingURL),
+           let recordingDate = recording.recordingDate {
+            return recordingDate
+        }
+        if let resourceValues = try? job.recordingURL.resourceValues(forKeys: [.creationDateKey]),
+           let creationDate = resourceValues.creationDate {
+            return creationDate
+        }
+        return job.startTime
+    }
+
+    private func isCloudSyncEligible(for recordingURL: URL) -> Bool {
+        guard let coordinator = enhancedFileManager.getCoordinator(),
+              let recording = coordinator.getRecording(url: recordingURL) else {
+            return false
+        }
+        return SummaryManager.shared.getiCloudManager().isEnabled && !recording.isCloudSyncDisabled
     }
 
     // MARK: - Job Status Management
@@ -2725,6 +2733,45 @@ class BackgroundProcessingManager: ObservableObject {
 
 // MARK: - Background Processing Errors
 
+@MainActor
+func persistBackgroundTranscript(
+    _ transcriptData: TranscriptData,
+    using appCoordinator: AppDataCoordinator?
+) throws -> UUID {
+    guard let appCoordinator else {
+        throw BackgroundProcessingError.processingFailed(
+            "App data coordinator is unavailable while saving the transcript"
+        )
+    }
+
+    guard let recordingId = transcriptData.recordingId,
+          appCoordinator.getRecording(id: recordingId)?.id == recordingId else {
+        throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptData.recordingURL)
+    }
+
+    guard let transcriptId = appCoordinator.addTranscript(
+        for: recordingId,
+        segments: transcriptData.segments,
+        speakerMappings: transcriptData.speakerMappings,
+        engine: transcriptData.engine,
+        processingTime: transcriptData.processingTime,
+        confidence: transcriptData.confidence
+    ) else {
+        throw BackgroundProcessingError.processingFailed(
+            "Failed to persist the transcript for \(transcriptData.recordingName)"
+        )
+    }
+
+    return transcriptId
+}
+
+func requiredRecordingID(_ recordingId: UUID?, for recordingURL: URL) throws -> UUID {
+    guard let recordingId else {
+        throw BackgroundProcessingError.recordingIdentityUnavailable(recordingURL)
+    }
+    return recordingId
+}
+
 enum BackgroundProcessingError: LocalizedError {
     case jobAlreadyRunning
     case noActiveJob
@@ -2736,6 +2783,7 @@ enum BackgroundProcessingError: LocalizedError {
     case invalidJobType
     case fileNotFound(String)
     case invalidAudioFormat(String)
+    case recordingIdentityUnavailable(URL)
 
     var errorDescription: String? {
         switch self {
@@ -2759,6 +2807,8 @@ enum BackgroundProcessingError: LocalizedError {
             return "File not found: \(message)"
         case .invalidAudioFormat(let message):
             return "Invalid audio format: \(message)"
+        case .recordingIdentityUnavailable(let url):
+            return "Recording identity unavailable for \(url.lastPathComponent)"
         }
     }
 }
