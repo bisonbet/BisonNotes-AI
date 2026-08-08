@@ -8,7 +8,7 @@ import XCTest
 
 final class EndpointSecurityPolicyTests: XCTestCase {
     func testAllowsEncryptedPublicEndpoints() {
-        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "https://api.openai.com/v1"))
+        XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "https://api.example.com/v1"))
         XCTAssertNil(EndpointSecurityPolicy.validationMessage(for: "wss://example.com/socket"))
     }
 

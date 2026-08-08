@@ -84,14 +84,14 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         let secondId = try XCTUnwrap(appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "New replacement text", startTime: 0, endTime: 2)],
-            engine: .openAI,
+            engine: .fluidAudio,
             confidence: 0.9
         ))
 
         let transcript = try XCTUnwrap(appCoordinator.getTranscriptData(for: recordingId))
         XCTAssertEqual(secondId, firstId)
         XCTAssertEqual(transcript.segments.map(\.text), ["New replacement text"])
-        XCTAssertEqual(transcript.engine, .openAI)
+        XCTAssertEqual(transcript.engine, .fluidAudio)
     }
 
     @MainActor

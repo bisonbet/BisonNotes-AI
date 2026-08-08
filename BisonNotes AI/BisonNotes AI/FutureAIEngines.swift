@@ -1640,8 +1640,6 @@ class GoogleAIStudioEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .openAI:
-            return OpenAISummarizationEngine()
         case .mistralAI:
             return MistralAIEngine()
         case .awsBedrock:
@@ -1674,7 +1672,6 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
     case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
@@ -1690,6 +1687,7 @@ enum AIEngineType: String, CaseIterable {
         switch self {
         case .mlxSwift: return "On Device AI"
         case .onDeviceLLM: return "On Device AI (Legacy)"
+        case .openAICompatible: return "Compatible API"
         default: return rawValue
         }
     }
@@ -1710,14 +1708,12 @@ enum AIEngineType: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .openAI:
-            return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .mistralAI:
             return "Fast, high-quality summaries using Mistral's chat models"
         case .awsBedrock:
             return "Cloud-based AI using AWS Bedrock foundation models"
         case .openAICompatible:
-            return "Advanced AI summaries using OpenAI API compatible models"
+            return "Advanced AI summaries using compatible chat-completion APIs"
         case .localLLM:
             return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
@@ -1733,21 +1729,19 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .mlxSwift, .appleNative:
+        case .localLLM, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .mlxSwift, .appleNative:
             return false
         }
     }
 
     var requirements: [String] {
         switch self {
-        case .openAI:
-            return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .mistralAI:
             return ["Mistral API Key", "Internet Connection"]
         case .awsBedrock:
             return ["AWS Account", "Internet Connection", "API Keys"]
         case .openAICompatible:
-            return ["OpenAI API Compatible Service", "Internet Connection"]
+            return ["Compatible API service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:

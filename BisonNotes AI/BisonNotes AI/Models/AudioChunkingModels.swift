@@ -66,7 +66,6 @@ enum ChunkingStrategy {
     case duration(maxSeconds: TimeInterval)
     case combined(maxBytes: Int64, maxSeconds: TimeInterval)
 
-    static let openAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds (21.67 minutes)
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 10 * 60) // 10 minutes
@@ -104,8 +103,6 @@ struct ChunkingConfig {
         switch engine {
         case .notConfigured:
             return ChunkingConfig(strategy: .whisper) // Default fallback for unconfigured state
-        case .openAI:
-            return ChunkingConfig(strategy: .openAI)
         case .whisper:
             return ChunkingConfig(strategy: .whisper)
         case .awsTranscribe:
@@ -114,8 +111,6 @@ struct ChunkingConfig {
             return ChunkingConfig(strategy: .onDeviceAI)
         case .mistralAI:
             return ChunkingConfig(strategy: .mistralAI)
-        case .openAIAPICompatible:
-            return ChunkingConfig(strategy: .openAI) // Default to OpenAI limits
         }
     }
 }

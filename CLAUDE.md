@@ -41,7 +41,6 @@ The app has **migrated from legacy file-based storage to Core Data-only architec
 #### AI Integration
 The app supports multiple AI engines:
 - **Apple Intelligence**: Local processing using Apple frameworks
-- **OpenAI**: GPT-4o models for transcription and summarization
 - **Google AI Studio**: Gemini 2.5 models for AI processing
 - **AWS Bedrock**: Claude models (Sonnet 4, Sonnet 4.5, Haiku 4.5) and Llama 4 Maverick
 - **Whisper**: Local Whisper server for transcription
@@ -68,7 +67,6 @@ BisonNotes AI/
 │   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
 │   └── DataMigrationView.swift
 ├── ViewModels/          # View model layer
-├── OpenAI/             # OpenAI integration
 ├── AI Engines/         # Various AI service integrations
 └── Background/         # Background processing
 ```
@@ -143,7 +141,7 @@ For AI-generated content display:
 - Use `AITextView` with MarkdownUI for all AI summaries, transcripts, and formatted content
 - MarkdownUI handles headers, lists, bold text, links, and complex formatting automatically
 - Text preprocessing in `AITextView.cleanTextForMarkdown()` removes JSON artifacts and normalizes content
-- Supports all AI engines: OpenAI, Claude (Bedrock), Gemini, Apple Intelligence, etc.
+- Supports all configured AI engines, including Claude (Bedrock), Gemini, Apple Intelligence, and compatible APIs.
 
 ## Key Files to Understand
 

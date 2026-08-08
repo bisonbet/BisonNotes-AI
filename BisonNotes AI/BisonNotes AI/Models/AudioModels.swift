@@ -94,9 +94,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
     case fluidAudio = "On Device"
     case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
-    case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
-    case openAIAPICompatible = "OpenAI API Compatible"
 
     /// Returns only engine types that are available on the current device and build.
     static var availableCases: [TranscriptionEngine] {
@@ -112,13 +110,9 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
         case .awsTranscribe:
             return "Cloud-based transcription service with support for long audio files"
         case .whisper:
-            return "High-quality transcription using OpenAI's Whisper model on your local server (REST API or Wyoming protocol)"
-        case .openAI:
-            return "High-quality transcription using OpenAI's GPT-4o models and Whisper via API"
+            return "High-quality transcription using the Whisper model on your local server (REST API or Wyoming protocol)"
         case .mistralAI:
             return "High-quality transcription using Mistral's Voxtral Mini model with speaker diarization ($0.003/min)"
-        case .openAIAPICompatible:
-            return "Connect to OpenAI-compatible API endpoints for flexible transcription options (Coming Soon)"
         }
     }
 
@@ -128,10 +122,8 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return false
         case .fluidAudio:
             return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.isAvailableInCurrentBuild
-        case .awsTranscribe, .whisper, .openAI, .mistralAI:
+        case .awsTranscribe, .whisper, .mistralAI:
             return true
-        case .openAIAPICompatible:
-            return false
         }
     }
 
@@ -141,7 +133,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return true
         case .fluidAudio:
             return true  // Requires model download
-        case .awsTranscribe, .whisper, .openAI, .openAIAPICompatible, .mistralAI:
+        case .awsTranscribe, .whisper, .mistralAI:
             return true
         }
     }

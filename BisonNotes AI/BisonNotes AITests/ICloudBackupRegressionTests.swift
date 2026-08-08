@@ -54,7 +54,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertTrue(manager.isSensitiveSettingKey("openAIAPIKey"))
         XCTAssertTrue(manager.isSensitiveSettingKey("awsSecretAccessKey"))
         XCTAssertTrue(manager.isSensitiveSettingKey("awsBedrockSessionToken"))
-        XCTAssertFalse(manager.isSensitiveSettingKey("openAISummarizationMaxTokens"))
+        XCTAssertFalse(manager.isSensitiveSettingKey("compatibleAPIMaxTokens"))
     }
 
     func testProductionSchemaDiagnosticProducesActionableError() {

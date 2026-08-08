@@ -18,7 +18,6 @@ struct TranscriptionSettingsView: View {
     @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
     @State private var showingFluidAudioSettings = false
-    @State private var showingOpenAISettings = false
     @State private var showingMistralTranscribeSettings = false
     @Environment(\.dismiss) private var dismiss
 
@@ -46,9 +45,6 @@ struct TranscriptionSettingsView: View {
             .navigationDestination(isPresented: $showingFluidAudioSettings) {
                 FluidAudioSettingsView()
             }
-            .navigationDestination(isPresented: $showingOpenAISettings) {
-                OpenAISettingsView()
-            }
             .navigationDestination(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
             }
@@ -63,9 +59,6 @@ struct TranscriptionSettingsView: View {
                 NavigationStack {
                     FluidAudioSettingsView()
                 }
-            }
-            .sheet(isPresented: $showingOpenAISettings) {
-                OpenAISettingsView()
             }
             .sheet(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
@@ -179,12 +172,6 @@ struct TranscriptionSettingsView: View {
                 title: "Mistral AI",
                 subtitle: "Enterprise, speaker diarization, cheap"
             )
-            modernEngineOptionRow(
-                engine: .openAI,
-                title: "OpenAI Whisper",
-                subtitle: "Requires API key"
-            )
-
             Divider()
 
             modernEngineGroupHeader("Local Server", systemImage: "server.rack", tint: .green)
@@ -382,11 +369,6 @@ struct TranscriptionSettingsView: View {
                         subtitle: "Enterprise, speaker diarization, cheap"
                     )
 
-                    engineOptionRow(
-                        engine: .openAI,
-                        title: "OpenAI Whisper",
-                        subtitle: "Requires API key"
-                    )
                 }
 
                 Divider()
@@ -619,12 +601,8 @@ struct TranscriptionSettingsView: View {
             showingAWSSettings = true
         case .whisper:
             showingWhisperSettings = true
-        case .openAI:
-            showingOpenAISettings = true
         case .mistralAI:
             showingMistralTranscribeSettings = true
-        case .openAIAPICompatible:
-            break
         }
     }
 
@@ -632,8 +610,6 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .fluidAudio:
             return fluidAudioManager.isModelReady ? "Model downloaded and ready" : "Download required (~250-350 MB)"
-        case .openAI:
-            return "Requires OpenAI API key"
         case .awsTranscribe:
             return "Requires AWS credentials"
         case .mistralAI:
@@ -655,12 +631,8 @@ struct TranscriptionSettingsView: View {
             return .orange
         case .whisper:
             return .green
-        case .openAI:
-            return .blue
         case .mistralAI:
             return .purple
-        case .openAIAPICompatible:
-            return .gray
         }
     }
 
@@ -744,12 +716,8 @@ struct TranscriptionSettingsView: View {
             return "shippingbox"
         case .whisper:
             return "server.rack"
-        case .openAI:
-            return "sparkles"
         case .mistralAI:
             return "wind"
-        case .openAIAPICompatible:
-            return "link"
         }
     }
 

@@ -86,7 +86,7 @@
       <ul>
         <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
         <li><strong>On Device AI:</strong> Private, on-device processing. No data leaves your device. Uses MLX Swift for summaries on 4GB+ devices and Parakeet for transcription. Models download once, then run locally.</li>
-        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes OpenAI, Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, AWS Bedrock, Mistral AI, Compatible API, and Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
       </ul>
     </div>
     <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
@@ -357,51 +357,9 @@
   </div>
 </details>
 
-<!-- OpenAI -->
-<details>
-  <summary>2. OpenAI — Cloud AI</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-cloud">Cloud</span>
-    <span class="bn-badge bn-b-paid">Pay-per-use</span>
-    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Privacy:</strong> Data sent to OpenAI &bull; <strong>Internet:</strong> Required</p>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li>Get API key at <a href="https://platform.openai.com" target="_blank" rel="noopener">platform.openai.com</a></li>
-      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI</li>
-      <li>Enter your API key, select model, test connection.</li>
-    </ol>
-
-    <h4>Summarization Models</h4>
-    <div class="bn-tw">
-      <table>
-        <thead><tr><th>Model</th><th>Best For</th><th>Tier</th></tr></thead>
-        <tbody>
-          <tr><td><strong>GPT-4.1 Mini</strong></td><td>Balanced performance (Default)</td><td>Standard</td></tr>
-          <tr><td><strong>GPT-5 Mini</strong></td><td>Next-gen reasoning</td><td>Premium</td></tr>
-          <tr><td><strong>GPT-5.4 Mini</strong></td><td>Latest GPT-5 Mini — improved reasoning</td><td>Premium</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h4>Transcription Models</h4>
-    <div class="bn-tw">
-      <table>
-        <thead><tr><th>Model</th><th>Notes</th></tr></thead>
-        <tbody>
-          <tr><td><strong>GPT-4o Transcribe</strong></td><td>Most robust. Supports streaming.</td></tr>
-          <tr><td><strong>GPT-4o Mini Transcribe</strong></td><td>Cheapest/fastest. Streaming. Recommended.</td></tr>
-          <tr><td><strong>Whisper-1</strong></td><td>Legacy Whisper V2. No streaming.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p><strong>Best for:</strong> High-quality results, advanced features</p>
-  </div>
-</details>
-
 <!-- Google AI Studio -->
 <details>
-  <summary>3. Google AI Studio — Gemini Models</summary>
+  <summary>2. Google AI Studio — Gemini Models</summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
     <span class="bn-badge bn-b-free">Free tier</span>
@@ -423,13 +381,13 @@
   </div>
 </details>
 
-<!-- OpenAI API Compatible -->
+<!-- Compatible API -->
 <details>
-  <summary>4. OpenAI API Compatible — LiteLLM, llama.cpp, Groq, etc.</summary>
+  <summary>3. Compatible API — LiteLLM, llama.cpp, Groq, etc.</summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud/Local</span>
     <span class="bn-badge bn-b-free">Flexible</span>
-    <p><strong>Type:</strong> OpenAI-compatible endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
+    <p><strong>Type:</strong> Compatible chat-completion endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
 
     <div class="bn-info"><strong>Note:</strong> This is a single engine option that works with multiple providers. You don't select them as separate engines — just change the base URL and API key.</div>
 
@@ -439,12 +397,12 @@
       <li><strong>llama.cpp</strong> — Base URL: <code>http://localhost:8080</code>. API key: "no-key" or empty.</li>
       <li><strong>Groq</strong> — Base URL: <code>https://api.groq.com/v1</code>. API key from <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></li>
       <li><strong>Nebius</strong> — Your Nebius endpoint URL</li>
-      <li><strong>Custom</strong> — Any OpenAI-compatible endpoint</li>
+      <li><strong>Custom</strong> — Any compatible chat-completion endpoint</li>
     </ul>
 
     <h4>Setup</h4>
     <ol class="bn-sl">
-      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI API Compatible</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Compatible API</li>
       <li>Enter API key and base URL for your provider.</li>
       <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
       <li>Test the connection.</li>
@@ -458,7 +416,7 @@
 
 <!-- Mistral AI -->
 <details>
-  <summary>5. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
+  <summary>4. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
     <span class="bn-badge bn-b-free">Free Tier Available</span>
@@ -510,7 +468,7 @@
 
 <!-- AWS Bedrock -->
 <details>
-  <summary>6. AWS Bedrock — Enterprise Claude AI</summary>
+  <summary>5. AWS Bedrock — Enterprise Claude AI</summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
     <span class="bn-badge bn-b-paid">Pay-per-use</span>
@@ -536,7 +494,7 @@
 
 <!-- Apple Native -->
 <details>
-  <summary>7. Apple Native — Apple Intelligence</summary>
+  <summary>6. Apple Native — Apple Intelligence</summary>
   <div class="dd">
     <span class="bn-badge bn-b-free">Free</span>
     <span class="bn-badge bn-b-local">On-Device</span>
@@ -569,7 +527,7 @@
 
 <!-- Ollama -->
 <details>
-  <summary>8. Ollama — Local LLM Server</summary>
+  <summary>7. Ollama — Local LLM Server</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">Local</span>
     <span class="bn-badge bn-b-free">Free</span>
@@ -580,7 +538,7 @@
       <li>Install <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> on your machine.</li>
       <li>Download models:
         <pre><code>ollama pull qwen3:30b
-ollama pull gpt-oss:20b
+ollama pull llama3.2
 ollama pull mistral-small3.2</code></pre>
       </li>
       <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
@@ -595,7 +553,7 @@ ollama pull mistral-small3.2</code></pre>
 
 <!-- On Device AI Legacy -->
 <details>
-  <summary>9. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
+  <summary>8. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">On-Device</span>
     <span class="bn-badge bn-b-free">Free</span>
@@ -632,11 +590,9 @@ ollama pull mistral-small3.2</code></pre>
 <h3>Available Engines</h3>
 <ul>
   <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
-  <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
   <li><strong>Mistral AI</strong> — Voxtral Mini with optional speaker diarization. Free tier available; $0.003/min on paid tiers.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
   <li><strong>AWS Transcribe</strong> — Cloud service for long audio files.</li>
-  <li><strong>OpenAI API Compatible</strong> — Any compatible transcription endpoint.</li>
 </ul>
 
 <h3>Transcription Engine Comparison</h3>
@@ -645,8 +601,6 @@ ollama pull mistral-small3.2</code></pre>
     <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
     <tbody>
       <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
-      <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
-      <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
       <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
       <tr><td><strong>AWS Transcribe</strong></td><td>Cloud</td><td>Yes</td><td>Per minute</td></tr>
       <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
@@ -678,13 +632,7 @@ ollama pull mistral-small3.2</code></pre>
   <summary>Whisper (Local Server) Setup</summary>
   <div class="dd">
     <ol class="bn-sl">
-      <li><strong>Install Whisper Server:</strong>
-        <pre><code># Using Docker (recommended)
-docker run -d -p 9000:9000 \
-  -e ASR_MODEL=base \
-  -e ASR_ENGINE=openai_whisper \
-  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
-      </li>
+      <li><strong>Install a Whisper-compatible server:</strong> Run your preferred local server on port 9000, then configure its REST API or Wyoming endpoint below.</li>
       <li><strong>Configure:</strong> Setup &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
     </ol>
     <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
@@ -829,7 +777,7 @@ docker run -d -p 9000:9000 \
 
 <h3>AI Settings</h3>
 <ul>
-  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, OpenAI-compatible, Ollama, Apple Native, and AWS Bedrock engines</li>
+  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama, Apple Native, and AWS Bedrock engines</li>
   <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
   <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
   <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
@@ -901,7 +849,7 @@ docker run -d -p 9000:9000 \
 
 <h3>How credentials are stored</h3>
 <ul>
-  <li><strong>Keychain-backed storage</strong> &mdash; OpenAI keys, Mistral keys, Google AI keys, AWS access keys/secret keys/session tokens, OpenAI-Compatible keys, and Whisper auth tokens all live in the iOS Keychain.</li>
+  <li><strong>Keychain-backed storage</strong> &mdash; Compatible API keys, Mistral keys, Google AI keys, AWS access keys/secret keys/session tokens, and Whisper auth tokens all live in the iOS Keychain.</li>
   <li><strong>Automatic migration</strong> &mdash; Existing values stored in legacy locations are migrated into the Keychain on first launch of v1.11 and then removed from their old locations.</li>
   <li><strong>Process environment is cleared</strong> &mdash; Any inherited <code>AWS_*</code> environment variables are scrubbed at launch so AWS SDKs only use the credentials you configured in-app.</li>
   <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
@@ -918,11 +866,11 @@ docker run -d -p 9000:9000 \
 </ul>
 
 <h3>Endpoint safety</h3>
-<p>User-configurable AI services (OpenAI, OpenAI-Compatible, Ollama, Whisper) are checked against an endpoint policy:</p>
+<p>User-configurable AI services (compatible API, Ollama, Whisper) are checked against an endpoint policy:</p>
 <ul>
   <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
   <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>
-  <li>HTTPS / WSS public endpoints (Groq, Nebius, OpenAI, etc.) work as expected.</li>
+  <li>HTTPS / WSS public endpoints (Groq, Nebius, and similar providers) work as expected.</li>
 </ul>
 <div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public address while you set it up &mdash; it does not weaken transport security for any other engine.</div>
 
@@ -1151,7 +1099,6 @@ docker run -d -p 9000:9000 \
   <div class="bn-gc">
     <h4>Cloud Services</h4>
     <ul>
-      <li><a href="https://platform.openai.com/docs" target="_blank" rel="noopener">OpenAI Docs</a></li>
       <li><a href="https://ai.google.dev" target="_blank" rel="noopener">Google AI</a></li>
       <li><a href="https://docs.aws.amazon.com/bedrock" target="_blank" rel="noopener">AWS Bedrock</a></li>
       <li><a href="https://docs.aws.amazon.com/transcribe" target="_blank" rel="noopener">AWS Transcribe</a></li>

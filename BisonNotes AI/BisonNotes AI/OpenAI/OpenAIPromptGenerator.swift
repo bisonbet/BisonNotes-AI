@@ -1,8 +1,8 @@
 //
-//  OpenAIPromptGenerator.swift
+//  ChatCompletionPromptGenerator.swift
 //  Audio Journal
 //
-//  OpenAI prompt generation with standardized title logic
+//  Chat-completion prompt generation with standardized title logic
 //
 
 import Foundation
@@ -65,9 +65,9 @@ enum ComedyMode: String {
     }
 }
 
-// MARK: - OpenAI Prompt Generator
+// MARK: - Chat Completion Prompt Generator
 
-class OpenAIPromptGenerator {
+class ChatCompletionPromptGenerator {
 
     // MARK: - Prompt Types
 

@@ -1,272 +1,17 @@
 //
-//  OpenAISummarizationSettingsView.swift
-//  Audio Journal
+//  OpenAICompatibleSettingsView.swift
+//  BisonNotes AI
 //
-//  Settings view for OpenAI summarization configuration
+//  Settings view for compatible API summarization configuration
 //
 
 import SwiftUI
 
-struct OpenAISummarizationSettingsView: View {
-    @SecureStorage(KeychainSecretStore.openAIAPIKey) private var apiKey: String = ""
-    @AppStorage("openAISummarizationModel") private var selectedModel: String = OpenAISummarizationModel.gpt41Mini.rawValue
-    @AppStorage("openAISummarizationBaseURL") private var baseURL: String = "https://api.openai.com/v1"
-    @AppStorage("openAISummarizationTemperature") private var temperature: Double = 0.1
-    @AppStorage("openAISummarizationMaxTokens") private var maxTokens: Int = 0
-    @AppStorage("enableOpenAI") private var enableOpenAI: Bool = true
-    @AppStorage(EndpointSecurityPolicy.allowInsecurePublicEndpointsKey) private var allowInsecurePublicEndpoints: Bool = false
-
-    @State private var isTestingConnection = false
-    @State private var connectionTestResult: String = ""
-    @State private var showingConnectionResult = false
-    @State private var isConnectionSuccessful = false
-    @State private var showingAPIKeyInfo = false
-    @Environment(\.dismiss) private var dismiss
-
-    var onConfigurationChanged: (() -> Void)?
-
-    init(onConfigurationChanged: (() -> Void)? = nil) {
-        self.onConfigurationChanged = onConfigurationChanged
-    }
-
-    var body: some View {
-        PlatformSettingsNavigationStack {
-            Form {
-                authenticationSection
-                apiConfigurationSection
-                modelSelectionSection
-                generationSettingsSection
-                responseLimitsSection
-                connectionTestSection
-            }
-            .nativeMacSettingsFormStyle()
-            .scrollContentBackground(.hidden)
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle("OpenAI Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
-                }
-
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        onConfigurationChanged?()
-                        dismiss()
-                    }
-                }
-            }
-            .alert("Connection Test Result", isPresented: $showingConnectionResult) {
-                Button("OK") { }
-            } message: {
-                Text(connectionTestResult)
-            }
-            .alert("API Key Information", isPresented: $showingAPIKeyInfo) {
-                Button("OK") { }
-            } message: {
-                Text("Get your API key from https://platform.openai.com/api-keys")
-            }
-        }
-    }
-
-    // MARK: - View Components
-
-    private var authenticationSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("API Key")
-                    Spacer()
-                    Button(action: { showingAPIKeyInfo = true }) {
-                        Image(systemName: "info.circle")
-                            .foregroundColor(.blue)
-                    }
-                }
-
-                SecureField("Enter your OpenAI API key", text: $apiKey)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-
-                if !apiKey.isEmpty {
-                    Text("API key configured (\(apiKey.count) characters)")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                } else {
-                    Text("API key required for OpenAI")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-            }
-        } header: {
-            Text("Authentication")
-        } footer: {
-            Text("Your API key is stored securely on your device and only used for summarization requests.")
-        }
-    }
-
-    private var apiConfigurationSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Base URL")
-
-                TextField("API Base URL", text: $baseURL)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .autocapitalization(.none)
-                    .disableAutocorrection(true)
-
-                Text("Default: https://api.openai.com/v1")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                endpointSecurityWarning(for: baseURL)
-            }
-        } header: {
-            Text("API Configuration")
-        } footer: {
-            Text("Configure the base URL for OpenAI API.")
-        }
-    }
-
-    private var modelSelectionSection: some View {
-        Section {
-            Picker("Model", selection: $selectedModel) {
-                ForEach(OpenAISummarizationModel.allCases, id: \.self) { model in
-                    Text(model.displayName)
-                        .tag(model.rawValue)
-                }
-            }
-            .pickerStyle(MenuPickerStyle())
-        } header: {
-            Text("Model Selection")
-        } footer: {
-            Text("Choose the AI model for summarization.")
-        }
-    }
-
-    private var generationSettingsSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Temperature: \(temperature, specifier: "%.2f")")
-
-                Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                    .accentColor(.blue)
-
-                Text("Controls randomness in responses. Lower values are more deterministic.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        } header: {
-            Text("Generation Settings")
-        }
-    }
-
-    private var responseLimitsSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Max Tokens: \(maxTokens == 0 ? "Unlimited" : "\(maxTokens)")")
-
-                HStack {
-                    Slider(value: Binding(
-                        get: { Double(maxTokens) },
-                        set: { maxTokens = Int($0) }
-                    ), in: 0...4096, step: 1)
-                    .accentColor(.blue)
-
-                    Button("Reset") {
-                        maxTokens = 0
-                    }
-                    .font(.caption)
-                }
-
-                Text("Maximum tokens for response. 0 = unlimited")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        } header: {
-            Text("Response Limits")
-        }
-    }
-
-    private var connectionTestSection: some View {
-        Section {
-            Button(action: testConnection) {
-                HStack {
-                    if isTestingConnection {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "network")
-                    }
-                    Text(isTestingConnection ? "Testing..." : "Test Connection")
-                }
-            }
-            .disabled(apiKey.isEmpty || isTestingConnection)
-        } header: {
-            Text("Connection Test")
-        } footer: {
-            Text("Test your API connection and model availability.")
-        }
-    }
-
-    private func testConnection() {
-        isTestingConnection = true
-
-        Task {
-            let config = OpenAISummarizationConfig(
-                apiKey: apiKey,
-                model: OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt41Mini,
-                baseURL: baseURL,
-                temperature: temperature,
-                maxTokens: maxTokens == 0 ? 2048 : maxTokens,
-                timeout: SummarizationTimeouts.current(),
-                dynamicModelId: nil
-            )
-
-            let service = OpenAISummarizationService(config: config)
-
-            let success = await service.testConnection()
-
-            await MainActor.run {
-                isConnectionSuccessful = success
-                connectionTestResult = success
-                    ? "✅ Connection successful! Your API key and configuration are working correctly."
-                    : "❌ Connection failed. Please check your API key and configuration."
-                showingConnectionResult = true
-                isTestingConnection = false
-            }
-        }
-    }
-
-    private func resetToDefaults() {
-        apiKey = ""
-        selectedModel = OpenAISummarizationModel.gpt41Mini.rawValue
-        baseURL = "https://api.openai.com/v1"
-        temperature = 0.1
-        maxTokens = 0
-        showingConnectionResult = false
-    }
-
-    @ViewBuilder
-    private func endpointSecurityWarning(for endpoint: String) -> some View {
-        if let warning = EndpointSecurityPolicy.warningMessage(for: endpoint) {
-            Label(warning, systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundColor(.orange)
-        }
-
-        if EndpointSecurityPolicy.validationMessage(for: endpoint, allowInsecurePublicEndpoints: false) != nil {
-            Toggle("Development Mode: Allow Public HTTP", isOn: $allowInsecurePublicEndpoints)
-                .font(.caption)
-        }
-    }
-}
-
-// MARK: - OpenAI API Compatible Settings View
+// MARK: - Compatible API Settings View
 
 struct OpenAICompatibleSettingsView: View {
     @SecureStorage(KeychainSecretStore.openAICompatibleAPIKey) private var apiKey: String = ""
-    @AppStorage("openAICompatibleModel") private var selectedModel: String = "gpt-4o"
+    @AppStorage("openAICompatibleModel") private var selectedModel: String = ""
     @AppStorage("openAICompatibleBaseURL") private var baseURL: String = ""
     @AppStorage("openAICompatibleTemperature") private var temperature: Double = 0.1
     @AppStorage("openAICompatibleMaxTokens") private var maxTokens: Int = 2048
@@ -281,7 +26,6 @@ struct OpenAICompatibleSettingsView: View {
     @State private var isConnectionSuccessful = false
     @State private var showingAPIKeyInfo = false
     @State private var isLoadingModels = false
-    @State private var availableModels: [OpenAISummarizationModel] = []
     @State private var availableModelIds: [String] = []
     @State private var showingModelFetchError = false
     @State private var modelFetchError = ""
@@ -294,7 +38,7 @@ struct OpenAICompatibleSettingsView: View {
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
 
-        // Check if OpenAI Compatible is the selected engine
+        // Check if the compatible API is the selected engine
         let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
         let isSelectedEngine = selectedEngine == "OpenAI API Compatible"
 
@@ -327,20 +71,15 @@ struct OpenAICompatibleSettingsView: View {
         }
 
         isLoadingModels = true
-        availableModels = []
         modelFetchError = ""
         showingModelFetchError = false
 
         Task {
             do {
-                let modelIds = try await OpenAISummarizationService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
+                let modelIds = try await OpenAICompatibleService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
 
                 await MainActor.run {
                     availableModelIds = modelIds
-                    availableModels = modelIds.compactMap { id in
-                        OpenAISummarizationModel(rawValue: id)
-                    }
-
                     if !modelIds.isEmpty && selectedModel.isEmpty {
                         selectedModel = modelIds.first!
                     }
@@ -370,10 +109,9 @@ struct OpenAICompatibleSettingsView: View {
         showingConnectionResult = false
 
         Task {
-            let model = OpenAISummarizationModel(rawValue: selectedModel) ?? .gpt41Mini
-            let config = OpenAISummarizationConfig(
+            let config = OpenAICompatibleConfig(
                 apiKey: apiKey,
-                model: model,
+                modelID: selectedModel,
                 baseURL: baseURL,
                 temperature: temperature,
                 maxTokens: maxTokens,
@@ -381,7 +119,7 @@ struct OpenAICompatibleSettingsView: View {
                 dynamicModelId: selectedModel
             )
 
-            let service = OpenAISummarizationService(config: config)
+            let service = OpenAICompatibleService(config: config)
 
             let success = await service.testConnection()
 
@@ -398,12 +136,11 @@ struct OpenAICompatibleSettingsView: View {
 
     private func resetToDefaults() {
         apiKey = ""
-        selectedModel = "gpt-4o"
-        baseURL = "https://api.openai.com/v1"
+        selectedModel = ""
+        baseURL = ""
         temperature = 0.1
         maxTokens = 2048
         useDynamicModels = false
-        availableModels = []
         availableModelIds = []
         showingConnectionResult = false
         showingModelFetchError = false
@@ -427,7 +164,7 @@ struct OpenAICompatibleSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("OpenAI Compatible")
+            .navigationTitle("Compatible API")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -498,7 +235,7 @@ struct OpenAICompatibleSettingsView: View {
             if isSelectedEngine {
                 Text("This engine is currently active and will be used for AI processing. It has been automatically enabled.")
             } else {
-                Text("To use this engine, select 'OpenAI API Compatible' in the AI Engine settings.")
+                Text("To use this engine, select 'Compatible API' in the AI Engine settings.")
             }
         }
     }
@@ -677,7 +414,7 @@ struct OpenAICompatibleSettingsView: View {
         } header: {
             Text("API Configuration")
         } footer: {
-            Text("Enter the base URL for your OpenAI-compatible API. Examples:\n• LiteLLM: http://localhost:4000\n• vLLM: http://localhost:8000/v1\n• LocalAI: http://localhost:8080/v1\n• OpenRouter: https://openrouter.ai/api/v1\n• Together AI: https://api.together.xyz/v1")
+            Text("Enter the base URL for your compatible API. Examples:\n• LiteLLM: http://localhost:4000\n• vLLM: http://localhost:8000/v1\n• LocalAI: http://localhost:8080/v1\n• OpenRouter: https://openrouter.ai/api/v1\n• Together AI: https://api.together.xyz/v1")
         }
 
     }
@@ -689,7 +426,7 @@ struct OpenAICompatibleSettingsView: View {
                     if useDynamicModels {
                         loadAvailableModels()
                     } else {
-                        availableModels = []
+                        availableModelIds = []
                     }
                 }
 
@@ -701,7 +438,7 @@ struct OpenAICompatibleSettingsView: View {
             if useDynamicModels {
                 Text("Enable to discover models from your API endpoint automatically. If your provider supports the /models endpoint (like LiteLLM, vLLM, LocalAI), it will list all available models.")
             } else {
-                Text("Enter the model ID manually. Common examples: gpt-4o, claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
+                Text("Enter the model ID manually. Common examples: claude-sonnet-4-5-20250929, llama-4-maverick, gemini-2.5-flash, deepseek-chat, etc.")
             }
         }
     }
@@ -779,7 +516,7 @@ struct OpenAICompatibleSettingsView: View {
                 .font(.subheadline)
                 .fontWeight(.medium)
 
-            TextField("e.g., gpt-4o, claude-sonnet-4-5, llama-4-maverick", text: $selectedModel)
+            TextField("e.g., claude-sonnet-4-5, llama-4-maverick", text: $selectedModel)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
@@ -897,10 +634,10 @@ struct OpenAICompatibleSettingsView: View {
                                         Text("Simple String Format")
                                             .font(.caption)
                                             .fontWeight(.medium)
-                                        Text("Standard OpenAI format: {\"content\": \"text\"}")
+                                        Text("Standard chat-completion format: {\"content\": \"text\"}")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
-                                        Text("Used by: OpenAI, Groq, OpenRouter, Together AI")
+                                        Text("Used by: Groq, OpenRouter, Together AI, and similar providers")
                                             .font(.caption2)
                                             .foregroundColor(.secondary)
                                     }
@@ -1072,5 +809,33 @@ struct OpenAICompatibleSettingsView: View {
 struct OpenAICompatibleSettingsView_Previews: PreviewProvider {
     static var previews: some View {
         OpenAICompatibleSettingsView()
+    }
+}
+
+struct FeatureRow: View {
+    let icon: String
+    let title: String
+    let description: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundColor(.blue)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 }

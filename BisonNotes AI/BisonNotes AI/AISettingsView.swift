@@ -73,7 +73,7 @@ final class AISettingsViewModel: ObservableObject {
         switch engineType {
         case .openAICompatible:
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            AppLog.shared.general("Auto-enabled OpenAI Compatible engine")
+            AppLog.shared.general("Auto-enabled Compatible API engine")
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
             AppLog.shared.general("Auto-enabled Ollama engine")
@@ -86,9 +86,6 @@ final class AISettingsViewModel: ObservableObject {
         case .mistralAI:
             UserDefaults.standard.set(true, forKey: "enableMistralAI")
             AppLog.shared.general("Auto-enabled Mistral AI engine")
-        case .openAI:
-            UserDefaults.standard.set(true, forKey: "enableOpenAI")
-            AppLog.shared.general("Auto-enabled OpenAI engine")
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             AppLog.shared.general("Auto-enabled On-Device AI engine")
@@ -114,7 +111,6 @@ struct AISettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingOllamaSettings = false
-    @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
     @State private var showingMistralAISettings = false
@@ -176,9 +172,6 @@ struct AISettingsView: View {
 
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .openAI:
-            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-            return !apiKey.isEmpty
         case .openAICompatible:
             let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
             return !apiKey.isEmpty
@@ -223,9 +216,6 @@ struct AISettingsView: View {
 
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
-        case .openAI:
-            let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-            return OpenAISummarizationModel(rawValue: modelString)?.displayName ?? modelString
         case .openAICompatible:
             return "API Compatible"
         case .mistralAI:
@@ -289,7 +279,7 @@ struct AISettingsView: View {
             summarizationTimeout = SummarizationTimeouts.clamp(
                 summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
             )
-            // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
+            // Align regeneration manager with the user's currently selected engine.
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
@@ -306,11 +296,6 @@ struct AISettingsView: View {
         .navigationDestination(isPresented: $showingOllamaSettings) {
             OllamaSettingsView(onConfigurationChanged: {
                 self.refreshEngineStatuses()
-            })
-        }
-        .navigationDestination(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
             })
         }
         .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
@@ -341,11 +326,6 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView(onConfigurationChanged: {
                 self.refreshEngineStatuses()
-            })
-        }
-        .sheet(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
@@ -717,7 +697,7 @@ private extension AISettingsView {
             case .onDevice:
                 return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
             case .cloud:
-                return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
+                return [.googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
             case .selfHosted:
                 return engine == .localLLM
             }
@@ -754,7 +734,6 @@ private extension AISettingsView {
         case .onDeviceLLM: return "Private, no internet after download"
         case .mlxSwift: return "On-device MLX summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
-        case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
         case .mistralAI: return "Fast cloud summaries"
         case .awsBedrock: return "Enterprise model routing"
@@ -765,8 +744,6 @@ private extension AISettingsView {
 
     func openSettings(for engine: AIEngineType) {
         switch engine {
-        case .openAI:
-            showingOpenAISettings = true
         case .openAICompatible:
             showingOpenAICompatibleSettings = true
         case .localLLM:
@@ -801,7 +778,6 @@ private extension AISettingsView {
             // apple.intelligence requires iOS 18.1+
             if #available(iOS 18.1, *) { return "apple.intelligence" }
             return "brain"
-        case .openAI: return "sparkles"
         case .googleAIStudio: return "globe"
         case .mistralAI: return "wind"
         case .awsBedrock: return "shippingbox"
@@ -841,7 +817,6 @@ private extension AISettingsView {
         case .onDeviceLLM: return .indigo
         case .mlxSwift: return .orange
         case .appleNative: return .mint
-        case .openAI: return .blue
         case .googleAIStudio: return .purple
         case .mistralAI: return .orange
         case .awsBedrock: return .brown

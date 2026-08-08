@@ -132,7 +132,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             recordingName: "Persisted Transcript",
             recordingDate: Date(),
             segments: [TranscriptSegment(speaker: "Speaker", text: "Persist this transcript", startTime: 0, endTime: 1)],
-            engine: .openAI,
+            engine: .fluidAudio,
             processingTime: 0.5,
             confidence: 0.9
         )
@@ -165,7 +165,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         defer { manager.activeJobs = oldJobs }
 
         let queuedJob = ProcessingJob(
-            type: .transcription(engine: .openAI),
+            type: .transcription(engine: .fluidAudio),
             recordingURL: audioURL,
             recordingName: "Active Job"
         ).withStatus(.queued)

@@ -146,28 +146,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return config
     }
 
-    // OpenAI Configuration
-    private var openAIConfig: OpenAITranscribeConfig? {
-        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
-        let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-
-        guard !apiKey.isEmpty else {
-            AppLog.shared.transcription("OpenAI API key is not configured")
-            return nil
-        }
-
-        let model = OpenAITranscribeModel(rawValue: modelString) ?? .gpt4oMiniTranscribe
-
-        let config = OpenAITranscribeConfig(
-            apiKey: apiKey,
-            model: model,
-            baseURL: baseURL
-        )
-
-        return config
-    }
-
     // Mistral Transcribe Configuration
     private var mistralTranscribeConfig: MistralTranscribeConfig? {
         let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
@@ -501,21 +479,6 @@ if isWhisperAvailable {
                 return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
-        case .openAI:
-            switchToNativeSpeechTranscription() // OpenAI doesn't need background checking
-
-            // Validate OpenAI configuration
-            if let config = openAIConfig {
-                return try await transcribeWithOpenAI(url: url, config: config, recordingId: recordingId)
-            } else {
-                // Ensure speech recognizer is available for fallback
-                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-                    throw TranscriptionError.speechRecognizerUnavailable
-                }
-
-                    return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
-            }
-
         case .mistralAI:
             switchToNativeSpeechTranscription() // Mistral doesn't need background checking
 
@@ -530,10 +493,6 @@ if isWhisperAvailable {
                 return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
-        case .openAIAPICompatible:
-// These are not implemented yet, fall back to native speech recognition
-            switchToNativeSpeechTranscription()
-            return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
         }
     }
 
@@ -1547,103 +1506,6 @@ return result
         }
     }
 
-    // MARK: - OpenAI Transcription
-
-private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
-
-        let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
-
-        do {
-// Test connection first
-            try await openAIService.testConnection()
-
-            // OpenAI has a 25MB file size limit, so we don't need chunking for most files
-            // But we should check the file size
-            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let fileSize = fileAttributes[.size] as? Int64 ?? 0
-            let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
-
-if fileSize > maxSize {
-                return try await transcribeWithChunkedOpenAI(url: url, recordingId: recordingId)
-            }
-
-            let openAIResult = try await openAIService.transcribeAudioFile(at: url, recordingId: recordingId)
-
-            // Convert OpenAI result to our TranscriptionResult format
-            let transcriptionResult = TranscriptionResult(
-                fullText: openAIResult.transcriptText,
-                segments: openAIResult.segments,
-                processingTime: openAIResult.processingTime,
-                chunkCount: 1,
-                success: openAIResult.success,
-                error: openAIResult.error
-            )
-
-return transcriptionResult
-
-        } catch {
-            AppLog.shared.transcription("OpenAI transcription failed: \(error)", level: .error)
-            throw TranscriptionError.openAITranscriptionFailed(error)
-        }
-    }
-
-private func transcribeWithChunkedOpenAI(url: URL, recordingId: UUID) async throws -> TranscriptionResult {
-
-        guard let openAIConfig = openAIConfig else {
-            throw TranscriptionError.openAITranscriptionFailed(TranscriptionError.fileNotFound)
-        }
-
-        do {
-            // Create OpenAI service with config
-            let openAIService = OpenAITranscribeService(config: openAIConfig, chunkingService: chunkingService)
-
-// Use the chunking service to chunk the file
-            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
-            let chunks = chunkingResult.chunks
-
-            var transcriptChunks: [TranscriptChunk] = []
-
-for chunk in chunks {
-                let openAIResult = try await openAIService.transcribeAudioFile(
-                    at: chunk.chunkURL,
-                    recordingId: recordingId
-                )
-                let transcriptChunk = chunkingService.createTranscriptChunk(
-                    from: openAIResult.transcriptText,
-                    audioChunk: chunk,
-                    segments: openAIResult.segments
-                )
-                transcriptChunks.append(transcriptChunk)
-
-            }
-
-            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
-            let reassembly = try await chunkingService.reassembleTranscript(
-                from: transcriptChunks,
-                originalURL: url,
-                recordingName: url.deletingPathExtension().lastPathComponent,
-                recordingDate: recordingDate,
-                recordingId: recordingId
-            )
-
-            let transcriptionResult = TranscriptionResult(
-                fullText: reassembly.transcriptData.plainText,
-                segments: reassembly.transcriptData.segments,
-                processingTime: reassembly.reassemblyTime,
-                chunkCount: transcriptChunks.count,
-                success: true,
-                error: nil
-            )
-
-return transcriptionResult
-
-        } catch {
-            AppLog.shared.transcription("Chunked OpenAI transcription failed: \(error)", level: .error)
-            throw TranscriptionError.openAITranscriptionFailed(error)
-        }
-    }
-
     // MARK: - Mistral Transcription
 
     private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
@@ -1894,7 +1756,7 @@ func switchToWhisperTranscription() {
             switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .openAI, .openAIAPICompatible, .mistralAI:
+        case .mistralAI:
             switchToNativeSpeechTranscription()
         }
     }
@@ -2036,7 +1898,6 @@ enum TranscriptionError: LocalizedError {
     case awsNotConfigured
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
-    case openAITranscriptionFailed(Error)
     case fluidAudioNotAvailable
     case fluidAudioNotReady
     case fluidAudioTranscriptionFailed(Error)
@@ -2069,8 +1930,6 @@ enum TranscriptionError: LocalizedError {
             return "Failed to connect to Whisper service"
         case .whisperTranscriptionFailed(let error):
             return "Whisper transcription failed: \(error.localizedDescription)"
-        case .openAITranscriptionFailed(let error):
-            return "OpenAI transcription failed: \(error.localizedDescription)"
         case .fluidAudioNotAvailable:
             return "FluidAudio is not available in this build. Add the FluidAudio Swift package and rebuild."
         case .fluidAudioNotReady:

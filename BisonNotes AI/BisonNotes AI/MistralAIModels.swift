@@ -127,7 +127,7 @@ struct MistralAIConfig: Equatable {
 
 // MARK: - Mistral Chat Completion Request
 
-/// Mistral-specific chat completion request that uses `max_tokens` instead of OpenAI's `max_completion_tokens`
+/// Mistral-specific chat completion request that uses `max_tokens` instead of `max_completion_tokens`.
 struct MistralChatCompletionRequest: Codable {
     let model: String
     let messages: [ChatMessage]

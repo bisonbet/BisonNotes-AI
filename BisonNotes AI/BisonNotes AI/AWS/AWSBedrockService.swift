@@ -78,8 +78,8 @@ class AWSBedrockService: ObservableObject {
             var summaries: [String] = []
 
             for chunk in chunks {
-                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
-                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: chunk)
+                let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+                let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: chunk)
 
                 let response = try await invokeModel(
                     prompt: userPrompt,
@@ -94,8 +94,8 @@ class AWSBedrockService: ObservableObject {
             return try await generateMetaSummary(from: summaries, contentType: contentType)
         } else {
             // Single chunk processing
-            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
-            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
+            let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+            let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: text)
 
             let response = try await invokeModel(
                 prompt: userPrompt,
@@ -117,8 +117,8 @@ class AWSBedrockService: ObservableObject {
             var allTasks: [TaskItem] = []
 
             for chunk in chunks {
-                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
-                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: chunk)
+                let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+                let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .tasks, text: chunk)
 
                 let response = try await invokeModel(
                     prompt: userPrompt,
@@ -133,8 +133,8 @@ class AWSBedrockService: ObservableObject {
 
             return deduplicateTasks(allTasks)
         } else {
-            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
-            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
+            let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+            let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .tasks, text: text)
 
             let response = try await invokeModel(
                 prompt: userPrompt,
@@ -156,8 +156,8 @@ class AWSBedrockService: ObservableObject {
             var allReminders: [ReminderItem] = []
 
             for chunk in chunks {
-                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
-                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: chunk)
+                let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+                let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .reminders, text: chunk)
 
                 let response = try await invokeModel(
                     prompt: userPrompt,
@@ -172,8 +172,8 @@ class AWSBedrockService: ObservableObject {
 
             return deduplicateReminders(allReminders)
         } else {
-            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
-            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
+            let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+            let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .reminders, text: text)
 
             let response = try await invokeModel(
                 prompt: userPrompt,
@@ -195,8 +195,8 @@ class AWSBedrockService: ObservableObject {
             var allTitles: [TitleItem] = []
 
             for chunk in chunks {
-                let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
-                let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: chunk)
+                let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+                let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .titles, text: chunk)
 
                 let response = try await invokeModel(
                     prompt: userPrompt,
@@ -211,8 +211,8 @@ class AWSBedrockService: ObservableObject {
 
             return deduplicateTitles(allTitles)
         } else {
-            let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
-            let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .titles, text: text)
+            let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .titles, contentType: .general)
+            let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .titles, text: text)
 
             let response = try await invokeModel(
                 prompt: userPrompt,
@@ -394,8 +394,8 @@ class AWSBedrockService: ObservableObject {
     }
 
     private func processCompleteStructured(text: String, contentType: ContentType) async throws -> SummarizationResult {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: text)
 
         let response = try await invokeModel(
             prompt: userPrompt,
@@ -616,13 +616,13 @@ class AWSBedrockService: ObservableObject {
     // MARK: - Response Parsers
 
     private func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
-        // Reuse the existing OpenAI response parser since the JSON structure is the same
-        return try OpenAIResponseParser.parseCompleteResponseFromJSON(jsonString)
+        // Reuse the shared response parser since the JSON structure is the same
+        return try ChatCompletionResponseParser.parseCompleteResponseFromJSON(jsonString)
     }
 
     private func parseTasksFromResponse(_ response: String) -> [TaskItem] {
         do {
-            return try OpenAIResponseParser.parseTasksFromJSON(response)
+            return try ChatCompletionResponseParser.parseTasksFromJSON(response)
         } catch {
             AppLog.shared.networking("Failed to parse tasks JSON, falling back to text parsing", level: .error)
             return parseTasksFromPlainText(response)
@@ -631,7 +631,7 @@ class AWSBedrockService: ObservableObject {
 
     private func parseRemindersFromResponse(_ response: String) -> [ReminderItem] {
         do {
-            return try OpenAIResponseParser.parseRemindersFromJSON(response)
+            return try ChatCompletionResponseParser.parseRemindersFromJSON(response)
         } catch {
             AppLog.shared.networking("Failed to parse reminders JSON, falling back to text parsing", level: .error)
             return parseRemindersFromPlainText(response)
@@ -640,7 +640,7 @@ class AWSBedrockService: ObservableObject {
 
     private func parseTitlesFromResponse(_ response: String) -> [TitleItem] {
         do {
-            return try OpenAIResponseParser.parseTitlesFromJSON(response)
+            return try ChatCompletionResponseParser.parseTitlesFromJSON(response)
         } catch {
             AppLog.shared.networking("Failed to parse titles JSON, falling back to text parsing", level: .error)
             return parseTitlesFromPlainText(response)

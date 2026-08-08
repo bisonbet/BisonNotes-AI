@@ -1,15 +1,15 @@
 //
-//  OpenAIResponseParser.swift
+//  ChatCompletionResponseParser.swift
 //  Audio Journal
 //
-//  OpenAI response parsing with standardized title cleaning
+//  Chat-completion response parsing with standardized title cleaning
 //
 
 import Foundation
 
-// MARK: - OpenAI Response Parser
+// MARK: - Chat Completion Response Parser
 
-class OpenAIResponseParser {
+class ChatCompletionResponseParser {
 
     // MARK: - Complete Response Parsing
 
@@ -66,7 +66,7 @@ class OpenAIResponseParser {
                 response = wrapped.json
                 AppLog.shared.networking("Parsed wrapped JSON response", level: .debug)
             } catch {
-                // If that fails, try direct parsing (standard OpenAI format)
+                // If that fails, try direct parsing (standard chat-completion format)
                 response = try JSONDecoder().decode(CompleteResponse.self, from: jsonData)
                 AppLog.shared.networking("Parsed standard JSON response", level: .debug)
             }
@@ -118,13 +118,13 @@ class OpenAIResponseParser {
 
             // Check if the JSON is empty or malformed
             if cleanedJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AppLog.shared.networking("Empty JSON response received from OpenAI", level: .error)
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty response")
+                AppLog.shared.networking("Empty JSON response received from compatible API", level: .error)
+                throw SummarizationError.aiServiceUnavailable(service: "Compatible API returned empty response")
             }
 
             if cleanedJSON == "{}" {
-                AppLog.shared.networking("OpenAI returned empty JSON object - check API key and model configuration", level: .error)
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty JSON - check API key and model configuration")
+                AppLog.shared.networking("Compatible API returned empty JSON object - check credentials and model configuration", level: .error)
+                throw SummarizationError.aiServiceUnavailable(service: "Compatible API returned empty JSON - check credentials and model configuration")
             }
 
             // Fallback: try to extract information from plain text

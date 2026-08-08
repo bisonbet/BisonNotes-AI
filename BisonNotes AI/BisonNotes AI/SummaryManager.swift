@@ -98,7 +98,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Background Task Management
 
     /// Background task ID for keeping summarization alive when the app is backgrounded.
-    /// Cloud AI calls (OpenAI, Bedrock, Gemini) use network requests that iOS will
+    /// Cloud AI calls (Bedrock, Gemini, Mistral, and compatible APIs) use network requests that iOS will
     /// terminate after ~30s without a background task.
     private var summaryBackgroundTaskID: PlatformBackgroundTask.ID = .invalid
 
@@ -807,7 +807,7 @@ class SummaryManager: ObservableObject {
         }
 
         // For engines that support connection testing, perform additional checks
-        if engineName.contains("OpenAI") || engineName.contains("Ollama") {
+        if engineName.contains("Compatible") || engineName.contains("Ollama") {
             // Try to perform a connection test if the engine supports it
             if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                 let isConnected = await testableEngine.testConnection()
@@ -898,7 +898,7 @@ class SummaryManager: ObservableObject {
             AppLog.shared.summarization("Testing connection for '\(engineName)'", level: .debug)
 
             // Only test connections for engines that support it
-            if engineName.contains("OpenAI") || engineName.contains("Ollama") || engineName.contains("Google") {
+            if engineName.contains("Compatible") || engineName.contains("Ollama") || engineName.contains("Google") {
                 if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                     let isConnected = await testableEngine.testConnection()
                     if isConnected {
@@ -1101,7 +1101,7 @@ class SummaryManager: ObservableObject {
             throw validationError
         }
 
-        // Begin a background task so cloud AI calls (OpenAI, Bedrock, Gemini, etc.)
+        // Begin a background task so cloud AI calls (Bedrock, Gemini, Mistral, etc.)
         // can complete even if the user backgrounds the app during summarization.
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }

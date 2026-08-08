@@ -76,7 +76,7 @@ struct MistralAISettingsView: View {
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
 
-                        Text("Mistral uses OpenAI-compatible chat endpoints. Keep the default base URL unless you use a gateway.")
+                        Text("Mistral uses standard chat-completion endpoints. Keep the default base URL unless you use a gateway.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

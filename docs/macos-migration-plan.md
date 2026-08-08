@@ -158,7 +158,7 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 - Record a mic-only note → transcript → summary end-to-end.
 - Record with system audio (ScreenCaptureKit) → verify mixed/parallel files as on Catalyst.
 - On-device transcription + LLM summary (llama and/or MLX path) complete.
-- Cloud engines (OpenAI/Bedrock/Gemini) reachable (config permitting).
+- Cloud engines (Bedrock/Gemini/Mistral) reachable (config permitting).
 - Quit app during background processing → relaunch → job recovers (matches memory: quit-crash was a Catalyst Phase-2 test item).
 - Zero remaining `TODO(macos-phase2)` markers.
 

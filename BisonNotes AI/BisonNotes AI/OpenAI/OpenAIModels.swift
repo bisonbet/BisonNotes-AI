@@ -1,69 +1,17 @@
 //
-//  OpenAIModels.swift
+//  CompatibleAPIModels.swift
 //  Audio Journal
 //
-//  OpenAI models and configuration for AI summarization
+//  Shared chat-completion models and configuration for compatible AI services
 //
 
 import Foundation
 
-// MARK: - OpenAI Models for Summarization
+// MARK: - Compatible API Configuration
 
-enum OpenAISummarizationModel: String, CaseIterable {
-    case gpt41Mini = "gpt-4.1-mini"
-    case gpt5Mini = "gpt-5-mini"
-    case gpt54Mini = "gpt-5.4-mini"
-
-    var displayName: String {
-        switch self {
-        case .gpt41Mini:
-            return "GPT-4.1 Mini"
-        case .gpt5Mini:
-            return "GPT-5 Mini"
-        case .gpt54Mini:
-            return "GPT-5.4 Mini"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .gpt41Mini:
-            return "Balanced performance and cost, suitable for most summarization tasks"
-        case .gpt5Mini:
-            return "Next-generation model with enhanced reasoning and efficiency"
-        case .gpt54Mini:
-            return "Latest GPT-5 mini model with improved reasoning and efficiency"
-        }
-    }
-
-    var maxTokens: Int {
-        switch self {
-        case .gpt41Mini:
-            return 2048
-        case .gpt5Mini:
-            return 8192
-        case .gpt54Mini:
-            return 8192
-        }
-    }
-
-    var costTier: String {
-        switch self {
-        case .gpt41Mini:
-            return "Standard"
-        case .gpt5Mini:
-            return "Premium"
-        case .gpt54Mini:
-            return "Premium"
-        }
-    }
-}
-
-// MARK: - OpenAI Configuration
-
-struct OpenAISummarizationConfig: Equatable {
+struct OpenAICompatibleConfig: Equatable {
     let apiKey: String
-    let model: OpenAISummarizationModel
+    let modelID: String
     let baseURL: String
     let temperature: Double
     let maxTokens: Int
@@ -73,26 +21,26 @@ struct OpenAISummarizationConfig: Equatable {
     static var defaultTimeout: TimeInterval { SummarizationTimeouts.current() }
     static let connectionTestTimeout: TimeInterval = 30.0
 
-    static var `default`: OpenAISummarizationConfig {
-        return OpenAISummarizationConfig(
+    static var `default`: OpenAICompatibleConfig {
+        return OpenAICompatibleConfig(
             apiKey: "",
-            model: .gpt41Mini,
-            baseURL: "https://api.openai.com/v1",
+            modelID: "",
+            baseURL: "",
             temperature: 0.1,
             maxTokens: 2048,
-            timeout: OpenAISummarizationConfig.defaultTimeout,
+            timeout: OpenAICompatibleConfig.defaultTimeout,
             dynamicModelId: nil
         )
     }
 
     var effectiveModelId: String {
-        return dynamicModelId ?? model.rawValue
+        return dynamicModelId ?? modelID
     }
 }
 
-// MARK: - OpenAI API Request/Response Models
+// MARK: - Chat Completion Request/Response Models
 
-struct OpenAIChatCompletionRequest: Codable {
+struct ChatCompletionRequest: Codable {
     let model: String
     let messages: [ChatMessage]
     let temperature: Double?
@@ -101,7 +49,7 @@ struct OpenAIChatCompletionRequest: Codable {
     let frequencyPenalty: Double?
     let presencePenalty: Double?
     let responseFormat: ResponseFormat?
-    let reasoningEffort: String?  // For GPT-5 and o-series reasoning models: "low", "medium", "high"
+    let reasoningEffort: String?  // For reasoning models: "low", "medium", "high"
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -131,7 +79,7 @@ struct OpenAIChatCompletionRequest: Codable {
 // MARK: - Message Content Models
 
 enum MessageContentFormat {
-    case string      // Standard OpenAI format: "content": "text"
+    case string      // Standard chat-completion format: "content": "text"
     case blocks      // Nebius/Anthropic format: "content": [{"type": "text", "text": "..."}]
 
     /// Human-readable description for logging and display
@@ -240,7 +188,7 @@ struct ChatMessage: Codable {
     /// ```swift
     /// let decoder = JSONDecoder()
     /// decoder.userInfo[ChatMessage.formatKey] = .blocks  // or .string
-    /// let response = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+    /// let response = try decoder.decode(ChatCompletionResponse.self, from: data)
     /// ```
     ///
     /// **Testing Note**: To verify content blocks decode correctly from Nebius/Anthropic responses,
@@ -284,13 +232,13 @@ struct ChatMessage: Codable {
 
 // MARK: - Provider Detection
 
-/// Detects the appropriate message format for OpenAI-compatible API providers
+/// Detects the appropriate message format for compatible API providers
 ///
 /// Supports automatic detection based on known provider URLs and manual override
 /// via UserDefaults. Thread-safe through service-level caching at initialization.
 ///
 /// - Supported Formats:
-///   - `.string`: Standard OpenAI format {"content": "text"}
+///   - `.string`: Standard chat-completion format {"content": "text"}
 ///   - `.blocks`: Content blocks format {"content": [{"type": "text", "text": "..."}]}
 ///
 /// - Detection Priority:
@@ -308,13 +256,12 @@ class MessageFormatDetector {
     // Known providers that use content blocks format
     private static let blockFormatProviders = [
         "nebius.com",               // Nebius API (matches *.nebius.com including api.tokenfactory.nebius.com)
-        "anthropic.com",            // Anthropic (if using OpenAI compat)
+        "anthropic.com",            // Anthropic (if using the compatible protocol)
         "fireworks.ai"              // Fireworks AI (some models)
     ]
 
     // Known providers that use simple string format
     private static let stringFormatProviders = [
-        "openai.com",               // Official OpenAI (matches *.openai.com)
         "groq.com",                 // Groq
         "openrouter.ai",            // OpenRouter
         "together.xyz",             // Together AI
@@ -384,7 +331,7 @@ class MessageFormatDetector {
             return true
         }
 
-        // Subdomain match (e.g., "api.openai.com" matches "openai.com")
+        // Subdomain match (e.g., "api.example.com" matches "example.com")
         // Does not apply to IP addresses or "localhost"
         if host.hasSuffix("." + provider) {
             return true
@@ -413,7 +360,7 @@ class MessageFormatDetector {
         AppLog.shared.networking("URL parsing failed, using fallback string matching", level: .error)
 
         // Extract only the host portion before query params (?) and fragments (#)
-        // This prevents matching providers in URLs like: https://example.com?provider=openai.com
+        // This prevents matching providers in URLs like: https://example.com?provider=other.example.com
         let hostPortion: String
         if let queryIndex = baseURL.firstIndex(of: "?") {
             hostPortion = String(baseURL[..<queryIndex])
@@ -483,21 +430,9 @@ class MessageFormatDetector {
         return detectFormatByHost(host)
     }
 
-    /// Check if a base URL should use response_format
-    /// Uses precise URL matching to avoid false positives
-    static func shouldUseResponseFormat(for baseURL: String) -> Bool {
-        guard let url = URL(string: baseURL),
-              let host = url.host?.lowercased() else {
-            return false
-        }
-
-        // Only use response_format with official OpenAI API
-        // Must be exactly "api.openai.com" or a subdomain of "openai.com"
-        return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
-    }
 }
 
-struct OpenAIChatCompletionResponse: Codable {
+struct ChatCompletionResponse: Codable {
     let id: String
     let object: String
     let created: Int
@@ -706,12 +641,12 @@ extension ResponseFormat {
 
 // MARK: - Models List Response (for /models endpoint)
 
-struct OpenAIModelsListResponse: Codable {
-    let data: [OpenAIModelInfo]
+struct CompatibleModelsResponse: Codable {
+    let data: [CompatibleModelInfo]
     let object: String?
 }
 
-struct OpenAIModelInfo: Codable {
+struct CompatibleModelInfo: Codable {
     let id: String
     let object: String?
     let created: Int?
@@ -723,4 +658,12 @@ struct OpenAIModelInfo: Codable {
     }
 }
 
-// OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
+struct CompatibleAPIErrorResponse: Codable {
+    let error: CompatibleAPIError
+}
+
+struct CompatibleAPIError: Codable {
+    let message: String
+    let type: String?
+    let code: String?
+}

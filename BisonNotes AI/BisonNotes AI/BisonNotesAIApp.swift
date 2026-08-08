@@ -114,6 +114,51 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// Migrates selections that depended on the removed official API options.
+    /// Existing compatible-API summarization selections are preserved.
+    private func migrateRemovedOfficialAPISelections() {
+        let migrationKey = "removedOfficialAPISelectionsMigrated_v2.4"
+
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let aiEngineKey = "SelectedAIEngine"
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        let currentAIEngine = UserDefaults.standard.string(forKey: aiEngineKey)
+        let currentTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey)
+        let hasOnDeviceAISupport = DeviceCapabilities.supportsMLX
+
+        if currentAIEngine == "OpenAI" {
+            if hasOnDeviceAISupport {
+                let deviceRAM = DeviceCapabilities.totalRAMInGB
+                let defaultModelId = deviceRAM < 6.0
+                    ? MLXModelOption.smallModelId
+                    : MLXSwiftSettingsKeys.defaultModelId
+                UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
+                UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                UserDefaults.standard.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                NSLog("✅ Migrated removed cloud AI selection to On-Device AI (model: \(defaultModelId))")
+            } else {
+                UserDefaults.standard.set(AIEngineType.mistralAI.rawValue, forKey: aiEngineKey)
+                NSLog("✅ Migrated removed cloud AI selection to Mistral AI")
+            }
+        }
+
+        if currentTranscriptionEngine == "OpenAI" || currentTranscriptionEngine == "OpenAI API Compatible" {
+            if hasOnDeviceAISupport {
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                NSLog("✅ Migrated removed cloud transcription selection to On-Device transcription")
+            } else {
+                UserDefaults.standard.set(TranscriptionEngine.mistralAI.rawValue, forKey: transcriptionEngineKey)
+                NSLog("✅ Migrated removed cloud transcription selection to Mistral AI")
+            }
+        }
+
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
     /// Migrates users off WhisperKit, which has been removed in v1.8.
     /// Deletes downloaded Whisper model files, clears settings, switches the engine to
     /// Parakeet (FluidAudio), sets the default Parakeet model to v2 (English), and
@@ -224,25 +269,13 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
-    /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
-    /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
-    /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
+    /// Migrates removed Google AI Studio and on-device models to current defaults.
+    /// This keeps existing installations from retaining invalid model selections.
     private func migrateRemovedModels() {
         let migrationKey = "removedModelsMigrated_v1.8"
 
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
-        }
-
-        // OpenAI summarization: gpt-4.1 and gpt-4.1-nano were removed; default to gpt-4.1-mini
-        let openAIKey = "openAISummarizationModel"
-        if let storedModel = UserDefaults.standard.string(forKey: openAIKey) {
-            let removedOpenAIModels = ["gpt-4.1", "gpt-4.1-nano"]
-            if removedOpenAIModels.contains(storedModel) {
-                let newDefault = OpenAISummarizationModel.gpt41Mini.rawValue
-                UserDefaults.standard.set(newDefault, forKey: openAIKey)
-                NSLog("✅ OpenAI summarization model migrated from '\(storedModel)' to '\(newDefault)'")
-            }
         }
 
         // Google AI Studio: gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3-pro-preview removed
@@ -421,6 +454,7 @@ struct BisonNotesAIApp: App {
         setupAppShortcuts()
         migrateAWSBedrockSettings()
         migrateAIEngineSelection()
+        migrateRemovedOfficialAPISelections()
         migrateAppleIntelligenceToOnDeviceLLM()
         migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()

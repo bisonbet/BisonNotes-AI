@@ -241,7 +241,7 @@ Expected: the synthetic filenames are ignored; no real secret file becomes newly
 - [ ] Keep the existing primary `generateEnhancedSummary` call to `engine.processComplete`.
 - [ ] Change `extractTasksAndRemindersFromText` so one complete result is obtained and projected into tasks/reminders.
 - [ ] Remove `extractTasksRemindersAndTitlesFromText` if it still has no caller. If it gains a caller, make it obtain one complete result.
-- [ ] In background OpenAI-compatible processing, replace separate summary/task/reminder/title requests with one supported complete-processing request.
+- [ ] In background compatible-API processing, replace separate summary/task/reminder/title requests with one supported complete-processing request.
 - [ ] Check every provider wrapper before changing it; individual extraction methods are protocol API and may still be used independently.
 - [ ] Add a spy/fake engine test that counts calls and proves a combined operation invokes `processComplete` exactly once.
 
@@ -266,7 +266,6 @@ Do this as a separate commit only after E1 is green.
 ### Owned files
 
 - `BisonNotes AI/BisonNotes AI/AWSTranscribeService.swift`
-- `BisonNotes AI/BisonNotes AI/OpenAITranscribeService.swift`
 - `BisonNotes AI/BisonNotes AI/MistralTranscribeService.swift`
 - `BisonNotes AI/BisonNotes AI/WhisperService.swift`
 - `BisonNotes AI/BisonNotes AI/BackgroundProcessingManager.swift` only after Package D is integrated

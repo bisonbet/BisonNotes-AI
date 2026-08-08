@@ -3,18 +3,16 @@ import Textual
 
 enum AIService {
     case googleAI
-    case openAI
     case bedrock
     case ollama
     case whisper
     case onDevice
+    case compatibleAPI
 
     var description: String {
         switch self {
         case .googleAI:
             return "google"
-        case .openAI:
-            return "openai"
         case .bedrock:
             return "bedrock"
         case .ollama:
@@ -23,6 +21,8 @@ enum AIService {
             return "whisper"
         case .onDevice:
             return "on-device"
+        case .compatibleAPI:
+            return "compatible-api"
         }
     }
 
@@ -33,8 +33,8 @@ enum AIService {
 
         if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
-        } else if engineLower.contains("openai") || modelLower.contains("gpt") {
-            return .openAI
+        } else if engineLower.contains("compatible") || engineLower.contains("custom api") {
+            return .compatibleAPI
         } else if engineLower.contains("bedrock") || modelLower.contains("claude") || engineLower.contains("aws") {
             return .bedrock
         } else if engineLower.contains("ollama") {

@@ -1464,7 +1464,7 @@ class OllamaService: ObservableObject {
 
     private func isQwenModel(_ modelName: String) -> Bool {
         let lowerModel = modelName.lowercased()
-        // Qwen3 uses different tool calling format (OpenAI-compatible), not legacy Qwen format
+        // Qwen3 uses a different tool-calling format than the legacy Qwen format.
         if lowerModel.contains("qwen3") {
             return false
         }
