@@ -1389,31 +1389,6 @@ struct TranscriptsView: View {
     }
 
     private func setupTranscriptionCompletionCallback() {
-        // Capture the transcription manager for the notification handler
-        let transcriptionManager = enhancedTranscriptionManager
-
-        // Set up notification listener for updating pending jobs when recordings are renamed
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("UpdatePendingTranscriptionJobs"),
-            object: nil,
-            queue: .main
-        ) { notification in
-            guard let userInfo = notification.userInfo,
-                  let oldURL = userInfo["oldURL"] as? URL,
-                  let newURL = userInfo["newURL"] as? URL,
-                  let newName = userInfo["newName"] as? String else {
-                return
-            }
-
-            Task { @MainActor in
-                transcriptionManager.updatePendingJobsForRenamedRecording(
-                    from: oldURL,
-                    to: newURL,
-                    newName: newName
-                )
-            }
-        }
-
         // Set up completion handler for BackgroundProcessingManager
         backgroundProcessingManager.onTranscriptionCompleted = { _, job in
             Task { @MainActor in
@@ -1447,67 +1422,6 @@ struct TranscriptsView: View {
             }
         }
 
-        enhancedTranscriptionManager.onTranscriptionCompleted = { result, jobInfo in
-            Task { @MainActor in
-
-                AppLog.shared.transcription("Background transcription completed, available recordings: \(recordings.count)", level: .debug)
-
-                // Find the recording that matches this transcription
-                if let recording = recordings.first(where: { recording in
-                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
-                        return false
-                    }
-                    return recordingURL == jobInfo.recordingURL
-                }) {
-                    // Create transcript data and save it
-                    guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording.recording) else {
-                        AppLog.shared.transcription("Invalid recording URL in completion handler", level: .error)
-                        return
-                    }
-
-                    let transcriptData = TranscriptData(
-                        recordingURL: recordingURL,
-                        recordingName: recording.recording.recordingName ?? "Unknown Recording",
-                        recordingDate: recording.recording.recordingDate ?? Date(),
-                        segments: result.segments
-                    )
-
-                    // Save transcript using Core Data
-                    let appCoordinator = appCoordinator
-                    guard let recordingId = transcriptData.recordingId else {
-                        AppLog.shared.transcription("Background transcript data missing recording ID", level: .error)
-                        return
-                    }
-                    let transcriptId = appCoordinator.addTranscript(
-                        for: recordingId,
-                        segments: transcriptData.segments,
-                        speakerMappings: transcriptData.speakerMappings,
-                        engine: transcriptData.engine,
-                        processingTime: transcriptData.processingTime,
-                        confidence: transcriptData.confidence
-                    )
-                    if transcriptId != nil {
-                        AppLog.shared.transcription("Background transcript saved to Core Data with ID: \(transcriptId!)")
-                    } else {
-                        AppLog.shared.transcription("Failed to save background transcript to Core Data", level: .error)
-                    }
-
-                    // Force UI refresh to update button states
-                    self.forceRefreshUI()
-
-                    // Send notification for other views to refresh
-                    NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
-
-                    // Show completion alert to notify user transcription finished in background
-                    if !self.isShowingAlert {
-                        self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
-                        self.showingTranscriptionCompletionAlert = true
-                    }
-                } else {
-                    AppLog.shared.transcription("No matching recording found for completed job", level: .error)
-                }
-            }
-        }
     }
 }
 

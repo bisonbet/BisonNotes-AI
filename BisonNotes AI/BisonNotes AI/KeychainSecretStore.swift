@@ -2,7 +2,7 @@
 //  KeychainSecretStore.swift
 //  BisonNotes AI
 //
-//  Keychain-backed storage for API keys and cloud credentials.
+//  Keychain-backed storage for API keys.
 //
 
 import Foundation
@@ -36,15 +36,12 @@ final class KeychainSecretStore {
     static let openAICompatibleAPIKey = "openAICompatibleAPIKey"
     static let googleAIStudioAPIKey = "googleAIStudioAPIKey"
     static let mistralAPIKey = "mistralAPIKey"
-    static let awsCredentials = "AWSCredentials"
-    static let awsBedrockSessionToken = "awsBedrockSessionToken"
 
     private static let stringSecretKeys = [
         openAIAPIKey,
         openAICompatibleAPIKey,
         googleAIStudioAPIKey,
-        mistralAPIKey,
-        awsBedrockSessionToken
+        mistralAPIKey
     ]
 
     private let service: String
@@ -141,17 +138,6 @@ final class KeychainSecretStore {
                 }
             }
             defaults.removeObject(forKey: key)
-        }
-
-        if data(forKey: Self.awsCredentials) == nil, let legacyData = defaults.data(forKey: Self.awsCredentials) {
-            let result = setData(legacyData, forKey: Self.awsCredentials)
-            if case .failure(let error) = result {
-                failures.append(error)
-            } else {
-                defaults.removeObject(forKey: Self.awsCredentials)
-            }
-        } else if data(forKey: Self.awsCredentials) != nil {
-            defaults.removeObject(forKey: Self.awsCredentials)
         }
 
         return failures

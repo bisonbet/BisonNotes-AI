@@ -65,7 +65,7 @@ enum SummarizationError: Error, LocalizedError {
         case .configurationRequired:
             return "Go to Settings to configure an AI engine for summarization."
         case .contentSafetyBlock:
-            return "This transcript triggered safety filters on this AI engine. Try a different AI engine in Settings (e.g., Bedrock, Mistral, or Gemini)."
+            return "This transcript triggered safety filters on this AI engine. Try a different AI engine in Settings (e.g., Mistral, Gemini, or a compatible API)."
         }
     }
 }

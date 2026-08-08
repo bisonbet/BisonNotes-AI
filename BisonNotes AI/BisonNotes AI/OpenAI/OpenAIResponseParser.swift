@@ -58,7 +58,7 @@ class ChatCompletionResponseParser {
             let jsonString = extractJSONFromResponse(jsonString)
             let jsonData = jsonString.data(using: .utf8) ?? data
 
-            // First try to parse as a wrapped response (for providers like AWS Bedrock/Claude)
+            // First try to parse as a wrapped response from a provider-specific payload
             var response: CompleteResponse
 
             do {

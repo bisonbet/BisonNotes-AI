@@ -37,29 +37,6 @@ struct BisonNotesAIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     #endif
 
-    /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
-    /// This ensures UserDefaults is updated rather than migrating on every access
-    private func migrateAWSBedrockSettings() {
-        let key = "awsBedrockModel"
-        let migrationKey = "awsBedrockModelMigrated_v1.3"
-
-        // Check if migration has already been performed
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            return
-        }
-
-        if let storedModel = UserDefaults.standard.string(forKey: key) {
-            let migratedModel = AWSBedrockModel.migrate(rawValue: storedModel)
-            if migratedModel != storedModel {
-                UserDefaults.standard.set(migratedModel, forKey: key)
-                NSLog("✅ AWS Bedrock model migrated from \(storedModel) to \(migratedModel)")
-            }
-        }
-
-        // Mark migration as complete
-        UserDefaults.standard.set(true, forKey: migrationKey)
-    }
-
     /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults.
     /// MLX is the on-device default for any device with 4GB+ RAM; the 1.7B model is used
     /// on 4-6GB devices and the 4B model on 6GB+ devices. Below 4GB falls back to Mistral AI.
@@ -114,10 +91,10 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
-    /// Migrates selections that depended on the removed official API options.
+    /// Migrates selections that depended on removed provider options.
     /// Existing compatible-API summarization selections are preserved.
-    private func migrateRemovedOfficialAPISelections() {
-        let migrationKey = "removedOfficialAPISelectionsMigrated_v2.4"
+    private func migrateRemovedProviderSelections() {
+        let migrationKey = "removedProviderSelectionsMigrated_v2.5"
 
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
@@ -153,6 +130,35 @@ struct BisonNotesAIApp: App {
             } else {
                 UserDefaults.standard.set(TranscriptionEngine.mistralAI.rawValue, forKey: transcriptionEngineKey)
                 NSLog("✅ Migrated removed cloud transcription selection to Mistral AI")
+            }
+        }
+
+        // Any persisted provider value that is no longer represented by the current
+        // engine enums must fall back to a supported engine. This also handles values
+        // written by older builds without naming each removed provider.
+        let validAIEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+        if let selectedAIEngine = UserDefaults.standard.string(forKey: aiEngineKey),
+           !validAIEngineNames.contains(selectedAIEngine) {
+            if hasOnDeviceAISupport {
+                UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
+                UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                NSLog("✅ Migrated unavailable AI selection to On-Device AI")
+            } else {
+                UserDefaults.standard.set(AIEngineType.mistralAI.rawValue, forKey: aiEngineKey)
+                NSLog("✅ Migrated unavailable AI selection to Mistral AI")
+            }
+        }
+
+        let validTranscriptionEngineNames = Set(TranscriptionEngine.allCases.map(\.rawValue))
+        if let selectedTranscriptionEngine = UserDefaults.standard.string(forKey: transcriptionEngineKey),
+           !validTranscriptionEngineNames.contains(selectedTranscriptionEngine) {
+            if hasOnDeviceAISupport {
+                UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: transcriptionEngineKey)
+                UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+                NSLog("✅ Migrated unavailable transcription selection to On-Device transcription")
+            } else {
+                UserDefaults.standard.set(TranscriptionEngine.mistralAI.rawValue, forKey: transcriptionEngineKey)
+                NSLog("✅ Migrated unavailable transcription selection to Mistral AI")
             }
         }
 
@@ -452,9 +458,8 @@ struct BisonNotesAIApp: App {
 
         setupBackgroundTasks()
         setupAppShortcuts()
-        migrateAWSBedrockSettings()
         migrateAIEngineSelection()
-        migrateRemovedOfficialAPISelections()
+        migrateRemovedProviderSelections()
         migrateAppleIntelligenceToOnDeviceLLM()
         migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()

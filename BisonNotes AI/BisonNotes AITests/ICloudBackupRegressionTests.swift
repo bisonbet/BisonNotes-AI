@@ -50,10 +50,8 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let manager = iCloudStorageManager()
 
         XCTAssertFalse(iCloudStorageManager.backedUpSettingsKeys.contains(KeychainSecretStore.openAIAPIKey))
-        XCTAssertFalse(iCloudStorageManager.backedUpSettingsKeys.contains(KeychainSecretStore.awsCredentials))
         XCTAssertTrue(manager.isSensitiveSettingKey("openAIAPIKey"))
-        XCTAssertTrue(manager.isSensitiveSettingKey("awsSecretAccessKey"))
-        XCTAssertTrue(manager.isSensitiveSettingKey("awsBedrockSessionToken"))
+        XCTAssertTrue(manager.isSensitiveSettingKey("secretAccessKey"))
         XCTAssertFalse(manager.isSensitiveSettingKey("compatibleAPIMaxTokens"))
     }
 

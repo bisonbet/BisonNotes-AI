@@ -364,7 +364,6 @@ struct SimpleSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Compatible APIs - Use LiteLLM, vLLM, or similar proxies")
                     FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
-                    FeatureBullet(text: "AWS Bedrock - Enterprise-grade Claude AI")
                     FeatureBullet(text: "Mistral AI - Free and paid cloud AI processing")
                 }
             }

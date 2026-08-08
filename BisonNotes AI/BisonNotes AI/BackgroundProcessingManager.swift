@@ -204,14 +204,9 @@ enum JobType: Codable {
         switch type {
         case .transcription:
             let engineRawValue = try container.decode(String.self, forKey: .engine)
-            // Jobs persisted before the official API transcription option was
-            // removed are rerouted to the on-device engine during decoding.
-            let migratedEngineRawValue = ["OpenAI", "OpenAI API Compatible"].contains(engineRawValue)
-                ? TranscriptionEngine.fluidAudio.rawValue
-                : engineRawValue
-            guard let engine = TranscriptionEngine(rawValue: migratedEngineRawValue) else {
-                throw DecodingError.dataCorruptedError(forKey: .engine, in: container, debugDescription: "Invalid TranscriptionEngine value: \(engineRawValue)")
-            }
+            // Jobs persisted with an engine that is no longer available are
+            // rerouted to the on-device engine during decoding.
+            let engine = TranscriptionEngine(rawValue: engineRawValue) ?? .fluidAudio
             self = .transcription(engine: engine)
         case .summarization:
             let engine = try container.decode(String.self, forKey: .engine)
@@ -221,7 +216,8 @@ enum JobType: Codable {
 
     private static func migratedSummarizationEngineName(_ engineName: String) -> String {
         let normalized = engineName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard normalized == "openai" || normalized == "gpt-4" || normalized == "gpt-3.5" else {
+        let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+        guard normalized == "openai" || normalized == "gpt-4" || normalized == "gpt-3.5" || !validEngineNames.contains(engineName) else {
             return engineName
         }
 
@@ -1119,14 +1115,6 @@ class BackgroundProcessingManager: ObservableObject {
 
                 result = try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
 
-            case .awsTranscribe:
-                let manager = EnhancedTranscriptionManager()
-                result = try await manager.transcribeAudioFile(
-                    at: chunk.chunkURL,
-                    using: .awsTranscribe,
-                    recordingId: recordingId
-                )
-
             case .fluidAudio:
                 AppLog.shared.backgroundProcessing("Using FluidAudio (Parakeet) for transcription")
                 let fluidAudioManager = FluidAudioManager.shared
@@ -1527,9 +1515,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Determine engine type for background processing
         let engineType: String
         let lowerEngine = engine.lowercased()
-        if lowerEngine.contains("bedrock") || lowerEngine.contains("aws") {
-            engineType = "AWS Bedrock"
-        } else if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
+        if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
             engineType = "Google AI"
         } else if lowerEngine.contains("device") {
             engineType = "On-Device AI"
@@ -1928,7 +1914,7 @@ class BackgroundProcessingManager: ObservableObject {
         case .fluidAudio:
             // On-device engine is always available
             return (true, nil)
-        case .awsTranscribe, .mistralAI:
+        case .mistralAI:
             // Cloud engines need network
             return await checkNetworkAvailability(engineName: engine.rawValue)
         case .whisper:
@@ -1953,7 +1939,7 @@ class BackgroundProcessingManager: ObservableObject {
             return await checkLocalServerAvailability(engineName: engine)
         }
 
-        // Cloud engines (AWS Bedrock, Google AI, Mistral, or a compatible API)
+        // Cloud engines (Google AI, Mistral, or a compatible API)
         return await checkNetworkAvailability(engineName: engine)
     }
 
@@ -2026,7 +2012,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Check for stale jobs that may have been abandoned
         await cleanupStaleJobs()
 
-        // This would check with external services (like AWS) for job completion
+        // External cloud jobs are represented by local job records while processing.
         // For now, we mainly focus on cleaning up stale local jobs
         AppLog.shared.backgroundProcessing("Checked for completed and stale background jobs", level: .debug)
     }
@@ -2060,7 +2046,8 @@ class BackgroundProcessingManager: ObservableObject {
         } else {
             let persistedEngine = jobEntry.engine ?? AIEngineType.mlxSwift.rawValue
             let normalizedEngine = persistedEngine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let engine = ["openai", "gpt-4", "gpt-3.5"].contains(normalizedEngine)
+            let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+            let engine = ["openai", "gpt-4", "gpt-3.5"].contains(normalizedEngine) || !validEngineNames.contains(persistedEngine)
                 ? (DeviceCapabilities.supportsMLX ? AIEngineType.mlxSwift.rawValue : AIEngineType.mistralAI.rawValue)
                 : persistedEngine
             type = .summarization(engine: engine)

@@ -15,7 +15,6 @@ struct TranscriptionSettingsView: View {
 
     @StateObject private var fluidAudioManager = FluidAudioManager.shared
 
-    @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
     @State private var showingFluidAudioSettings = false
     @State private var showingMistralTranscribeSettings = false
@@ -36,9 +35,6 @@ struct TranscriptionSettingsView: View {
                     #endif
                 }
             #if os(macOS)
-            .navigationDestination(isPresented: $showingAWSSettings) {
-                AWSSettingsView()
-            }
             .navigationDestination(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
             }
@@ -49,9 +45,6 @@ struct TranscriptionSettingsView: View {
                 MistralTranscribeSettingsView()
             }
             #else
-            .sheet(isPresented: $showingAWSSettings) {
-                AWSSettingsView()
-            }
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
             }
@@ -162,11 +155,6 @@ struct TranscriptionSettingsView: View {
             Divider()
 
             modernEngineGroupHeader("Cloud (Higher Accuracy)", systemImage: "cloud", tint: .blue)
-            modernEngineOptionRow(
-                engine: .awsTranscribe,
-                title: "AWS Transcribe",
-                subtitle: "Enterprise, speaker diarization, expensive"
-            )
             modernEngineOptionRow(
                 engine: .mistralAI,
                 title: "Mistral AI",
@@ -356,12 +344,6 @@ struct TranscriptionSettingsView: View {
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(.blue)
-
-                    engineOptionRow(
-                        engine: .awsTranscribe,
-                        title: "AWS Transcribe",
-                        subtitle: "Enterprise, speaker diarization, expensive"
-                    )
 
                     engineOptionRow(
                         engine: .mistralAI,
@@ -597,8 +579,6 @@ struct TranscriptionSettingsView: View {
             break
         case .fluidAudio:
             showingFluidAudioSettings = true
-        case .awsTranscribe:
-            showingAWSSettings = true
         case .whisper:
             showingWhisperSettings = true
         case .mistralAI:
@@ -610,8 +590,6 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .fluidAudio:
             return fluidAudioManager.isModelReady ? "Model downloaded and ready" : "Download required (~250-350 MB)"
-        case .awsTranscribe:
-            return "Requires AWS credentials"
         case .mistralAI:
             return "Requires Mistral API key"
         case .whisper:
@@ -627,8 +605,6 @@ struct TranscriptionSettingsView: View {
             return .gray
         case .fluidAudio:
             return .indigo
-        case .awsTranscribe:
-            return .orange
         case .whisper:
             return .green
         case .mistralAI:
@@ -712,8 +688,6 @@ struct TranscriptionSettingsView: View {
             return "circle"
         case .fluidAudio:
             return "iphone"
-        case .awsTranscribe:
-            return "shippingbox"
         case .whisper:
             return "server.rack"
         case .mistralAI:

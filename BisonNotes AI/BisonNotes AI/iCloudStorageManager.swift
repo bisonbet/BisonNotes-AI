@@ -2606,14 +2606,6 @@ extension iCloudStorageManager {
         "mistralTranscribeModel",
         "mistralTranscribeDiarize",
         "mistralTranscribeLanguage",
-        "awsBucketName",
-        "enableAWSTranscribe",
-        "awsBedrockModel",
-        "awsBedrockTemperature",
-        "awsBedrockMaxTokens",
-        "awsBedrockUseProfile",
-        "awsBedrockProfileName",
-        "enableAWSBedrock",
         "ollamaServerURL",
         "ollamaPort",
         "ollamaModelName",
@@ -3843,7 +3835,6 @@ extension iCloudStorageManager {
             }
 
             try context.save()
-            AWSCredentialsManager.shared.clearCredentialEnvironment()
 
             await MainActor.run {
                 self.lastSyncDate = Date()
@@ -5545,19 +5536,9 @@ extension iCloudStorageManager {
         case KeychainSecretStore.openAIAPIKey,
              KeychainSecretStore.openAICompatibleAPIKey,
              KeychainSecretStore.googleAIStudioAPIKey,
-             KeychainSecretStore.mistralAPIKey,
-             KeychainSecretStore.awsBedrockSessionToken:
+             KeychainSecretStore.mistralAPIKey:
             guard let value = rawValue as? String else { return true }
             KeychainSecretStore.shared.setString(value, forKey: key)
-            return true
-        case KeychainSecretStore.awsCredentials:
-            guard let data = rawValue as? Data else { return true }
-            if let credentials = try? JSONDecoder().decode(AWSCredentials.self, from: data) {
-                AWSCredentialsManager.shared.updateCredentials(credentials)
-            } else {
-                KeychainSecretStore.shared.setData(data, forKey: key)
-                AWSCredentialsManager.shared.clearCredentialEnvironment()
-            }
             return true
         default:
             return false

@@ -98,7 +98,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Background Task Management
 
     /// Background task ID for keeping summarization alive when the app is backgrounded.
-    /// Cloud AI calls (Bedrock, Gemini, Mistral, and compatible APIs) use network requests that iOS will
+    /// Cloud AI calls (Gemini, Mistral, and compatible APIs) use network requests that iOS will
     /// terminate after ~30s without a background task.
     private var summaryBackgroundTaskID: PlatformBackgroundTask.ID = .invalid
 
@@ -1101,7 +1101,7 @@ class SummaryManager: ObservableObject {
             throw validationError
         }
 
-        // Begin a background task so cloud AI calls (Bedrock, Gemini, Mistral, etc.)
+        // Begin a background task so cloud AI calls (Gemini, Mistral, etc.)
         // can complete even if the user backgrounds the app during summarization.
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }
@@ -2050,23 +2050,6 @@ class SummaryManager: ObservableObject {
                     "newName": newName,
                     "oldURL": recordingURL,
                     "newURL": recordingURL // The URL will be updated by the workflow manager
-                ]
-            )
-        }
-    }
-
-    private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {
-        // Update any pending transcription jobs with the new URL and name
-        // For now, we'll use a notification approach, but this could be improved
-        // by injecting the transcription manager as a dependency
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: NSNotification.Name("UpdatePendingTranscriptionJobs"),
-                object: nil,
-                userInfo: [
-                    "oldURL": oldURL,
-                    "newURL": newURL,
-                    "newName": newName
                 ]
             )
         }

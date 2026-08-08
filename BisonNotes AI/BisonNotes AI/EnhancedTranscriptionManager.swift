@@ -46,15 +46,6 @@ struct TranscriptionResult {
     let error: Error?
 }
 
-// MARK: - Transcription Job Info
-
-struct TranscriptionJobInfo: Codable {
-    let jobName: String
-    let recordingURL: URL
-    let recordingName: String
-    let startDate: Date
-}
-
 // MARK: - Enhanced Transcription Manager
 
 @MainActor
@@ -90,30 +81,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     private var chunkOverlap: TimeInterval {
         UserDefaults.standard.double(forKey: "chunkOverlap").nonZero ?? 2.0 // 2 second overlap between chunks
-    }
-
-    private var enableAWSTranscribe: Bool {
-        return UserDefaults.standard.bool(forKey: "enableAWSTranscribe")
-    }
-
-    // AWS Configuration
-    private var awsConfig: AWSTranscribeConfig? {
-        guard enableAWSTranscribe else { return nil }
-
-        // Use unified credentials manager instead of separate UserDefaults keys
-        let credentials = AWSCredentialsManager.shared.credentials
-        let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
-
-        guard credentials.isValid && !bucketName.isEmpty else {
-            return nil
-        }
-
-        return AWSTranscribeConfig(
-            region: credentials.region,
-            accessKey: credentials.accessKeyId,
-            secretKey: credentials.secretAccessKey,
-            bucketName: bucketName
-        )
     }
 
     // Whisper Configuration
@@ -204,17 +171,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return await whisperService.testConnection()
     }
 
-    // Job tracking for async transcriptions
-    private var pendingJobNames: String = ""
-    private var pendingJobs: [TranscriptionJobInfo] = []
-
-    // Background checking for completed transcriptions
-    private var backgroundCheckTimer: Timer?
-    private var isBackgroundChecking = false
-
-    // Callback for when transcriptions complete
-    var onTranscriptionCompleted: ((TranscriptionResult, TranscriptionJobInfo) -> Void)?
-
     // Alert states for user notifications
     @Published var showingWhisperFallbackAlert = false
     @Published var whisperFallbackMessage = ""
@@ -224,13 +180,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     override init() {
         super.init()
         setupSpeechRecognizer()
-        // Load pending job names from UserDefaults
-        pendingJobNames = UserDefaults.standard.string(forKey: "pendingTranscriptionJobs") ?? ""
-
-        // Load pending jobs from UserDefaults
-        loadPendingJobs()
-
-        // Don't start background checking on init - let it be controlled by the selected engine
     }
 
     private func setupSpeechRecognizer() {
@@ -428,7 +377,7 @@ if durationMinutes > 120 { // 2 hours max
 // Determine transcription engine to use
         let selectedEngine = engine ?? .fluidAudio // Default fallback
 
-        // Manage background checking based on selected engine
+        // Select the configured transcription engine
         switch selectedEngine {
         case .notConfigured:
             AppLog.shared.transcription("Transcription engine not configured", level: .error)
@@ -438,32 +387,13 @@ if durationMinutes > 120 { // 2 hours max
             switchToFluidAudioTranscription()
             return try await transcribeWithFluidAudio(url: url)
 
-        case .awsTranscribe:
-            switchToAWSTranscription()
-
-            // Check if AWS Transcribe is configured
-            guard let config = awsConfig else {
-                AppLog.shared.transcription("AWS Transcribe selected but not configured", level: .error)
-                throw TranscriptionError.awsNotConfigured
-            }
-
-            // AWS Transcribe has a maximum limit of 4 hours
-            let maxAWSDuration: TimeInterval = 4 * 60 * 60 // 4 hours in seconds
-            if duration > maxAWSDuration {
-                AppLog.shared.transcription("File too large for AWS Transcribe: \(duration/3600) hours (max: 4 hours)", level: .error)
-                throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxAWSDuration)
-            }
-
-            return try await transcribeWithAWS(url: url, config: config, recordingId: recordingId)
-
         case .whisper:
             switchToWhisperTranscription()
 
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
                 AppLog.shared.transcription("Whisper not properly configured, falling back to native speech recognition")
-                switchToNativeSpeechTranscription()
-                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+            return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
             let isWhisperAvailable = await validateWhisperService()
@@ -471,17 +401,13 @@ if isWhisperAvailable {
                 if let config = whisperConfig {
                     return try await transcribeWithWhisper(url: url, config: config, recordingId: recordingId)
                 } else {
-                    switchToNativeSpeechTranscription()
                     return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
                 }
             } else {
-                switchToNativeSpeechTranscription()
                 return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .mistralAI:
-            switchToNativeSpeechTranscription() // Mistral doesn't need background checking
-
             // Validate Mistral configuration
             if let config = mistralTranscribeConfig {
                 return try await transcribeWithMistral(url: url, config: config, recordingId: recordingId)
@@ -579,61 +505,6 @@ if isWhisperAvailable {
     }
 
     /// Manually check for completed transcriptions
-    func checkForCompletedTranscriptions() async {
-        // Only check if AWS is enabled and configured
-        guard enableAWSTranscribe else {
-            return
-        }
-
-        guard let config = awsConfig else {
-            return
-        }
-
-        let jobNames = getPendingJobNames()
-        guard !jobNames.isEmpty else {
-            return
-        }
-
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-
-                    // Get job info before removing it
-                    let jobInfo = getPendingJobInfo(for: jobName)
-
-                    // Remove from pending jobs
-                    removePendingJob(jobName)
-
-                    // Notify completion
-                    if let jobInfo = jobInfo {
-                        onTranscriptionCompleted?(result, jobInfo)
-                    }
-
-                } else if status.isFailed {
-                    AppLog.shared.transcription("AWS job failed: \(jobName) - \(status.failureReason ?? "Unknown error")", level: .error)
-                    // Remove failed jobs from pending list
-                    removePendingJob(jobName)
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Error checking AWS job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        if stillPendingJobs != jobNames {
-            updatePendingJobNames(stillPendingJobs)
-        }
-    }
-
     // MARK: - Private Methods
 
     private func getAudioDuration(url: URL) async throws -> TimeInterval {
@@ -1281,155 +1152,6 @@ for (index, chunk) in chunks.enumerated() {
         return [singleSegment]
     }
 
-    // MARK: - AWS Transcription
-
-private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
-
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-
-        do {
-// Start the transcription job asynchronously
-            let jobName = try await awsService.startTranscriptionJob(url: url)
-
-            // Add job to pending list for background checking
-            addPendingJob(jobName, recordingURL: url, recordingName: url.lastPathComponent)
-
-            // Start background checking if not already running
-            startBackgroundChecking()
-
-            // Now wait for the job to complete by polling
-            return try await waitForAndRetrieveTranscription(jobName: jobName, awsService: awsService)
-
-        } catch {
-            AppLog.shared.transcription("AWS Transcribe failed: \(error)", level: .error)
-            throw TranscriptionError.awsTranscriptionFailed(error)
-        }
-    }
-
-    /// Wait for a transcription job to complete and retrieve the result
-private func waitForAndRetrieveTranscription(jobName: String, awsService: AWSTranscribeService) async throws -> TranscriptionResult {
-        let maxWaitTime: TimeInterval = 3600 // 1 hour max wait
-        let startTime = Date()
-
-        while Date().timeIntervalSince(startTime) < maxWaitTime {
-            do {
-                let status = try await awsService.checkJobStatus(jobName: jobName)
-
-                switch status.status {
-case .completed:
-                    let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
-
-                    // Remove from pending jobs since it's complete
-                    removePendingJob(jobName)
-
-                    let transcriptionResult = TranscriptionResult(
-                        fullText: awsResult.transcriptText,
-                        segments: awsResult.segments,
-                        processingTime: Date().timeIntervalSince(startTime),
-                        chunkCount: 1,
-                        success: true,
-                        error: nil
-                    )
-
-                    return transcriptionResult
-
-case .failed:
-                    let errorMessage = status.failureReason ?? "Unknown error"
-                    removePendingJob(jobName)
-                    throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMessage]))
-
-case .inProgress:
-                    // Wait 30 seconds before checking again
-                    try await Task.sleep(nanoseconds: 30_000_000_000)
-
-default:
-                    try await Task.sleep(nanoseconds: 30_000_000_000)
-                }
-
-            } catch {
-                AppLog.shared.transcription("Error checking job status: \(error), retrying in 30 seconds", level: .error)
-                try await Task.sleep(nanoseconds: 30_000_000_000)
-            }
-        }
-
-// If we get here, the job timed out
-        removePendingJob(jobName)
-        throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -2, userInfo: [NSLocalizedDescriptionKey: "Transcription job timed out after \(Int(maxWaitTime/60)) minutes"]))
-    }
-
-private func removePendingJob(_ jobName: String) {
-        pendingJobs.removeAll { $0.jobName == jobName }
-        savePendingJobs()
-    }
-
-/// Start an async transcription job and return the job name
-    func startAsyncTranscription(url: URL, config: AWSTranscribeConfig) async throws -> String {
-
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        let jobName = try await awsService.startTranscriptionJob(url: url)
-
-        // Track this job for later checking
-        addPendingJob(jobName, recordingURL: url, recordingName: url.lastPathComponent)
-
-return jobName
-    }
-
-    /// Check the status of a transcription job
-    func checkTranscriptionStatus(jobName: String, config: AWSTranscribeConfig) async throws -> AWSTranscribeJobStatus {
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        return try await awsService.checkJobStatus(jobName: jobName)
-    }
-
-    /// Retrieve a completed transcript
-    func retrieveTranscription(jobName: String, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
-
-// Convert AWS result to our TranscriptionResult format
-
-        let transcriptionResult = TranscriptionResult(
-            fullText: awsResult.transcriptText,
-            segments: awsResult.segments,
-            processingTime: awsResult.processingTime,
-            chunkCount: 1,
-            success: awsResult.success,
-            error: awsResult.error
-        )
-
-return transcriptionResult
-    }
-
-    /// Check for any completed transcription jobs and retrieve them
-    func checkForCompletedTranscriptions(config: AWSTranscribeConfig) async -> [TranscriptionResult] {
-        let jobNames = getPendingJobNames()
-        var completedResults: [TranscriptionResult] = []
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-                    completedResults.append(result)
-                } else if status.isFailed {
-                    // Remove failed jobs from pending list
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Error checking job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        updatePendingJobNames(stillPendingJobs)
-
-        return completedResults
-    }
-
     // MARK: - Whisper Transcription
 
     private func transcribeWithWhisper(url: URL, config: WhisperConfig, recordingId: UUID) async throws -> TranscriptionResult {
@@ -1592,236 +1314,41 @@ return result
         }
     }
 
-    // MARK: - Job Tracking Helpers
-
-/// Update pending jobs when recording files are renamed
-    func updatePendingJobsForRenamedRecording(from oldURL: URL, to newURL: URL, newName: String) {
-
-        var updatedJobs: [TranscriptionJobInfo] = []
-        var updated = false
-
-for job in pendingJobs {
-            if job.recordingURL == oldURL {
-                let updatedJob = TranscriptionJobInfo(
-                    jobName: job.jobName,
-                    recordingURL: newURL,
-                    recordingName: newName,
-                    startDate: job.startDate
-                )
-                updatedJobs.append(updatedJob)
-                updated = true
-            } else {
-                updatedJobs.append(job)
-            }
-        }
-
-if updated {
-            pendingJobs = updatedJobs
-            savePendingJobs()
-        }
-    }
-
-    private func addPendingJob(_ jobName: String, recordingURL: URL, recordingName: String) {
-        let jobInfo = TranscriptionJobInfo(
-            jobName: jobName,
-            recordingURL: recordingURL,
-            recordingName: recordingName,
-            startDate: Date()
-        )
-
-if !pendingJobs.contains(where: { $0.jobName == jobName }) {
-            pendingJobs.append(jobInfo)
-            savePendingJobs()
-        }
-    }
-
-    private func getPendingJobNames() -> [String] {
-        return pendingJobs.map { $0.jobName }
-    }
-
-    private func getPendingJobInfo(for jobName: String) -> TranscriptionJobInfo? {
-        return pendingJobs.first { $0.jobName == jobName }
-    }
-
-    private func updatePendingJobNames(_ jobNames: [String]) {
-        // Remove jobs that are no longer in the list
-        pendingJobs.removeAll { !jobNames.contains($0.jobName) }
-        savePendingJobs()
-    }
-
-private func loadPendingJobs() {
-        if let data = UserDefaults.standard.data(forKey: "pendingTranscriptionJobInfos"),
-           let jobs = try? JSONDecoder().decode([TranscriptionJobInfo].self, from: data) {
-            pendingJobs = jobs
-        }
-    }
-
-    private func savePendingJobs() {
-        if let data = try? JSONEncoder().encode(pendingJobs) {
-            UserDefaults.standard.set(data, forKey: "pendingTranscriptionJobInfos")
-        }
-    }
-
-    // MARK: - Background Checking
-
-private func startBackgroundChecking() {
-        guard !isBackgroundChecking else { return }
-
-        isBackgroundChecking = true
-
-        // Check every 30 seconds for completed transcriptions
-        backgroundCheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkForCompletedTranscriptionsInBackground()
-            }
-        }
-    }
-
-private func stopBackgroundChecking() {
-        backgroundCheckTimer?.invalidate()
-        backgroundCheckTimer = nil
-        isBackgroundChecking = false
-    }
-
     // MARK: - Engine Management
 
-func switchToNativeSpeechTranscription() {
-        stopBackgroundChecking()
-
-        // Clear any pending AWS jobs since we're not using AWS anymore
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
-        // Also disable AWS transcription in settings to prevent future background checks
-        UserDefaults.standard.set(false, forKey: "enableAWSTranscribe")
-    }
-
-func switchToAWSTranscription() {
-        if awsConfig != nil {
-            if !isBackgroundChecking {
-                startBackgroundChecking()
-            }
-        }
-    }
-
-func switchToWhisperTranscription() {
-        // Whisper doesn't use background checking like AWS, so we stop any existing background processes
-        stopBackgroundChecking()
-
-        // Clear any pending AWS jobs since we're switching to Whisper
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
+    private func switchToWhisperTranscription() {
         if whisperConfig != nil {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Whisper transcription configured and ready", category: "EnhancedTranscriptionManager")
-            }
+            AppLog.shared.general("Whisper transcription configured and ready")
         } else {
-            AppLogger.shared.warning("Whisper transcription selected but not configured", category: "EnhancedTranscriptionManager")
+            AppLog.shared.general("Whisper transcription selected but not configured", level: .error)
         }
     }
 
-    func switchToFluidAudioTranscription() {
-        stopBackgroundChecking()
-
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
+    private func switchToFluidAudioTranscription() {
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("FluidAudio (Parakeet) transcription selected", category: "EnhancedTranscriptionManager")
+            AppLogger.shared.verbose(
+                "FluidAudio (Parakeet) transcription selected",
+                category: "EnhancedTranscriptionManager"
+            )
         }
     }
 
-    /// Public method to update transcription engine and manage background processes
+    /// Updates manager state when the user changes the selected transcription engine.
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
-        // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Updating transcription engine to: \(engine.rawValue)", category: "EnhancedTranscriptionManager")
+            AppLogger.shared.verbose(
+                "Updating transcription engine to: \(engine.rawValue)",
+                category: "EnhancedTranscriptionManager"
+            )
         }
 
         switch engine {
-        case .notConfigured:
-            // For unconfigured state, default to Apple Transcription which is always available
-            switchToNativeSpeechTranscription()
         case .fluidAudio:
             switchToFluidAudioTranscription()
-        case .awsTranscribe:
-            switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .mistralAI:
-            switchToNativeSpeechTranscription()
-        }
-    }
-
-    private func clearAllPendingJobs() {
-        pendingJobs.removeAll()
-        pendingJobNames = ""
-        UserDefaults.standard.set("", forKey: "pendingTranscriptionJobs")
-        savePendingJobs()
-    }
-
-    private func checkForCompletedTranscriptionsInBackground() async {
-        // Only check if AWS is enabled, configured, AND we have pending jobs
-guard enableAWSTranscribe else {
-            stopBackgroundChecking()
-            clearAllPendingJobs()
-            return
-        }
-
-        guard let config = awsConfig else {
-            stopBackgroundChecking()
-            return
-        }
-
-        let jobNames = getPendingJobNames()
-guard !jobNames.isEmpty else {
-            return
-        }
-
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-
-                    // Get job info before removing it
-                    let jobInfo = getPendingJobInfo(for: jobName)
-
-                    // Remove from pending jobs
-                    removePendingJob(jobName)
-
-                    // Notify completion
-                    if let jobInfo = jobInfo {
-                        onTranscriptionCompleted?(result, jobInfo)
-                    }
-
-} else if status.isFailed {
-                    // Remove failed jobs from pending list
-                    removePendingJob(jobName)
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Background check: Error checking job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        if stillPendingJobs != jobNames {
-            updatePendingJobNames(stillPendingJobs)
+        case .notConfigured, .mistralAI:
+            break
         }
     }
 
@@ -1894,8 +1421,6 @@ enum TranscriptionError: LocalizedError {
     case audioExtractionFailed
     case timeout
     case fileTooLarge(duration: TimeInterval, maxDuration: TimeInterval)
-    case awsTranscriptionFailed(Error)
-    case awsNotConfigured
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
     case fluidAudioNotAvailable
@@ -1922,10 +1447,6 @@ enum TranscriptionError: LocalizedError {
             return "Failed to extract audio chunk"
         case .timeout:
             return "Transcription timed out"
-        case .awsTranscriptionFailed(let error):
-            return "AWS Transcribe failed: \(error.localizedDescription)"
-        case .awsNotConfigured:
-            return "AWS Transcribe is not properly configured. Please check your AWS credentials in settings."
         case .whisperConnectionFailed:
             return "Failed to connect to Whisper service"
         case .whisperTranscriptionFailed(let error):

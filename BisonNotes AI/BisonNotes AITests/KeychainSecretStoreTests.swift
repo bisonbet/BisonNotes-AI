@@ -22,9 +22,7 @@ final class KeychainSecretStoreTests: XCTestCase {
             KeychainSecretStore.openAIAPIKey,
             KeychainSecretStore.openAICompatibleAPIKey,
             KeychainSecretStore.googleAIStudioAPIKey,
-            KeychainSecretStore.mistralAPIKey,
-            KeychainSecretStore.awsBedrockSessionToken,
-            KeychainSecretStore.awsCredentials
+            KeychainSecretStore.mistralAPIKey
         ].forEach { _ = store.delete(forKey: $0) }
 
         defaults.removePersistentDomain(forName: suiteName)
@@ -59,24 +57,6 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertEqual(store.string(forKey: KeychainSecretStore.mistralAPIKey), "mistral-test-key")
     }
 
-    func testMigratesAWSCredentialsBlobFromUserDefaultsToKeychain() throws {
-        let credentials = AWSCredentials(
-            accessKeyId: "AKIATEST",
-            secretAccessKey: "aws-secret-test",
-            region: "us-west-2"
-        )
-        let encoded = try JSONEncoder().encode(credentials)
-        defaults.set(encoded, forKey: KeychainSecretStore.awsCredentials)
-
-        XCTAssertTrue(store.migrateLegacySecretsFromUserDefaults(defaults).isEmpty)
-
-        XCTAssertNil(defaults.data(forKey: KeychainSecretStore.awsCredentials))
-
-        let migratedData = try XCTUnwrap(store.data(forKey: KeychainSecretStore.awsCredentials))
-        let migratedCredentials = try JSONDecoder().decode(AWSCredentials.self, from: migratedData)
-        XCTAssertEqual(migratedCredentials, credentials)
-    }
-
     func testEmptyStringDeletesKeychainSecret() {
         assertSuccess(store.setString("temporary-secret", forKey: KeychainSecretStore.googleAIStudioAPIKey))
         XCTAssertEqual(store.string(forKey: KeychainSecretStore.googleAIStudioAPIKey), "temporary-secret")
@@ -87,69 +67,6 @@ final class KeychainSecretStoreTests: XCTestCase {
         assertSuccess(store.setString("", forKey: KeychainSecretStore.googleAIStudioAPIKey))
 
         XCTAssertNil(store.string(forKey: KeychainSecretStore.googleAIStudioAPIKey))
-    }
-
-    func testDecodesLegacyThreeFieldAWSCredentials() throws {
-        let legacyData = Data(
-            #"{"accessKeyId":"AKIATEST","secretAccessKey":"aws-secret-test","region":"us-west-2"}"#.utf8
-        )
-
-        let credentials = try JSONDecoder().decode(AWSCredentials.self, from: legacyData)
-
-        XCTAssertEqual(credentials.accessKeyId, "AKIATEST")
-        XCTAssertEqual(credentials.secretAccessKey, "aws-secret-test")
-        XCTAssertEqual(credentials.region, "us-west-2")
-        XCTAssertNil(credentials.sessionToken)
-    }
-
-    func testAWSCredentialsWithSessionTokenRoundTrips() throws {
-        let credentials = AWSCredentials(
-            accessKeyId: "AKIATEST",
-            secretAccessKey: "aws-secret-test",
-            region: "us-west-2",
-            sessionToken: "session-token-test"
-        )
-
-        let encoded = try JSONEncoder().encode(credentials)
-        let decoded = try JSONDecoder().decode(AWSCredentials.self, from: encoded)
-
-        XCTAssertEqual(decoded, credentials)
-    }
-
-    func testMigratesLegacySessionTokenIntoUnifiedCredentials() throws {
-        defaults.set("AKIATEST", forKey: "awsAccessKey")
-        defaults.set("aws-secret-test", forKey: "awsSecretKey")
-        defaults.set("us-west-2", forKey: "awsRegion")
-        assertSuccess(store.setString("session-token-test", forKey: KeychainSecretStore.awsBedrockSessionToken))
-
-        let manager = AWSCredentialsManager(keychain: store, userDefaults: defaults)
-
-        XCTAssertEqual(manager.credentials.sessionToken, "session-token-test")
-        XCTAssertNil(store.string(forKey: KeychainSecretStore.awsBedrockSessionToken))
-        XCTAssertNil(defaults.string(forKey: "awsAccessKey"))
-        XCTAssertNil(defaults.string(forKey: "awsSecretKey"))
-        XCTAssertNil(defaults.string(forKey: "awsRegion"))
-
-        let unifiedData = try XCTUnwrap(store.data(forKey: KeychainSecretStore.awsCredentials))
-        let unifiedCredentials = try JSONDecoder().decode(AWSCredentials.self, from: unifiedData)
-        XCTAssertEqual(unifiedCredentials.sessionToken, "session-token-test")
-    }
-
-    func testStaticResolverPassesSessionToken() async throws {
-        let credentials = AWSCredentials(
-            accessKeyId: "AKIATEST",
-            secretAccessKey: "aws-secret-test",
-            region: "us-west-2",
-            sessionToken: "session-token-test"
-        )
-
-        let identity = try await AWSClientCredentialResolver
-            .staticResolver(credentials: credentials)
-            .getIdentity(identityProperties: nil)
-
-        XCTAssertEqual(identity.accessKey, "AKIATEST")
-        XCTAssertEqual(identity.secret, "aws-secret-test")
-        XCTAssertEqual(identity.sessionToken, "session-token-test")
     }
 
     private func assertSuccess(

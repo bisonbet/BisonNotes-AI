@@ -67,7 +67,6 @@ enum ChunkingStrategy {
     case combined(maxBytes: Int64, maxSeconds: TimeInterval)
 
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
-    static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 10 * 60) // 10 minutes
     static let mistralAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds
 
@@ -105,8 +104,6 @@ struct ChunkingConfig {
             return ChunkingConfig(strategy: .whisper) // Default fallback for unconfigured state
         case .whisper:
             return ChunkingConfig(strategy: .whisper)
-        case .awsTranscribe:
-            return ChunkingConfig(strategy: .aws)
         case .fluidAudio:
             return ChunkingConfig(strategy: .onDeviceAI)
         case .mistralAI:

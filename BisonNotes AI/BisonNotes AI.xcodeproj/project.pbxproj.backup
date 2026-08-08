@@ -16,12 +16,6 @@
 		1485FEDF2E5272FA0044121F /* WatchRecordingMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED92E5272FA0044121F /* WatchRecordingMessage.swift */; };
 		1485FEE02E5272FA0044121F /* WatchAudioChunk.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FED82E5272FA0044121F /* WatchAudioChunk.swift */; };
 		1485FEE12E5272FA0044121F /* WatchRecordingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1485FEDA2E5272FA0044121F /* WatchRecordingState.swift */; };
-		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
-		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
-		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
-		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
-		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
-		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -163,13 +157,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */,
-				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
-				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
-				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
 				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
-				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
-				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -327,12 +315,6 @@
 			);
 			name = "BisonNotes AI";
 			packageProductDependencies = (
-				14FDF9072E3F8D5600BBD2FA /* AWSBedrock */,
-				14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */,
-				14FDF90B2E3F8D5600BBD2FA /* AWSS3 */,
-				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
-				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
-				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
 			);
 			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
@@ -428,21 +410,6 @@
 			mainGroup = 14DBC8342E34F7B500DAD442;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
-			);
-			preferredProjectObjectVersion = 77;
-			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
-			projectDirPath = "";
-			projectRoot = "";
-			targets = (
-				14DBC83C2E34F7B500DAD442 /* BisonNotes AI */,
-				14DBC84E2E34F7B600DAD442 /* BisonNotes AITests */,
-				14DBC8582E34F7B600DAD442 /* BisonNotes AIUITests */,
-				1485FEA42E526FB10044121F /* BisonNotes AI Watch App Watch App */,
-				1485FEB02E526FB30044121F /* BisonNotes AI Watch App Watch AppTests */,
-				1485FEBA2E526FB30044121F /* BisonNotes AI Watch App Watch AppUITests */,
-			);
-		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
@@ -1046,47 +1013,16 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
-			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 1.5.12;
-			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrock;
-		};
-		14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSClientRuntime;
-		};
-		14FDF90B2E3F8D5600BBD2FA /* AWSS3 */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSS3;
-		};
-		14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribe;
-		};
-		14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribeStreaming;
-		};
-		14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrockRuntime;
-		};
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 14DBC8352E34F7B500DAD442 /* Project object */;

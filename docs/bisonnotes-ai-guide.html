@@ -86,7 +86,7 @@
       <ul>
         <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
         <li><strong>On Device AI:</strong> Private, on-device processing. No data leaves your device. Uses MLX Swift for summaries on 4GB+ devices and Parakeet for transcription. Models download once, then run locally.</li>
-        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, AWS Bedrock, Mistral AI, Compatible API, and Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, Mistral AI, Compatible API, and Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
       </ul>
     </div>
     <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
@@ -466,35 +466,9 @@
   </div>
 </details>
 
-<!-- AWS Bedrock -->
-<details>
-  <summary>5. AWS Bedrock — Enterprise Claude AI</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-cloud">Cloud</span>
-    <span class="bn-badge bn-b-paid">Pay-per-use</span>
-    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Internet:</strong> Required</p>
-
-    <h4>Available Models</h4>
-    <ul>
-      <li><strong>Claude 4.5 Haiku</strong> (Default) — Fast, efficient (Standard tier)</li>
-      <li><strong>Claude Sonnet 4.5</strong> — Advanced reasoning and analysis (Premium tier)</li>
-      <li><strong>Llama 4 Maverick 17B</strong> — Meta's latest, enhanced reasoning (Economy tier)</li>
-    </ul>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li>Create an AWS account and enable Bedrock service.</li>
-      <li>Create IAM user with Bedrock permissions and generate access keys.</li>
-      <li>Go to Setup &rarr; AI Settings &rarr; AWS Bedrock.</li>
-      <li>Enter AWS credentials, select region and model, test connection.</li>
-    </ol>
-    <p><strong>Best for:</strong> Enterprise features and compliance</p>
-  </div>
-</details>
-
 <!-- Apple Native -->
 <details>
-  <summary>6. Apple Native — Apple Intelligence</summary>
+  <summary>5. Apple Native — Apple Intelligence</summary>
   <div class="dd">
     <span class="bn-badge bn-b-free">Free</span>
     <span class="bn-badge bn-b-local">On-Device</span>
@@ -527,7 +501,7 @@
 
 <!-- Ollama -->
 <details>
-  <summary>7. Ollama — Local LLM Server</summary>
+  <summary>6. Ollama — Local LLM Server</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">Local</span>
     <span class="bn-badge bn-b-free">Free</span>
@@ -553,7 +527,7 @@ ollama pull mistral-small3.2</code></pre>
 
 <!-- On Device AI Legacy -->
 <details>
-  <summary>8. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
+  <summary>7. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">On-Device</span>
     <span class="bn-badge bn-b-free">Free</span>
@@ -592,7 +566,6 @@ ollama pull mistral-small3.2</code></pre>
   <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
   <li><strong>Mistral AI</strong> — Voxtral Mini with optional speaker diarization. Free tier available; $0.003/min on paid tiers.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
-  <li><strong>AWS Transcribe</strong> — Cloud service for long audio files.</li>
 </ul>
 
 <h3>Transcription Engine Comparison</h3>
@@ -602,7 +575,6 @@ ollama pull mistral-small3.2</code></pre>
     <tbody>
       <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
       <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
-      <tr><td><strong>AWS Transcribe</strong></td><td>Cloud</td><td>Yes</td><td>Per minute</td></tr>
       <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
     </tbody>
   </table>
@@ -636,20 +608,6 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Configure:</strong> Setup &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
     </ol>
     <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
-  </div>
-</details>
-
-<!-- AWS Transcribe -->
-<details>
-  <summary>AWS Transcribe Setup</summary>
-  <div class="dd">
-    <ol class="bn-sl">
-      <li>Create an AWS account and enable Transcribe service.</li>
-      <li>Create IAM user with <code>transcribe:StartTranscriptionJob</code> and <code>transcribe:GetTranscriptionJob</code> permissions.</li>
-      <li>Setup &rarr; Transcription Settings &rarr; AWS Transcribe.</li>
-      <li>Enter access key, secret key, region, language. Test connection.</li>
-    </ol>
-    <div class="bn-info"><strong>Tip:</strong> Choose a region close to you for better performance.</div>
   </div>
 </details>
 
@@ -777,7 +735,7 @@ ollama pull mistral-small3.2</code></pre>
 
 <h3>AI Settings</h3>
 <ul>
-  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama, Apple Native, and AWS Bedrock engines</li>
+  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama, and Apple Native engines</li>
   <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
   <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
   <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
@@ -849,10 +807,9 @@ ollama pull mistral-small3.2</code></pre>
 
 <h3>How credentials are stored</h3>
 <ul>
-  <li><strong>Keychain-backed storage</strong> &mdash; Compatible API keys, Mistral keys, Google AI keys, AWS access keys/secret keys/session tokens, and Whisper auth tokens all live in the iOS Keychain.</li>
+  <li><strong>Keychain-backed storage</strong> &mdash; Compatible API keys, Mistral keys, Google AI keys, and Whisper auth tokens all live in the iOS Keychain.</li>
   <li><strong>Automatic migration</strong> &mdash; Existing values stored in legacy locations are migrated into the Keychain on first launch of v1.11 and then removed from their old locations.</li>
-  <li><strong>Process environment is cleared</strong> &mdash; Any inherited <code>AWS_*</code> environment variables are scrubbed at launch so AWS SDKs only use the credentials you configured in-app.</li>
-  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
+  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
 </ul>
 
 <h3>File protection</h3>
@@ -954,7 +911,6 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>On Device AI Handling</strong> &mdash; Local AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
       <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
       <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
-      <li><strong>Explicit credential resolvers</strong> (v1.11) &mdash; Background AWS jobs always pull fresh credentials from the Keychain so stale process-environment values can&rsquo;t leak in</li>
       <li><strong>Temporary audio cleanup</strong> (v2.1) &mdash; Conservative startup cleanup removes stale scratch, merge, and chunk files left by failed or interrupted audio workflows without touching active recordings.</li>
     </ul>
   </div>
@@ -1027,7 +983,7 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Keep on This Device</strong> &mdash; Mark an individual recording from its recording row or audio player to exclude that recording, transcript, and summary from BisonNotes iCloud sync and backup. When enabled, BisonNotes skips future app-managed iCloud sync/backup for that item and removes known app-created iCloud records when iCloud is available.</li>
       <li><strong>Deleted item cleanup</strong> &mdash; Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records. Other devices apply that marker before uploading so deleted items are not silently re-created. Active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.</li>
       <li><strong>Summary-only cleanup</strong> &mdash; Deleting a summary while keeping its recording/transcript queues removal of the summary&rsquo;s live record, backup record, and content-index reference. If iCloud is unavailable, BisonNotes retries the queued removal later.</li>
-      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys and AWS credentials are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
+      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
       <li>Prompted after generating your first summary</li>
     </ul>
   </div>
@@ -1100,8 +1056,6 @@ ollama pull mistral-small3.2</code></pre>
     <h4>Cloud Services</h4>
     <ul>
       <li><a href="https://ai.google.dev" target="_blank" rel="noopener">Google AI</a></li>
-      <li><a href="https://docs.aws.amazon.com/bedrock" target="_blank" rel="noopener">AWS Bedrock</a></li>
-      <li><a href="https://docs.aws.amazon.com/transcribe" target="_blank" rel="noopener">AWS Transcribe</a></li>
       <li><a href="https://docs.mistral.ai" target="_blank" rel="noopener">Mistral AI</a></li>
     </ul>
   </div>

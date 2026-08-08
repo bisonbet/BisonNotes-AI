@@ -92,7 +92,6 @@ public enum ProcessingStatus: String, Codable, CaseIterable {
 public enum TranscriptionEngine: String, CaseIterable, Codable {
     case notConfigured = "Not Configured"
     case fluidAudio = "On Device"
-    case awsTranscribe = "AWS Transcribe"
     case whisper = "Whisper (Local Server)"
     case mistralAI = "Mistral AI"
 
@@ -107,8 +106,6 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return "No transcription engine has been configured yet"
         case .fluidAudio:
             return "High-quality on-device transcription powered by NVIDIA Parakeet. Your audio never leaves your device, ensuring complete privacy."
-        case .awsTranscribe:
-            return "Cloud-based transcription service with support for long audio files"
         case .whisper:
             return "High-quality transcription using the Whisper model on your local server (REST API or Wyoming protocol)"
         case .mistralAI:
@@ -122,7 +119,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return false
         case .fluidAudio:
             return DeviceCompatibility.isFluidAudioSupported && FluidAudioManager.isAvailableInCurrentBuild
-        case .awsTranscribe, .whisper, .mistralAI:
+        case .whisper, .mistralAI:
             return true
         }
     }
@@ -133,7 +130,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
             return true
         case .fluidAudio:
             return true  // Requires model download
-        case .awsTranscribe, .whisper, .mistralAI:
+        case .whisper, .mistralAI:
             return true
         }
     }

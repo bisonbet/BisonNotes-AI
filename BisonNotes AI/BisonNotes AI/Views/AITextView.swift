@@ -3,7 +3,6 @@ import Textual
 
 enum AIService {
     case googleAI
-    case bedrock
     case ollama
     case whisper
     case onDevice
@@ -13,8 +12,6 @@ enum AIService {
         switch self {
         case .googleAI:
             return "google"
-        case .bedrock:
-            return "bedrock"
         case .ollama:
             return "ollama"
         case .whisper:
@@ -35,8 +32,6 @@ enum AIService {
             return .googleAI
         } else if engineLower.contains("compatible") || engineLower.contains("custom api") {
             return .compatibleAPI
-        } else if engineLower.contains("bedrock") || modelLower.contains("claude") || engineLower.contains("aws") {
-            return .bedrock
         } else if engineLower.contains("ollama") {
             return .ollama
         } else if engineLower.contains("whisper") {
@@ -44,8 +39,8 @@ enum AIService {
         } else if engineLower.contains("device") || engineLower.contains("apple") || engineLower.contains("mlx") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") || modelLower.contains("bonsai") || modelLower.contains("ternary") {
             return .onDevice
         } else {
-            // Default to bedrock for unknown services
-            return .bedrock
+            // Unknown services use the generic compatible-API style.
+            return .compatibleAPI
         }
     }
 }
