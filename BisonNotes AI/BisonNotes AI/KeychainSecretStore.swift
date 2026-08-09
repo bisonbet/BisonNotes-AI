@@ -2,7 +2,7 @@
 //  KeychainSecretStore.swift
 //  BisonNotes AI
 //
-//  Keychain-backed storage for API keys and cloud credentials.
+//  Keychain-backed storage for API keys and legacy-secret cleanup.
 //
 
 import Foundation
@@ -36,15 +36,39 @@ final class KeychainSecretStore {
     static let openAICompatibleAPIKey = "openAICompatibleAPIKey"
     static let googleAIStudioAPIKey = "googleAIStudioAPIKey"
     static let mistralAPIKey = "mistralAPIKey"
-    static let awsCredentials = "AWSCredentials"
-    static let awsBedrockSessionToken = "awsBedrockSessionToken"
+    static let legacyAWSCredentials = "AWSCredentials"
+    static let legacyAWSBedrockSessionToken = "awsBedrockSessionToken"
+
+    /// Settings and secret identifiers written by builds that included AWS.
+    /// AWS is no longer supported, so old values must not be restored into
+    /// UserDefaults or retained in the app's Keychain namespace.
+    static let legacyAWSSettingKeys: Set<String> = [
+        legacyAWSCredentials,
+        legacyAWSBedrockSessionToken,
+        "awsAccessKey",
+        "awsSecretKey",
+        "awsSecretAccessKey",
+        "awsRegion",
+        "awsBucketName",
+        "awsBedrockModel",
+        "awsBedrockTemperature",
+        "awsBedrockMaxTokens",
+        "awsBedrockUseProfile",
+        "awsBedrockProfileName",
+        "awsBedrockModelMigrated_v1.3",
+        "enableAWSBedrock",
+        "enableAWSTranscribe"
+    ]
+
+    static func isLegacyAWSSettingKey(_ key: String) -> Bool {
+        legacyAWSSettingKeys.contains(key)
+    }
 
     private static let stringSecretKeys = [
         openAIAPIKey,
         openAICompatibleAPIKey,
         googleAIStudioAPIKey,
-        mistralAPIKey,
-        awsBedrockSessionToken
+        mistralAPIKey
     ]
 
     private let service: String
@@ -143,15 +167,16 @@ final class KeychainSecretStore {
             defaults.removeObject(forKey: key)
         }
 
-        if data(forKey: Self.awsCredentials) == nil, let legacyData = defaults.data(forKey: Self.awsCredentials) {
-            let result = setData(legacyData, forKey: Self.awsCredentials)
+        // AWS provider support was removed. Clean up old opaque credential
+        // blobs and individual AWS fields instead of migrating them to a
+        // credential format that no current provider consumes.
+        for key in Self.legacyAWSSettingKeys {
+            let result = delete(forKey: key)
             if case .failure(let error) = result {
                 failures.append(error)
-            } else {
-                defaults.removeObject(forKey: Self.awsCredentials)
+                continue
             }
-        } else if data(forKey: Self.awsCredentials) != nil {
-            defaults.removeObject(forKey: Self.awsCredentials)
+            defaults.removeObject(forKey: key)
         }
 
         return failures

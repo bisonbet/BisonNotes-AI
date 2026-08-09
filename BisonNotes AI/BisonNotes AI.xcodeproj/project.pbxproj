@@ -27,18 +27,6 @@
 		14EA428F2E7F5ECA0059271B /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 14EA428E2E7F5ECA0059271B /* SwiftUI.framework */; };
 		14EA42A92E7F66370059271B /* BisonNotes AI ControlsExtension.appex in Embed Controls Extension */ = {isa = PBXBuildFile; fileRef = 14EA428B2E7F5ECA0059271B /* BisonNotes AI ControlsExtension.appex */; platformFilter = ios; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 14FA00022F30000000BBD2FA /* FluidAudio */; };
-		14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9072E3F8D5600BBD2FA /* AWSBedrock */; };
-		14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */; };
-		14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90B2E3F8D5600BBD2FA /* AWSS3 */; };
-		14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */; };
-		14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */; };
-		14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = 14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */; };
-		AC0000000000000000000030 /* AWSBedrock in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000020 /* AWSBedrock */; };
-		AC0000000000000000000031 /* AWSClientRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000021 /* AWSClientRuntime */; };
-		AC0000000000000000000032 /* AWSS3 in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000022 /* AWSS3 */; };
-		AC0000000000000000000033 /* AWSTranscribe in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000023 /* AWSTranscribe */; };
-		AC0000000000000000000034 /* AWSTranscribeStreaming in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000024 /* AWSTranscribeStreaming */; };
-		AC0000000000000000000035 /* AWSBedrockRuntime in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000025 /* AWSBedrockRuntime */; };
 		AC0000000000000000000036 /* Textual in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000026 /* Textual */; };
 		AC0000000000000000000037 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000027 /* FluidAudio */; };
 		AC0000000000000000000038 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = AC0000000000000000000028 /* MLXLLM */; };
@@ -409,18 +397,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				14FDF9102E3F8D5600BBD2FA /* AWSTranscribeStreaming in Frameworks */,
 				14FA00012F30000000BBD2FA /* FluidAudio in Frameworks */,
-				14FDF90C2E3F8D5600BBD2FA /* AWSS3 in Frameworks */,
-				14FDF9122E3F90FB00BBD2FA /* AWSBedrockRuntime in Frameworks */,
 				1435711D2F2137E1000BFF00 /* Textual in Frameworks */,
 				14B0A0012F80000000BBD2FA /* MLXLLM in Frameworks */,
 				14B0A0022F80000000BBD2FA /* MLXLMCommon in Frameworks */,
-				14FDF90E2E3F8D5600BBD2FA /* AWSTranscribe in Frameworks */,
 				143196D12F128D16003BA61E /* llama.xcframework in Frameworks */,
 				1485FED52E5271970044121F /* WatchConnectivity.framework in Frameworks */,
-				14FDF90A2E3F8D5600BBD2FA /* AWSClientRuntime in Frameworks */,
-				14FDF9082E3F8D5600BBD2FA /* AWSBedrock in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -451,17 +433,11 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AC0000000000000000000034 /* AWSTranscribeStreaming in Frameworks */,
 				AC0000000000000000000037 /* FluidAudio in Frameworks */,
-				AC0000000000000000000032 /* AWSS3 in Frameworks */,
-				AC0000000000000000000035 /* AWSBedrockRuntime in Frameworks */,
 				AC0000000000000000000036 /* Textual in Frameworks */,
 				AC0000000000000000000038 /* MLXLLM in Frameworks */,
 				AC0000000000000000000039 /* MLXLMCommon in Frameworks */,
-				AC0000000000000000000033 /* AWSTranscribe in Frameworks */,
 				AC000000000000000000003A /* llama.xcframework in Frameworks */,
-				AC0000000000000000000031 /* AWSClientRuntime in Frameworks */,
-				AC0000000000000000000030 /* AWSBedrock in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -687,12 +663,6 @@
 			);
 			name = "BisonNotes AI";
 			packageProductDependencies = (
-				14FDF9072E3F8D5600BBD2FA /* AWSBedrock */,
-				14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */,
-				14FDF90B2E3F8D5600BBD2FA /* AWSS3 */,
-				14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */,
-				14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */,
-				14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */,
 				1435711C2F2137E1000BFF00 /* Textual */,
 				14FA00022F30000000BBD2FA /* FluidAudio */,
 				14B0A0042F80000000BBD2FA /* MLXLLM */,
@@ -792,12 +762,6 @@
 			);
 			name = "BisonNotes AI macOS";
 			packageProductDependencies = (
-				AC0000000000000000000020 /* AWSBedrock */,
-				AC0000000000000000000021 /* AWSClientRuntime */,
-				AC0000000000000000000022 /* AWSS3 */,
-				AC0000000000000000000023 /* AWSTranscribe */,
-				AC0000000000000000000024 /* AWSTranscribeStreaming */,
-				AC0000000000000000000025 /* AWSBedrockRuntime */,
 				AC0000000000000000000026 /* Textual */,
 				AC0000000000000000000027 /* FluidAudio */,
 				AC0000000000000000000028 /* MLXLLM */,
@@ -911,7 +875,6 @@
 			mainGroup = 14DBC8342E34F7B500DAD442;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */,
 				1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */,
 				14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
@@ -2174,14 +2137,6 @@
 				version = 0.15.5;
 			};
 		};
-		14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/awslabs/aws-sdk-swift";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.7.46;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -2204,66 +2159,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */;
 			productName = FluidAudio;
-		};
-		14FDF9072E3F8D5600BBD2FA /* AWSBedrock */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrock;
-		};
-		14FDF9092E3F8D5600BBD2FA /* AWSClientRuntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSClientRuntime;
-		};
-		14FDF90B2E3F8D5600BBD2FA /* AWSS3 */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSS3;
-		};
-		14FDF90D2E3F8D5600BBD2FA /* AWSTranscribe */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribe;
-		};
-		14FDF90F2E3F8D5600BBD2FA /* AWSTranscribeStreaming */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribeStreaming;
-		};
-		14FDF9112E3F90FB00BBD2FA /* AWSBedrockRuntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrockRuntime;
-		};
-		AC0000000000000000000020 /* AWSBedrock */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrock;
-		};
-		AC0000000000000000000021 /* AWSClientRuntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSClientRuntime;
-		};
-		AC0000000000000000000022 /* AWSS3 */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSS3;
-		};
-		AC0000000000000000000023 /* AWSTranscribe */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribe;
-		};
-		AC0000000000000000000024 /* AWSTranscribeStreaming */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSTranscribeStreaming;
-		};
-		AC0000000000000000000025 /* AWSBedrockRuntime */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 14FDF9062E3F8D5600BBD2FA /* XCRemoteSwiftPackageReference "aws-sdk-swift" */;
-			productName = AWSBedrockRuntime;
 		};
 		AC0000000000000000000026 /* Textual */ = {
 			isa = XCSwiftPackageProductDependency;

@@ -50,11 +50,16 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let manager = iCloudStorageManager()
 
         XCTAssertFalse(iCloudStorageManager.backedUpSettingsKeys.contains(KeychainSecretStore.openAIAPIKey))
-        XCTAssertFalse(iCloudStorageManager.backedUpSettingsKeys.contains(KeychainSecretStore.awsCredentials))
         XCTAssertTrue(manager.isSensitiveSettingKey("openAIAPIKey"))
-        XCTAssertTrue(manager.isSensitiveSettingKey("awsSecretAccessKey"))
-        XCTAssertTrue(manager.isSensitiveSettingKey("awsBedrockSessionToken"))
-        XCTAssertFalse(manager.isSensitiveSettingKey("openAISummarizationMaxTokens"))
+        XCTAssertTrue(manager.isSensitiveSettingKey("secretAccessKey"))
+        XCTAssertFalse(manager.isSensitiveSettingKey("compatibleAPIMaxTokens"))
+    }
+
+    func testRemovedAWSSettingsAreRecognized() {
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("AWSCredentials"))
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("awsBedrockModel"))
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("enableAWSTranscribe"))
+        XCTAssertFalse(KeychainSecretStore.isLegacyAWSSettingKey("openAICompatibleModel"))
     }
 
     func testProductionSchemaDiagnosticProducesActionableError() {

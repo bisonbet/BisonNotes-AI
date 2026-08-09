@@ -59,7 +59,7 @@ struct AcknowledgementsView: View {
                         }
                     }
                 } footer: {
-                    Text("These are brought in through AWS SDK and other direct dependencies. All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
+                    Text("These are brought in through the app's direct and transitive dependencies. All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
                 }
             }
             .scrollContentBackground(.hidden)
@@ -240,13 +240,6 @@ private let directDependencies: [DependencyCard] = [
         url: URL(string: "https://github.com/ggerganov/llama.cpp")!
     ),
     DependencyCard(
-        name: "AWS SDK for Swift",
-        description: "Cloud SDK powering AWS Bedrock, Transcribe, and S3 integrations.",
-        license: "Apache 2.0",
-        linkText: "awslabs/aws-sdk-swift",
-        url: URL(string: "https://github.com/awslabs/aws-sdk-swift")!
-    ),
-    DependencyCard(
         name: "Swift Transformers",
         description: "Hugging Face tokenizers and transformer utilities used by local model pipelines.",
         license: "Apache 2.0",
@@ -257,42 +250,15 @@ private let directDependencies: [DependencyCard] = [
 
 private let transitiveDependencyGroups: [DependencyGroup] = [
     DependencyGroup(
-        title: "Apple Swift Server Libraries",
+        title: "Swift and Community Libraries",
         projects: [
             TransitiveProject(name: "Swift NIO", url: URL(string: "https://github.com/apple/swift-nio")!),
-            TransitiveProject(name: "Swift NIO Extras", url: URL(string: "https://github.com/apple/swift-nio-extras")!),
-            TransitiveProject(name: "Swift NIO HTTP/2", url: URL(string: "https://github.com/apple/swift-nio-http2")!),
-            TransitiveProject(name: "Swift NIO SSL", url: URL(string: "https://github.com/apple/swift-nio-ssl")!),
-            TransitiveProject(name: "Swift NIO Transport Services", url: URL(string: "https://github.com/apple/swift-nio-transport-services")!),
             TransitiveProject(name: "Swift Crypto", url: URL(string: "https://github.com/apple/swift-crypto")!),
-            TransitiveProject(name: "Swift Protobuf", url: URL(string: "https://github.com/apple/swift-protobuf")!),
             TransitiveProject(name: "Swift Collections", url: URL(string: "https://github.com/apple/swift-collections")!),
-            TransitiveProject(name: "Swift Algorithms", url: URL(string: "https://github.com/apple/swift-algorithms")!),
-            TransitiveProject(name: "Swift Log", url: URL(string: "https://github.com/apple/swift-log")!),
-            TransitiveProject(name: "Swift Metrics", url: URL(string: "https://github.com/apple/swift-metrics")!),
             TransitiveProject(name: "Swift Atomics", url: URL(string: "https://github.com/apple/swift-atomics")!),
             TransitiveProject(name: "Swift System", url: URL(string: "https://github.com/apple/swift-system")!),
-            TransitiveProject(name: "Swift Async Algorithms", url: URL(string: "https://github.com/apple/swift-async-algorithms")!),
-            TransitiveProject(name: "Swift Argument Parser", url: URL(string: "https://github.com/apple/swift-argument-parser")!),
             TransitiveProject(name: "Swift Numerics", url: URL(string: "https://github.com/apple/swift-numerics")!),
-            TransitiveProject(name: "Swift Certificates", url: URL(string: "https://github.com/apple/swift-certificates")!),
             TransitiveProject(name: "Swift ASN1", url: URL(string: "https://github.com/apple/swift-asn1")!),
-            TransitiveProject(name: "Swift HTTP Types", url: URL(string: "https://github.com/apple/swift-http-types")!),
-            TransitiveProject(name: "Swift HTTP Structured Headers", url: URL(string: "https://github.com/apple/swift-http-structured-headers")!),
-            TransitiveProject(name: "Swift Distributed Tracing", url: URL(string: "https://github.com/apple/swift-distributed-tracing")!),
-            TransitiveProject(name: "Swift Service Context", url: URL(string: "https://github.com/apple/swift-service-context")!),
-            TransitiveProject(name: "Swift Configuration", url: URL(string: "https://github.com/apple/swift-configuration")!)
-        ]
-    ),
-    DependencyGroup(
-        title: "Community and Infrastructure",
-        projects: [
-            TransitiveProject(name: "Async HTTP Client", url: URL(string: "https://github.com/swift-server/async-http-client")!),
-            TransitiveProject(name: "Swift Service Lifecycle", url: URL(string: "https://github.com/swift-server/swift-service-lifecycle")!),
-            TransitiveProject(name: "gRPC Swift", url: URL(string: "https://github.com/grpc/grpc-swift")!),
-            TransitiveProject(name: "OpenTelemetry Swift", url: URL(string: "https://github.com/open-telemetry/opentelemetry-swift")!),
-            TransitiveProject(name: "AWS CRT Swift", url: URL(string: "https://github.com/awslabs/aws-crt-swift")!),
-            TransitiveProject(name: "Smithy Swift", url: URL(string: "https://github.com/smithy-lang/smithy-swift")!),
             TransitiveProject(name: "Swift Jinja", url: URL(string: "https://github.com/huggingface/swift-jinja")!),
             TransitiveProject(name: "Swift HuggingFace", url: URL(string: "https://github.com/huggingface/swift-huggingface")!),
             TransitiveProject(name: "SwiftUI Math", url: URL(string: "https://github.com/gonzalezreal/swiftui-math")!),

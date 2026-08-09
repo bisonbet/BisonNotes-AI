@@ -9,424 +9,6 @@ import Foundation
 import os.log
 import SwiftUI
 
-// MARK: - AWS Bedrock Engine
-
-class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
-    var name: String { "AWS Bedrock" }
-    var engineType: String { "AWS Bedrock" }
-    var description: String { "Enterprise-grade AI using Amazon Bedrock foundation models." }
-    let version: String = "1.0"
-    var metadataName: String {
-        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
-        return AWSBedrockModel(rawValue: modelString)?.displayName ?? modelString
-    }
-
-    private var service: AWSBedrockService?
-    private var currentConfig: AWSBedrockConfig?
-
-    var isAvailable: Bool {
-        // Check if AWS Bedrock is enabled in settings
-        let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-        let keyExists = UserDefaults.standard.object(forKey: "enableAWSBedrock") != nil
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Checking enableAWSBedrock setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "AWSBedrockEngine")
-        }
-
-        guard isEnabled else {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                AppLogger.shared.verbose("AWS Bedrock is not enabled in settings", category: "AWSBedrockEngine")
-            }
-            return false
-        }
-
-        // Check credentials using unified credentials manager
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-
-        // Check credentials based on authentication method
-        if useProfile {
-            guard !profileName.isEmpty else {
-                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    AppLogger.shared.verbose("AWS profile name not configured", category: "AWSBedrockEngine")
-                }
-                return false
-            }
-        } else {
-            // Use unified credentials manager instead of separate UserDefaults keys
-            let credentials = AWSCredentialsManager.shared.credentials
-            guard credentials.isValid else {
-                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    AppLogger.shared.verbose("AWS credentials not configured in unified manager", category: "AWSBedrockEngine")
-                }
-                return false
-            }
-        }
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Basic availability checks passed", category: "AWSBedrockEngine")
-        }
-        return true
-    }
-
-    init() {
-        updateConfiguration()
-    }
-
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        AppLog.shared.networking("AWSBedrockEngine: Starting summary generation")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            AppLog.shared.networking("AWSBedrockEngine: Service is nil", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        AppLog.shared.networking("AWSBedrockEngine: Calling AWS Bedrock service for summary")
-
-        do {
-            return try await service.generateSummary(from: text, contentType: contentType)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Summary generation failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting task extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractTasks(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Task extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting reminder extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractReminders(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Reminder extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting title extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractTitles(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Title extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func classifyContent(_ text: String) async throws -> ContentType {
-        AppLog.shared.networking("AWSBedrockEngine: Starting content classification")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.classifyContent(text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Content classification failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func processComplete(text: String) async throws -> SummarizationResult {
-        AppLog.shared.networking("AWSBedrockEngine: Starting complete processing")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        // Check if text needs chunking based on token count
-        let tokenCount = TokenManager.getTokenCount(text)
-        AppLog.shared.networking("AWSBedrockEngine: Text token count: \(tokenCount)", level: .debug)
-
-        do {
-            // Use the model's context window for chunking decision
-            let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
-            if TokenManager.needsChunking(text, maxTokens: contextWindow) {
-                AppLog.shared.networking("AWSBedrockEngine: Large transcript detected (\(tokenCount) tokens), using chunked processing", level: .debug)
-                return try await processChunkedText(text, service: service)
-            } else {
-                AppLog.shared.networking("AWSBedrockEngine: Processing single chunk (\(tokenCount) tokens)", level: .debug)
-                return try await service.processComplete(text: text)
-            }
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Complete processing failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    // MARK: - Configuration Management
-
-    private func updateConfiguration() {
-        // Use unified credentials manager instead of separate UserDefaults keys
-        let credentials = AWSCredentialsManager.shared.credentials
-        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-        // Migrate legacy model identifiers
-        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
-        let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
-        let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName")
-
-        let model = AWSBedrockModel(rawValue: modelString) ?? .claude45Haiku
-
-        let newConfig = AWSBedrockConfig(
-            region: credentials.region,
-            accessKeyId: credentials.accessKeyId,
-            secretAccessKey: credentials.secretAccessKey,
-            sessionToken: credentials.sessionToken,
-            model: model,
-            temperature: temperature > 0 ? temperature : 0.1,
-            maxTokens: maxTokens > 0 ? maxTokens : 4096,
-            timeout: SummarizationTimeouts.current(),
-            useProfile: useProfile,
-            profileName: profileName
-        )
-
-        // Only create a new service if the configuration has actually changed
-        if currentConfig == nil || currentConfig != newConfig {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), Region: \(credentials.region)", category: "AWSBedrockEngine")
-            }
-
-            self.currentConfig = newConfig
-            self.service = AWSBedrockService(config: newConfig)
-
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Configuration updated successfully", category: "AWSBedrockEngine")
-            }
-        }
-    }
-
-    // MARK: - Chunked Processing
-
-    private func processChunkedText(_ text: String, service: AWSBedrockService) async throws -> SummarizationResult {
-        let startTime = Date()
-
-        // Initialize Ollama service for meta-summary generation
-        let ollamaService = OllamaService()
-        _ = await ollamaService.testConnection()
-
-        // Split text into chunks
-        let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
-        let chunks = TokenManager.chunkText(text, maxTokens: contextWindow)
-        AppLog.shared.networking("AWSBedrockEngine: Split text into \(chunks.count) chunks", level: .debug)
-
-        // Process each chunk
-        var allSummaries: [String] = []
-        var allTasks: [TaskItem] = []
-        var allReminders: [ReminderItem] = []
-        var allTitles: [TitleItem] = []
-        var contentType: ContentType = .general
-
-        for (index, chunk) in chunks.enumerated() {
-            AppLog.shared.networking("AWSBedrockEngine: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
-
-            do {
-                let chunkResult = try await service.processComplete(text: chunk)
-                allSummaries.append(chunkResult.summary)
-                allTasks.append(contentsOf: chunkResult.tasks)
-                allReminders.append(contentsOf: chunkResult.reminders)
-                allTitles.append(contentsOf: chunkResult.titles)
-
-                // Use the first chunk's content type
-                if index == 0 {
-                    contentType = chunkResult.contentType
-                }
-
-                // Add delay between chunks to avoid rate limiting
-                if index < chunks.count - 1 {
-                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
-                }
-
-            } catch {
-                AppLog.shared.networking("AWSBedrockEngine: Failed to process chunk \(index + 1): \(error)", level: .error)
-                throw error
-            }
-        }
-
-        // Combine results using AI-generated meta-summary
-        let combinedSummary = try await TokenManager.combineSummaries(
-            allSummaries,
-            contentType: contentType,
-            service: ollamaService
-        )
-
-        // Deduplicate tasks, reminders, and titles
-        let uniqueTasks = deduplicateTasks(allTasks)
-        let uniqueReminders = deduplicateReminders(allReminders)
-        let uniqueTitles = deduplicateTitles(allTitles)
-
-        let processingTime = Date().timeIntervalSince(startTime)
-        AppLog.shared.networking("AWSBedrockEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        AppLog.shared.networking("AWSBedrockEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
-
-        return SummarizationResult(
-            summary: combinedSummary,
-            tasks: uniqueTasks,
-            reminders: uniqueReminders,
-            titles: uniqueTitles,
-            contentType: contentType
-        )
-    }
-
-    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
-        var uniqueTasks: [TaskItem] = []
-
-        for task in tasks {
-            let isDuplicate = uniqueTasks.contains { existingTask in
-                let similarity = calculateTextSimilarity(task.text, existingTask.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueTasks.append(task)
-            }
-        }
-
-        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
-    }
-
-    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
-        var uniqueReminders: [ReminderItem] = []
-
-        for reminder in reminders {
-            let isDuplicate = uniqueReminders.contains { existingReminder in
-                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueReminders.append(reminder)
-            }
-        }
-
-        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
-    }
-
-    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
-        var uniqueTitles: [TitleItem] = []
-
-        for title in titles {
-            let isDuplicate = uniqueTitles.contains { existingTitle in
-                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueTitles.append(title)
-            }
-        }
-
-        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
-    }
-
-    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
-        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
-
-        let intersection = words1.intersection(words2)
-        let union = words1.union(words2)
-
-        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
-    }
-
-    // MARK: - Connection Testing
-
-    func testConnection() async -> Bool {
-        AppLog.shared.networking("AWSBedrockEngine: Testing connection")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            AppLog.shared.networking("AWSBedrockEngine: Service is nil - configuration issue", level: .error)
-            return false
-        }
-
-        let connectionResult = await service.testConnection()
-        if connectionResult {
-            AppLog.shared.networking("AWSBedrockEngine: Connection test successful")
-            return true
-        } else {
-            AppLog.shared.networking("AWSBedrockEngine: Connection test failed", level: .error)
-            return false
-        }
-    }
-
-    func loadAvailableModels() async throws -> [AWSBedrockModel] {
-        updateConfiguration()
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: name)
-        }
-
-        return try await service.listAvailableModels()
-    }
-
-    // MARK: - Enhanced Error Handling
-
-    private func handleAPIError(_ error: Error) -> SummarizationError {
-        if let summarizationError = error as? SummarizationError {
-            return summarizationError
-        }
-
-        // Handle specific AWS Bedrock errors
-        let errorString = error.localizedDescription.lowercased()
-
-        if errorString.contains("access denied") || errorString.contains("unauthorized") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock access denied. Please check your credentials and permissions.")
-        } else if errorString.contains("throttling") || errorString.contains("rate limit") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock rate limit exceeded. Please try again later.")
-        } else if errorString.contains("model not found") || errorString.contains("validation") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock model not available. Please check your model configuration.")
-        } else if errorString.contains("timeout") || errorString.contains("network") {
-            return SummarizationError.processingTimeout
-        } else {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock error: \(error.localizedDescription)")
-        }
-    }
-}
-
 // MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
@@ -1640,12 +1222,8 @@ class GoogleAIStudioEngine: SummarizationEngine {
 class AIEngineFactory {
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .openAI:
-            return OpenAISummarizationEngine()
         case .mistralAI:
             return MistralAIEngine()
-        case .awsBedrock:
-            return AWSBedrockEngine()
         case .openAICompatible:
             return OpenAICompatibleEngine()
         case .localLLM:
@@ -1674,9 +1252,7 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
-    case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
@@ -1690,6 +1266,7 @@ enum AIEngineType: String, CaseIterable {
         switch self {
         case .mlxSwift: return "On Device AI"
         case .onDeviceLLM: return "On Device AI (Legacy)"
+        case .openAICompatible: return "Compatible API"
         default: return rawValue
         }
     }
@@ -1710,14 +1287,10 @@ enum AIEngineType: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .openAI:
-            return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .mistralAI:
             return "Fast, high-quality summaries using Mistral's chat models"
-        case .awsBedrock:
-            return "Cloud-based AI using AWS Bedrock foundation models"
         case .openAICompatible:
-            return "Advanced AI summaries using OpenAI API compatible models"
+            return "Advanced AI summaries using compatible chat-completion APIs"
         case .localLLM:
             return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
@@ -1733,21 +1306,17 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .mlxSwift, .appleNative:
+        case .localLLM, .openAICompatible, .googleAIStudio, .mistralAI, .onDeviceLLM, .mlxSwift, .appleNative:
             return false
         }
     }
 
     var requirements: [String] {
         switch self {
-        case .openAI:
-            return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .mistralAI:
             return ["Mistral API Key", "Internet Connection"]
-        case .awsBedrock:
-            return ["AWS Account", "Internet Connection", "API Keys"]
         case .openAICompatible:
-            return ["OpenAI API Compatible Service", "Internet Connection"]
+            return ["Compatible API service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:

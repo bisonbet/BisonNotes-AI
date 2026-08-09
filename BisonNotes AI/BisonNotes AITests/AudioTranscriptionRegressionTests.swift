@@ -21,6 +21,19 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         tempDirectory = nil
     }
 
+    func testRemovedTranscriptionEngineJobWaitsForConfiguredReplacement() throws {
+        let payload = """
+        {"type":"transcription","engine":"OpenAI"}
+        """.data(using: .utf8)!
+
+        let jobType = try JSONDecoder().decode(JobType.self, from: payload)
+
+        guard case .transcription(let engine) = jobType else {
+            return XCTFail("Expected a transcription job")
+        }
+        XCTAssertEqual(engine, .notConfigured)
+    }
+
     func testValidShortAudioFixtureProducesAudioFileInfo() async throws {
         let audioURL = tempDirectory.appendingPathComponent("valid-short.caf")
         try createSilentAudioFixture(at: audioURL, duration: 1.0)
@@ -132,7 +145,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             recordingName: "Persisted Transcript",
             recordingDate: Date(),
             segments: [TranscriptSegment(speaker: "Speaker", text: "Persist this transcript", startTime: 0, endTime: 1)],
-            engine: .openAI,
+            engine: .fluidAudio,
             processingTime: 0.5,
             confidence: 0.9
         )
@@ -165,7 +178,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         defer { manager.activeJobs = oldJobs }
 
         let queuedJob = ProcessingJob(
-            type: .transcription(engine: .openAI),
+            type: .transcription(engine: .fluidAudio),
             recordingURL: audioURL,
             recordingName: "Active Job"
         ).withStatus(.queued)

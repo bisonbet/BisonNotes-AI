@@ -8,15 +8,12 @@
 import SwiftUI
 
 enum ProcessingOption: String, CaseIterable {
-    case openai = "OpenAI"
     case mistralAI = "Mistral AI"
     case onDeviceLLM = "On-Device AI"
     case chooseLater = "Choose Later"
 
     var displayName: String {
         switch self {
-        case .openai:
-            return "OpenAI (Cloud)"
         case .mistralAI:
             return "Mistral AI (Free)"
         case .onDeviceLLM:
@@ -28,8 +25,6 @@ enum ProcessingOption: String, CaseIterable {
 
     var description: String {
         switch self {
-        case .openai:
-            return "Cloud-based transcription and AI summaries"
         case .mistralAI:
             return "Free cloud AI -- no credit card required"
         case .onDeviceLLM:
@@ -41,8 +36,6 @@ enum ProcessingOption: String, CaseIterable {
 
     var iconName: String {
         switch self {
-        case .openai:
-            return "sparkles"
         case .mistralAI:
             return "cloud.fill"
         case .onDeviceLLM:
@@ -54,8 +47,6 @@ enum ProcessingOption: String, CaseIterable {
 
     var tintColor: Color {
         switch self {
-        case .openai:
-            return .purple
         case .mistralAI:
             return .orange
         case .onDeviceLLM:
@@ -226,7 +217,7 @@ struct SimpleSettingsView: View {
     }
 
     /// Options offered on this page: Mistral AI (free cloud), On-Device (if
-    /// supported), and Advanced. OpenAI is available under Advanced & Other Options.
+    /// supported), and Advanced.
     private var availableProcessingOptions: [ProcessingOption] {
         ProcessingOption.allCases.filter { option in
             option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
@@ -371,10 +362,8 @@ struct SimpleSettingsView: View {
 
             DetailGroup(title: "Available Options", tint: .blue) {
                 VStack(alignment: .leading, spacing: 8) {
-                    FeatureBullet(text: "OpenAI - GPT-4.1 Mini transcription and summaries")
-                    FeatureBullet(text: "OpenAI Compatible - Use LiteLLM, vLLM, or similar proxies")
+                    FeatureBullet(text: "Compatible APIs - Use LiteLLM, vLLM, or similar proxies")
                     FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
-                    FeatureBullet(text: "AWS Bedrock - Enterprise-grade Claude AI")
                     FeatureBullet(text: "Mistral AI - Free and paid cloud AI processing")
                 }
             }
@@ -395,9 +384,6 @@ struct SimpleSettingsView: View {
             .controlSize(.large)
         }
     }
-
-    // OpenAI setup has been moved to Advanced & Other Options.
-    // Existing OpenAI users keep their configuration; they see "Advanced" selected on this page.
 
     private var saveSection: some View {
         VStack(spacing: 16) {

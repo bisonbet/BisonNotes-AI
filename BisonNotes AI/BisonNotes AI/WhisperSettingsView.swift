@@ -49,7 +49,7 @@ struct WhisperSettingsView: View {
             Form {
                 Section(header: Text("Whisper Service")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Whisper provides high-quality transcription using OpenAI's Whisper model via REST API. This service runs on your local server for privacy and performance.")
+                        Text("Whisper provides high-quality transcription through a local REST or Wyoming service. The server runs on your own device or network for privacy and performance.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -319,7 +319,7 @@ struct WhisperSettingsView: View {
                     } else {
                         Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
                     }
-                    Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
+                    Link("Whisper Model Information", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
                 }
             }
             .nativeMacSettingsFormStyle()

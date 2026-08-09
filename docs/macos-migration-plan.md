@@ -1,7 +1,7 @@
 # macOS Native Migration Plan
 
 **Branch:** `v2.2` (the migration branch was merged and removed)
-**Goal:** Replace the Mac Catalyst build with a native macOS SwiftUI target, without ever breaking the shipping iOS/Catalyst app, then delete Catalyst and collect the maintenance rewards (unpin aws-sdk-swift, delete the hand-built llama Catalyst slice, drop the textual fork patches).
+**Goal:** Replace the Mac Catalyst build with a native macOS SwiftUI target, without ever breaking the shipping iOS/Catalyst app, then delete Catalyst and collect the maintenance rewards (delete the hand-built llama Catalyst slice and drop the textual fork patches).
 
 This document is written for an AI agent (or human) to execute incrementally. Every task has a verification step. Work phase by phase, task by task, committing after each green verification loop.
 
@@ -23,7 +23,7 @@ This document is written for an AI agent (or human) to execute incrementally. Ev
 - **Phase 4.2 ScreenCaptureKit permission repair — IMPLEMENTED, TESTFLIGHT RETEST PENDING.** Native TestFlight build 11 could show BisonNotes enabled under Screen & System Audio Recording while `SCShareableContent` still returned `userDeclined`. The native Settings path had inherited Catalyst-only permission guards, and the shared Info.plist omitted `NSScreenCaptureUsageDescription`. Native macOS and Catalyst now use the same preflight/request flow, explain the required quit/reopen after a new grant, include Apple's purpose string, and replace the raw TCC failure with a microphone-only fallback message. Signed native macOS and Catalyst Debug builds are green; a new TestFlight build must repeat first-grant, existing-grant, and revoked-grant recording cases.
 - **Native Settings polish — IMPLEMENTED, USER VISUAL QA PENDING.** Setup now opens the dedicated macOS Settings window instead of stacking a Settings sheet over the main window. Settings and its provider/model panels share one navigation hierarchy; true tasks remain modal. Acknowledgements and MLX On Device AI use bounded, top-aligned Mac card layouts, while the remaining settings forms use grouped native styling. Native macOS, iOS Simulator, and Mac Catalyst Debug builds are green; the root Settings window passed a live visual check, and each destination still needs the user walkthrough.
 - **Xcode recommended settings — APPLIED.** Project and shared-scheme upgrade metadata now match Xcode 26.6; the native macOS target enables dead-code stripping and app-group registration in Debug and Release. These settings were present for the green three-platform Phase 2.2 build loop.
-- **Phase 4.3 — IMPLEMENTED, REVIEW VALIDATION COMPLETE.** Mac Catalyst is no longer a supported destination. Its signing override, handcrafted llama slice, archive script, and conditional source branches were removed; the native target now owns the Mac-only recorder and ScreenCaptureKit implementation. AWS SDK for Swift moved from the Catalyst-workaround pin at 1.6.113 to 1.7.46. Current developer and user documentation now describe native macOS as the only Mac product. Review validation on July 25, 2026 completed clean plist/diff checks plus native macOS and generic iOS Simulator Debug builds. SwiftLint completed with 41 baseline violations (11 serious). The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization, so signed-app tests and archives remain pending.
+- **Phase 4.3 — IMPLEMENTED, REVIEW VALIDATION COMPLETE.** Mac Catalyst is no longer a supported destination. Its signing override, handcrafted llama slice, archive script, and conditional source branches were removed; the native target now owns the Mac-only recorder and ScreenCaptureKit implementation. Current developer and user documentation now describe native macOS as the only Mac product. Review validation on July 25, 2026 completed clean plist/diff checks plus native macOS and generic iOS Simulator Debug builds. SwiftLint completed with 41 baseline violations (11 serious). The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization, so signed-app tests and archives remain pending.
 - **Next: native-only testing and stabilization** — continue the TestFlight permission and signed recording matrix, including the Poly Sync 10 failure case, microphone changes during recording, long hidden-window processing, archive bookmark restoration, Share extension/widget checks, and the full Settings destination walkthrough.
 
 ---
@@ -32,10 +32,9 @@ This document is written for an AI agent (or human) to execute incrementally. Ev
 
 1. **Never break the iOS or Catalyst build.** Both must build green after every commit until Phase 4 cutover. Run the verification loop (below) before every commit.
 2. **One task per commit.** Small, revertable commits. Conventional prefixes: `refactor:` (Phase 0), `feat(macos):` (Phases 1–3), `chore:` (cleanup).
-3. **Do not bump aws-sdk-swift past 1.6.113** until Phase 4 cutover. SPM versions are project-wide; the Catalyst archive bug (see CLAUDE.md "Archive-only failures") applies as long as the Catalyst destination exists.
-4. **Do not touch `Frameworks/llama.xcframework/ios-arm64-maccatalyst/`** until Phase 4.
-5. **`#if targetEnvironment(macCatalyst)` semantics:** on native macOS this is FALSE. Any behavior currently gated to Catalyst that native macOS also needs must be re-fenced as `#if targetEnvironment(macCatalyst) || os(macOS)`. Any iOS-only API usage must be fenced `#if os(iOS)` (which is TRUE on Catalyst — fence Catalyst-excluded iOS code as `#if os(iOS) && !targetEnvironment(macCatalyst)`).
-6. **Known Catalyst UI landmines** (do not regress; both remain relevant until cutover):
+3. **Do not touch `Frameworks/llama.xcframework/ios-arm64-maccatalyst/`** until Phase 4.
+4. **`#if targetEnvironment(macCatalyst)` semantics:** on native macOS this is FALSE. Any behavior currently gated to Catalyst that native macOS also needs must be re-fenced as `#if targetEnvironment(macCatalyst) || os(macOS)`. Any iOS-only API usage must be fenced `#if os(iOS)` (which is TRUE on Catalyst — fence Catalyst-excluded iOS code as `#if os(iOS) && !targetEnvironment(macCatalyst)`).
+5. **Known Catalyst UI landmines** (do not regress; both remain relevant until cutover):
    - SwiftUI `ScrollView` is broken inside Mac Catalyst sheets — use `Form`/`List`.
    - Multiple `Button`s in one `Form` row need explicit `.buttonStyle(.borderless)` or they share one tap target.
 
@@ -115,7 +114,6 @@ Shrinks the eventual port and benefits iOS/Catalyst immediately. Each task is in
 ### 1.2 Dependency sanity
 - llama.xcframework: native macOS resolves to the stock `macos-arm64_x86_64` slice. No action needed; do NOT touch the Catalyst slice.
 - MLX-Swift, FluidAudio, textual: expect to build natively. textual takes its upstream AppKit path on native macOS (the Catalyst guards are `!targetEnvironment(macCatalyst)` and don't affect native macOS).
-- aws-sdk-swift: stays pinned (rule 3). Confirm a native macOS **archive** succeeds once the target builds (`xcodebuild archive -scheme "BisonNotes AI macOS" -destination 'generic/platform=macOS' ONLY_ACTIVE_ARCH=NO EXCLUDED_ARCHS=x86_64`) — this validates the Phase 4 unpin assumption early.
 
 ### 1.3 Compile to first launch
 - Iterate: build macOS target, take the first batch of errors, fence iOS-only code (`#if os(iOS)`), stub macOS gaps with `// TODO(macos-phase2)` markers, loop.
@@ -158,7 +156,7 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 - Record a mic-only note → transcript → summary end-to-end.
 - Record with system audio (ScreenCaptureKit) → verify mixed/parallel files as on Catalyst.
 - On-device transcription + LLM summary (llama and/or MLX path) complete.
-- Cloud engines (OpenAI/Bedrock/Gemini) reachable (config permitting).
+- Cloud engines (Gemini/Mistral) reachable (config permitting).
 - Quit app during background processing → relaunch → job recovers (matches memory: quit-crash was a Catalyst Phase-2 test item).
 - Zero remaining `TODO(macos-phase2)` markers.
 
@@ -192,10 +190,9 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 1. Mac Catalyst was removed from the iOS and test targets' supported destinations.
 2. `Frameworks/llama.xcframework/ios-arm64-maccatalyst/` and its `Info.plist` entry were deleted.
 3. `Scripts/archive-catalyst.sh` was deleted.
-4. AWS SDK for Swift was updated from 1.6.113 to 1.7.46. The old pin addressed a Catalyst-only archive staging collision and is no longer required.
-5. The `textual` fork cleanup remains a separate repository task for its next rebase; its historical Catalyst guards are harmless here.
-6. Dead `targetEnvironment(macCatalyst)` source branches were purged, and the Mac recorder/system-audio files were renamed for native macOS.
-7. `CLAUDE.md`, `README.md`, the WordPress user guide, the v2.3 release guide, and the testing regimen were updated.
+4. The `textual` fork cleanup remains a separate repository task for its next rebase; its historical Catalyst guards are harmless here.
+5. Dead `targetEnvironment(macCatalyst)` source branches were purged, and the Mac recorder/system-audio files were renamed for native macOS.
+6. `CLAUDE.md`, `README.md`, the WordPress user guide, the v2.3 release guide, and the testing regimen were updated.
 - Review verification: native macOS and generic iOS Simulator Debug builds succeeded. The unsigned unit and UI test runners built but exited before bootstrapping in CloudKit container initialization. iOS/macOS archives and signed-app tests remain deferred.
 
 ---

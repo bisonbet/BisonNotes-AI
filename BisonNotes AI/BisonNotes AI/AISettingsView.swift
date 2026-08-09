@@ -73,22 +73,16 @@ final class AISettingsViewModel: ObservableObject {
         switch engineType {
         case .openAICompatible:
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            AppLog.shared.general("Auto-enabled OpenAI Compatible engine")
+            AppLog.shared.general("Auto-enabled Compatible API engine")
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
             AppLog.shared.general("Auto-enabled Ollama engine")
         case .googleAIStudio:
             UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
             AppLog.shared.general("Auto-enabled Google AI Studio engine")
-        case .awsBedrock:
-            UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
-            AppLog.shared.general("Auto-enabled AWS Bedrock engine")
         case .mistralAI:
             UserDefaults.standard.set(true, forKey: "enableMistralAI")
             AppLog.shared.general("Auto-enabled Mistral AI engine")
-        case .openAI:
-            UserDefaults.standard.set(true, forKey: "enableOpenAI")
-            AppLog.shared.general("Auto-enabled OpenAI engine")
         case .onDeviceLLM:
             UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             AppLog.shared.general("Auto-enabled On-Device AI engine")
@@ -114,11 +108,9 @@ struct AISettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingOllamaSettings = false
-    @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
     @State private var showingMistralAISettings = false
-    @State private var showingAWSBedrockSettings = false
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingMLXSwiftSettings = false
     @State private var showingMistralOnboarding = false
@@ -176,9 +168,6 @@ struct AISettingsView: View {
 
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .openAI:
-            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-            return !apiKey.isEmpty
         case .openAICompatible:
             let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
             return !apiKey.isEmpty
@@ -193,18 +182,6 @@ struct AISettingsView: View {
             let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
-        case .awsBedrock:
-            let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-            let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-            let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-
-            if useProfile {
-                return !profileName.isEmpty && isEnabled
-            } else {
-                // Use unified credentials manager instead of separate UserDefaults keys
-                let credentials = AWSCredentialsManager.shared.credentials
-                return credentials.isValid && isEnabled
-            }
         case .onDeviceLLM:
             let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
             let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
@@ -223,9 +200,6 @@ struct AISettingsView: View {
 
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
-        case .openAI:
-            let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-            return OpenAISummarizationModel(rawValue: modelString)?.displayName ?? modelString
         case .openAICompatible:
             return "API Compatible"
         case .mistralAI:
@@ -237,14 +211,6 @@ struct AISettingsView: View {
         case .googleAIStudio:
             let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
             return model
-        case .awsBedrock:
-            let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-            // Migrate legacy model identifiers
-            let modelName = AWSBedrockModel.migrate(rawValue: storedModelName)
-            if let model = AWSBedrockModel(rawValue: modelName) {
-                return model.displayName
-            }
-            return "Claude 4.5 Haiku"
         case .onDeviceLLM:
             return OnDeviceLLMModelInfo.selectedModel.displayName
         case .mlxSwift:
@@ -289,7 +255,7 @@ struct AISettingsView: View {
             summarizationTimeout = SummarizationTimeouts.clamp(
                 summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
             )
-            // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
+            // Align regeneration manager with the user's currently selected engine.
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
@@ -308,11 +274,6 @@ struct AISettingsView: View {
                 self.refreshEngineStatuses()
             })
         }
-        .navigationDestination(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
         .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
@@ -328,9 +289,6 @@ struct AISettingsView: View {
                 Task { refreshEngineStatuses() }
             })
         }
-        .navigationDestination(isPresented: $showingAWSBedrockSettings) {
-            AWSBedrockSettingsView()
-        }
         .navigationDestination(isPresented: $showingOnDeviceLLMSettings) {
             OnDeviceLLMSettingsView()
         }
@@ -341,11 +299,6 @@ struct AISettingsView: View {
         .sheet(isPresented: $showingOllamaSettings) {
             OllamaSettingsView(onConfigurationChanged: {
                 self.refreshEngineStatuses()
-            })
-        }
-        .sheet(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
@@ -362,9 +315,6 @@ struct AISettingsView: View {
             MistralAISettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
             })
-        }
-        .sheet(isPresented: $showingAWSBedrockSettings) {
-            AWSBedrockSettingsView()
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
@@ -717,7 +667,7 @@ private extension AISettingsView {
             case .onDevice:
                 return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
             case .cloud:
-                return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
+                return [.googleAIStudio, .mistralAI, .openAICompatible].contains(engine)
             case .selfHosted:
                 return engine == .localLLM
             }
@@ -754,10 +704,8 @@ private extension AISettingsView {
         case .onDeviceLLM: return "Private, no internet after download"
         case .mlxSwift: return "On-device MLX summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
-        case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
         case .mistralAI: return "Fast cloud summaries"
-        case .awsBedrock: return "Enterprise model routing"
         case .openAICompatible: return "Works with compatible APIs"
         case .localLLM: return "Use your local Ollama server"
         }
@@ -765,8 +713,6 @@ private extension AISettingsView {
 
     func openSettings(for engine: AIEngineType) {
         switch engine {
-        case .openAI:
-            showingOpenAISettings = true
         case .openAICompatible:
             showingOpenAICompatibleSettings = true
         case .localLLM:
@@ -780,8 +726,6 @@ private extension AISettingsView {
             } else {
                 showingMistralAISettings = true
             }
-        case .awsBedrock:
-            showingAWSBedrockSettings = true
         case .onDeviceLLM:
             guard DeviceCapabilities.supportsOnDeviceLLM else { return }
             showingOnDeviceLLMSettings = true
@@ -801,10 +745,8 @@ private extension AISettingsView {
             // apple.intelligence requires iOS 18.1+
             if #available(iOS 18.1, *) { return "apple.intelligence" }
             return "brain"
-        case .openAI: return "sparkles"
         case .googleAIStudio: return "globe"
         case .mistralAI: return "wind"
-        case .awsBedrock: return "shippingbox"
         case .openAICompatible: return "link"
         case .localLLM: return "server.rack"
         }
@@ -841,10 +783,8 @@ private extension AISettingsView {
         case .onDeviceLLM: return .indigo
         case .mlxSwift: return .orange
         case .appleNative: return .mint
-        case .openAI: return .blue
         case .googleAIStudio: return .purple
         case .mistralAI: return .orange
-        case .awsBedrock: return .brown
         case .openAICompatible: return .green
         case .localLLM: return .teal
         }

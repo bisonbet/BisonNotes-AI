@@ -204,14 +204,28 @@ enum JobType: Codable {
         switch type {
         case .transcription:
             let engineRawValue = try container.decode(String.self, forKey: .engine)
-            guard let engine = TranscriptionEngine(rawValue: engineRawValue) else {
-                throw DecodingError.dataCorruptedError(forKey: .engine, in: container, debugDescription: "Invalid TranscriptionEngine value: \(engineRawValue)")
-            }
+            // Do not run a restored job through an arbitrary replacement. In
+            // particular, FluidAudio may be unsupported or its model may not be
+            // downloaded yet. Keep the job waiting until the user retries it with
+            // a configured engine rather than resuming it only to fail.
+            let engine = TranscriptionEngine(rawValue: engineRawValue) ?? .notConfigured
             self = .transcription(engine: engine)
         case .summarization:
             let engine = try container.decode(String.self, forKey: .engine)
-            self = .summarization(engine: engine)
+            self = .summarization(engine: Self.migratedSummarizationEngineName(engine))
         }
+    }
+
+    private static func migratedSummarizationEngineName(_ engineName: String) -> String {
+        let normalized = engineName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+        guard normalized == "openai" || normalized == "gpt-4" || normalized == "gpt-3.5" || !validEngineNames.contains(engineName) else {
+            return engineName
+        }
+
+        return DeviceCapabilities.supportsMLX
+            ? AIEngineType.mlxSwift.rawValue
+            : AIEngineType.mistralAI.rawValue
     }
 
     func encode(to encoder: Encoder) throws {
@@ -229,14 +243,11 @@ enum JobType: Codable {
 }
 
 enum BackgroundSummarizationRoute: Equatable {
-    case openAI
     case ollama
     case selectedEngine
 
     init(engineName: String) {
         switch engineName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "openai", "gpt-4", "gpt-3.5":
-            self = .openAI
         case "ollama", "local", "local llm (ollama)":
             self = .ollama
         default:
@@ -1097,20 +1108,6 @@ class BackgroundProcessingManager: ObservableObject {
             switch engine {
             case .notConfigured:
                 throw BackgroundProcessingError.processingFailed("Transcription engine not configured. Please configure a transcription engine in Settings.")
-            case .openAI:
-                AppLog.shared.backgroundProcessing("Using OpenAI for transcription")
-                let config = getOpenAIConfig()
-                let service = OpenAITranscribeService(config: config, chunkingService: chunkingService)
-                let openAIResult = try await service.transcribeAudioFile(at: chunk.chunkURL, recordingId: recordingId)
-                result = TranscriptionResult(
-                    fullText: openAIResult.transcriptText,
-                    segments: openAIResult.segments,
-                    processingTime: openAIResult.processingTime,
-                    chunkCount: 1,
-                    success: openAIResult.success,
-                    error: openAIResult.error
-                )
-
             case .whisper:
                 let config = getWhisperConfig()
                 let service = WhisperService(config: config, chunkingService: chunkingService)
@@ -1119,14 +1116,6 @@ class BackgroundProcessingManager: ObservableObject {
                 service.disableWyomingBackgroundTaskManagement()
 
                 result = try await service.transcribeAudio(url: chunk.chunkURL, recordingId: recordingId)
-
-            case .awsTranscribe:
-                let manager = EnhancedTranscriptionManager()
-                result = try await manager.transcribeAudioFile(
-                    at: chunk.chunkURL,
-                    using: .awsTranscribe,
-                    recordingId: recordingId
-                )
 
             case .fluidAudio:
                 AppLog.shared.backgroundProcessing("Using FluidAudio (Parakeet) for transcription")
@@ -1153,8 +1142,6 @@ class BackgroundProcessingManager: ObservableObject {
                     error: mistralResult.error
                 )
 
-            case .openAIAPICompatible:
-                throw BackgroundProcessingError.processingFailed("OpenAI API Compatible integration not yet implemented")
             }
 
             let processingTime = Date().timeIntervalSince(startTime)
@@ -1197,20 +1184,6 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     // MARK: - Configuration Helpers
-
-    private func getOpenAIConfig() -> OpenAITranscribeConfig {
-        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
-        let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-
-        let model = OpenAITranscribeModel(rawValue: modelString) ?? .gpt4oMiniTranscribe
-
-        return OpenAITranscribeConfig(
-            apiKey: apiKey,
-            model: model,
-            baseURL: baseURL
-        )
-    }
 
     private func getMistralTranscribeConfig() -> MistralTranscribeConfig {
         let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.mistralAPIKey) ?? ""
@@ -1500,17 +1473,6 @@ class BackgroundProcessingManager: ObservableObject {
         var titles: [TitleItem] = []
 
         switch BackgroundSummarizationRoute(engineName: engine) {
-        case .openAI:
-            let config = getOpenAISummarizationConfig()
-            let service = OpenAISummarizationService(config: config)
-
-            let result = try await service.processComplete(text: transcriptText)
-            summary = result.summary
-            tasks = result.tasks
-            reminders = result.reminders
-            titles = result.titles
-            contentType = result.contentType
-
         case .ollama:
             let selectedEngine = AIEngineType.localLLM.rawValue
             let availability = await SummaryManager.shared.checkEngineAvailability(selectedEngine)
@@ -1555,11 +1517,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Determine engine type for background processing
         let engineType: String
         let lowerEngine = engine.lowercased()
-        if lowerEngine.contains("openai") || lowerEngine.contains("gpt") {
-            engineType = "OpenAI"
-        } else if lowerEngine.contains("bedrock") || lowerEngine.contains("aws") {
-            engineType = "AWS Bedrock"
-        } else if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
+        if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
             engineType = "Google AI"
         } else if lowerEngine.contains("device") {
             engineType = "On-Device AI"
@@ -1584,24 +1542,6 @@ class BackgroundProcessingManager: ObservableObject {
             aiModel: engine,
             originalLength: transcriptText.count,
             processingTime: processingTime
-        )
-    }
-
-    private func getOpenAISummarizationConfig() -> OpenAISummarizationConfig {
-        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-        let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-
-        let model = OpenAISummarizationModel(rawValue: modelString) ?? .gpt41Mini
-
-        return OpenAISummarizationConfig(
-            apiKey: apiKey,
-            model: model,
-            baseURL: baseURL,
-            temperature: 0.1,
-            maxTokens: 2048,
-            timeout: SummarizationTimeouts.current(),
-            dynamicModelId: nil
         )
     }
 
@@ -1974,9 +1914,14 @@ class BackgroundProcessingManager: ObservableObject {
     private func checkTranscriptionEngineAvailability(_ engine: TranscriptionEngine) async -> (available: Bool, reason: String?) {
         switch engine {
         case .fluidAudio:
-            // On-device engine is always available
+            guard engine.isAvailable else {
+                return (false, "On-device transcription is not supported on this device or build")
+            }
+            guard FluidAudioManager.shared.isModelReady else {
+                return (false, "On-device transcription model is not downloaded")
+            }
             return (true, nil)
-        case .openAI, .openAIAPICompatible, .awsTranscribe, .mistralAI:
+        case .mistralAI:
             // Cloud engines need network
             return await checkNetworkAvailability(engineName: engine.rawValue)
         case .whisper:
@@ -1991,7 +1936,7 @@ class BackgroundProcessingManager: ObservableObject {
         let lowerEngine = engine.lowercased()
 
         // On-device engines
-        if lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") ||
+        if lowerEngine.contains("mlx") || lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") ||
            lowerEngine.contains("apple native") || lowerEngine.contains("foundation") {
             return (true, nil)
         }
@@ -2001,7 +1946,7 @@ class BackgroundProcessingManager: ObservableObject {
             return await checkLocalServerAvailability(engineName: engine)
         }
 
-        // Cloud engines (OpenAI, AWS Bedrock, Google AI, Mistral)
+        // Cloud engines (Google AI, Mistral, or a compatible API)
         return await checkNetworkAvailability(engineName: engine)
     }
 
@@ -2074,7 +2019,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Check for stale jobs that may have been abandoned
         await cleanupStaleJobs()
 
-        // This would check with external services (like AWS) for job completion
+        // External cloud jobs are represented by local job records while processing.
         // For now, we mainly focus on cleaning up stale local jobs
         AppLog.shared.backgroundProcessing("Checked for completed and stale background jobs", level: .debug)
     }
@@ -2103,10 +2048,18 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
+            let engine = TranscriptionEngine(
+                rawValue: jobEntry.engine ?? TranscriptionEngine.notConfigured.rawValue
+            ) ?? .notConfigured
             type = .transcription(engine: engine)
         } else {
-            type = .summarization(engine: jobEntry.engine ?? AIEngineType.mlxSwift.rawValue)
+            let persistedEngine = jobEntry.engine ?? AIEngineType.mlxSwift.rawValue
+            let normalizedEngine = persistedEngine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+            let engine = ["openai", "gpt-4", "gpt-3.5"].contains(normalizedEngine) || !validEngineNames.contains(persistedEngine)
+                ? (DeviceCapabilities.supportsMLX ? AIEngineType.mlxSwift.rawValue : AIEngineType.mistralAI.rawValue)
+                : persistedEngine
+            type = .summarization(engine: engine)
         }
 
         // Convert status string back to JobProcessingStatus enum

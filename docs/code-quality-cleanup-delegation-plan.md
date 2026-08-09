@@ -11,7 +11,7 @@ Improve repository safety and maintainability without changing user-visible beha
 - secret-file prevention and repository rules;
 - confirmed dead or commented-out code;
 - false-success and placeholder behavior;
-- AWS credential consistency;
+- credential consistency;
 - repeated AI requests;
 - transcript recording identity;
 - the legacy summary state split between UserDefaults, memory, Core Data, and iCloud;
@@ -87,7 +87,7 @@ Stop and ask the user if the checkout is dirty in files required by this plan, t
 | Package | Risk | May run in parallel with | Must finish before | Shared-file warning |
 |---|---:|---|---|---|
 | A. Repository safeguards | Low | B, C | Final gate | Owns `.gitignore` and `AGENTS.md` |
-| B. Keychain and AWS credentials | Medium | A, C | Final gate | Owns credential files and their tests |
+| B. Keychain credential storage | Medium | A, C | Final gate | Owns credential storage and its tests |
 | C. Confirmed dead/commented code | Low | A, B | D–G integration | Must not edit shared managers |
 | D. False-success behavior | Medium | None if F is active | Final gate | Owns `BackgroundProcessingManager.swift` and `EnhancedFileManager.swift` |
 | E. Repeated AI requests | Medium | None while F is active | G | Owns `SummaryManager.swift` and may revisit `BackgroundProcessingManager.swift` |
@@ -132,16 +132,12 @@ git diff --check
 
 Expected: the synthetic filenames are ignored; no real secret file becomes newly tracked; existing tracked source files are unaffected.
 
-## Package B — Keychain failure handling and AWS temporary credentials
+## Package B — Keychain failure handling and legacy provider cleanup
 
 ### Owned files
 
 - `BisonNotes AI/BisonNotes AI/KeychainSecretStore.swift`
-- `BisonNotes AI/BisonNotes AI/AWS/AWSCredentialsManager.swift`
-- `BisonNotes AI/BisonNotes AI/AWS/AWSClientCredentialResolver.swift`
-- AWS settings/config call sites that are proven necessary
 - `BisonNotes AI/BisonNotes AITests/KeychainSecretStoreTests.swift`
-- A focused AWS credential resolver test if testable without network access
 
 ### Tasks
 
@@ -149,19 +145,12 @@ Expected: the synthetic filenames are ignored; no real secret file becomes newly
 - [ ] Treat `errSecSuccess` and expected `errSecItemNotFound` explicitly.
 - [ ] Update callers to show or log a non-secret failure without logging key names and values together.
 - [ ] Add tests for create, update, delete, empty-string deletion, and legacy UserDefaults migration.
-- [ ] Add an optional `sessionToken` to the shared AWS credential model, preserving decoding of existing blobs where the field is absent.
-- [ ] Migrate the existing `awsBedrockSessionToken` Keychain value into the unified credential model safely. Do not delete the legacy value until the unified value is saved successfully.
-- [ ] Pass the session token through `AWSClientCredentialResolver.staticResolver(credentials:)` so temporary credentials work consistently for Bedrock, Transcribe, and S3 call paths.
-- [ ] Keep environment cleanup for `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`.
-- [ ] Never perform a live AWS request in unit tests. Verify identity construction and Codable migration locally.
+- [ ] Remove provider-specific credential storage only after confirming it has no remaining call sites.
 
 ### Acceptance checks
 
-- Existing three-field `AWSCredentials` JSON decodes with `sessionToken == nil`.
-- New four-field JSON round-trips.
-- A fake session token reaches the constructed AWS credential identity.
 - Keychain tests pass without exposing values in logs.
-- Manual gate: enter, update, and remove credentials; if temporary credentials are available, separately smoke-test Bedrock and Transcribe.
+- Manual gate: enter, update, and remove the remaining provider credentials.
 
 ## Package C — Confirmed dead and commented-out code
 
@@ -241,7 +230,7 @@ Expected: the synthetic filenames are ignored; no real secret file becomes newly
 - [ ] Keep the existing primary `generateEnhancedSummary` call to `engine.processComplete`.
 - [ ] Change `extractTasksAndRemindersFromText` so one complete result is obtained and projected into tasks/reminders.
 - [ ] Remove `extractTasksRemindersAndTitlesFromText` if it still has no caller. If it gains a caller, make it obtain one complete result.
-- [ ] In background OpenAI-compatible processing, replace separate summary/task/reminder/title requests with one supported complete-processing request.
+- [ ] In background compatible-API processing, replace separate summary/task/reminder/title requests with one supported complete-processing request.
 - [ ] Check every provider wrapper before changing it; individual extraction methods are protocol API and may still be used independently.
 - [ ] Add a spy/fake engine test that counts calls and proves a combined operation invokes `processComplete` exactly once.
 
@@ -265,8 +254,6 @@ Do this as a separate commit only after E1 is green.
 
 ### Owned files
 
-- `BisonNotes AI/BisonNotes AI/AWSTranscribeService.swift`
-- `BisonNotes AI/BisonNotes AI/OpenAITranscribeService.swift`
 - `BisonNotes AI/BisonNotes AI/MistralTranscribeService.swift`
 - `BisonNotes AI/BisonNotes AI/WhisperService.swift`
 - `BisonNotes AI/BisonNotes AI/BackgroundProcessingManager.swift` only after Package D is integrated
@@ -428,6 +415,5 @@ These cannot be proven or safely completed by source edits alone:
 
 - Enable GitHub Secret Scanning and Push Protection, then capture the repository-setting evidence.
 - Rotate a provider key only if an actual credential is discovered or the provider reports exposure.
-- Perform live AWS temporary-credential checks.
 - Validate Ollama against the user's configured local server and model.
 - Perform signed-app, hardware, and two-device CloudKit tests from `docs/testing-regimen.md`.

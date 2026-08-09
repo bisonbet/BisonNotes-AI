@@ -98,7 +98,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Background Task Management
 
     /// Background task ID for keeping summarization alive when the app is backgrounded.
-    /// Cloud AI calls (OpenAI, Bedrock, Gemini) use network requests that iOS will
+    /// Cloud AI calls (Gemini, Mistral, and compatible APIs) use network requests that iOS will
     /// terminate after ~30s without a background task.
     private var summaryBackgroundTaskID: PlatformBackgroundTask.ID = .invalid
 
@@ -454,13 +454,13 @@ class SummaryManager: ObservableObject {
             // No saved preference, try to set MLX (the new on-device default)
             if let defaultEngine = availableEngines[AIEngineType.mlxSwift.rawValue], defaultEngine.isAvailable {
                 currentEngine = defaultEngine
-                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                UserDefaults.standard.set(defaultEngine.engineType, forKey: "SelectedAIEngine")
                 AppLog.shared.summarization("No saved preference, set MLX as default engine")
             } else {
                 // Try to find any available engine
                 if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = anyAvailableEngine
-                    UserDefaults.standard.set(anyAvailableEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(anyAvailableEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("On-Device AI not available, using '\(anyAvailableEngine.name)' as default")
                 } else {
                     // Last resort: set to None
@@ -563,7 +563,7 @@ class SummaryManager: ObservableObject {
         availableEngines[engineType.rawValue] = updatedEngine
 
         // If this was the current engine, update the reference
-        if currentEngine?.name == engineName {
+        if currentEngine?.engineType == engineName {
             currentEngine = updatedEngine
             AppLog.shared.summarization("Updated current engine configuration for '\(engineName)'", level: .debug)
         }
@@ -692,7 +692,7 @@ class SummaryManager: ObservableObject {
         let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
 
         // If current engine doesn't match the selected engine, update it
-        if currentEngine?.name != selectedEngineName {
+        if currentEngine?.engineType != selectedEngineName {
             if let selectedEngine = availableEngines[selectedEngineName], selectedEngine.isAvailable {
                 currentEngine = selectedEngine
                 AppLog.shared.summarization("Synced current engine to '\(selectedEngineName)' from settings", level: .debug)
@@ -807,7 +807,7 @@ class SummaryManager: ObservableObject {
         }
 
         // For engines that support connection testing, perform additional checks
-        if engineName.contains("OpenAI") || engineName.contains("Ollama") {
+        if engineName.contains("Compatible") || engineName.contains("Ollama") {
             // Try to perform a connection test if the engine supports it
             if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                 let isConnected = await testableEngine.testConnection()
@@ -859,7 +859,7 @@ class SummaryManager: ObservableObject {
 
         // Update current engine if needed
         if let currentEngine = currentEngine {
-            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.name })
+            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.engineType })
             let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .mlxSwift)
 
             if !currentEngineInstance.isAvailable {
@@ -868,7 +868,7 @@ class SummaryManager: ObservableObject {
                 // Try to find an available fallback engine
                 if let fallbackEngine = availableEngines.values.first {
                     self.currentEngine = fallbackEngine
-                    UserDefaults.standard.set(fallbackEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("Switched to fallback engine '\(fallbackEngine.name)'", level: .debug)
                 }
             }
@@ -898,7 +898,7 @@ class SummaryManager: ObservableObject {
             AppLog.shared.summarization("Testing connection for '\(engineName)'", level: .debug)
 
             // Only test connections for engines that support it
-            if engineName.contains("OpenAI") || engineName.contains("Ollama") || engineName.contains("Google") {
+            if engineName.contains("Compatible") || engineName.contains("Ollama") || engineName.contains("Google") {
                 if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                     let isConnected = await testableEngine.testConnection()
                     if isConnected {
@@ -937,7 +937,7 @@ class SummaryManager: ObservableObject {
                 isComingSoon: engineType.isComingSoon,
                 requirements: engineType.requirements,
                 version: engine.version,
-                isCurrentEngine: currentEngine?.name == engineName
+                isCurrentEngine: currentEngine?.engineType == engineName
             )
 
             statusMap[engineName] = status
@@ -974,7 +974,7 @@ class SummaryManager: ObservableObject {
         }
 
         // Check if current engine is still available
-        let availability = await checkEngineAvailability(currentEngine.name)
+        let availability = await checkEngineAvailability(currentEngine.engineType)
 
         if !availability.isAvailable {
             AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)
@@ -1101,7 +1101,7 @@ class SummaryManager: ObservableObject {
             throw validationError
         }
 
-        // Begin a background task so cloud AI calls (OpenAI, Bedrock, Gemini, etc.)
+        // Begin a background task so cloud AI calls (Gemini, Mistral, etc.)
         // can complete even if the user backgrounds the app during summarization.
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }
@@ -2050,23 +2050,6 @@ class SummaryManager: ObservableObject {
                     "newName": newName,
                     "oldURL": recordingURL,
                     "newURL": recordingURL // The URL will be updated by the workflow manager
-                ]
-            )
-        }
-    }
-
-    private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {
-        // Update any pending transcription jobs with the new URL and name
-        // For now, we'll use a notification approach, but this could be improved
-        // by injecting the transcription manager as a dependency
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: NSNotification.Name("UpdatePendingTranscriptionJobs"),
-                object: nil,
-                userInfo: [
-                    "oldURL": oldURL,
-                    "newURL": newURL,
-                    "newName": newName
                 ]
             )
         }

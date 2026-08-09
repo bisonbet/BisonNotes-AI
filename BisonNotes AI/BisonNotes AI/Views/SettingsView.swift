@@ -422,7 +422,7 @@ struct SettingsView: View {
                     )
                     .disabled(!iCloudBackupIncludeSettings)
 
-                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                Text("API keys stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -800,7 +800,7 @@ struct SettingsView: View {
                 Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
                 Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
                     .disabled(!iCloudBackupIncludeSettings)
-                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                Text("API keys stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 

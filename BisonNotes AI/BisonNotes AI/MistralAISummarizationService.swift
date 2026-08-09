@@ -2,13 +2,13 @@
 //  MistralAISummarizationService.swift
 //  Audio Journal
 //
-//  Dedicated summarization service for Mistral's OpenAI-compatible chat API
+//  Dedicated summarization service for Mistral's compatible chat API
 //
 
 import Foundation
 import os.log
 
-/// Service for interacting with Mistral AI's OpenAI-compatible chat completion API
+/// Service for interacting with Mistral AI's compatible chat-completion API
 ///
 /// This service handles all direct API communication with Mistral, including:
 /// - Request construction and JSON encoding
@@ -47,8 +47,8 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - Empty text provided")
         }
 
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: text)
 
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
@@ -73,8 +73,8 @@ class MistralAISummarizationService {
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .tasks, text: text)
 
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
@@ -95,12 +95,12 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
-        return try OpenAIResponseParser.parseTasksFromJSON(choice.message.content)
+        return try ChatCompletionResponseParser.parseTasksFromJSON(choice.message.content)
     }
 
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .reminders, text: text)
 
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
@@ -121,7 +121,7 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
-        return try OpenAIResponseParser.parseRemindersFromJSON(choice.message.content)
+        return try ChatCompletionResponseParser.parseRemindersFromJSON(choice.message.content)
     }
 
     func extractTitles(from text: String) async throws -> [TitleItem] {
@@ -136,8 +136,8 @@ class MistralAISummarizationService {
     func processComplete(text: String) async throws -> SummarizationResult {
         let contentType = try await classifyContent(text)
 
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: text)
 
         let messages = [
             ChatMessage(role: "system", content: systemPrompt),
@@ -161,7 +161,7 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
-        let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
+        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(choice.message.content)
         return SummarizationResult(
             summary: result.summary,
             tasks: result.tasks,
@@ -173,7 +173,7 @@ class MistralAISummarizationService {
 
     // MARK: - Private Helper Methods
 
-    private func makeAPICall(request: MistralChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
+    private func makeAPICall(request: MistralChatCompletionRequest) async throws -> ChatCompletionResponse {
         guard !config.apiKey.isEmpty else {
             logger.error("Mistral AI API key is empty")
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI API key not configured")
@@ -233,7 +233,7 @@ class MistralAISummarizationService {
             }
 
             if httpResponse.statusCode != 200 {
-                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                if let errorResponse = try? JSONDecoder().decode(CompatibleAPIErrorResponse.self, from: data) {
                     logger.error("Mistral API Error: \(errorResponse.error.message, privacy: .public)")
                     throw SummarizationError.aiServiceUnavailable(service: "Mistral API Error: \(errorResponse.error.message)")
                 } else {
@@ -243,7 +243,7 @@ class MistralAISummarizationService {
             }
 
             let decoder = JSONDecoder()
-            let apiResponse = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+            let apiResponse = try decoder.decode(ChatCompletionResponse.self, from: data)
 
             if let usage = apiResponse.usage {
                 logger.info("Usage - Prompt: \(usage.promptTokens, privacy: .public), Completion: \(usage.completionTokens, privacy: .public), Total: \(usage.totalTokens, privacy: .public)")

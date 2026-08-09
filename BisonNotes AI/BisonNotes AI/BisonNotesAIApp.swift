@@ -37,29 +37,6 @@ struct BisonNotesAIApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     #endif
 
-    /// Performs one-time migration of AWS Bedrock settings from legacy model identifiers
-    /// This ensures UserDefaults is updated rather than migrating on every access
-    private func migrateAWSBedrockSettings() {
-        let key = "awsBedrockModel"
-        let migrationKey = "awsBedrockModelMigrated_v1.3"
-
-        // Check if migration has already been performed
-        guard !UserDefaults.standard.bool(forKey: migrationKey) else {
-            return
-        }
-
-        if let storedModel = UserDefaults.standard.string(forKey: key) {
-            let migratedModel = AWSBedrockModel.migrate(rawValue: storedModel)
-            if migratedModel != storedModel {
-                UserDefaults.standard.set(migratedModel, forKey: key)
-                NSLog("✅ AWS Bedrock model migrated from \(storedModel) to \(migratedModel)")
-            }
-        }
-
-        // Mark migration as complete
-        UserDefaults.standard.set(true, forKey: migrationKey)
-    }
-
     /// Migrates legacy "None" and "Not Configured" AI engine selections to intelligent defaults.
     /// MLX is the on-device default for any device with 4GB+ RAM; the 1.7B model is used
     /// on 4-6GB devices and the 4B model on 6GB+ devices. Below 4GB falls back to Mistral AI.
@@ -112,6 +89,217 @@ struct BisonNotesAIApp: App {
 
         // Mark migration as complete
         UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    /// Migrates selections that depended on removed provider options.
+    /// Existing compatible-API summarization selections are preserved.
+    private func migrateRemovedProviderSelections() {
+        let migrationKey = "removedProviderSelectionsMigrated_v2.3"
+        let previousMigrationKey = "removedProviderSelectionsMigrated_v2.5"
+        let defaults = UserDefaults.standard
+
+        guard !defaults.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let aiEngineKey = "SelectedAIEngine"
+        let transcriptionEngineKey = "selectedTranscriptionEngine"
+        normalizeLegacyCompatibleEngineIdentifier(in: defaults, key: aiEngineKey)
+        let migratedLegacyOpenAI = migrateLegacyOpenAIConfiguration()
+        let hasOnDeviceAISupport = DeviceCapabilities.supportsMLX
+
+        migrateRemovedAIEngineSelection(
+            currentAIEngine: defaults.string(forKey: aiEngineKey),
+            migratedLegacyOpenAI: migratedLegacyOpenAI,
+            previousMigrationCompleted: defaults.bool(forKey: previousMigrationKey),
+            hasOnDeviceAISupport: hasOnDeviceAISupport
+        )
+        migrateRemovedTranscriptionSelection(
+            currentTranscriptionEngine: defaults.string(forKey: transcriptionEngineKey),
+            hasOnDeviceAISupport: hasOnDeviceAISupport,
+            defaults: defaults,
+            key: transcriptionEngineKey
+        )
+        migrateInvalidAIEngineSelection(in: defaults, key: aiEngineKey, hasOnDeviceAISupport: hasOnDeviceAISupport)
+        migrateInvalidTranscriptionSelection(
+            in: defaults,
+            key: transcriptionEngineKey,
+            hasOnDeviceAISupport: hasOnDeviceAISupport
+        )
+
+        defaults.set(true, forKey: migrationKey)
+    }
+
+    /// Normalizes compatible-engine identifiers written by older builds.
+    private func normalizeLegacyCompatibleEngineIdentifier(in defaults: UserDefaults, key: String) {
+        let legacyCompatibleEngineNames = ["Compatible API", "OpenAI-Compatible"]
+        if let selectedAIEngine = defaults.string(forKey: key),
+           legacyCompatibleEngineNames.contains(selectedAIEngine) {
+            defaults.set(AIEngineType.openAICompatible.rawValue, forKey: key)
+        }
+    }
+
+    private func migrateRemovedAIEngineSelection(
+        currentAIEngine: String?,
+        migratedLegacyOpenAI: Bool,
+        previousMigrationCompleted: Bool,
+        hasOnDeviceAISupport: Bool
+    ) {
+        let defaults = UserDefaults.standard
+        let key = "SelectedAIEngine"
+
+        if currentAIEngine == "OpenAI" {
+            if migratedLegacyOpenAI {
+                defaults.set(AIEngineType.openAICompatible.rawValue, forKey: key)
+                defaults.set(true, forKey: "enableOpenAICompatible")
+                NSLog("✅ Migrated removed OpenAI selection to Compatible API")
+            } else if hasOnDeviceAISupport {
+                let deviceRAM = DeviceCapabilities.totalRAMInGB
+                let defaultModelId = deviceRAM < 6.0
+                    ? MLXModelOption.smallModelId
+                    : MLXSwiftSettingsKeys.defaultModelId
+                defaults.set(AIEngineType.mlxSwift.rawValue, forKey: key)
+                defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                defaults.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                NSLog("✅ Migrated removed cloud AI selection to On-Device AI (model: \(defaultModelId))")
+            } else {
+                setConfiguredFallbackAIEngine(forKey: key)
+            }
+        } else if currentAIEngine == AIEngineType.mistralAI.rawValue,
+                  previousMigrationCompleted,
+                  !AIEngineFactory.createEngine(type: .mistralAI).isAvailable {
+            // Repair installations that already ran the original v2.5 migration,
+            // which selected Mistral without checking its credentials.
+            setConfiguredFallbackAIEngine(forKey: key)
+        }
+    }
+
+    private func migrateRemovedTranscriptionSelection(
+        currentTranscriptionEngine: String?,
+        hasOnDeviceAISupport: Bool,
+        defaults: UserDefaults,
+        key: String
+    ) {
+        guard currentTranscriptionEngine == "OpenAI" || currentTranscriptionEngine == "OpenAI API Compatible" else {
+            return
+        }
+
+        if hasOnDeviceAISupport,
+           TranscriptionEngine.fluidAudio.isAvailable,
+           FluidAudioManager.shared.isModelReady {
+            defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: key)
+            defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+            NSLog("✅ Migrated removed cloud transcription selection to On-Device transcription")
+        } else if AIEngineFactory.createEngine(type: .mistralAI).isAvailable {
+            defaults.set(TranscriptionEngine.mistralAI.rawValue, forKey: key)
+            NSLog("✅ Migrated removed cloud transcription selection to configured Mistral AI")
+        } else {
+            defaults.set(TranscriptionEngine.notConfigured.rawValue, forKey: key)
+            NSLog("⚠️ No ready transcription engine is available; leaving selection unconfigured")
+        }
+    }
+
+    private func migrateInvalidAIEngineSelection(in defaults: UserDefaults, key: String, hasOnDeviceAISupport: Bool) {
+        let validAIEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
+        guard let selectedAIEngine = defaults.string(forKey: key),
+              selectedAIEngine != "None",
+              !validAIEngineNames.contains(selectedAIEngine) else {
+            return
+        }
+
+        if hasOnDeviceAISupport {
+            defaults.set(AIEngineType.mlxSwift.rawValue, forKey: key)
+            defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            NSLog("✅ Migrated unavailable AI selection to On-Device AI")
+        } else {
+            setConfiguredFallbackAIEngine(forKey: key)
+        }
+    }
+
+    private func migrateInvalidTranscriptionSelection(
+        in defaults: UserDefaults,
+        key: String,
+        hasOnDeviceAISupport: Bool
+    ) {
+        let validTranscriptionEngineNames = Set(TranscriptionEngine.allCases.map(\.rawValue))
+        guard let selectedTranscriptionEngine = defaults.string(forKey: key),
+              !validTranscriptionEngineNames.contains(selectedTranscriptionEngine) else {
+            return
+        }
+
+        if hasOnDeviceAISupport {
+            defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: key)
+            defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+            NSLog("✅ Migrated unavailable transcription selection to On-Device transcription")
+        } else {
+            defaults.set(TranscriptionEngine.mistralAI.rawValue, forKey: key)
+            NSLog("✅ Migrated unavailable transcription selection to Mistral AI")
+        }
+    }
+
+    /// Carries an existing OpenAI configuration into the compatible API engine.
+    /// The old provider is removed, but its credentials and model settings remain
+    /// valid for the official OpenAI-compatible endpoint.
+    private func migrateLegacyOpenAIConfiguration() -> Bool {
+        let defaults = UserDefaults.standard
+        let keychain = KeychainSecretStore.shared
+        let compatibleKey = KeychainSecretStore.openAICompatibleAPIKey
+
+        let existingCompatibleKey = keychain.string(forKey: compatibleKey)
+        let oldOpenAIKey = keychain.string(forKey: KeychainSecretStore.openAIAPIKey)
+        guard let apiKey = existingCompatibleKey?.isEmpty == false ? existingCompatibleKey : oldOpenAIKey,
+              !apiKey.isEmpty else {
+            return false
+        }
+
+        if existingCompatibleKey?.isEmpty != false {
+            let result = keychain.setString(apiKey, forKey: compatibleKey)
+            guard case .success = result, keychain.string(forKey: compatibleKey) == apiKey else {
+                NSLog("⚠️ Could not migrate the legacy OpenAI API key to Compatible API")
+                return false
+            }
+
+            // Delete the legacy key only after the compatible key has been read back.
+            _ = keychain.delete(forKey: KeychainSecretStore.openAIAPIKey)
+        }
+
+        let compatibleBaseURL = defaults.string(forKey: "openAICompatibleBaseURL")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if compatibleBaseURL?.isEmpty != false {
+            let legacyBaseURL = defaults.string(forKey: "openAISummarizationBaseURL") ?? "https://api.openai.com/v1"
+            defaults.set(OpenAICompatibleService.normalizedBaseURL(legacyBaseURL), forKey: "openAICompatibleBaseURL")
+        }
+        let compatibleModel = defaults.string(forKey: "openAICompatibleModel")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if compatibleModel?.isEmpty != false {
+            let legacyModel = defaults.string(forKey: "openAISummarizationModel") ?? "gpt-4.1-mini"
+            defaults.set(legacyModel, forKey: "openAICompatibleModel")
+        }
+        if defaults.object(forKey: "openAICompatibleTemperature") == nil {
+            let legacyTemperature = defaults.double(forKey: "openAISummarizationTemperature")
+            defaults.set(legacyTemperature > 0 ? legacyTemperature : 0.1, forKey: "openAICompatibleTemperature")
+        }
+        if defaults.object(forKey: "openAICompatibleMaxTokens") == nil {
+            let legacyMaxTokens = defaults.integer(forKey: "openAISummarizationMaxTokens")
+            defaults.set(legacyMaxTokens > 0 ? legacyMaxTokens : 2048, forKey: "openAICompatibleMaxTokens")
+        }
+        defaults.set(true, forKey: "enableOpenAICompatible")
+        return true
+    }
+
+    /// Selects an engine that is actually configured, or leaves the selection
+    /// unconfigured so the user can choose one instead of creating a dead state.
+    private func setConfiguredFallbackAIEngine(forKey key: String) {
+        let fallback = AIEngineType.availableCases.first { engineType in
+            AIEngineFactory.createEngine(type: engineType).isAvailable
+        }
+        if let fallback {
+            UserDefaults.standard.set(fallback.rawValue, forKey: key)
+            NSLog("✅ Migrated unavailable AI selection to configured \(fallback.displayName)")
+        } else {
+            UserDefaults.standard.set("None", forKey: key)
+            NSLog("⚠️ No configured AI engine is available; leaving selection unconfigured")
+        }
     }
 
     /// Migrates users off WhisperKit, which has been removed in v1.8.
@@ -224,25 +412,13 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
-    /// Migrates removed OpenAI summarization and Google AI Studio models to current defaults
-    /// Handles users who had gpt-4.1, gpt-4.1-nano, gemini-2.5-flash, gemini-2.5-flash-lite,
-    /// or gemini-3-pro-preview saved and would now get a nil/broken model selection
+    /// Migrates removed Google AI Studio and on-device models to current defaults.
+    /// This keeps existing installations from retaining invalid model selections.
     private func migrateRemovedModels() {
         let migrationKey = "removedModelsMigrated_v1.8"
 
         guard !UserDefaults.standard.bool(forKey: migrationKey) else {
             return
-        }
-
-        // OpenAI summarization: gpt-4.1 and gpt-4.1-nano were removed; default to gpt-4.1-mini
-        let openAIKey = "openAISummarizationModel"
-        if let storedModel = UserDefaults.standard.string(forKey: openAIKey) {
-            let removedOpenAIModels = ["gpt-4.1", "gpt-4.1-nano"]
-            if removedOpenAIModels.contains(storedModel) {
-                let newDefault = OpenAISummarizationModel.gpt41Mini.rawValue
-                UserDefaults.standard.set(newDefault, forKey: openAIKey)
-                NSLog("✅ OpenAI summarization model migrated from '\(storedModel)' to '\(newDefault)'")
-            }
         }
 
         // Google AI Studio: gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3-pro-preview removed
@@ -419,8 +595,8 @@ struct BisonNotesAIApp: App {
 
         setupBackgroundTasks()
         setupAppShortcuts()
-        migrateAWSBedrockSettings()
         migrateAIEngineSelection()
+        migrateRemovedProviderSelections()
         migrateAppleIntelligenceToOnDeviceLLM()
         migrateWhisperKitToParakeet()
         migrateOnDeviceLLMNameToOnDeviceAI()

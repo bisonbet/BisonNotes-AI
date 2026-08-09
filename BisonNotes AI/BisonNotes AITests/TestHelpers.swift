@@ -81,7 +81,7 @@ struct TestHelpers {
     
     /// Creates a mock processing job for testing
     static func createMockProcessingJob(
-        type: JobType = .transcription(engine: .openAI),
+        type: JobType = .transcription(engine: .fluidAudio),
         recordingName: String = "Test Recording"
     ) -> ProcessingJob {
         let testURL = URL(fileURLWithPath: "/test/recording.m4a")
@@ -113,7 +113,7 @@ struct TestHelpers {
             titles: titles,
             contentType: .meeting,
             aiEngine: "Mock Engine",
-            aiModel: "GPT-4",
+            aiModel: "Test Model",
             originalLength: 60,
             processingTime: 5.0,
             generatedAt: Date(),

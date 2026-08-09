@@ -2586,13 +2586,6 @@ extension iCloudStorageManager {
         "WatchAutoSync",
         "WatchBatteryAware",
         "isLocationTrackingEnabled",
-        "openAIModel",
-        "openAIBaseURL",
-        "openAISummarizationModel",
-        "openAISummarizationBaseURL",
-        "openAISummarizationTemperature",
-        "openAISummarizationMaxTokens",
-        "enableOpenAI",
         "openAICompatibleModel",
         "openAICompatibleBaseURL",
         "openAICompatibleTemperature",
@@ -2613,14 +2606,6 @@ extension iCloudStorageManager {
         "mistralTranscribeModel",
         "mistralTranscribeDiarize",
         "mistralTranscribeLanguage",
-        "awsBucketName",
-        "enableAWSTranscribe",
-        "awsBedrockModel",
-        "awsBedrockTemperature",
-        "awsBedrockMaxTokens",
-        "awsBedrockUseProfile",
-        "awsBedrockProfileName",
-        "enableAWSBedrock",
         "ollamaServerURL",
         "ollamaPort",
         "ollamaModelName",
@@ -3850,7 +3835,6 @@ extension iCloudStorageManager {
             }
 
             try context.save()
-            AWSCredentialsManager.shared.clearCredentialEnvironment()
 
             await MainActor.run {
                 self.lastSyncDate = Date()
@@ -5528,6 +5512,14 @@ extension iCloudStorageManager {
         let defaults = UserDefaults.standard
 
         for (key, encodedValue) in payload.values {
+            if KeychainSecretStore.isLegacyAWSSettingKey(key) {
+                // Never restore settings from the removed AWS provider. This
+                // also handles backups created before AWS settings were removed
+                // from backedUpSettingsKeys.
+                defaults.removeObject(forKey: key)
+                continue
+            }
+
             guard let rawValue = try? PropertyListSerialization.propertyList(
                 from: encodedValue,
                 options: [],
@@ -5552,19 +5544,9 @@ extension iCloudStorageManager {
         case KeychainSecretStore.openAIAPIKey,
              KeychainSecretStore.openAICompatibleAPIKey,
              KeychainSecretStore.googleAIStudioAPIKey,
-             KeychainSecretStore.mistralAPIKey,
-             KeychainSecretStore.awsBedrockSessionToken:
+             KeychainSecretStore.mistralAPIKey:
             guard let value = rawValue as? String else { return true }
             KeychainSecretStore.shared.setString(value, forKey: key)
-            return true
-        case KeychainSecretStore.awsCredentials:
-            guard let data = rawValue as? Data else { return true }
-            if let credentials = try? JSONDecoder().decode(AWSCredentials.self, from: data) {
-                AWSCredentialsManager.shared.updateCredentials(credentials)
-            } else {
-                KeychainSecretStore.shared.setData(data, forKey: key)
-                AWSCredentialsManager.shared.clearCredentialEnvironment()
-            }
             return true
         default:
             return false
