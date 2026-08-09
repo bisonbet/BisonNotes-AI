@@ -628,6 +628,7 @@ struct DataMigrationView: View {
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
                 .nativeMacModalSizing(width: 760, height: 680)
+                .nativeMacModalDismissControl()
         }
         .alert("iCloud Sync Verification", isPresented: $showingSyncVerification) {
             Button("OK") {

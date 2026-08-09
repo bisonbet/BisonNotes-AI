@@ -95,7 +95,9 @@ extension View {
     ) -> some View {
         #if os(macOS)
         sheet(isPresented: isPresented) {
-            content().nativeMacModalSizing(width: 760, height: 700)
+            content()
+                .nativeMacModalSizing(width: 760, height: 700)
+                .nativeMacModalDismissControl("Cancel")
         }
         #else
         fullScreenCover(isPresented: isPresented, content: content)
@@ -111,15 +113,18 @@ private struct NativeMacModalDismissModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(alignment: .topTrailing) {
+            .overlay(alignment: .topLeading) {
                 Button(title) {
                     dismiss()
                 }
                 .buttonStyle(.bordered)
                 .keyboardShortcut(.cancelAction)
                 .padding(.top, 18)
-                .padding(.trailing, 20)
+                .padding(.leading, 20)
                 .accessibilityIdentifier("nativeMacModalDismissButton")
+            }
+            .onExitCommand {
+                dismiss()
             }
     }
 }

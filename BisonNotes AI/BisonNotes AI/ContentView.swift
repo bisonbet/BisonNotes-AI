@@ -172,6 +172,7 @@ struct ContentView: View {
                 OnDeviceLLMSettingsView()
             }
             .nativeMacModalSizing(width: 760, height: 700)
+            .nativeMacModalDismissControl()
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }

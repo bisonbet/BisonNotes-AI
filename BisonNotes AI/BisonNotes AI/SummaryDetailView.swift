@@ -239,6 +239,7 @@ struct SummaryDetailView: View {
                 }
             )
             .nativeMacModalSizing(width: 700, height: 620)
+            .nativeMacModalDismissControl("Cancel")
         }
         .sheet(isPresented: $showingShareSheet) {
             Group {
@@ -338,6 +339,7 @@ struct SummaryDetailView: View {
                 saveUserNotes()
             }
             .nativeMacModalSizing(width: 680, height: 600)
+            .nativeMacModalDismissControl("Cancel")
         }
         .quickLookPreview($selectedAttachmentGenericURL)
         .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
@@ -1050,6 +1052,7 @@ struct SummaryDetailView: View {
                 }
             )
             .nativeMacModalSizing(width: 560, height: 500)
+            .nativeMacModalDismissControl("Cancel")
         }
     }
 

@@ -210,6 +210,7 @@ struct AudioPlayerView: View {
                 EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                     .environmentObject(appCoordinator)
                     .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacModalDismissControl("Cancel")
             } else {
                 TranscriptDetailView(recording: entry, transcriptText: "")
                     .environmentObject(appCoordinator)

@@ -99,6 +99,7 @@ struct RecordingsListView: View {
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
                     .nativeMacModalSizing(width: 520, height: 440)
+                    .nativeMacModalDismissControl("Cancel")
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
@@ -175,6 +176,7 @@ struct RecordingsListView: View {
                     )
                     .environmentObject(appCoordinator)
                     .nativeMacModalSizing(width: 760, height: 680)
+                    .nativeMacModalDismissControl("Cancel")
                 }
             }
             .sheet(isPresented: $showingArchiveConfirmation) {
@@ -235,6 +237,7 @@ struct RecordingsListView: View {
                     EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                         .environmentObject(appCoordinator)
                         .nativeMacModalSizing(width: 820, height: 720)
+                        .nativeMacModalDismissControl("Cancel")
                 } else {
                     TranscriptDetailView(recording: entry, transcriptText: "")
                         .environmentObject(appCoordinator)

@@ -342,11 +342,13 @@ struct RecordingsView: View {
                     transcriptImportManager: transcriptImportManager
                 )
                 .nativeMacModalSizing(width: 700, height: 620)
+                .nativeMacModalDismissControl("Cancel")
             }
             // Video import hidden — feature not yet ready for users
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
                     .nativeMacModalSizing(width: 760, height: 680)
+                    .nativeMacModalDismissControl()
             }
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}

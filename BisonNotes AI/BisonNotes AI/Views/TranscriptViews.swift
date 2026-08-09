@@ -65,6 +65,7 @@ struct TranscriptsView: View {
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
                     .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacModalDismissControl("Cancel")
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
                     .environmentObject(appCoordinator)
@@ -142,6 +143,7 @@ struct TranscriptsView: View {
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
                 .nativeMacModalSizing(width: 520, height: 440)
+                .nativeMacModalDismissControl("Cancel")
         }
         .onAppear {
             loadRecordings()
@@ -2286,6 +2288,9 @@ struct SpeakerEditingView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        nativeMacContent
+        #else
         NavigationStack {
             speakerForm
                 .navigationTitle("Edit Speakers")
@@ -2299,6 +2304,111 @@ struct SpeakerEditingView: View {
                             .fontWeight(.semibold)
                     }
                 }
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    private var nativeMacContent: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Edit Speakers")
+                        .font(.title2.weight(.semibold))
+
+                    Text("Rename speakers across this transcript.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 16)
+
+                HStack(spacing: 10) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("speakerEditorCancelButton")
+
+                    Button("Apply") {
+                        applyNames()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("speakerEditorApplyButton")
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            .background(.bar)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Rename Speakers")
+                        .font(.headline)
+
+                    VStack(spacing: 10) {
+                        ForEach(speakerIds, id: \.self) { speakerId in
+                            nativeSpeakerRow(for: speakerId)
+                        }
+                    }
+
+                    Text(
+                        "Enter a name for each speaker. Changes apply to the entire transcript "
+                            + "and are used in AI summaries."
+                    )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if hasEditedNames {
+                        HStack {
+                            Spacer()
+
+                            Button("Clear All Names", role: .destructive) {
+                                for id in speakerIds {
+                                    editingNames[id] = ""
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.visible)
+        }
+        .background(Color(.systemGroupedBackground))
+        .onExitCommand {
+            dismiss()
+        }
+        .accessibilityIdentifier("nativeMacSpeakerEditor")
+    }
+
+    private func nativeSpeakerRow(for speakerId: String) -> some View {
+        let hash = abs(speakerId.hashValue)
+        let color = Self.speakerColors[hash % Self.speakerColors.count]
+
+        return HStack(spacing: 12) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+
+            Text(defaultName(for: speakerId))
+                .font(.subheadline.weight(.medium))
+                .frame(width: 110, alignment: .leading)
+
+            TextField("Enter name", text: binding(for: speakerId))
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+    #endif
+
+    private var hasEditedNames: Bool {
+        editingNames.values.contains { name in
+            !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -2327,7 +2437,7 @@ struct SpeakerEditingView: View {
                 }
             }
 
-            if speakerMappings.values.contains(where: { !$0.isEmpty }) {
+            if hasEditedNames {
                 Section {
                     Button("Clear All Names", role: .destructive) {
                         for id in speakerIds {
