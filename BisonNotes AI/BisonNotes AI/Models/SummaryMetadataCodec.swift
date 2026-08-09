@@ -9,7 +9,7 @@ struct SummaryMetadataPayload: Codable {
 /// These should match the engineType properties of SummarizationEngine implementations
 struct AIEngineTypeConstants {
     static let googleAI = "Google AI"
-    static let openAICompatible = "Compatible API"
+    static let openAICompatible = "OpenAI API Compatible"
     static let mistralAI = "Mistral AI"
     static let ollama = "Ollama"
     static let appleIntelligence = "Apple Intelligence" // Kept for legacy metadata parsing

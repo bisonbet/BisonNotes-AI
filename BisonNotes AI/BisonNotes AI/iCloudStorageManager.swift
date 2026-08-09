@@ -5512,6 +5512,14 @@ extension iCloudStorageManager {
         let defaults = UserDefaults.standard
 
         for (key, encodedValue) in payload.values {
+            if KeychainSecretStore.isLegacyAWSSettingKey(key) {
+                // Never restore settings from the removed AWS provider. This
+                // also handles backups created before AWS settings were removed
+                // from backedUpSettingsKeys.
+                defaults.removeObject(forKey: key)
+                continue
+            }
+
             guard let rawValue = try? PropertyListSerialization.propertyList(
                 from: encodedValue,
                 options: [],

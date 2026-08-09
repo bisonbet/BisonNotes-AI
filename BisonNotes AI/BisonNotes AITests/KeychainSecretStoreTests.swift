@@ -25,6 +25,8 @@ final class KeychainSecretStoreTests: XCTestCase {
             KeychainSecretStore.mistralAPIKey
         ].forEach { _ = store.delete(forKey: $0) }
 
+        KeychainSecretStore.legacyAWSSettingKeys.forEach { _ = store.delete(forKey: $0) }
+
         defaults.removePersistentDomain(forName: suiteName)
     }
 
@@ -67,6 +69,21 @@ final class KeychainSecretStoreTests: XCTestCase {
         assertSuccess(store.setString("", forKey: KeychainSecretStore.googleAIStudioAPIKey))
 
         XCTAssertNil(store.string(forKey: KeychainSecretStore.googleAIStudioAPIKey))
+    }
+
+    func testRemovesLegacyAWSSecretsFromUserDefaultsAndKeychain() {
+        defaults.set(Data("legacy-credentials".utf8), forKey: KeychainSecretStore.legacyAWSCredentials)
+        defaults.set("legacy-session-token", forKey: KeychainSecretStore.legacyAWSBedrockSessionToken)
+        assertSuccess(
+            store.setData(Data("keychain-credentials".utf8), forKey: KeychainSecretStore.legacyAWSCredentials)
+        )
+
+        XCTAssertTrue(store.migrateLegacySecretsFromUserDefaults(defaults).isEmpty)
+
+        KeychainSecretStore.legacyAWSSettingKeys.forEach { key in
+            XCTAssertNil(defaults.object(forKey: key), "Legacy AWS setting should be removed: \(key)")
+            XCTAssertNil(store.data(forKey: key), "Legacy AWS secret should be removed: \(key)")
+        }
     }
 
     private func assertSuccess(

@@ -55,6 +55,13 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertFalse(manager.isSensitiveSettingKey("compatibleAPIMaxTokens"))
     }
 
+    func testRemovedAWSSettingsAreRecognized() {
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("AWSCredentials"))
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("awsBedrockModel"))
+        XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("enableAWSTranscribe"))
+        XCTAssertFalse(KeychainSecretStore.isLegacyAWSSettingKey("openAICompatibleModel"))
+    }
+
     func testProductionSchemaDiagnosticProducesActionableError() {
         let diagnostic = "Cannot create new type CD_BackupRecording in production schema"
 
