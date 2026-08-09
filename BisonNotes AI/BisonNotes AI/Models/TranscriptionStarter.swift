@@ -39,6 +39,10 @@ final class TranscriptionStarter: ObservableObject {
         queuedCleanupRecordings.contains { $0.id == recordingId }
     }
 
+    func clearLastTranscriptionWarning() {
+        lastTranscriptionWarning = nil
+    }
+
     /// True when the recording has a queued or processing transcription job in the background manager.
     /// Resolves the filename directly from the stored URL string — no disk I/O — so it is safe to
     /// call per row at list scale (List previously stalled on Mac when this routed through

@@ -107,7 +107,7 @@ struct FluidAudioSettingsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .onAppear(perform: normalizeAndRefreshLocalSpeakerSettings)
-        .onDisappear(perform: cancelLocalSpeakerTasks)
+        .onDisappear(perform: stopLocalSpeakerObservationTasks)
     }
 
     private func nativeSettingsCard<Content: View>(
@@ -179,7 +179,7 @@ struct FluidAudioSettingsView: View {
             }
         }
         .onAppear(perform: normalizeAndRefreshLocalSpeakerSettings)
-        .onDisappear(perform: cancelLocalSpeakerTasks)
+        .onDisappear(perform: stopLocalSpeakerObservationTasks)
     }
 
 }
@@ -654,13 +654,8 @@ private extension FluidAudioSettingsView {
         }
     }
 
-    private func cancelLocalSpeakerTasks() {
+    private func stopLocalSpeakerObservationTasks() {
         localSpeakerStatusTask?.cancel()
-        let method = selectedLocalSpeakerMethod
-        invalidateLocalSpeakerOperation()
-        Task {
-            await cancelLocalSpeakerModelPreparationIfNeeded(method)
-        }
     }
 
     private func clearLocalSpeakerTransientState() {
