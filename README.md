@@ -1,8 +1,47 @@
-# BisonNotes AI
+# 🎙️ BisonNotes AI
+
+**AI-Powered Voice Recording, Transcription, and Summarization for Apple Platforms**
+
+<div align="center">
+
+![iOS](https://img.shields.io/badge/iOS-18.5+-blue?style=for-the-badge&logo=apple)
+![iPadOS](https://img.shields.io/badge/iPadOS-18.5+-blue?style=for-the-badge&logo=apple)
+![watchOS](https://img.shields.io/badge/watchOS-11.5+-black?style=for-the-badge&logo=apple)
+![macOS](https://img.shields.io/badge/macOS-15.0+-lightgrey?style=for-the-badge&logo=apple)
+
+![Swift](https://img.shields.io/badge/Swift-5.0-orange?style=for-the-badge&logo=swift)
+![SwiftUI](https://img.shields.io/badge/SwiftUI-blue?style=for-the-badge&logo=swift)
+![Xcode](https://img.shields.io/badge/Xcode-16+-147EFB?style=for-the-badge&logo=xcode)
+![Release](https://img.shields.io/github/v/release/bisonbet/BisonNotes-AI?style=for-the-badge&color=success)
+![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
+
+[![Download on the App Store](https://img.shields.io/badge/Download_on_the-App_Store-0D96F6?style=for-the-badge&logo=appstore&logoColor=white)](https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425)
+
+</div>
+
+---
+
+## 🌟 Overview
 
 SwiftUI app for recording audio, transcribing it with local or cloud engines, and generating summaries, tasks, and reminders. Ships on **iOS, iPadOS, watchOS, and native macOS**. Core Data powers persistence; background jobs handle long/complex processing; WatchConnectivity imports complete watch recordings back to the phone.
 
-AVAILABLE ON THE APP STORE: https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425
+Your recordings can stay entirely on-device: Parakeet handles transcription locally and MLX Swift handles summarization locally, with cloud engines available only if you opt into them.
+
+### ✨ Key Features
+
+- 🎙️ **Record Anywhere** — iPhone, iPad, Apple Watch, and native Mac, with pause/resume, Control Center widget, and Action Button support
+- ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
+- 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
+- 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
+- 🤖 **Pluggable AI Engines** — On-device (MLX Swift, llama.cpp legacy), Apple Foundation Models, OpenAI, OpenAI-compatible, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper, Wyoming, and Ollama
+- 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
+- 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
+- ☁️ **Guarded iCloud Sync** — Per-recording **Keep on This Device** exclusions, durable deletion markers, and explicit review of older cloud-only items
+- ♿️ **Accessibility Throughout** — VoiceOver, Voice Control, non-color status cues, Reduce Motion, Dynamic Type, and Full Keyboard Access
+
+> **⚠️ Not HIPAA Compliant**
+>
+> BisonNotes AI is a personal productivity app. It is **not** HIPAA-compliant and we do not provide Business Associate Agreements (BAAs). Do not use it to record or process protected health information, and review the in-app notice before enabling iCloud sync.
 
 Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.2 Release Guide (WordPress)](docs/bisonnotes-ai-v2.2.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
