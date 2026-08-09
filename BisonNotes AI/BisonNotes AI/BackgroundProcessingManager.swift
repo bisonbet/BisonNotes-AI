@@ -1180,6 +1180,23 @@ class BackgroundProcessingManager: ObservableObject {
                 try Task.checkCancellation()
                 speakerLabelWarning = labeledResult.speakerLabelWarning
 
+                let knownSpeakerIDs = Set(
+                    labeledResult.segments
+                        .map(\.speaker)
+                        .filter { !$0.isEmpty && $0 != "Speaker" && $0 != "Unknown" }
+                )
+                let labelOutcome = speakerLabelWarning == nil && !knownSpeakerIDs.isEmpty
+                    ? "applied"
+                    : "fallback"
+                let warningDescription = speakerLabelWarning.map { String(describing: $0) } ?? "none"
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels outcome: method=\(configuration.method.rawValue), "
+                        + "outcome=\(labelOutcome), timedWords=\(reassemblyResult.timedWords?.count ?? 0), "
+                        + "segments=\(labeledResult.segments.count), knownSpeakers=\(knownSpeakerIDs.count), "
+                        + "mappings=\(labeledResult.speakerMappings?.count ?? 0), warning=\(warningDescription)",
+                    level: .info
+                )
+
                 if speakerLabelWarning == nil {
                     transcriptData = transcriptData.updatedTranscript(
                         segments: labeledResult.segments,

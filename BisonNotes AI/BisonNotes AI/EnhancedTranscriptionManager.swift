@@ -139,8 +139,25 @@ struct LocalSpeakerLabelingCoordinator {
         }
         try Task.checkCancellation()
 
+        let baseTextIsEmpty = baseResult.fullText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
         guard let words = baseResult.timedWords,
-              !words.isEmpty || baseResult.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              !words.isEmpty || baseTextIsEmpty else {
+            return baseResult.with(speakerLabelWarning: .timingUnavailable)
+        }
+
+        // A non-empty timing collection is not sufficient by itself. Do not
+        // spend the diarizer pass or persist an all-Unknown result when the
+        // SDK did not provide any finite word ranges to align.
+        let hasUsableWordTiming = words.contains { word in
+            guard let startTime = word.startTime,
+                  let endTime = word.endTime else {
+                return false
+            }
+            return startTime.isFinite && endTime.isFinite
+        }
+        guard baseTextIsEmpty || hasUsableWordTiming else {
             return baseResult.with(speakerLabelWarning: .timingUnavailable)
         }
 
@@ -184,21 +201,89 @@ struct LocalSpeakerLabelingCoordinator {
                 audioDuration: diarization.audioDuration ?? audioDuration
             )
             try Task.checkCancellation()
+
+            let effectiveDuration = diarization.audioDuration ?? audioDuration
+            let finiteWordRanges = words.compactMap { word -> (TimeInterval, TimeInterval)? in
+                guard let startTime = word.startTime,
+                      let endTime = word.endTime,
+                      startTime.isFinite,
+                      endTime.isFinite else {
+                    return nil
+                }
+                return (min(startTime, endTime), max(startTime, endTime))
+            }
+            let finiteIntervalRanges = diarization.intervals.compactMap { interval -> (TimeInterval, TimeInterval)? in
+                guard interval.startTime.isFinite,
+                      interval.endTime.isFinite else {
+                    return nil
+                }
+                return (min(interval.startTime, interval.endTime), max(interval.startTime, interval.endTime))
+            }
+            let alignedKnownSpeakerCount = Set(
+                labeling.segments
+                    .map(\.speakerID)
+                    .filter { $0 != LocalSpeakerLabeledSegment.unknownSpeakerID }
+            ).count
+            let normalizedBaseText = SpeakerTranscriptAligner.normalizedPlainText(baseResult.fullText)
+            let wordTextMatches = normalizedBaseText ==
+                SpeakerTranscriptAligner.normalizedPlainText(from: words)
+            let segmentTextMatches = normalizedBaseText ==
+                SpeakerTranscriptAligner.normalizedPlainText(from: labeling.segments)
+            // Speaker turns are presentation boundaries. Validate the
+            // preserved ASR content against the original timed-word sequence,
+            // not only against a segment list that may insert a separator at
+            // a punctuation turn.
+            let textMatches = wordTextMatches
+            AppLog.shared.backgroundProcessing(
+                "Local speaker labels alignment: words=\(words.count), finiteWordRanges=\(finiteWordRanges.count), "
+                    + "wordRange=\(Self.timeRangeDescription(finiteWordRanges)), "
+                    + "rawIntervals=\(diarization.intervals.count), "
+                    + "rawIntervalRange=\(Self.timeRangeDescription(finiteIntervalRanges)), "
+                    + "normalizedIntervals=\(labeling.normalizedIntervals.count), "
+                    + "duration=\(Self.timeDescription(effectiveDuration)), "
+                    + "alignedSegments=\(labeling.segments.count), knownSpeakers=\(alignedKnownSpeakerCount), "
+                    + "wordTextMatches=\(wordTextMatches), segmentTextMatches=\(segmentTextMatches)",
+                level: .debug
+            )
             guard labeling.didApplyLabels else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=alignmentNoUsableIntervals",
+                    level: .debug
+                )
                 return baseResult.with(
                     speakerLabelWarning: labeling.warning ?? .timingUnavailable
                 )
             }
-            let baseTextIsEmpty = baseResult.fullText
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
             guard !labeling.segments.isEmpty || baseTextIsEmpty else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=alignmentProducedNoSegments",
+                    level: .debug
+                )
                 return baseResult.with(speakerLabelWarning: .timingUnavailable)
             }
 
-            guard normalizedText(baseResult.fullText) == normalizedText(
-                SpeakerTranscriptAligner.normalizedPlainText(from: labeling.segments)
-            ) else {
+            // A successful alignment must produce at least one visible
+            // speaker. The aligner intentionally uses Unknown for words that
+            // cannot be placed; treating an all-Unknown result as success
+            // would silently save a transcript that looks unlabeled.
+            let knownSpeakerCount = Set(
+                labeling.segments
+                    .map(\.speakerID)
+                    .filter { $0 != LocalSpeakerLabeledSegment.unknownSpeakerID }
+            ).count
+            guard baseTextIsEmpty || knownSpeakerCount > 0 else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=allWordsUnknown",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+            }
+
+            guard textMatches else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=alignedTextMismatch",
+                    level: .debug
+                )
                 return baseResult.with(speakerLabelWarning: .timingUnavailable)
             }
 
@@ -242,9 +327,21 @@ struct LocalSpeakerLabelingCoordinator {
         return mappings
     }
 
-    private func normalizedText(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    private static func timeDescription(_ value: TimeInterval) -> String {
+        guard value.isFinite else { return "invalid" }
+        return String(format: "%.3f", value)
     }
+
+    private static func timeRangeDescription(
+        _ ranges: [(TimeInterval, TimeInterval)]
+    ) -> String {
+        guard let minimum = ranges.map(\.0).min(),
+              let maximum = ranges.map(\.1).max() else {
+            return "empty"
+        }
+        return "\(timeDescription(minimum))...\(timeDescription(maximum))"
+    }
+
 }
 
 // MARK: - Enhanced Transcription Manager

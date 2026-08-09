@@ -195,6 +195,15 @@ struct SpeakerTranscriptAligner {
     static func normalizedPlainText(from segments: [LocalSpeakerLabeledSegment]) -> String {
         normalizePlainText(segments.map(\.text).joined(separator: " "))
     }
+
+    /// Normalize an existing ASR string with the same punctuation/whitespace
+    /// rules used for aligned segment text. Parakeet's decoded text and its
+    /// SentencePiece timing reconstruction can differ only in whitespace
+    /// around punctuation; comparing them with different normalizers causes a
+    /// valid diarization pass to be discarded.
+    static func normalizedPlainText(_ text: String) -> String {
+        normalizePlainText(text)
+    }
 }
 
 extension SpeakerTranscriptAligner {

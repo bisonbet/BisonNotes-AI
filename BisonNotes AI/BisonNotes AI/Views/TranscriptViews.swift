@@ -1998,15 +1998,29 @@ struct EditableTranscriptView: View {
     private func setupRerunCompletionHandler(for recordingURL: URL) {
         // Set up a temporary completion handler for the background processing manager
         let originalHandler = backgroundProcessingManager.onTranscriptionCompleted
+        let recordingID = recording.id
 
         backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job, speakerLabelWarning in
             // Only handle completion for our specific recording
-            if job.recordingURL == recordingURL {
+            let isMatchingRecording = job.recordingURL == recordingURL
+                || (recordingID != nil && transcriptData.recordingId == recordingID)
+            if isMatchingRecording {
                 Task { @MainActor in
                     AppLog.shared.transcription("Background processing transcription rerun completed")
 
                     // BackgroundProcessingManager already persisted this
-                    // replacement. Notify the view to refresh that one path.
+                    // replacement. Apply the exact persisted value to the
+                    // editor before notifying other views, so a successful
+                    // label pass cannot be hidden by a stale SwiftUI state
+                    // snapshot or a URL-matching refresh miss.
+                    if let speakerLabelWarning {
+                        self.speakerLabelWarningMessage = speakerLabelWarning.userVisibleMessage
+                    } else {
+                        self.speakerLabelWarningMessage = nil
+                    }
+                    self.updateVisibleTranscript(with: transcriptData)
+                    self.isRerunningTranscription = false
+
                     var userInfo: [String: Any] = ["recordingURL": recordingURL]
                     if let speakerLabelWarning {
                         userInfo["speakerLabelWarning"] = speakerLabelWarning.userVisibleMessage
@@ -2091,19 +2105,24 @@ struct EditableTranscriptView: View {
            let recordingId = recordingEntry.id,
            let updatedTranscript = appCoordinator.getTranscriptData(for: recordingId) {
 
-            // Only update if we have segments with actual content
-            let hasValidContent = updatedTranscript.segments.contains { !$0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty }
+            updateVisibleTranscript(with: updatedTranscript)
+        }
+    }
 
-            guard hasValidContent else { return }
+    private func updateVisibleTranscript(with updatedTranscript: TranscriptData) {
+        // Only update if we have segments with actual content.
+        let hasValidContent = updatedTranscript.segments.contains {
+            !$0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty
+        }
+        guard hasValidContent else { return }
 
-            // Force SwiftUI to detect the change by clearing first, then setting
-            editedSegments = []
-            speakerMappings = updatedTranscript.speakerMappings
+        // Force SwiftUI to detect the change by clearing first, then setting.
+        editedSegments = []
+        speakerMappings = updatedTranscript.speakerMappings
 
-            // Small delay to ensure UI updates
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                self.editedSegments = updatedTranscript.segments
-            }
+        // Small delay to ensure the List/Form rebuilds its segment bindings.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            self.editedSegments = updatedTranscript.segments
         }
     }
 }

@@ -8,6 +8,12 @@
 import Foundation
 import AVFoundation
 
+private struct TimedWordReassemblyItem {
+    let word: TimedTranscriptWord
+    let sourceOrder: Int
+    let sourceChunk: Int
+}
+
 @MainActor
 class AudioFileChunkingService: ObservableObject {
 
@@ -213,8 +219,9 @@ class AudioFileChunkingService: ObservableObject {
         // Combine all segments with time offset adjustments
         var allSegments: [TranscriptSegment] = []
         var speakerMappings: [String: String] = [:]
-        var allTimedWords: [(word: TimedTranscriptWord, sourceOrder: Int)] = []
+        var allTimedWords: [TimedWordReassemblyItem] = []
         var sourceOrder = 0
+        var hasPreviousTimedWord = false
 
         for chunk in sortedChunks {
             for segment in chunk.segments {
@@ -233,14 +240,27 @@ class AudioFileChunkingService: ObservableObject {
                 }
             }
 
+            var hasTimedWordInChunk = false
             for word in chunk.timedWords ?? [] {
+                let forceLeadingSpace = !word.text.isEmpty
+                    && !hasTimedWordInChunk
+                    && hasPreviousTimedWord
                 allTimedWords.append(
-                    (
-                        word: offsetTimedWord(word, by: chunk.startTime),
-                        sourceOrder: sourceOrder
+                    TimedWordReassemblyItem(
+                        word: offsetTimedWord(
+                            word,
+                            by: chunk.startTime,
+                            forceLeadingSpace: forceLeadingSpace
+                        ),
+                        sourceOrder: sourceOrder,
+                        sourceChunk: chunk.sequenceNumber
                     )
                 )
                 sourceOrder += 1
+                if !word.text.isEmpty {
+                    hasTimedWordInChunk = true
+                    hasPreviousTimedWord = true
+                }
             }
         }
 
@@ -417,13 +437,17 @@ class AudioFileChunkingService: ObservableObject {
         return uniqueSegments
     }
 
-    private func offsetTimedWord(_ word: TimedTranscriptWord, by offset: TimeInterval) -> TimedTranscriptWord {
+    private func offsetTimedWord(
+        _ word: TimedTranscriptWord,
+        by offset: TimeInterval,
+        forceLeadingSpace: Bool = false
+    ) -> TimedTranscriptWord {
         TimedTranscriptWord(
             text: word.text,
             startTime: offsetTime(word.startTime, by: offset),
             endTime: offsetTime(word.endTime, by: offset),
             confidence: word.confidence,
-            hasLeadingSpace: word.hasLeadingSpace
+            hasLeadingSpace: word.hasLeadingSpace || forceLeadingSpace
         )
     }
 
@@ -434,15 +458,20 @@ class AudioFileChunkingService: ObservableObject {
 
     /// Normalize chunk-local word timings in the same reassembly pass that
     /// already sorts and de-duplicates transcript segments. Identical words
-    /// with overlapping valid ranges are retained from the earliest chunk;
-    /// chunk-local leading-space metadata does not prevent de-duplication.
+    /// with overlapping valid ranges are retained from the earliest chunk.
+    /// Within one chunk, only an effectively identical range is considered a
+    /// duplicate so legitimate repeated words are not dropped.
     private func reassembleTimedWords(
-        _ words: [(word: TimedTranscriptWord, sourceOrder: Int)],
+        _ words: [TimedWordReassemblyItem],
         audioDuration: TimeInterval?
     ) -> [TimedTranscriptWord] {
         let duration = audioDuration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         let normalized = words.map { item in
-            (word: clampTimedWord(item.word, to: duration), sourceOrder: item.sourceOrder)
+            TimedWordReassemblyItem(
+                word: clampTimedWord(item.word, to: duration),
+                sourceOrder: item.sourceOrder,
+                sourceChunk: item.sourceChunk
+            )
         }
         .sorted { lhs, rhs in
             let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
@@ -456,7 +485,7 @@ class AudioFileChunkingService: ObservableObject {
         }
 
         var result: [TimedTranscriptWord] = []
-        var activeWordsByText: [String: [TimedTranscriptWord]] = [:]
+        var activeWordsByText: [String: [(word: TimedTranscriptWord, sourceChunk: Int)]] = [:]
         for item in normalized {
             guard let start = item.word.startTime,
                   item.word.endTime != nil else {
@@ -466,11 +495,15 @@ class AudioFileChunkingService: ObservableObject {
 
             var activeWords = activeWordsByText[item.word.text, default: []]
             activeWords.removeAll { word in
-                guard let existingEnd = word.endTime else { return true }
+                guard let existingEnd = word.word.endTime else { return true }
                 return existingEnd < start - 0.001
             }
-            let isDuplicate = activeWords.contains { rangesOverlap($0, item.word) }
-            activeWords.append(item.word)
+            let isDuplicate = activeWords.contains { existing in
+                guard rangesOverlap(existing.word, item.word) else { return false }
+                return existing.sourceChunk != item.sourceChunk
+                    || sameTimedWordRange(existing.word, item.word)
+            }
+            activeWords.append((word: item.word, sourceChunk: item.sourceChunk))
             activeWordsByText[item.word.text] = activeWords
 
             guard !isDuplicate else {
@@ -479,6 +512,16 @@ class AudioFileChunkingService: ObservableObject {
             result.append(item.word)
         }
         return result
+    }
+
+    private func sameTimedWordRange(_ lhs: TimedTranscriptWord, _ rhs: TimedTranscriptWord) -> Bool {
+        guard let lhsStart = lhs.startTime,
+              let rhsStart = rhs.startTime,
+              let lhsEnd = lhs.endTime,
+              let rhsEnd = rhs.endTime else {
+            return false
+        }
+        return abs(lhsStart - rhsStart) <= 0.001 && abs(lhsEnd - rhsEnd) <= 0.001
     }
 
     private func clampTimedWord(_ word: TimedTranscriptWord, to duration: TimeInterval?) -> TimedTranscriptWord {

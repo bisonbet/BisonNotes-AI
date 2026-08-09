@@ -76,6 +76,118 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
     }
 
     @MainActor
+    func testReassemblyRetainsSequentialRepeatedWordsWithinOneChunk() async throws {
+        let service = AudioFileChunkingService()
+        let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")
+        let audioChunk = AudioChunk(
+            originalURL: sourceURL,
+            chunkURL: URL(fileURLWithPath: "/chunk-0.m4a"),
+            sequenceNumber: 0,
+            startTime: 0,
+            endTime: 2,
+            fileSize: 1
+        )
+        let chunk = service.createTranscriptChunk(
+            from: "go go",
+            audioChunk: audioChunk,
+            segments: [TranscriptSegment(speaker: "", text: "go go", startTime: 0, endTime: 1)],
+            timedWords: [
+                TimedTranscriptWord(text: "go", startTime: 0.1, endTime: 0.2, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "go", startTime: 0.3, endTime: 0.4, hasLeadingSpace: true)
+            ]
+        )
+
+        let reassembly = try await service.reassembleTranscript(
+            from: [chunk],
+            originalURL: sourceURL,
+            recordingName: "Complete Source",
+            recordingDate: Date(),
+            recordingId: UUID()
+        )
+
+        XCTAssertEqual(reassembly.timedWords?.map(\.text), ["go", "go"])
+    }
+
+    @MainActor
+    func testReassemblyAddsBoundarySpaceWhenTimedChunkStartsWithoutOne() async throws {
+        let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")
+        let reassembly = try await makeBoundaryReassembly()
+        let timedWords = try XCTUnwrap(reassembly.timedWords)
+
+        XCTAssertEqual(timedWords.map(\.hasLeadingSpace), [false, true])
+        XCTAssertEqual(SpeakerTranscriptAligner.normalizedPlainText(from: timedWords), "hello world")
+
+        let fake = OrchestrationFakeLocalDiarizationService(
+            intervals: [LocalDiarizationInterval(speakerID: "raw-speaker", startTime: 0, endTime: 20)]
+        )
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        let result = try await coordinator.apply(
+            to: TranscriptionResult(
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: 0,
+                chunkCount: 2,
+                success: true,
+                error: nil,
+                timedWords: timedWords
+            ),
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: sourceURL,
+            audioDuration: 20
+        )
+
+        XCTAssertNil(result.speakerLabelWarning)
+        XCTAssertEqual(result.fullText, "hello world")
+        XCTAssertEqual(result.segments.map(\.text), ["hello", "world"])
+    }
+
+    @MainActor
+    private func makeBoundaryReassembly() async throws -> ReassemblyResult {
+        let service = AudioFileChunkingService()
+        let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")
+        let firstAudioChunk = AudioChunk(
+            originalURL: sourceURL,
+            chunkURL: URL(fileURLWithPath: "/chunk-0.m4a"),
+            sequenceNumber: 0,
+            startTime: 0,
+            endTime: 10,
+            fileSize: 1
+        )
+        let secondAudioChunk = AudioChunk(
+            originalURL: sourceURL,
+            chunkURL: URL(fileURLWithPath: "/chunk-1.m4a"),
+            sequenceNumber: 1,
+            startTime: 10,
+            endTime: 20,
+            fileSize: 1
+        )
+        let first = service.createTranscriptChunk(
+            from: "hello",
+            audioChunk: firstAudioChunk,
+            segments: [TranscriptSegment(speaker: "", text: "hello", startTime: 1, endTime: 2)],
+            timedWords: [
+                TimedTranscriptWord(text: "hello", startTime: 1, endTime: 2, hasLeadingSpace: false)
+            ]
+        )
+        let second = service.createTranscriptChunk(
+            from: "world",
+            audioChunk: secondAudioChunk,
+            segments: [TranscriptSegment(speaker: "", text: "world", startTime: 0.5, endTime: 1.5)],
+            timedWords: [
+                TimedTranscriptWord(text: "world", startTime: 0.5, endTime: 1.5, hasLeadingSpace: false)
+            ]
+        )
+
+        return try await service.reassembleTranscript(
+            from: [second, first],
+            originalURL: sourceURL,
+            recordingName: "Complete Source",
+            recordingDate: Date(),
+            recordingId: UUID()
+        )
+    }
+
+    @MainActor
     private func makeTimedReassembly() async throws -> ReassemblyResult {
         let service = AudioFileChunkingService()
         let firstAudioChunk = AudioChunk(
@@ -312,6 +424,97 @@ extension LocalDiarizationOrchestrationTests {
         XCTAssertEqual(result.speakerLabelWarning, .timingUnavailable)
         XCTAssertEqual(result.segments.map(\.speaker), [""])
         XCTAssertEqual(result.fullText, "hello world")
+    }
+
+    func testAllUnknownAlignmentReturnsBaseTranscriptWithTimingWarning() async throws {
+        let outsideAudioInterval = LocalDiarizationInterval(
+            speakerID: "raw-speaker",
+            startTime: 10,
+            endTime: 12
+        )
+        let fake = OrchestrationFakeLocalDiarizationService(intervals: [outsideAudioInterval])
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+
+        let result = try await coordinator.apply(
+            to: makeResult(),
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: URL(fileURLWithPath: "/complete-source.m4a"),
+            audioDuration: 2
+        )
+
+        XCTAssertEqual(result.speakerLabelWarning, .timingUnavailable)
+        XCTAssertEqual(result.segments.map(\.speaker), [""])
+        XCTAssertEqual(result.fullText, "hello world")
+    }
+
+    func testPunctuationWhitespaceDifferenceDoesNotDiscardKnownSpeakerLabels() async throws {
+        let fake = OrchestrationFakeLocalDiarizationService()
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        let base = TranscriptionResult(
+            fullText: "hello , world !",
+            segments: [
+                TranscriptSegment(
+                    speaker: "",
+                    text: "hello , world !",
+                    startTime: 0,
+                    endTime: 2
+                )
+            ],
+            processingTime: 0,
+            chunkCount: 1,
+            success: true,
+            error: nil,
+            timedWords: [
+                TimedTranscriptWord(text: "hello", startTime: 0, endTime: 0.4, hasLeadingSpace: false),
+                TimedTranscriptWord(text: ",", startTime: 0.4, endTime: 0.5, hasLeadingSpace: true),
+                TimedTranscriptWord(text: "world", startTime: 0.6, endTime: 1.1, hasLeadingSpace: true),
+                TimedTranscriptWord(text: "!", startTime: 1.1, endTime: 1.2, hasLeadingSpace: true)
+            ]
+        )
+
+        let result = try await coordinator.apply(
+            to: base,
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: URL(fileURLWithPath: "/complete-source.m4a"),
+            audioDuration: 2
+        )
+
+        XCTAssertNil(result.speakerLabelWarning)
+        XCTAssertEqual(result.segments.map(\.speaker), ["speaker_1"])
+        XCTAssertEqual(result.segments.map(\.text), ["hello, world!"])
+    }
+
+    func testSpeakerTurnSeparatorDoesNotDiscardTimedWordText() async throws {
+        let fake = OrchestrationFakeLocalDiarizationService(
+            intervals: [
+                LocalDiarizationInterval(speakerID: "first", startTime: 0, endTime: 0.4),
+                LocalDiarizationInterval(speakerID: "second", startTime: 0.4, endTime: 1)
+            ]
+        )
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        let base = TranscriptionResult(
+            fullText: "hello(world)",
+            segments: [TranscriptSegment(speaker: "", text: "hello(world)", startTime: 0, endTime: 1)],
+            processingTime: 0,
+            chunkCount: 1,
+            success: true,
+            error: nil,
+            timedWords: [
+                TimedTranscriptWord(text: "hello", startTime: 0, endTime: 0.4, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "(world)", startTime: 0.4, endTime: 1, hasLeadingSpace: false)
+            ]
+        )
+
+        let result = try await coordinator.apply(
+            to: base,
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: URL(fileURLWithPath: "/complete-source.m4a"),
+            audioDuration: 1
+        )
+
+        XCTAssertNil(result.speakerLabelWarning)
+        XCTAssertEqual(result.fullText, base.fullText)
+        XCTAssertEqual(result.segments.map(\.text), ["hello", "(world)"])
     }
 }
 
