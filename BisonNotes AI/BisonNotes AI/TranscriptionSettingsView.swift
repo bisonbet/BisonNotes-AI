@@ -744,6 +744,14 @@ struct TranscriptionSettingsView: View {
         showTranscriptionProgress = true
         enableLiveTranscription = false
         selectedTranscriptionEngine = TranscriptionEngine.fluidAudio.rawValue
+        UserDefaults.standard.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled,
+            forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled
+        )
+        UserDefaults.standard.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue,
+            forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        )
     }
 }
 

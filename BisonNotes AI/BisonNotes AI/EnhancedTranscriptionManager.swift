@@ -44,6 +44,191 @@ struct TranscriptionResult {
     let chunkCount: Int
     let success: Bool
     let error: Error?
+    /// Absolute ASR word timings are present only for FluidAudio results.
+    /// The field is optional so every existing engine initializer remains valid.
+    let timedWords: [TimedTranscriptWord]?
+    /// Stable speaker IDs and their default display names after local labeling.
+    let speakerMappings: [String: String]?
+    /// A completed transcript can succeed while local labels are unavailable.
+    let speakerLabelWarning: LocalSpeakerLabelWarning?
+
+    init(
+        fullText: String,
+        segments: [TranscriptSegment],
+        processingTime: TimeInterval,
+        chunkCount: Int,
+        success: Bool,
+        error: Error?,
+        timedWords: [TimedTranscriptWord]? = nil,
+        speakerMappings: [String: String]? = nil,
+        speakerLabelWarning: LocalSpeakerLabelWarning? = nil
+    ) {
+        self.fullText = fullText
+        self.segments = segments
+        self.processingTime = processingTime
+        self.chunkCount = chunkCount
+        self.success = success
+        self.error = error
+        self.timedWords = timedWords
+        self.speakerMappings = speakerMappings
+        self.speakerLabelWarning = speakerLabelWarning
+    }
+
+    func with(
+        timedWords: [TimedTranscriptWord]? = nil,
+        speakerMappings: [String: String]? = nil,
+        speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
+        segments: [TranscriptSegment]? = nil
+    ) -> TranscriptionResult {
+        TranscriptionResult(
+            fullText: fullText,
+            segments: segments ?? self.segments,
+            processingTime: processingTime,
+            chunkCount: chunkCount,
+            success: success,
+            error: error,
+            timedWords: timedWords ?? self.timedWords,
+            speakerMappings: speakerMappings ?? self.speakerMappings,
+            speakerLabelWarning: speakerLabelWarning
+        )
+    }
+}
+
+extension LocalSpeakerLabelsConfiguration {
+    /// Read the two user choices once at a completed Parakeet job boundary.
+    /// Model readiness, download state, and cache paths are intentionally not
+    /// part of this snapshot.
+    static func currentUserChoice(from defaults: UserDefaults = .standard) -> LocalSpeakerLabelsConfiguration {
+        let enabled = defaults.object(forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled) as? Bool
+            ?? FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled
+        let rawMethod = defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
+        let normalizedMethod = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(rawMethod)
+        let method = LocalDiarizationMethod(rawValue: normalizedMethod) ?? .defaultMethod
+        return LocalSpeakerLabelsConfiguration(isEnabled: enabled, method: method)
+    }
+}
+
+/// Applies local labels to a completed, unlabeled Parakeet result. This is the
+/// only Package C diarization seam: it checks readiness, invokes one complete
+/// source-file pass, aligns absolute ASR words, and returns the base result
+/// with a structured warning on recoverable label failures.
+struct LocalSpeakerLabelingCoordinator {
+    private let modelManager: any LocalDiarizationModelManaging
+    private let diarizer: any LocalDiarizing
+    private let aligner: SpeakerTranscriptAligner
+
+    init(
+        modelManager: any LocalDiarizationModelManaging = LocalDiarizationManager.shared,
+        diarizer: any LocalDiarizing = LocalDiarizationManager.shared,
+        aligner: SpeakerTranscriptAligner = SpeakerTranscriptAligner()
+    ) {
+        self.modelManager = modelManager
+        self.diarizer = diarizer
+        self.aligner = aligner
+    }
+
+    func apply(
+        to baseResult: TranscriptionResult,
+        configuration: LocalSpeakerLabelsConfiguration,
+        sourceAudioURL: URL,
+        audioDuration: TimeInterval
+    ) async throws -> TranscriptionResult {
+        guard configuration.isEnabled, baseResult.success else {
+            return baseResult
+        }
+        try Task.checkCancellation()
+
+        guard let words = baseResult.timedWords,
+              !words.isEmpty || baseResult.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return baseResult.with(speakerLabelWarning: .timingUnavailable)
+        }
+
+        if configuration.method == .experimentalLSEEND,
+           audioDuration > (configuration.method.maximumSupportedDuration ?? .greatestFiniteMagnitude) {
+            return baseResult.with(
+                speakerLabelWarning: .experimentalDurationLimit(
+                    duration: audioDuration,
+                    maximumDuration: configuration.method.maximumSupportedDuration ?? 3_600
+                )
+            )
+        }
+
+        let status = await modelManager.modelStatus(for: configuration.method)
+        try Task.checkCancellation()
+        guard status.isReady else {
+            return baseResult.with(
+                speakerLabelWarning: .modelNotReady(method: configuration.method)
+            )
+        }
+
+        do {
+            let diarization = try await diarizer.diarize(
+                audioURL: sourceAudioURL,
+                method: configuration.method,
+                audioDuration: audioDuration,
+                progress: { _ in }
+            )
+            try Task.checkCancellation()
+            await modelManager.unloadModel(for: configuration.method)
+
+            let labeling = aligner.align(
+                words: words,
+                intervals: diarization.intervals,
+                audioDuration: diarization.audioDuration ?? audioDuration
+            )
+            guard !labeling.segments.isEmpty || baseResult.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+            }
+
+            guard normalizedText(baseResult.fullText) == normalizedText(
+                SpeakerTranscriptAligner.normalizedPlainText(from: labeling.segments)
+            ) else {
+                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+            }
+
+            let segments = labeling.segments.map { segment in
+                TranscriptSegment(
+                    speaker: segment.speakerID,
+                    text: segment.text,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime
+                )
+            }
+            let speakerMappings = defaultSpeakerMappings(for: labeling.segments)
+            return baseResult.with(
+                speakerMappings: speakerMappings,
+                speakerLabelWarning: nil,
+                segments: segments
+            )
+        } catch is CancellationError {
+            await modelManager.unloadModel(for: configuration.method)
+            throw CancellationError()
+        } catch {
+            await modelManager.unloadModel(for: configuration.method)
+            return baseResult.with(
+                speakerLabelWarning: .diarizationFailed(method: configuration.method)
+            )
+        }
+    }
+
+    private func defaultSpeakerMappings(
+        for segments: [LocalSpeakerLabeledSegment]
+    ) -> [String: String] {
+        var mappings: [String: String] = [:]
+        for speakerID in segments.map(\.speakerID) where speakerID != LocalSpeakerLabeledSegment.unknownSpeakerID {
+            guard mappings[speakerID] == nil else { continue }
+            if speakerID.hasPrefix("speaker_") {
+                mappings[speakerID] = "Speaker \(speakerID.dropFirst("speaker_".count))"
+            } else {
+                mappings[speakerID] = speakerID
+            }
+        }
+        return mappings
+    }
+
+    private func normalizedText(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
 }
 
 // MARK: - Enhanced Transcription Manager
@@ -62,6 +247,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
     private let chunkingService = AudioFileChunkingService()
+    private let localSpeakerLabelingCoordinator = LocalSpeakerLabelingCoordinator()
     private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTaskRefreshTimer: Task<Void, Never>?
@@ -354,6 +540,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.fileNotFound
         }
 
+        // Snapshot local speaker-label choices at the start of the completed
+        // Parakeet job. Later settings changes cannot switch this job's method.
+        let selectedEngine = engine ?? .fluidAudio // Default fallback
+        let localSpeakerLabelsConfiguration = selectedEngine == .fluidAudio
+            ? LocalSpeakerLabelsConfiguration.currentUserChoice()
+            : nil
+
         // Validate audio file before transcription
         do {
             let testPlayer = try AVAudioPlayer(contentsOf: url)
@@ -374,9 +567,6 @@ if durationMinutes > 120 { // 2 hours max
         // Check file duration
         let duration = try await getAudioDuration(url: url)
 
-// Determine transcription engine to use
-        let selectedEngine = engine ?? .fluidAudio // Default fallback
-
         // Select the configured transcription engine
         switch selectedEngine {
         case .notConfigured:
@@ -385,7 +575,11 @@ if durationMinutes > 120 { // 2 hours max
 
         case .fluidAudio:
             switchToFluidAudioTranscription()
-            return try await transcribeWithFluidAudio(url: url)
+            return try await transcribeWithFluidAudio(
+                url: url,
+                duration: duration,
+                configuration: localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration()
+            )
 
         case .whisper:
             switchToWhisperTranscription()
@@ -1190,7 +1384,11 @@ return result
 
     // MARK: - FluidAudio (Parakeet) Transcription
 
-    private func transcribeWithFluidAudio(url: URL) async throws -> TranscriptionResult {
+    private func transcribeWithFluidAudio(
+        url: URL,
+        duration: TimeInterval,
+        configuration: LocalSpeakerLabelsConfiguration
+    ) async throws -> TranscriptionResult {
         beginBackgroundTask()
         defer { endBackgroundTask() }
 
@@ -1211,14 +1409,27 @@ return result
         }
 
         do {
-            let result = try await manager.transcribe(audioURL: url)
+            let timedOutput = try await manager.transcribeWithTimingData(audioURL: url)
+            let resultWithTiming = timedOutput.result.with(timedWords: timedOutput.timedWords)
+            let result = try await localSpeakerLabelingCoordinator.apply(
+                to: resultWithTiming,
+                configuration: configuration,
+                sourceAudioURL: url,
+                audioDuration: duration
+            )
 
             await MainActor.run {
                 isTranscribing = false
-                currentStatus = "Transcription complete"
+                currentStatus = result.speakerLabelWarning?.userVisibleMessage ?? "Transcription complete"
             }
 
             return result
+        } catch is CancellationError {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Transcription cancelled"
+            }
+            throw CancellationError()
         } catch {
             await MainActor.run {
                 isTranscribing = false

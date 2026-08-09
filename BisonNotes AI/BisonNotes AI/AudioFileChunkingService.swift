@@ -203,6 +203,8 @@ class AudioFileChunkingService: ObservableObject {
         // Combine all segments with time offset adjustments
         var allSegments: [TranscriptSegment] = []
         var speakerMappings: [String: String] = [:]
+        var allTimedWords: [(word: TimedTranscriptWord, sourceOrder: Int)] = []
+        var sourceOrder = 0
 
         for chunk in sortedChunks {
             for segment in chunk.segments {
@@ -220,10 +222,24 @@ class AudioFileChunkingService: ObservableObject {
                     speakerMappings[segment.speaker] = segment.speaker
                 }
             }
+
+            for word in chunk.timedWords ?? [] {
+                allTimedWords.append(
+                    (
+                        word: offsetTimedWord(word, by: chunk.startTime),
+                        sourceOrder: sourceOrder
+                    )
+                )
+                sourceOrder += 1
+            }
         }
 
         // Remove duplicate segments that might occur due to overlap
         allSegments = removeDuplicateSegments(allSegments)
+        let absoluteTimedWords = reassembleTimedWords(
+            allTimedWords,
+            audioDuration: sortedChunks.map(\.endTime).max()
+        )
 
         // Create the complete transcript with recording ID
         let transcriptData = TranscriptData(
@@ -243,12 +259,18 @@ class AudioFileChunkingService: ObservableObject {
             transcriptData: transcriptData,
             totalSegments: allSegments.count,
             reassemblyTime: reassemblyTime,
-            chunks: sortedChunks
+            chunks: sortedChunks,
+            timedWords: sortedChunks.contains(where: { $0.timedWords != nil }) ? absoluteTimedWords : nil
         )
     }
 
     /// Creates transcript chunks from transcription results
-    func createTranscriptChunk(from transcriptText: String, audioChunk: AudioChunk, segments: [TranscriptSegment] = []) -> TranscriptChunk {
+    func createTranscriptChunk(
+        from transcriptText: String,
+        audioChunk: AudioChunk,
+        segments: [TranscriptSegment] = [],
+        timedWords: [TimedTranscriptWord]? = nil
+    ) -> TranscriptChunk {
         // If no segments provided, create a single segment from the transcript text
         let chunkSegments = segments.isEmpty ? [
             TranscriptSegment(
@@ -265,7 +287,8 @@ class AudioFileChunkingService: ObservableObject {
             transcript: transcriptText,
             segments: chunkSegments,
             startTime: audioChunk.startTime,
-            endTime: audioChunk.endTime
+            endTime: audioChunk.endTime,
+            timedWords: timedWords
         )
     }
 
@@ -381,6 +404,109 @@ class AudioFileChunkingService: ObservableObject {
         }
 
         return uniqueSegments
+    }
+
+    private func offsetTimedWord(_ word: TimedTranscriptWord, by offset: TimeInterval) -> TimedTranscriptWord {
+        TimedTranscriptWord(
+            text: word.text,
+            startTime: offsetTime(word.startTime, by: offset),
+            endTime: offsetTime(word.endTime, by: offset),
+            confidence: word.confidence,
+            hasLeadingSpace: word.hasLeadingSpace
+        )
+    }
+
+    private func offsetTime(_ value: TimeInterval?, by offset: TimeInterval) -> TimeInterval? {
+        guard let value, value.isFinite, offset.isFinite else { return nil }
+        return value + offset
+    }
+
+    /// Normalize chunk-local word timings in the same reassembly pass that
+    /// already sorts and de-duplicates transcript segments. Identical words
+    /// with overlapping valid ranges are retained from the earliest chunk;
+    /// chunk-local leading-space metadata does not prevent de-duplication.
+    private func reassembleTimedWords(
+        _ words: [(word: TimedTranscriptWord, sourceOrder: Int)],
+        audioDuration: TimeInterval?
+    ) -> [TimedTranscriptWord] {
+        let duration = audioDuration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        let normalized = words.map { item in
+            (word: clampTimedWord(item.word, to: duration), sourceOrder: item.sourceOrder)
+        }
+        .sorted { lhs, rhs in
+            let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
+            let rhsStart = rhs.word.startTime ?? .greatestFiniteMagnitude
+            if lhsStart != rhsStart { return lhsStart < rhsStart }
+
+            let lhsEnd = lhs.word.endTime ?? .greatestFiniteMagnitude
+            let rhsEnd = rhs.word.endTime ?? .greatestFiniteMagnitude
+            if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+            return lhs.sourceOrder < rhs.sourceOrder
+        }
+
+        var result: [TimedTranscriptWord] = []
+        var activeWordsByText: [String: [TimedTranscriptWord]] = [:]
+        for item in normalized {
+            guard let start = item.word.startTime,
+                  item.word.endTime != nil else {
+                result.append(item.word)
+                continue
+            }
+
+            var activeWords = activeWordsByText[item.word.text, default: []]
+            activeWords.removeAll { word in
+                guard let existingEnd = word.endTime else { return true }
+                return existingEnd < start - 0.001
+            }
+            let isDuplicate = activeWords.contains { rangesOverlap($0, item.word) }
+            activeWords.append(item.word)
+            activeWordsByText[item.word.text] = activeWords
+
+            guard !isDuplicate else {
+                continue
+            }
+            result.append(item.word)
+        }
+        return result
+    }
+
+    private func clampTimedWord(_ word: TimedTranscriptWord, to duration: TimeInterval?) -> TimedTranscriptWord {
+        let start = clampTime(word.startTime, to: duration)
+        let end = clampTime(word.endTime, to: duration)
+        let orderedStart: TimeInterval?
+        let orderedEnd: TimeInterval?
+        if let start, let end {
+            orderedStart = min(start, end)
+            orderedEnd = max(start, end)
+        } else {
+            orderedStart = start
+            orderedEnd = end
+        }
+
+        return TimedTranscriptWord(
+            text: word.text,
+            startTime: orderedStart,
+            endTime: orderedEnd,
+            confidence: word.confidence,
+            hasLeadingSpace: word.hasLeadingSpace
+        )
+    }
+
+    private func clampTime(_ value: TimeInterval?, to duration: TimeInterval?) -> TimeInterval? {
+        guard let value, value.isFinite else { return nil }
+        let nonNegative = max(0, value)
+        guard let duration else { return nonNegative }
+        return min(nonNegative, duration)
+    }
+
+    private func rangesOverlap(_ lhs: TimedTranscriptWord, _ rhs: TimedTranscriptWord) -> Bool {
+        guard let lhsStart = lhs.startTime,
+              let lhsEnd = lhs.endTime,
+              let rhsStart = rhs.startTime,
+              let rhsEnd = rhs.endTime else {
+            return false
+        }
+        return max(lhsStart, rhsStart) <= min(lhsEnd, rhsEnd) + 0.001
     }
 
     private func chunkEndTime(

@@ -33,6 +33,14 @@ enum BisonNotesUITestSupport {
         defaults.set(true, forKey: "hasAskedLocationPermission")
         defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
         defaults.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")
+        defaults.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled,
+            forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled
+        )
+        defaults.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue,
+            forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        )
         defaults.set(false, forKey: "showAppleIntelligenceMigrationAlert")
         defaults.set(false, forKey: "showParakeetMigrationSettings")
         defaults.set(false, forKey: "showWhisperKitSwitchedToParakeet")

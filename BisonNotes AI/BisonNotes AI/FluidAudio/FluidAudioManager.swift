@@ -6,6 +6,14 @@ import Network
 import FluidAudio
 #endif
 
+/// The Parakeet result plus timing data needed by the opt-in complete-file
+/// speaker-label pass. The existing `transcribe` API continues to return only
+/// `TranscriptionResult` so callers that do not opt in keep the current shape.
+struct FluidAudioTranscriptionOutput {
+    let result: TranscriptionResult
+    let timedWords: [TimedTranscriptWord]?
+}
+
 @MainActor
 final class FluidAudioManager: ObservableObject {
     static let shared = FluidAudioManager()
@@ -462,11 +470,10 @@ final class FluidAudioManager: ObservableObject {
     func deleteModel() {
         #if canImport(FluidAudio)
         asrManager = nil
-        // FluidAudio SDK stores ASR models in Application Support, not Caches
-        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let fluidAudioDir = appSupport.appendingPathComponent("FluidAudio")
-            try? FileManager.default.removeItem(at: fluidAudioDir)
-        }
+        // Delete only the selected Parakeet cache. Local diarization caches and
+        // other FluidAudio assets must survive this action.
+        let versionToDelete = loadedModelVersion ?? FluidAudioModelInfo.selectedModelVersion
+        Self.deleteModelFiles(for: versionToDelete)
         #endif
         loadedModelVersion = nil
         isModelReady = false
@@ -487,6 +494,12 @@ final class FluidAudioManager: ObservableObject {
     // MARK: - Transcription
 
     func transcribe(audioURL: URL) async throws -> TranscriptionResult {
+        try await transcribeWithTimingData(audioURL: audioURL).result
+    }
+
+    /// Transcribe a complete source file and retain Parakeet timing data for
+    /// the optional post-recording speaker-label pass.
+    func transcribeWithTimingData(audioURL: URL) async throws -> FluidAudioTranscriptionOutput {
         #if canImport(FluidAudio)
         // Require explicit model download before transcription can proceed
         guard isModelReady else {
@@ -510,7 +523,7 @@ final class FluidAudioManager: ObservableObject {
         // Re-initialize from cached model on fresh app launch (asrManager is nil until first use)
         if asrManager == nil {
             do {
-                try await downloadAndPrepareModel()
+                try await loadCachedModelWithoutNetwork()
             } catch {
                 // Cached model files are gone; clear stale state so the UI reflects this
                 isModelReady = false
@@ -537,7 +550,7 @@ final class FluidAudioManager: ObservableObject {
                 endTime: originalDuration > 0 ? originalDuration : 0
             )
 
-            return TranscriptionResult(
+            let transcription = TranscriptionResult(
                 fullText: result.text,
                 segments: [segment],
                 processingTime: Date().timeIntervalSince(start),
@@ -545,6 +558,19 @@ final class FluidAudioManager: ObservableObject {
                 success: true,  // success reflects engine completion without error, not output length
                 error: nil
             )
+            let timedWords = result.tokenTimings.map { tokenTimings in
+                SpeakerTranscriptAligner.reconstructWords(
+                    from: tokenTimings.map { token in
+                        TimedTranscriptToken(
+                            text: token.token,
+                            startTime: token.startTime,
+                            endTime: token.endTime,
+                            confidence: Double(token.confidence)
+                        )
+                    }
+                )
+            }
+            return FluidAudioTranscriptionOutput(result: transcription, timedWords: timedWords)
         } catch {
             let detailedError = Self.detailedFluidAudioError(
                 error,
@@ -560,6 +586,33 @@ final class FluidAudioManager: ObservableObject {
         throw TranscriptionError.fluidAudioNotAvailable
         #endif
     }
+
+    #if canImport(FluidAudio)
+    /// Load verified Parakeet files from the existing cache. FluidAudio's
+    /// normal `load` path may consult the Hub, so offline mode is scoped around
+    /// this reload to make a transcription-time cache miss fail locally.
+    private func loadCachedModelWithoutNetwork() async throws {
+        let selectedVersion = FluidAudioModelInfo.selectedModelVersion
+        let asrVersion = Self.asrModelVersion(for: selectedVersion)
+        let cacheDirectory = AsrModels.defaultCacheDirectory(for: asrVersion)
+        guard AsrModels.modelsExist(at: cacheDirectory, version: asrVersion) else {
+            throw TranscriptionError.fluidAudioNotReady
+        }
+
+        let previousOfflineMode = ModelHub.offlineMode
+        ModelHub.offlineMode = true
+        defer { ModelHub.offlineMode = previousOfflineMode }
+
+        let models = try await AsrModels.load(
+            from: cacheDirectory,
+            version: asrVersion,
+            encoderPrecision: .int8
+        )
+        try Task.checkCancellation()
+        asrManager = AsrManager(config: Self.parakeetASRConfig, models: models)
+        loadedModelVersion = selectedVersion
+    }
+    #endif
 
     private static func audioDuration(for url: URL) async -> TimeInterval {
         let asset = AVURLAsset(url: url)

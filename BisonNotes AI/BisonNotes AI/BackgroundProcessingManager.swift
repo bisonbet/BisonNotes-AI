@@ -385,6 +385,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var staleJobMonitor: Task<Void, Never>?
     private var isCleaningUpStaleJobs = false
     private let chunkingService = AudioFileChunkingService()
+    private let localSpeakerLabelingCoordinator = LocalSpeakerLabelingCoordinator()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager = EnhancedAudioSessionManager()
@@ -925,6 +926,12 @@ class BackgroundProcessingManager: ObservableObject {
 
         try Task.checkCancellation()
 
+        // Freeze the two user choices once for this completed Parakeet job.
+        // Non-Fluid engines never read or apply this configuration.
+        let localSpeakerLabelsConfiguration = engine == .fluidAudio
+            ? LocalSpeakerLabelsConfiguration.currentUserChoice()
+            : nil
+
         // Resolve the original recording before any transcription work can produce data to save.
         let recordingId = try resolveRecordingID(for: job.recordingURL)
 
@@ -1005,7 +1012,8 @@ class BackgroundProcessingManager: ObservableObject {
             let transcriptChunk = chunkingService.createTranscriptChunk(
                 from: transcriptResult.fullText,
                 audioChunk: chunk,
-                segments: transcriptResult.segments
+                segments: transcriptResult.segments,
+                timedWords: transcriptResult.timedWords
             )
 
             transcriptChunks.append(transcriptChunk)
@@ -1013,9 +1021,15 @@ class BackgroundProcessingManager: ObservableObject {
             EnhancedLogger.shared.logBackgroundProcessing("Chunk \(index + 1) transcribed: \(transcriptResult.fullText.count) characters", level: .debug)
         }
 
-        // Reassemble transcript if multiple chunks
-        if transcriptChunks.count > 1 {
-            EnhancedLogger.shared.logBackgroundProcessing("Reassembling transcript from \(transcriptChunks.count) chunks", level: .info)
+        let shouldReassemble = transcriptChunks.count > 1
+            || (engine == .fluidAudio && localSpeakerLabelsConfiguration?.isEnabled == true)
+        var speakerLabelWarning: LocalSpeakerLabelWarning?
+
+        if shouldReassemble {
+            EnhancedLogger.shared.logBackgroundProcessing(
+                "Reassembling transcript from \(transcriptChunks.count) chunks",
+                level: .info
+            )
 
             let reassemblyResult = try await chunkingService.reassembleTranscript(
                 from: transcriptChunks,
@@ -1024,11 +1038,42 @@ class BackgroundProcessingManager: ObservableObject {
                 recordingDate: Date(), // TODO: Get actual recording date
                 recordingId: recordingId
             )
+            var transcriptData = reassemblyResult.transcriptData
 
-            // Save the complete transcript
-            try saveTranscript(reassemblyResult.transcriptData)
+            if engine == .fluidAudio,
+               let configuration = localSpeakerLabelsConfiguration,
+               configuration.isEnabled {
+                let baseResult = TranscriptionResult(
+                    fullText: transcriptData.plainText,
+                    segments: transcriptData.segments,
+                    processingTime: reassemblyResult.reassemblyTime,
+                    chunkCount: transcriptChunks.count,
+                    success: true,
+                    error: nil,
+                    timedWords: reassemblyResult.timedWords,
+                    speakerMappings: transcriptData.speakerMappings
+                )
+                let labeledResult = try await localSpeakerLabelingCoordinator.apply(
+                    to: baseResult,
+                    configuration: configuration,
+                    sourceAudioURL: audioURL,
+                    audioDuration: chunks.map(\.endTime).max() ?? 0
+                )
+                speakerLabelWarning = labeledResult.speakerLabelWarning
+
+                if speakerLabelWarning == nil {
+                    transcriptData = transcriptData.updatedTranscript(
+                        segments: labeledResult.segments,
+                        speakerMappings: labeledResult.speakerMappings ?? transcriptData.speakerMappings
+                    )
+                }
+            }
+
+            // Save exactly once through the existing background persistence path.
+            try saveTranscript(transcriptData)
         } else if let firstChunk = transcriptChunks.first {
-            // Single chunk, save directly using the already-resolved recording identity.
+            // Preserve the existing direct single-chunk save path for default-off
+            // FluidAudio and for every non-Fluid engine.
             let transcriptData = TranscriptData(
                 recordingId: recordingId,
                 recordingURL: job.recordingURL,
@@ -1071,9 +1116,12 @@ class BackgroundProcessingManager: ObservableObject {
         await updateJob(completedJob)
 
         // Send completion notification
+        let completionBody = speakerLabelWarning.map { warning in
+            "Successfully transcribed \(job.recordingName). \(warning.userVisibleMessage)"
+        } ?? "Successfully transcribed \(job.recordingName)"
         await sendNotification(
             title: "Transcription Complete",
-            body: "Successfully transcribed \(job.recordingName)"
+            body: completionBody
         )
 
         AppLog.shared.backgroundProcessing("Transcription job completed with valid content")
@@ -1124,7 +1172,8 @@ class BackgroundProcessingManager: ObservableObject {
                 guard fluidAudioManager.isModelReady else {
                     throw BackgroundProcessingError.processingFailed("On-device model not downloaded. Please download the Parakeet model in Settings > Transcription > On Device.")
                 }
-                result = try await fluidAudioManager.transcribe(audioURL: chunk.chunkURL)
+                let timedOutput = try await fluidAudioManager.transcribeWithTimingData(audioURL: chunk.chunkURL)
+                result = timedOutput.result.with(timedWords: timedOutput.timedWords)
 
             case .mistralAI:
                 AppLog.shared.backgroundProcessing("Using Mistral AI for transcription")

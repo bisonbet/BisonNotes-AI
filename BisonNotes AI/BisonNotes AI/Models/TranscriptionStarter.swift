@@ -18,6 +18,10 @@ final class TranscriptionStarter: ObservableObject {
     @Published private(set) var queuedCleanupRecordings: [RecordingEntry] = []
     /// The recording currently undergoing audio cleanup, if any.
     @Published private(set) var activeCleaningRecordingId: UUID?
+    /// The most recent non-fatal local speaker-label warning from the direct
+    /// fallback path. The transcript itself is still persisted through the
+    /// existing Core Data save call below.
+    @Published private(set) var lastTranscriptionWarning: LocalSpeakerLabelWarning?
 
     private var isProcessingCleanupQueue: Bool = false
     private let backgroundProcessingManager = BackgroundProcessingManager.shared
@@ -137,6 +141,7 @@ final class TranscriptionStarter: ObservableObject {
                                               sourceAudioURL: URL?,
                                               appCoordinator: AppDataCoordinator) {
         Task { @MainActor in
+            lastTranscriptionWarning = nil
             let selectedEngine = TranscriptionEngine(
                 rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
             ) ?? .fluidAudio
@@ -176,6 +181,18 @@ final class TranscriptionStarter: ObservableObject {
                         using: selectedEngine,
                         recordingId: recordingId
                     )
+                    lastTranscriptionWarning = result.speakerLabelWarning
+                    if let warning = result.speakerLabelWarning {
+                        AppLog.shared.transcription(
+                            "Direct transcription completed without local speaker labels: "
+                                + warning.userVisibleMessage,
+                            level: .info
+                        )
+                        await backgroundProcessingManager.sendNotification(
+                            title: "Transcription Complete",
+                            body: warning.userVisibleMessage
+                        )
+                    }
                     AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
@@ -185,7 +202,8 @@ final class TranscriptionStarter: ObservableObject {
                             recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
-                            segments: result.segments
+                            segments: result.segments,
+                            speakerMappings: result.speakerMappings ?? [:]
                         )
                         let transcriptId = appCoordinator.addTranscript(
                             for: recordingId,
