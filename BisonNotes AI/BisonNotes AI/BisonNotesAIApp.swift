@@ -184,13 +184,18 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        if hasOnDeviceAISupport {
+        if hasOnDeviceAISupport,
+           TranscriptionEngine.fluidAudio.isAvailable,
+           FluidAudioManager.shared.isModelReady {
             defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: key)
             defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
             NSLog("✅ Migrated removed cloud transcription selection to On-Device transcription")
-        } else {
+        } else if AIEngineFactory.createEngine(type: .mistralAI).isAvailable {
             defaults.set(TranscriptionEngine.mistralAI.rawValue, forKey: key)
-            NSLog("✅ Migrated removed cloud transcription selection to Mistral AI")
+            NSLog("✅ Migrated removed cloud transcription selection to configured Mistral AI")
+        } else {
+            defaults.set(TranscriptionEngine.notConfigured.rawValue, forKey: key)
+            NSLog("⚠️ No ready transcription engine is available; leaving selection unconfigured")
         }
     }
 
