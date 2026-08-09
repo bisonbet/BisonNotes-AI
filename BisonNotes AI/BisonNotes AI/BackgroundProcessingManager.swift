@@ -204,9 +204,11 @@ enum JobType: Codable {
         switch type {
         case .transcription:
             let engineRawValue = try container.decode(String.self, forKey: .engine)
-            // Jobs persisted with an engine that is no longer available are
-            // rerouted to the on-device engine during decoding.
-            let engine = TranscriptionEngine(rawValue: engineRawValue) ?? .fluidAudio
+            // Do not run a restored job through an arbitrary replacement. In
+            // particular, FluidAudio may be unsupported or its model may not be
+            // downloaded yet. Keep the job waiting until the user retries it with
+            // a configured engine rather than resuming it only to fail.
+            let engine = TranscriptionEngine(rawValue: engineRawValue) ?? .notConfigured
             self = .transcription(engine: engine)
         case .summarization:
             let engine = try container.decode(String.self, forKey: .engine)
@@ -1961,7 +1963,12 @@ class BackgroundProcessingManager: ObservableObject {
     private func checkTranscriptionEngineAvailability(_ engine: TranscriptionEngine) async -> (available: Bool, reason: String?) {
         switch engine {
         case .fluidAudio:
-            // On-device engine is always available
+            guard engine.isAvailable else {
+                return (false, "On-device transcription is not supported on this device or build")
+            }
+            guard FluidAudioManager.shared.isModelReady else {
+                return (false, "On-device transcription model is not downloaded")
+            }
             return (true, nil)
         case .mistralAI:
             // Cloud engines need network
@@ -2090,7 +2097,9 @@ class BackgroundProcessingManager: ObservableObject {
         // Convert job type string back to JobType enum
         let type: JobType
         if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(rawValue: jobEntry.engine ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
+            let engine = TranscriptionEngine(
+                rawValue: jobEntry.engine ?? TranscriptionEngine.notConfigured.rawValue
+            ) ?? .notConfigured
             type = .transcription(engine: engine)
         } else {
             let persistedEngine = jobEntry.engine ?? AIEngineType.mlxSwift.rawValue

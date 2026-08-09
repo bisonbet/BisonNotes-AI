@@ -21,6 +21,19 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         tempDirectory = nil
     }
 
+    func testRemovedTranscriptionEngineJobWaitsForConfiguredReplacement() throws {
+        let payload = """
+        {"type":"transcription","engine":"OpenAI"}
+        """.data(using: .utf8)!
+
+        let jobType = try JSONDecoder().decode(JobType.self, from: payload)
+
+        guard case .transcription(let engine) = jobType else {
+            return XCTFail("Expected a transcription job")
+        }
+        XCTAssertEqual(engine, .notConfigured)
+    }
+
     func testValidShortAudioFixtureProducesAudioFileInfo() async throws {
         let audioURL = tempDirectory.appendingPathComponent("valid-short.caf")
         try createSilentAudioFixture(at: audioURL, duration: 1.0)
