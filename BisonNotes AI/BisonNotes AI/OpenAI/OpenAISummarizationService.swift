@@ -197,11 +197,7 @@ class OpenAICompatibleService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
         }
 
-        // Normalize base URL - remove trailing slash if present
-        var normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedBaseURL.hasSuffix("/") {
-            normalizedBaseURL.removeLast()
-        }
+        let normalizedBaseURL = Self.normalizedBaseURL(baseURL)
 
         if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
             throw SummarizationError.aiServiceUnavailable(service: message)
@@ -252,14 +248,30 @@ class OpenAICompatibleService: ObservableObject {
         }
     }
 
+    /// Normalizes a provider base URL before appending an API path.
+    /// This keeps model discovery and chat requests on the same endpoint.
+    static func normalizedBaseURL(_ baseURL: String) -> String {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while normalized.count > 1, normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
+    }
+
+    /// Compatible providers commonly expose the same reasoning-model IDs as
+    /// OpenAI, even when the endpoint itself is not hosted by OpenAI.
+    static func isReasoningModel(_ modelID: String) -> Bool {
+        let lowercasedModelID = modelID.lowercased()
+        return lowercasedModelID.hasPrefix("gpt-5") || lowercasedModelID.hasPrefix("gpt5") ||
+               lowercasedModelID.hasPrefix("o1") || lowercasedModelID.hasPrefix("o3") ||
+               lowercasedModelID.hasPrefix("o4") || lowercasedModelID.contains("reasoning")
+    }
+
     // MARK: - Private Helper Methods
 
     /// Check if the current model is a reasoning model.
     private func isReasoningModel() -> Bool {
-        let modelId = config.effectiveModelId.lowercased()
-        // Reasoning-model identifiers generally use o-series prefixes or a reasoning label.
-        return modelId.hasPrefix("o1") || modelId.hasPrefix("o3") || modelId.hasPrefix("o4") ||
-               modelId.contains("reasoning")
+        Self.isReasoningModel(config.effectiveModelId)
     }
 
     /// Returns a temperature value appropriate for the current model.
@@ -280,14 +292,18 @@ class OpenAICompatibleService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Compatible API key not configured")
         }
 
-        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
-            AppLog.shared.networking("Blocked insecure compatible API endpoint: \(config.baseURL)", level: .error)
+        let normalizedBaseURL = Self.normalizedBaseURL(config.baseURL)
+        if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
+            AppLog.shared.networking("Blocked insecure compatible API endpoint: \(normalizedBaseURL)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: message)
         }
 
-        AppLog.shared.networking("Compatible API configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)", level: .debug)
+        AppLog.shared.networking(
+            "Compatible API configuration - Model: \(config.effectiveModelId), BaseURL: \(normalizedBaseURL)",
+            level: .debug
+        )
 
-        guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
+        guard let url = URL(string: "\(normalizedBaseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid compatible API base URL: \(config.baseURL)")
         }
 

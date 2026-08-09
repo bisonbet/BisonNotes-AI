@@ -454,13 +454,13 @@ class SummaryManager: ObservableObject {
             // No saved preference, try to set MLX (the new on-device default)
             if let defaultEngine = availableEngines[AIEngineType.mlxSwift.rawValue], defaultEngine.isAvailable {
                 currentEngine = defaultEngine
-                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                UserDefaults.standard.set(defaultEngine.engineType, forKey: "SelectedAIEngine")
                 AppLog.shared.summarization("No saved preference, set MLX as default engine")
             } else {
                 // Try to find any available engine
                 if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = anyAvailableEngine
-                    UserDefaults.standard.set(anyAvailableEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(anyAvailableEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("On-Device AI not available, using '\(anyAvailableEngine.name)' as default")
                 } else {
                     // Last resort: set to None
@@ -563,7 +563,7 @@ class SummaryManager: ObservableObject {
         availableEngines[engineType.rawValue] = updatedEngine
 
         // If this was the current engine, update the reference
-        if currentEngine?.name == engineName {
+        if currentEngine?.engineType == engineName {
             currentEngine = updatedEngine
             AppLog.shared.summarization("Updated current engine configuration for '\(engineName)'", level: .debug)
         }
@@ -692,7 +692,7 @@ class SummaryManager: ObservableObject {
         let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
 
         // If current engine doesn't match the selected engine, update it
-        if currentEngine?.name != selectedEngineName {
+        if currentEngine?.engineType != selectedEngineName {
             if let selectedEngine = availableEngines[selectedEngineName], selectedEngine.isAvailable {
                 currentEngine = selectedEngine
                 AppLog.shared.summarization("Synced current engine to '\(selectedEngineName)' from settings", level: .debug)
@@ -859,7 +859,7 @@ class SummaryManager: ObservableObject {
 
         // Update current engine if needed
         if let currentEngine = currentEngine {
-            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.name })
+            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.engineType })
             let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .mlxSwift)
 
             if !currentEngineInstance.isAvailable {
@@ -868,7 +868,7 @@ class SummaryManager: ObservableObject {
                 // Try to find an available fallback engine
                 if let fallbackEngine = availableEngines.values.first {
                     self.currentEngine = fallbackEngine
-                    UserDefaults.standard.set(fallbackEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("Switched to fallback engine '\(fallbackEngine.name)'", level: .debug)
                 }
             }
@@ -937,7 +937,7 @@ class SummaryManager: ObservableObject {
                 isComingSoon: engineType.isComingSoon,
                 requirements: engineType.requirements,
                 version: engine.version,
-                isCurrentEngine: currentEngine?.name == engineName
+                isCurrentEngine: currentEngine?.engineType == engineName
             )
 
             statusMap[engineName] = status
@@ -974,7 +974,7 @@ class SummaryManager: ObservableObject {
         }
 
         // Check if current engine is still available
-        let availability = await checkEngineAvailability(currentEngine.name)
+        let availability = await checkEngineAvailability(currentEngine.engineType)
 
         if !availability.isAvailable {
             AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)

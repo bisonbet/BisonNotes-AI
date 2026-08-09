@@ -2,7 +2,7 @@
 //  KeychainSecretStore.swift
 //  BisonNotes AI
 //
-//  Keychain-backed storage for API keys.
+//  Keychain-backed storage for API keys and legacy-secret cleanup.
 //
 
 import Foundation
@@ -36,6 +36,33 @@ final class KeychainSecretStore {
     static let openAICompatibleAPIKey = "openAICompatibleAPIKey"
     static let googleAIStudioAPIKey = "googleAIStudioAPIKey"
     static let mistralAPIKey = "mistralAPIKey"
+    static let legacyAWSCredentials = "AWSCredentials"
+    static let legacyAWSBedrockSessionToken = "awsBedrockSessionToken"
+
+    /// Settings and secret identifiers written by builds that included AWS.
+    /// AWS is no longer supported, so old values must not be restored into
+    /// UserDefaults or retained in the app's Keychain namespace.
+    static let legacyAWSSettingKeys: Set<String> = [
+        legacyAWSCredentials,
+        legacyAWSBedrockSessionToken,
+        "awsAccessKey",
+        "awsSecretKey",
+        "awsSecretAccessKey",
+        "awsRegion",
+        "awsBucketName",
+        "awsBedrockModel",
+        "awsBedrockTemperature",
+        "awsBedrockMaxTokens",
+        "awsBedrockUseProfile",
+        "awsBedrockProfileName",
+        "awsBedrockModelMigrated_v1.3",
+        "enableAWSBedrock",
+        "enableAWSTranscribe"
+    ]
+
+    static func isLegacyAWSSettingKey(_ key: String) -> Bool {
+        legacyAWSSettingKeys.contains(key)
+    }
 
     private static let stringSecretKeys = [
         openAIAPIKey,
@@ -136,6 +163,18 @@ final class KeychainSecretStore {
                     failures.append(error)
                     continue
                 }
+            }
+            defaults.removeObject(forKey: key)
+        }
+
+        // AWS provider support was removed. Clean up old opaque credential
+        // blobs and individual AWS fields instead of migrating them to a
+        // credential format that no current provider consumes.
+        for key in Self.legacyAWSSettingKeys {
+            let result = delete(forKey: key)
+            if case .failure(let error) = result {
+                failures.append(error)
+                continue
             }
             defaults.removeObject(forKey: key)
         }

@@ -11,7 +11,7 @@ import Foundation
 
 class OpenAICompatibleEngine: SummarizationEngine, ConnectionTestable {
     var name: String { "Compatible API" }
-    var engineType: String { "Compatible API" }
+    var engineType: String { AIEngineType.openAICompatible.rawValue }
     var description: String { "Connect to a compatible API endpoint (for example, a local server or custom provider)." }
     let version: String = "1.0"
     var metadataName: String {
