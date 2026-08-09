@@ -447,7 +447,7 @@ extension LocalDiarizationOrchestrationTests {
         XCTAssertEqual(result.fullText, "hello world")
     }
 
-    func testPunctuationWhitespaceDifferenceDoesNotDiscardKnownSpeakerLabels() async throws {
+    func testSingleSpeakerPreservesTheUnlabeledParakeetTranscript() async throws {
         let fake = OrchestrationFakeLocalDiarizationService()
         let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
         let base = TranscriptionResult(
@@ -480,8 +480,9 @@ extension LocalDiarizationOrchestrationTests {
         )
 
         XCTAssertNil(result.speakerLabelWarning)
-        XCTAssertEqual(result.segments.map(\.speaker), ["speaker_1"])
-        XCTAssertEqual(result.segments.map(\.text), ["hello, world!"])
+        XCTAssertEqual(result.segments.map(\.speaker), base.segments.map(\.speaker))
+        XCTAssertEqual(result.segments.map(\.text), base.segments.map(\.text))
+        XCTAssertEqual(result.fullText, base.fullText)
     }
 
     func testSpeakerTurnSeparatorDoesNotDiscardTimedWordText() async throws {
@@ -514,7 +515,9 @@ extension LocalDiarizationOrchestrationTests {
 
         XCTAssertNil(result.speakerLabelWarning)
         XCTAssertEqual(result.fullText, base.fullText)
+        XCTAssertEqual(result.segments.map(\.speaker), ["speaker_1", "speaker_2"])
         XCTAssertEqual(result.segments.map(\.text), ["hello", "(world)"])
+        XCTAssertEqual(result.segments.map(\.hasLeadingSpace), [false, false])
     }
 }
 

@@ -278,17 +278,20 @@ public struct LocalSpeakerLabeledSegment: Codable, Equatable, Sendable {
     public let text: String
     public let startTime: TimeInterval
     public let endTime: TimeInterval
+    public let hasLeadingSpace: Bool
 
     public init(
         speakerID: String,
         text: String,
         startTime: TimeInterval,
-        endTime: TimeInterval
+        endTime: TimeInterval,
+        hasLeadingSpace: Bool = true
     ) {
         self.speakerID = speakerID
         self.text = text
         self.startTime = startTime
         self.endTime = endTime
+        self.hasLeadingSpace = hasLeadingSpace
     }
 }
 
@@ -346,6 +349,7 @@ struct SpeakerAlignmentSegmentBuilder {
     var text: String
     var startTime: TimeInterval
     var endTime: TimeInterval
+    let hasLeadingSpace: Bool
 
     func canMerge(
         speakerID: String,
@@ -375,7 +379,8 @@ struct SpeakerAlignmentSegmentBuilder {
             speakerID: speakerID,
             text: text,
             startTime: startTime,
-            endTime: endTime
+            endTime: endTime,
+            hasLeadingSpace: hasLeadingSpace
         )
     }
 }

@@ -8,13 +8,52 @@ struct TranscriptSegment: Codable, Identifiable {
     let text: String
     let startTime: TimeInterval
     let endTime: TimeInterval
+    /// Whether this segment's text had a word boundary before it in the
+    /// source transcript. Older persisted segments default to true.
+    let hasLeadingSpace: Bool
 
-    init(speaker: String, text: String, startTime: TimeInterval, endTime: TimeInterval) {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case speaker
+        case text
+        case startTime
+        case endTime
+        case hasLeadingSpace
+    }
+
+    init(
+        speaker: String,
+        text: String,
+        startTime: TimeInterval,
+        endTime: TimeInterval,
+        hasLeadingSpace: Bool = true
+    ) {
         self.id = UUID()
         self.speaker = speaker
         self.text = text
         self.startTime = startTime
         self.endTime = endTime
+        self.hasLeadingSpace = hasLeadingSpace
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.speaker = try container.decode(String.self, forKey: .speaker)
+        self.text = try container.decode(String.self, forKey: .text)
+        self.startTime = try container.decode(TimeInterval.self, forKey: .startTime)
+        self.endTime = try container.decode(TimeInterval.self, forKey: .endTime)
+        self.hasLeadingSpace = try container.decodeIfPresent(Bool.self, forKey: .hasLeadingSpace) ?? true
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(speaker, forKey: .speaker)
+        try container.encode(text, forKey: .text)
+        try container.encode(startTime, forKey: .startTime)
+        try container.encode(endTime, forKey: .endTime)
+        try container.encode(hasLeadingSpace, forKey: .hasLeadingSpace)
     }
 }
 
@@ -88,7 +127,9 @@ public struct TranscriptData: Codable, Identifiable {
     }
 
     var plainText: String {
-        return segments.map { $0.text }.joined(separator: " ")
+        SpeakerTranscriptAligner.joinWordText(
+            segments.map { (text: $0.text, hasLeadingSpace: $0.hasLeadingSpace) }
+        )
     }
 
     /// Text formatted for AI summarization: includes speaker labels when multiple speakers are present.

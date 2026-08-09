@@ -169,7 +169,8 @@ struct SpeakerTranscriptAligner {
                         speakerID: speakerID,
                         text: word.text,
                         startTime: start,
-                        endTime: end
+                        endTime: end,
+                        hasLeadingSpace: word.hasLeadingSpace
                     )
                 )
             }
@@ -193,7 +194,9 @@ struct SpeakerTranscriptAligner {
     }
 
     static func normalizedPlainText(from segments: [LocalSpeakerLabeledSegment]) -> String {
-        normalizePlainText(segments.map(\.text).joined(separator: " "))
+        normalizePlainText(
+            joinWordText(segments.map { ($0.text, $0.hasLeadingSpace) })
+        )
     }
 
     /// Normalize an existing ASR string with the same punctuation/whitespace

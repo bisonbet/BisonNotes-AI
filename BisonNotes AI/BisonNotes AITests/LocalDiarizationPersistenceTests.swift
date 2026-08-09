@@ -47,6 +47,42 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         XCTAssertTrue(persisted.textForSummarization.contains("Speaker 2: General Kenobi"))
     }
 
+    func testSpeakerBoundarySpacingSurvivesPersistence() throws {
+        let recordingID = try makeRecording(named: "Boundary Spacing")
+        let audioURL = tempDirectory.appendingPathComponent("boundary-spacing.m4a")
+        let transcriptData = TranscriptData(
+            recordingId: recordingID,
+            recordingURL: audioURL,
+            recordingName: "Boundary Spacing",
+            recordingDate: Date(),
+            segments: [
+                TranscriptSegment(
+                    speaker: "speaker_1",
+                    text: "hello",
+                    startTime: 0,
+                    endTime: 0.4,
+                    hasLeadingSpace: false
+                ),
+                TranscriptSegment(
+                    speaker: "speaker_2",
+                    text: "(world)",
+                    startTime: 0.4,
+                    endTime: 1,
+                    hasLeadingSpace: false
+                )
+            ],
+            speakerMappings: ["speaker_1": "Speaker 1", "speaker_2": "Speaker 2"],
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(transcriptData.plainText, "hello(world)")
+        _ = try persistBackgroundTranscript(transcriptData, using: appCoordinator)
+
+        let persisted = try XCTUnwrap(appCoordinator.getTranscriptData(for: recordingID))
+        XCTAssertEqual(persisted.plainText, "hello(world)")
+        XCTAssertEqual(persisted.segments.map(\.hasLeadingSpace), [false, false])
+    }
+
     func testRetryAndRerunReplaceLabelStateWithoutDuplicatingTranscript() throws {
         let recordingID = try makeRecording(named: "Rerun Recording")
         let audioURL = tempDirectory.appendingPathComponent("rerun-recording.m4a")

@@ -131,6 +131,47 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
     }
 
     @MainActor
+    func testReassemblyKeepsMalformedTimedWordsInSourceOrder() async throws {
+        let service = AudioFileChunkingService()
+        let recordingId = UUID()
+        let originalURL = tempDirectory.appendingPathComponent("malformed-timing.m4a")
+        let firstChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 0,
+            transcript: "missing first",
+            segments: [TranscriptSegment(speaker: "", text: "missing first", startTime: 0, endTime: 1)],
+            startTime: 0,
+            endTime: 1,
+            timedWords: [
+                TimedTranscriptWord(text: "missing", startTime: nil, endTime: nil, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "first", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+        let secondChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 1,
+            transcript: "second",
+            segments: [TranscriptSegment(speaker: "", text: "second", startTime: 0, endTime: 1)],
+            startTime: 1,
+            endTime: 2,
+            timedWords: [
+                TimedTranscriptWord(text: "second", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+
+        let result = try await service.reassembleTranscript(
+            from: [secondChunk, firstChunk],
+            originalURL: originalURL,
+            recordingName: "Malformed Timing",
+            recordingDate: Date(),
+            recordingId: recordingId,
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(result.timedWords?.map(\.text), ["missing", "first", "second"])
+    }
+
+    @MainActor
     func testMissingRecordingIdentityFailsBeforeTranscriptPersistence() throws {
         let persistence = PersistenceController(inMemory: true)
         let coordinator = AppDataCoordinator(persistenceController: persistence)

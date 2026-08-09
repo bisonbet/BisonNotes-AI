@@ -229,11 +229,10 @@ struct LocalSpeakerLabelingCoordinator {
                 SpeakerTranscriptAligner.normalizedPlainText(from: words)
             let segmentTextMatches = normalizedBaseText ==
                 SpeakerTranscriptAligner.normalizedPlainText(from: labeling.segments)
-            // Speaker turns are presentation boundaries. Validate the
-            // preserved ASR content against the original timed-word sequence,
-            // not only against a segment list that may insert a separator at
-            // a punctuation turn.
-            let textMatches = wordTextMatches
+            // Speaker turns are presentation boundaries, but they must retain
+            // the source word-boundary metadata. Validate both the timed-word
+            // sequence and the segment representation before persisting it.
+            let textMatches = wordTextMatches && segmentTextMatches
             AppLog.shared.backgroundProcessing(
                 "Local speaker labels alignment: words=\(words.count), finiteWordRanges=\(finiteWordRanges.count), "
                     + "wordRange=\(Self.timeRangeDescription(finiteWordRanges)), "
@@ -279,6 +278,17 @@ struct LocalSpeakerLabelingCoordinator {
                 return baseResult.with(speakerLabelWarning: .timingUnavailable)
             }
 
+            // One detected speaker is ordinary single-speaker audio, not a
+            // visible diarization result. Keep the original Parakeet
+            // segments so the transcript view does not show "Speaker 1".
+            guard knownSpeakerCount != 1 else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels skipped: reason=singleSpeakerDetected",
+                    level: .debug
+                )
+                return baseResult
+            }
+
             guard textMatches else {
                 AppLog.shared.backgroundProcessing(
                     "Local speaker labels fallback: reason=alignedTextMismatch",
@@ -292,7 +302,8 @@ struct LocalSpeakerLabelingCoordinator {
                     speaker: segment.speakerID,
                     text: segment.text,
                     startTime: segment.startTime,
-                    endTime: segment.endTime
+                    endTime: segment.endTime,
+                    hasLeadingSpace: segment.hasLeadingSpace
                 )
             }
             let speakerMappings = defaultSpeakerMappings(for: labeling.segments)

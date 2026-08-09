@@ -466,23 +466,45 @@ class AudioFileChunkingService: ObservableObject {
         audioDuration: TimeInterval?
     ) -> [TimedTranscriptWord] {
         let duration = audioDuration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
-        let normalized = words.map { item in
+        let normalizedItems = words.map { item in
             TimedWordReassemblyItem(
                 word: clampTimedWord(item.word, to: duration),
                 sourceOrder: item.sourceOrder,
                 sourceChunk: item.sourceChunk
             )
         }
-        .sorted { lhs, rhs in
-            let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
-            let rhsStart = rhs.word.startTime ?? .greatestFiniteMagnitude
-            if lhsStart != rhsStart { return lhsStart < rhsStart }
 
-            let lhsEnd = lhs.word.endTime ?? .greatestFiniteMagnitude
-            let rhsEnd = rhs.word.endTime ?? .greatestFiniteMagnitude
-            if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
-            return lhs.sourceOrder < rhs.sourceOrder
+        // Sort only words with complete finite timing. Malformed words remain
+        // anchored at their source positions so they can reach the aligner as
+        // Unknown without reordering the ASR transcript.
+        let sortedTimedItems = normalizedItems
+            .filter { $0.word.startTime != nil && $0.word.endTime != nil }
+            .sorted { lhs, rhs in
+                let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
+                let rhsStart = rhs.word.startTime ?? .greatestFiniteMagnitude
+                if lhsStart != rhsStart { return lhsStart < rhsStart }
+
+                let lhsEnd = lhs.word.endTime ?? .greatestFiniteMagnitude
+                let rhsEnd = rhs.word.endTime ?? .greatestFiniteMagnitude
+                if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
+
+        var orderedItems = [TimedWordReassemblyItem?](
+            repeating: nil,
+            count: normalizedItems.count
+        )
+        for item in normalizedItems where item.word.startTime == nil || item.word.endTime == nil {
+            orderedItems[item.sourceOrder] = item
         }
+
+        var timedItemIndex = 0
+        for index in orderedItems.indices where orderedItems[index] == nil {
+            orderedItems[index] = sortedTimedItems[timedItemIndex]
+            timedItemIndex += 1
+        }
+
+        let normalized = orderedItems.compactMap { $0 }
 
         var result: [TimedTranscriptWord] = []
         var activeWordsByText: [String: [(word: TimedTranscriptWord, sourceChunk: Int)]] = [:]
