@@ -255,18 +255,29 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         _ = try? await preparation.value
     }
 
-    func testStructuralReadinessRejectsEmptyOrMalformedAssets() throws {
+    func testStructuralReadinessRequiresCompleteCompiledModelArtifacts() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-diarization-assets-\(UUID().uuidString)", isDirectory: true)
         let model = root.appendingPathComponent("model.mlmodelc", isDirectory: true)
-        let weights = model.appendingPathComponent("weights.bin")
+        let weightsDirectory = model.appendingPathComponent("weights", isDirectory: true)
+        let weights = weightsDirectory.appendingPathComponent("weight.bin")
+        let modelMIL = model.appendingPathComponent("model.mil")
+        let metadata = model.appendingPathComponent("metadata.json")
+        let coreMLData = model.appendingPathComponent("coremldata.bin")
         let parameters = root.appendingPathComponent("plda.json")
         defer { try? FileManager.default.removeItem(at: root) }
 
         try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
-        try Data().write(to: weights)
-        XCTAssertFalse(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
+        try FileManager.default.createDirectory(at: weightsDirectory, withIntermediateDirectories: true)
         try Data([1]).write(to: weights)
+        XCTAssertFalse(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
+
+        try Data([1]).write(to: modelMIL)
+        try Data("[{}]".utf8).write(to: metadata)
+        try Data().write(to: coreMLData)
+        XCTAssertFalse(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
+
+        try Data([1]).write(to: coreMLData)
         XCTAssertTrue(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
 
         try Data("{}".utf8).write(to: parameters)
