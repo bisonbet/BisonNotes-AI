@@ -40,11 +40,15 @@ struct ProcessingJob: Identifiable, Codable {
     let completionTime: Date?
     let chunks: [AudioChunk]?
     let error: String?
+    /// Completed-file local speaker-label choices captured when a Parakeet
+    /// transcription is enqueued. Persisting the snapshot prevents a resumed
+    /// job from changing behavior after a settings edit or app relaunch.
+    let localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration
 
     // Exclude processingStartTime from Codable to avoid forward-compatibility issues
     private enum CodingKeys: String, CodingKey {
         case id, type, recordingPath, recordingName, modelName, sourceAudioPath, status, progress,
-             startTime, completionTime, chunks, error
+             startTime, completionTime, chunks, error, localSpeakerLabelsConfiguration
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +66,15 @@ struct ProcessingJob: Identifiable, Codable {
         completionTime = try container.decodeIfPresent(Date.self, forKey: .completionTime)
         chunks = try container.decodeIfPresent([AudioChunk].self, forKey: .chunks)
         error = try container.decodeIfPresent(String.self, forKey: .error)
+        let decodedConfiguration = try? container.decode(
+            LocalSpeakerLabelsConfiguration.self,
+            forKey: .localSpeakerLabelsConfiguration
+        )
+        if case .transcription(engine: .fluidAudio) = type {
+            localSpeakerLabelsConfiguration = decodedConfiguration ?? LocalSpeakerLabelsConfiguration()
+        } else {
+            localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+        }
     }
 
     // Computed property to get absolute URL when needed
@@ -83,7 +96,15 @@ struct ProcessingJob: Identifiable, Codable {
         return documentsURL.appendingPathComponent(sourcePath)
     }
 
-    init(type: JobType, recordingURL: URL, recordingName: String, modelName: String? = nil, sourceAudioURL: URL? = nil, chunks: [AudioChunk]? = nil) {
+    init(
+        type: JobType,
+        recordingURL: URL,
+        recordingName: String,
+        modelName: String? = nil,
+        sourceAudioURL: URL? = nil,
+        chunks: [AudioChunk]? = nil,
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+    ) {
         self.id = UUID()
         self.type = type
         // Store only the filename as relative path
@@ -98,6 +119,11 @@ struct ProcessingJob: Identifiable, Codable {
         self.completionTime = nil
         self.chunks = chunks
         self.error = nil
+        if case .transcription(engine: .fluidAudio) = type {
+            self.localSpeakerLabelsConfiguration = localSpeakerLabelsConfiguration
+        } else {
+            self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+        }
     }
 
     func withStatus(_ status: JobProcessingStatus) -> ProcessingJob {
@@ -114,7 +140,8 @@ struct ProcessingJob: Identifiable, Codable {
             processingStartTime: status == .processing ? Date() : nil,
             completionTime: status == .completed || status.isCancelled || status.isError ? Date() : self.completionTime,
             chunks: self.chunks,
-            error: status.errorMessage
+            error: status.errorMessage,
+            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration
         )
     }
 
@@ -132,11 +159,27 @@ struct ProcessingJob: Identifiable, Codable {
             processingStartTime: self.processingStartTime,
             completionTime: self.completionTime,
             chunks: self.chunks,
-            error: self.error
+            error: self.error,
+            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration
         )
     }
 
-    init(id: UUID, type: JobType, recordingPath: String, recordingName: String, modelName: String? = nil, sourceAudioPath: String? = nil, status: JobProcessingStatus, progress: Double, startTime: Date, processingStartTime: Date? = nil, completionTime: Date?, chunks: [AudioChunk]?, error: String?) {
+    init(
+        id: UUID,
+        type: JobType,
+        recordingPath: String,
+        recordingName: String,
+        modelName: String? = nil,
+        sourceAudioPath: String? = nil,
+        status: JobProcessingStatus,
+        progress: Double,
+        startTime: Date,
+        processingStartTime: Date? = nil,
+        completionTime: Date?,
+        chunks: [AudioChunk]?,
+        error: String?,
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+    ) {
         self.id = id
         self.type = type
         self.recordingPath = recordingPath
@@ -150,6 +193,56 @@ struct ProcessingJob: Identifiable, Codable {
         self.completionTime = completionTime
         self.chunks = chunks
         self.error = error
+        if case .transcription(engine: .fluidAudio) = type {
+            self.localSpeakerLabelsConfiguration = localSpeakerLabelsConfiguration
+        } else {
+            self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+        }
+    }
+}
+
+private struct ProcessingJobPersistenceEnvelope: Codable {
+    let version: Int
+    let modelName: String?
+    let localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration
+}
+
+extension ProcessingJob {
+    static let persistenceEnvelopePrefix = "bisonnotes-processing-job-v1:"
+
+    /// ProcessingJobEntry has no extensible metadata column. Store the
+    /// resumable Parakeet choice snapshot in its existing optional model-name
+    /// field while preserving the caller's actual model name inside a tagged
+    /// envelope. This avoids a Core Data migration.
+    var persistedModelNameValue: String? {
+        guard case .transcription(engine: .fluidAudio) = type else {
+            return modelName
+        }
+        let envelope = ProcessingJobPersistenceEnvelope(
+            version: 1,
+            modelName: modelName,
+            localSpeakerLabelsConfiguration: localSpeakerLabelsConfiguration
+        )
+        guard let data = try? JSONEncoder().encode(envelope) else {
+            return modelName
+        }
+        return Self.persistenceEnvelopePrefix + data.base64EncodedString()
+    }
+
+    static func restoredPersistenceValues(
+        from persistedModelName: String?
+    ) -> (modelName: String?, configuration: LocalSpeakerLabelsConfiguration) {
+        guard let persistedModelName,
+              persistedModelName.hasPrefix(persistenceEnvelopePrefix) else {
+            return (persistedModelName, LocalSpeakerLabelsConfiguration())
+        }
+        let encoded = String(persistedModelName.dropFirst(persistenceEnvelopePrefix.count))
+        guard let data = Data(base64Encoded: encoded),
+              let envelope = try? JSONDecoder().decode(ProcessingJobPersistenceEnvelope.self, from: data),
+              envelope.version == 1 else {
+            return (nil, LocalSpeakerLabelsConfiguration())
+        }
+        return (envelope.modelName, envelope.localSpeakerLabelsConfiguration)
     }
 }
 
@@ -371,7 +464,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Completion Handlers
 
-    var onTranscriptionCompleted: ((TranscriptData, ProcessingJob) -> Void)?
+    var onTranscriptionCompleted: ((TranscriptData, ProcessingJob, LocalSpeakerLabelWarning?) -> Void)?
 
     // MARK: - Private Properties
 
@@ -474,7 +567,19 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Job Management
 
-    func startTranscriptionJob(recordingURL: URL, recordingName: String, engine: TranscriptionEngine, modelName: String? = nil, sourceAudioURL: URL? = nil, chunks: [AudioChunk]? = nil) async throws {
+    func startTranscriptionJob(
+        recordingURL: URL,
+        recordingName: String,
+        engine: TranscriptionEngine,
+        modelName: String? = nil,
+        sourceAudioURL: URL? = nil,
+        chunks: [AudioChunk]? = nil,
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration? = nil
+    ) async throws {
+        let capturedSpeakerLabelsConfiguration = engine == .fluidAudio
+            ? (localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration.currentUserChoice())
+            : LocalSpeakerLabelsConfiguration()
+
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
         guard queuedCount < 20 else {
@@ -491,7 +596,8 @@ class BackgroundProcessingManager: ObservableObject {
             recordingName: recordingName,
             modelName: modelName,
             sourceAudioURL: sourceAudioURL,
-            chunks: chunks
+            chunks: chunks,
+            localSpeakerLabelsConfiguration: capturedSpeakerLabelsConfiguration
         )
 
         // For transcription jobs, check if we need to replace an existing job
@@ -656,7 +762,7 @@ class BackgroundProcessingManager: ObservableObject {
             engine: getEngineString(from: job.type),
             recordingURL: job.recordingURL,
             recordingName: job.recordingName,
-            modelName: job.modelName
+            modelName: job.persistedModelNameValue
         )
 
         // Update the job entry with initial status
@@ -694,7 +800,7 @@ class BackgroundProcessingManager: ObservableObject {
             engine: getEngineString(from: job.type),
             recordingURL: job.recordingURL,
             recordingName: job.recordingName,
-            modelName: job.modelName
+            modelName: job.persistedModelNameValue
         )
 
         // Update the job entry with initial status
@@ -929,9 +1035,10 @@ class BackgroundProcessingManager: ObservableObject {
         try Task.checkCancellation()
 
         // Freeze the two user choices once for this completed Parakeet job.
-        // Non-Fluid engines never read or apply this configuration.
+        // The choice was captured when the job was enqueued and survives
+        // status/progress copies and relaunch. Non-Fluid jobs fail closed off.
         let localSpeakerLabelsConfiguration = engine == .fluidAudio
-            ? LocalSpeakerLabelsConfiguration.currentUserChoice()
+            ? job.localSpeakerLabelsConfiguration
             : nil
 
         // Resolve the original recording before any transcription work can produce data to save.
@@ -984,7 +1091,10 @@ class BackgroundProcessingManager: ObservableObject {
 
         for (index, chunk) in chunks.enumerated() {
             try Task.checkCancellation()
-            EnhancedLogger.shared.logChunkingProgress(index + 1, totalChunks: totalChunks, fileURL: job.recordingURL)
+            EnhancedLogger.shared.logBackgroundProcessing(
+                "Transcription chunk progress: \(index + 1)/\(totalChunks)",
+                level: .debug
+            )
 
             // Update progress for this chunk
             let chunkProgress = 0.2 + (0.7 * Double(index) / Double(totalChunks))
@@ -1038,7 +1148,8 @@ class BackgroundProcessingManager: ObservableObject {
                 originalURL: job.recordingURL,
                 recordingName: job.recordingName,
                 recordingDate: Date(), // TODO: Get actual recording date
-                recordingId: recordingId
+                recordingId: recordingId,
+                engine: engine
             )
             var transcriptData = reassemblyResult.transcriptData
 
@@ -1059,8 +1170,14 @@ class BackgroundProcessingManager: ObservableObject {
                     to: baseResult,
                     configuration: configuration,
                     sourceAudioURL: audioURL,
-                    audioDuration: chunks.map(\.endTime).max() ?? 0
+                    audioDuration: chunks.map(\.endTime).max() ?? 0,
+                    unloadASRBeforeDiarization: {
+                        await MainActor.run {
+                            FluidAudioManager.shared.unloadModel()
+                        }
+                    }
                 )
+                try Task.checkCancellation()
                 speakerLabelWarning = labeledResult.speakerLabelWarning
 
                 if speakerLabelWarning == nil {
@@ -1072,7 +1189,8 @@ class BackgroundProcessingManager: ObservableObject {
             }
 
             // Save exactly once through the existing background persistence path.
-            try saveTranscript(transcriptData)
+            try Task.checkCancellation()
+            try saveTranscript(transcriptData, speakerLabelWarning: speakerLabelWarning)
         } else if let firstChunk = transcriptChunks.first {
             // Preserve the existing direct single-chunk save path for default-off
             // FluidAudio and for every non-Fluid engine.
@@ -1085,7 +1203,8 @@ class BackgroundProcessingManager: ObservableObject {
                 engine: engine
             )
 
-            try saveTranscript(transcriptData)
+            try Task.checkCancellation()
+            try saveTranscript(transcriptData, speakerLabelWarning: nil)
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
@@ -1135,15 +1254,15 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Verify chunk file exists and has content
         guard FileManager.default.fileExists(atPath: chunk.chunkURL.path) else {
-            let error = BackgroundProcessingError.fileNotFound("Chunk file not found: \(chunk.chunkURL.path)")
-            AppLog.shared.backgroundProcessing("Chunk file missing: \(chunk.chunkURL.lastPathComponent)", level: .error)
+            let error = BackgroundProcessingError.fileNotFound("A temporary audio chunk is unavailable")
+            AppLog.shared.backgroundProcessing("A temporary audio chunk is unavailable", level: .error)
             throw error
         }
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunk.chunkURL.path)[.size] as? Int64) ?? 0
         if fileSize == 0 {
-            let error = BackgroundProcessingError.invalidAudioFormat("Chunk file is empty: \(chunk.chunkURL.path)")
-            AppLog.shared.backgroundProcessing("Chunk file is empty: \(chunk.chunkURL.lastPathComponent)", level: .error)
+            let error = BackgroundProcessingError.invalidAudioFormat("A temporary audio chunk is empty")
+            AppLog.shared.backgroundProcessing("A temporary audio chunk is empty", level: .error)
             throw error
         }
 
@@ -1337,7 +1456,11 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    private func saveTranscript(_ transcriptData: TranscriptData) throws {
+    private func saveTranscript(
+        _ transcriptData: TranscriptData,
+        speakerLabelWarning: LocalSpeakerLabelWarning?
+    ) throws {
+        try Task.checkCancellation()
         let transcriptId = try persistBackgroundTranscript(
             transcriptData,
             using: enhancedFileManager.getCoordinator()
@@ -1348,7 +1471,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Call completion handler if set
         if let completionHandler = onTranscriptionCompleted,
            let currentJob {
-            completionHandler(transcriptData, currentJob)
+            completionHandler(transcriptData, currentJob, speakerLabelWarning)
         }
     }
 
@@ -2132,18 +2255,20 @@ class BackgroundProcessingManager: ObservableObject {
             processingStatus = .queued
         }
 
+        let restoredValues = ProcessingJob.restoredPersistenceValues(from: jobEntry.modelName)
         return ProcessingJob(
             id: id,
             type: type,
             recordingPath: recordingPath,
             recordingName: recordingName,
-            modelName: jobEntry.modelName,
+            modelName: restoredValues.modelName,
             status: processingStatus,
             progress: jobEntry.progress,
             startTime: jobEntry.startTime ?? Date(),
             completionTime: jobEntry.completionTime,
             chunks: nil,
-            error: jobEntry.error
+            error: jobEntry.error,
+            localSpeakerLabelsConfiguration: restoredValues.configuration
         )
     }
 
@@ -2740,6 +2865,7 @@ func persistBackgroundTranscript(
     _ transcriptData: TranscriptData,
     using appCoordinator: AppDataCoordinator?
 ) throws -> UUID {
+    try Task.checkCancellation()
     guard let appCoordinator else {
         throw BackgroundProcessingError.processingFailed(
             "App data coordinator is unavailable while saving the transcript"
@@ -2751,6 +2877,7 @@ func persistBackgroundTranscript(
         throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptData.recordingURL)
     }
 
+    try Task.checkCancellation()
     guard let transcriptId = appCoordinator.addTranscript(
         for: recordingId,
         segments: transcriptData.segments,
@@ -2760,7 +2887,7 @@ func persistBackgroundTranscript(
         confidence: transcriptData.confidence
     ) else {
         throw BackgroundProcessingError.processingFailed(
-            "Failed to persist the transcript for \(transcriptData.recordingName)"
+            "Failed to persist the completed transcript"
         )
     }
 
@@ -2809,8 +2936,8 @@ enum BackgroundProcessingError: LocalizedError {
             return "File not found: \(message)"
         case .invalidAudioFormat(let message):
             return "Invalid audio format: \(message)"
-        case .recordingIdentityUnavailable(let url):
-            return "Recording identity unavailable for \(url.lastPathComponent)"
+        case .recordingIdentityUnavailable:
+            return "Recording identity is unavailable for the selected audio source"
         }
     }
 }

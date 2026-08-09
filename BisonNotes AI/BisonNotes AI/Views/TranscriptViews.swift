@@ -1285,7 +1285,7 @@ struct TranscriptsView: View {
                 let sidecarURL = recordingURL.deletingPathExtension().appendingPathExtension(ext)
                 try? FileManager.default.removeItem(at: sidecarURL)
             }
-            AppLog.shared.transcription("Deleted dummy audio file: \(recordingURL.lastPathComponent)", level: .debug)
+            AppLog.shared.transcription("Deleted temporary audio placeholder", level: .debug)
         }
 
         // Check if there's an associated summary to preserve
@@ -1390,7 +1390,7 @@ struct TranscriptsView: View {
 
     private func setupTranscriptionCompletionCallback() {
         // Set up completion handler for BackgroundProcessingManager
-        backgroundProcessingManager.onTranscriptionCompleted = { _, job in
+        backgroundProcessingManager.onTranscriptionCompleted = { _, job, speakerLabelWarning in
             Task { @MainActor in
                 AppLog.shared.transcription("Background processing transcription completed for job")
 
@@ -1413,7 +1413,11 @@ struct TranscriptsView: View {
 
                     // Show completion alert to notify user transcription finished in background
                     if !self.isShowingAlert {
-                        self.completedTranscriptionText = "Transcription completed for: \(recording.recording.recordingName ?? "Unknown Recording")"
+                        let baseMessage = "Transcription completed for: "
+                            + (recording.recording.recordingName ?? "Unknown Recording")
+                        self.completedTranscriptionText = speakerLabelWarning.map {
+                            baseMessage + "\n\n" + $0.userVisibleMessage
+                        } ?? baseMessage
                         self.showingTranscriptionCompletionAlert = true
                     }
                 } else {
@@ -1447,6 +1451,7 @@ struct EditableTranscriptView: View {
     @State private var isGeneratingSummary = false
     @State private var showSummarySheet = false
     @State private var summaryGenerationError: String?
+    @State private var speakerLabelWarningMessage: String?
     @State private var summaryStateRefresh = false
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
@@ -1543,6 +1548,16 @@ struct EditableTranscriptView: View {
         } message: {
             Text(recordingRenameError ?? "Unknown error")
         }
+        .alert("Speaker Labels Unavailable", isPresented: Binding(
+            get: { speakerLabelWarningMessage != nil },
+            set: { if !$0 { speakerLabelWarningMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                speakerLabelWarningMessage = nil
+            }
+        } message: {
+            Text(speakerLabelWarningMessage ?? "Transcription completed without speaker labels.")
+        }
         .sheet(isPresented: $showingSpeakerEditor) {
             SpeakerEditingView(
                 speakerIds: uniqueSpeakers,
@@ -1598,12 +1613,14 @@ struct EditableTranscriptView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { notification in
             if let userInfo = notification.userInfo,
                let notificationURL = userInfo["recordingURL"] as? URL,
-               let segments = userInfo["segments"] as? [TranscriptSegment],
                let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
                notificationURL == recordingURL {
 
                 AppLog.shared.transcription("Received transcription rerun completion notification", level: .debug)
-                saveNewTranscriptToCoreData(segments: segments)
+                if let warningMessage = userInfo["speakerLabelWarning"] as? String {
+                    speakerLabelWarningMessage = warningMessage
+                }
+                refreshTranscriptFromCoreData()
                 isRerunningTranscription = false
                 AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
@@ -1904,7 +1921,7 @@ struct EditableTranscriptView: View {
                     return
                 }
 
-                AppLog.shared.transcription("Rerunning transcription for file: \(recordingURL.lastPathComponent)", level: .debug)
+                AppLog.shared.transcription("Rerunning transcription for the selected recording", level: .debug)
 
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
@@ -1947,9 +1964,17 @@ struct EditableTranscriptView: View {
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
-                        await MainActor.run {
+                        let replacement = TranscriptRerunReplacement(
+                            result: result,
+                            engine: selectedEngine
+                        )
+                        try Task.checkCancellation()
+                        try await MainActor.run {
+                            try Task.checkCancellation()
                             // Save the new transcript to Core Data first (this will replace the existing transcript)
-                            saveNewTranscriptToCoreData(segments: result.segments)
+                            saveNewTranscriptToCoreData(
+                                replacement: replacement
+                            )
 
                             AppLog.shared.transcription("Transcript UI updated with rerun results")
 
@@ -1974,23 +1999,22 @@ struct EditableTranscriptView: View {
         // Set up a temporary completion handler for the background processing manager
         let originalHandler = backgroundProcessingManager.onTranscriptionCompleted
 
-        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job in
+        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job, speakerLabelWarning in
             // Only handle completion for our specific recording
             if job.recordingURL == recordingURL {
                 Task { @MainActor in
                     AppLog.shared.transcription("Background processing transcription rerun completed")
 
-                    // Save the new transcript to Core Data and post notification
-                    AppLog.shared.transcription("Saving rerun transcript to Core Data...", level: .debug)
-
-                    // Post notification with the new segments
+                    // BackgroundProcessingManager already persisted this
+                    // replacement. Notify the view to refresh that one path.
+                    var userInfo: [String: Any] = ["recordingURL": recordingURL]
+                    if let speakerLabelWarning {
+                        userInfo["speakerLabelWarning"] = speakerLabelWarning.userVisibleMessage
+                    }
                     NotificationCenter.default.post(
                         name: NSNotification.Name("TranscriptionRerunCompleted"),
                         object: nil,
-                        userInfo: [
-                            "recordingURL": recordingURL,
-                            "segments": transcriptData.segments
-                        ]
+                        userInfo: userInfo
                     )
 
                     AppLog.shared.transcription("Posted transcription rerun completion notification", level: .debug)
@@ -2000,12 +2024,14 @@ struct EditableTranscriptView: View {
                 }
             } else {
                 // If it's not our recording, call the original handler
-                originalHandler?(transcriptData, job)
+                originalHandler?(transcriptData, job, speakerLabelWarning)
             }
         }
     }
 
-    private func saveNewTranscriptToCoreData(segments: [TranscriptSegment]) {
+    private func saveNewTranscriptToCoreData(
+        replacement: TranscriptRerunReplacement
+    ) {
         AppLog.shared.transcription("Saving new transcript to Core Data...", level: .debug)
 
         // We need to find and update the existing transcript in Core Data
@@ -2025,22 +2051,19 @@ struct EditableTranscriptView: View {
             // The Core Data system will update the existing transcript instead of creating a new one
             AppLog.shared.transcription("Replacing transcript for recording ID: \(recordingId)", level: .debug)
 
-            // Get the selected transcription engine
-            let engineString = UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
-            let engine = TranscriptionEngine(rawValue: engineString) ?? .fluidAudio
-
             // Add the new transcript
             let transcriptId = coordinator.addTranscript(
                 for: recordingId,
-                segments: segments,
-                speakerMappings: [:], // No speaker mappings needed
-                engine: engine,
+                segments: replacement.segments,
+                speakerMappings: replacement.speakerMappings,
+                engine: replacement.engine,
                 processingTime: 0.0, // We don't track this in reruns
                 confidence: 1.0
             )
 
             if transcriptId != nil {
                 AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
+                speakerLabelWarningMessage = replacement.speakerLabelWarning?.userVisibleMessage
 
                 // Immediately refresh the UI with the updated transcript data
                 refreshTranscriptFromCoreData()

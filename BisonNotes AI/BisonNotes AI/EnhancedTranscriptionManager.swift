@@ -131,7 +131,8 @@ struct LocalSpeakerLabelingCoordinator {
         to baseResult: TranscriptionResult,
         configuration: LocalSpeakerLabelsConfiguration,
         sourceAudioURL: URL,
-        audioDuration: TimeInterval
+        audioDuration: TimeInterval,
+        unloadASRBeforeDiarization: () async -> Void = {}
     ) async throws -> TranscriptionResult {
         guard configuration.isEnabled, baseResult.success else {
             return baseResult
@@ -152,6 +153,12 @@ struct LocalSpeakerLabelingCoordinator {
                 )
             )
         }
+
+        // The caller reaches this point only after the complete Parakeet ASR
+        // result (and any chunk reassembly) exists. Release Parakeet before a
+        // diarizer can be loaded so peak on-device model memory stays bounded.
+        await unloadASRBeforeDiarization()
+        try Task.checkCancellation()
 
         let status = await modelManager.modelStatus(for: configuration.method)
         try Task.checkCancellation()
@@ -176,7 +183,16 @@ struct LocalSpeakerLabelingCoordinator {
                 intervals: diarization.intervals,
                 audioDuration: diarization.audioDuration ?? audioDuration
             )
-            guard !labeling.segments.isEmpty || baseResult.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            try Task.checkCancellation()
+            guard labeling.didApplyLabels else {
+                return baseResult.with(
+                    speakerLabelWarning: labeling.warning ?? .timingUnavailable
+                )
+            }
+            let baseTextIsEmpty = baseResult.fullText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+            guard !labeling.segments.isEmpty || baseTextIsEmpty else {
                 return baseResult.with(speakerLabelWarning: .timingUnavailable)
             }
 
@@ -536,7 +552,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
-            AppLog.shared.transcription("File not found: \(url.path)", level: .error)
+            AppLog.shared.transcription("Transcription source file is unavailable", level: .error)
             throw TranscriptionError.fileNotFound
         }
 
@@ -623,7 +639,7 @@ if isWhisperAvailable {
             currentStatus = "Initializing native speech recognition transcription..."
         }
 
-        AppLog.shared.transcription("Starting native speech recognition for file: \(url.lastPathComponent), duration: \(duration)s")
+        AppLog.shared.transcription("Starting native speech recognition, duration: \(duration)s")
 
         // Request speech recognition authorization if needed
         let authStatus = await withCheckedContinuation { continuation in
@@ -1233,7 +1249,7 @@ for (index, chunk) in chunks.enumerated() {
         let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A)
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("chunk_\(UUID().uuidString).m4a")
 
-        AppLog.shared.transcription("Exporting chunk to: \(outputURL.lastPathComponent)", level: .debug)
+        AppLog.shared.transcription("Exporting temporary transcription chunk", level: .debug)
 
         exportSession?.outputURL = outputURL
         exportSession?.outputFileType = .m4a
@@ -1415,7 +1431,12 @@ return result
                 to: resultWithTiming,
                 configuration: configuration,
                 sourceAudioURL: url,
-                audioDuration: duration
+                audioDuration: duration,
+                unloadASRBeforeDiarization: {
+                    await MainActor.run {
+                        manager.unloadModel()
+                    }
+                }
             )
 
             await MainActor.run {

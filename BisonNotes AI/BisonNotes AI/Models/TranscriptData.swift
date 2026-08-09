@@ -134,3 +134,20 @@ public struct TranscriptData: Codable, Identifiable {
         )
     }
 }
+
+/// Metadata carried by the existing direct rerun replacement path. Keeping
+/// this as one value prevents a rerun from dropping labels, engine identity,
+/// or its visible recoverable warning while replacing transcript content.
+struct TranscriptRerunReplacement {
+    let segments: [TranscriptSegment]
+    let speakerMappings: [String: String]
+    let engine: TranscriptionEngine
+    let speakerLabelWarning: LocalSpeakerLabelWarning?
+
+    init(result: TranscriptionResult, engine: TranscriptionEngine) {
+        self.segments = result.segments
+        self.speakerMappings = result.speakerMappings ?? [:]
+        self.engine = engine
+        self.speakerLabelWarning = result.speakerLabelWarning
+    }
+}

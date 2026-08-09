@@ -166,8 +166,7 @@ struct AudioFileInfo {
     let channels: Int
 
     static func create(from url: URL) async throws -> AudioFileInfo {
-        AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
-        AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
+        AppLog.shared.chunking("AudioFileInfo.create - Analyzing audio source", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
 
         let asset = AVURLAsset(url: url)

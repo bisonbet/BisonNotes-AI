@@ -44,9 +44,14 @@ enum LocalDiarizationError: Error, LocalizedError, Sendable, Equatable {
 actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
     static let shared = LocalDiarizationManager()
 
+    private struct PreparationEntry {
+        let id: UUID
+        let task: Task<Void, Error>
+    }
+
     private let provider: any LocalDiarizationModelProvider
     private let maximumExperimentalDuration: TimeInterval
-    private var preparationTasks: [String: Task<Void, Error>] = [:]
+    private var preparationTasks: [String: PreparationEntry] = [:]
     private var statuses: [String: LocalDiarizationModelStatus] = [:]
 
     init(
@@ -59,13 +64,28 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
     }
 
     func modelStatus(for method: LocalDiarizationMethod) async -> LocalDiarizationModelStatus {
-        let ready = await provider.isReady(for: method)
         if let status = statuses[method.rawValue], status.state == .preparing {
             return status
         }
 
-        let state: LocalDiarizationModelState = ready ? .ready : .downloadRequired
-        let status = LocalDiarizationModelStatus(method: method, state: state, fractionCompleted: ready ? 1 : nil)
+        let ready = await provider.isReady(for: method)
+        if let status = statuses[method.rawValue], status.state == .preparing {
+            return status
+        }
+        let existingStatus = statuses[method.rawValue]
+        let state: LocalDiarizationModelState
+        if ready {
+            state = .ready
+        } else if existingStatus?.state == .failed || existingStatus?.state == .cancelled {
+            state = existingStatus?.state ?? .downloadRequired
+        } else {
+            state = .downloadRequired
+        }
+        let status = LocalDiarizationModelStatus(
+            method: method,
+            state: state,
+            fractionCompleted: ready ? 1 : nil
+        )
         statuses[method.rawValue] = status
         return status
     }
@@ -74,12 +94,15 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
         for method: LocalDiarizationMethod,
         progress: @escaping @Sendable (LocalDiarizationProgress) -> Void
     ) async throws {
-        if let existingTask = preparationTasks[method.rawValue] {
-            try await existingTask.value
+        let methodKey = method.rawValue
+        if let existing = preparationTasks[methodKey] {
+            try await existing.task.value
             return
         }
 
-        statuses[method.rawValue] = LocalDiarizationModelStatus(
+        let forceRedownload = statuses[methodKey]?.state == .failed
+        let preparationID = UUID()
+        statuses[methodKey] = LocalDiarizationModelStatus(
             method: method,
             state: .preparing,
             fractionCompleted: nil
@@ -88,14 +111,20 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
         let task = Task { [provider] in
             try await provider.prepare(
                 for: method,
-                forceRedownload: false,
+                forceRedownload: forceRedownload,
                 progressHandler: { progressValue in
                     progress(progressValue)
+                    Task {
+                        await self.recordPreparationProgress(
+                            progressValue,
+                            preparationID: preparationID
+                        )
+                    }
                 }
             )
         }
-        preparationTasks[method.rawValue] = task
-        defer { preparationTasks[method.rawValue] = nil }
+        preparationTasks[methodKey] = PreparationEntry(id: preparationID, task: task)
+        defer { clearPreparation(methodKey: methodKey, preparationID: preparationID) }
 
         do {
             try await withTaskCancellationHandler {
@@ -104,9 +133,12 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
                 task.cancel()
             }
             try Task.checkCancellation()
+            guard isCurrentPreparation(methodKey: methodKey, preparationID: preparationID) else {
+                throw CancellationError()
+            }
 
             guard await provider.isReady(for: method) else {
-                statuses[method.rawValue] = LocalDiarizationModelStatus(
+                statuses[methodKey] = LocalDiarizationModelStatus(
                     method: method,
                     state: .failed,
                     fractionCompleted: nil
@@ -114,31 +146,35 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
                 throw LocalDiarizationError.modelPreparationFailed(method)
             }
 
-            statuses[method.rawValue] = LocalDiarizationModelStatus(
+            statuses[methodKey] = LocalDiarizationModelStatus(
                 method: method,
                 state: .ready,
                 fractionCompleted: 1
             )
         } catch {
-            let state: LocalDiarizationModelState = error is CancellationError ? .cancelled : .failed
-            statuses[method.rawValue] = LocalDiarizationModelStatus(
-                method: method,
-                state: state,
-                fractionCompleted: nil
-            )
+            if isCurrentPreparation(methodKey: methodKey, preparationID: preparationID) {
+                let state: LocalDiarizationModelState = error is CancellationError ? .cancelled : .failed
+                statuses[methodKey] = LocalDiarizationModelStatus(
+                    method: method,
+                    state: state,
+                    fractionCompleted: nil
+                )
+            }
             throw error
         }
     }
 
     func cancelModelPreparation(for method: LocalDiarizationMethod) async {
-        preparationTasks[method.rawValue]?.cancel()
-        if preparationTasks[method.rawValue] != nil {
-            statuses[method.rawValue] = LocalDiarizationModelStatus(
-                method: method,
-                state: .cancelled,
-                fractionCompleted: nil
-            )
-        }
+        let methodKey = method.rawValue
+        guard let entry = preparationTasks[methodKey] else { return }
+        entry.task.cancel()
+        _ = await entry.task.result
+        clearPreparation(methodKey: methodKey, preparationID: entry.id)
+        statuses[methodKey] = LocalDiarizationModelStatus(
+            method: method,
+            state: .cancelled,
+            fractionCompleted: nil
+        )
     }
 
     /// Inference runners are created per complete-file call and cleaned up in
@@ -148,10 +184,14 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
     }
 
     func deleteModel(for method: LocalDiarizationMethod) async throws {
-        preparationTasks[method.rawValue]?.cancel()
-        preparationTasks[method.rawValue] = nil
+        let methodKey = method.rawValue
+        if let entry = preparationTasks[methodKey] {
+            entry.task.cancel()
+            _ = await entry.task.result
+            clearPreparation(methodKey: methodKey, preparationID: entry.id)
+        }
         try await provider.delete(for: method)
-        statuses[method.rawValue] = LocalDiarizationModelStatus(
+        statuses[methodKey] = LocalDiarizationModelStatus(
             method: method,
             state: .downloadRequired,
             fractionCompleted: nil
@@ -222,5 +262,31 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
         #else
         return 0
         #endif
+    }
+
+    private func recordPreparationProgress(
+        _ progress: LocalDiarizationProgress,
+        preparationID: UUID
+    ) {
+        let methodKey = progress.method.rawValue
+        guard preparationTasks[methodKey]?.id == preparationID,
+              statuses[methodKey]?.state == .preparing
+        else {
+            return
+        }
+        statuses[methodKey] = LocalDiarizationModelStatus(
+            method: progress.method,
+            state: .preparing,
+            fractionCompleted: progress.fractionCompleted
+        )
+    }
+
+    private func clearPreparation(methodKey: String, preparationID: UUID) {
+        guard preparationTasks[methodKey]?.id == preparationID else { return }
+        preparationTasks[methodKey] = nil
+    }
+
+    private func isCurrentPreparation(methodKey: String, preparationID: UUID) -> Bool {
+        preparationTasks[methodKey]?.id == preparationID
     }
 }

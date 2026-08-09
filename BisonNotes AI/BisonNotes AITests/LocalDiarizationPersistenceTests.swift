@@ -145,6 +145,131 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         XCTAssertFalse(keys.contains("localSpeakerLabelsBinary"))
     }
 
+    func testProcessingJobSnapshotSurvivesCodableStatusProgressAndRelaunchEnvelope() throws {
+        let configuration = LocalSpeakerLabelsConfiguration(
+            isEnabled: true,
+            method: .experimentalLSEEND
+        )
+        let job = ProcessingJob(
+            type: .transcription(engine: .fluidAudio),
+            recordingURL: tempDirectory.appendingPathComponent("snapshot.m4a"),
+            recordingName: "Snapshot",
+            modelName: "parakeet-v3",
+            localSpeakerLabelsConfiguration: configuration
+        )
+
+        let decoded = try JSONDecoder().decode(
+            ProcessingJob.self,
+            from: JSONEncoder().encode(job)
+        )
+        XCTAssertEqual(decoded.localSpeakerLabelsConfiguration, configuration)
+        XCTAssertEqual(job.withStatus(.processing).localSpeakerLabelsConfiguration, configuration)
+        XCTAssertEqual(job.withProgress(0.5).localSpeakerLabelsConfiguration, configuration)
+
+        let restored = ProcessingJob.restoredPersistenceValues(
+            from: job.persistedModelNameValue
+        )
+        XCTAssertEqual(restored.modelName, "parakeet-v3")
+        XCTAssertEqual(restored.configuration, configuration)
+    }
+
+    func testBackwardCorruptAndNonFluidJobsFailSpeakerLabelsClosed() throws {
+        let enabled = ProcessingJob(
+            type: .transcription(engine: .fluidAudio),
+            recordingURL: tempDirectory.appendingPathComponent("legacy.m4a"),
+            recordingName: "Legacy",
+            localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration(
+                isEnabled: true,
+                method: .experimentalLSEEND
+            )
+        )
+        let encoded = try JSONEncoder().encode(enabled)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "localSpeakerLabelsConfiguration")
+        let backwardDecoded = try JSONDecoder().decode(
+            ProcessingJob.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(backwardDecoded.localSpeakerLabelsConfiguration, LocalSpeakerLabelsConfiguration())
+
+        object["localSpeakerLabelsConfiguration"] = [
+            "isEnabled": true,
+            "method": "unknown-method"
+        ]
+        let corruptDecoded = try JSONDecoder().decode(
+            ProcessingJob.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(corruptDecoded.localSpeakerLabelsConfiguration, LocalSpeakerLabelsConfiguration())
+
+        let nonFluid = ProcessingJob(
+            type: .transcription(engine: .whisper),
+            recordingURL: tempDirectory.appendingPathComponent("non-fluid.m4a"),
+            recordingName: "Non Fluid",
+            localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration(isEnabled: true)
+        )
+        XCTAssertEqual(nonFluid.localSpeakerLabelsConfiguration, LocalSpeakerLabelsConfiguration())
+
+        let legacyPersistence = ProcessingJob.restoredPersistenceValues(from: "legacy-model")
+        XCTAssertEqual(legacyPersistence.modelName, "legacy-model")
+        XCTAssertEqual(legacyPersistence.configuration, LocalSpeakerLabelsConfiguration())
+    }
+
+    func testCancellationImmediatelyBeforePersistenceWritesNoPartialLabels() async throws {
+        let recordingID = try makeRecording(named: "Late Cancellation")
+        let transcriptData = TranscriptData(
+            recordingId: recordingID,
+            recordingURL: tempDirectory.appendingPathComponent("late-cancel.m4a"),
+            recordingName: "Late Cancellation",
+            recordingDate: Date(),
+            segments: [
+                TranscriptSegment(speaker: "speaker_1", text: "Do not save", startTime: 0, endTime: 1)
+            ],
+            speakerMappings: ["speaker_1": "Speaker 1"],
+            engine: .fluidAudio
+        )
+
+        let saveTask = Task { @MainActor in
+            withUnsafeCurrentTask { task in
+                task?.cancel()
+            }
+            return try persistBackgroundTranscript(transcriptData, using: appCoordinator)
+        }
+
+        do {
+            _ = try await saveTask.value
+            XCTFail("A cancellation immediately before persistence must not save labels")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertNil(appCoordinator.getTranscriptData(for: recordingID))
+    }
+
+    func testDirectRerunReplacementCarriesMappingsEngineAndVisibleWarning() {
+        let result = TranscriptionResult(
+            fullText: "Hello world",
+            segments: [
+                TranscriptSegment(speaker: "speaker_1", text: "Hello world", startTime: 0, endTime: 1)
+            ],
+            processingTime: 1,
+            chunkCount: 1,
+            success: true,
+            error: nil,
+            speakerMappings: ["speaker_1": "Speaker 1"],
+            speakerLabelWarning: .timingUnavailable
+        )
+
+        let replacement = TranscriptRerunReplacement(result: result, engine: .fluidAudio)
+
+        XCTAssertEqual(replacement.segments.map(\.speaker), ["speaker_1"])
+        XCTAssertEqual(replacement.speakerMappings, ["speaker_1": "Speaker 1"])
+        XCTAssertEqual(replacement.engine, .fluidAudio)
+        XCTAssertEqual(replacement.speakerLabelWarning, .timingUnavailable)
+        XCTAssertFalse(replacement.speakerLabelWarning?.userVisibleMessage.isEmpty ?? true)
+    }
+
     private func makeRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)

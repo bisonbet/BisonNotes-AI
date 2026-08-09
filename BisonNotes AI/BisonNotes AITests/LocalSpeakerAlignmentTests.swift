@@ -16,10 +16,119 @@ final class LocalSpeakerAlignmentTests: XCTestCase {
         let words = SpeakerTranscriptAligner.reconstructWords(from: tokens)
 
         XCTAssertEqual(words.map(\.text), ["Hello", "world,", "however!"])
-        XCTAssertEqual(words.map(\.hasLeadingSpace), [false, true, true])
+        XCTAssertEqual(words.map(\.hasLeadingSpace), [true, true, true])
         XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: words), "Hello world, however!")
     }
+}
 
+extension LocalSpeakerAlignmentTests {
+    func testPreservesFirstWordBoundaryAcrossIndependentlyReconstructedChunks() {
+        let firstChunk = SpeakerTranscriptAligner.reconstructWords(
+            from: [TimedTranscriptToken(text: "▁alpha", startTime: 0, endTime: 0.2)]
+        )
+        let secondChunk = SpeakerTranscriptAligner.reconstructWords(
+            from: [TimedTranscriptToken(text: "▁beta", startTime: 0, endTime: 0.2)]
+        )
+
+        XCTAssertEqual(firstChunk.first?.hasLeadingSpace, true)
+        XCTAssertEqual(secondChunk.first?.hasLeadingSpace, true)
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: firstChunk), "alpha")
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: secondChunk), "beta")
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: firstChunk + secondChunk), "alpha beta")
+    }
+
+    func testReconstructsCurrencyAsAPrefixInsteadOfClosingPunctuation() {
+        let words = SpeakerTranscriptAligner.reconstructWords(
+            from: [
+                TimedTranscriptToken(text: "▁cost"),
+                TimedTranscriptToken(text: "▁$"),
+                TimedTranscriptToken(text: "100"),
+                TimedTranscriptToken(text: "▁today"),
+                TimedTranscriptToken(text: ".")
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text), ["cost", "$100", "today."])
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: words), "cost $100 today.")
+    }
+
+    func testReconstructsParenthesesAsPairedPunctuation() {
+        let words = SpeakerTranscriptAligner.reconstructWords(
+            from: [
+                TimedTranscriptToken(text: "▁say"),
+                TimedTranscriptToken(text: "▁("),
+                TimedTranscriptToken(text: "hello"),
+                TimedTranscriptToken(text: ")"),
+                TimedTranscriptToken(text: "▁now")
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text), ["say", "(hello)", "now"])
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: words), "say (hello) now")
+    }
+
+    func testReconstructsPairedQuotesDeterministically() {
+        let words = SpeakerTranscriptAligner.reconstructWords(
+            from: [
+                TimedTranscriptToken(text: "▁She"),
+                TimedTranscriptToken(text: "▁said"),
+                TimedTranscriptToken(text: "▁“"),
+                TimedTranscriptToken(text: "hello"),
+                TimedTranscriptToken(text: "”"),
+                TimedTranscriptToken(text: "▁and"),
+                TimedTranscriptToken(text: "▁\""),
+                TimedTranscriptToken(text: "goodbye"),
+                TimedTranscriptToken(text: "\""),
+                TimedTranscriptToken(text: ".")
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text), ["She", "said", "“hello”", "and", "\"goodbye\"."])
+        XCTAssertEqual(
+            SpeakerTranscriptAligner.plainText(from: words),
+            "She said “hello” and \"goodbye\"."
+        )
+    }
+
+    func testReconstructsMultilingualOpeningAndClosingPunctuation() {
+        let words = SpeakerTranscriptAligner.reconstructWords(
+            from: [
+                TimedTranscriptToken(text: "▁¿"),
+                TimedTranscriptToken(text: "Qué"),
+                TimedTranscriptToken(text: "?"),
+                TimedTranscriptToken(text: "▁「"),
+                TimedTranscriptToken(text: "こんにちは"),
+                TimedTranscriptToken(text: "」"),
+                TimedTranscriptToken(text: "▁。")
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text), ["¿Qué?", "「こんにちは」。"])
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: words), "¿Qué? 「こんにちは」。")
+    }
+
+    func testStandaloneSentencePieceBoundaryStartsTheNextWord() {
+        let words = SpeakerTranscriptAligner.reconstructWords(
+            from: [
+                TimedTranscriptToken(text: "▁"),
+                TimedTranscriptToken(text: "$"),
+                TimedTranscriptToken(text: "100"),
+                TimedTranscriptToken(text: "▁value"),
+                TimedTranscriptToken(text: "▁"),
+                TimedTranscriptToken(text: "("),
+                TimedTranscriptToken(text: "test"),
+                TimedTranscriptToken(text: ")"),
+                TimedTranscriptToken(text: "▁")
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text), ["$100", "value", "(test)"])
+        XCTAssertEqual(words.map(\.hasLeadingSpace), [true, true, true])
+        XCTAssertEqual(SpeakerTranscriptAligner.plainText(from: words), "$100 value (test)")
+    }
+}
+
+extension LocalSpeakerAlignmentTests {
     func testPreservesOrderAndDoesNotDropWords() {
         let words = [
             word("first", 0, 0.2),
@@ -130,13 +239,38 @@ final class LocalSpeakerAlignmentTests: XCTestCase {
         let empty = SpeakerTranscriptAligner().align(words: [], intervals: [], audioDuration: 10)
         XCTAssertTrue(empty.segments.isEmpty)
         XCTAssertTrue(empty.normalizedIntervals.isEmpty)
+        XCTAssertTrue(empty.didApplyLabels)
 
-        let unknown = SpeakerTranscriptAligner().align(
-            words: [word("text", 1, 2)],
-            intervals: [],
-            audioDuration: 10
-        )
-        XCTAssertEqual(unknown.segments.single?.speakerID, "Unknown")
+        for timeline in [
+            [LocalDiarizationInterval](),
+            [interval("", 0, 1), interval("speaker", .nan, .infinity)]
+        ] {
+            let unlabeled = SpeakerTranscriptAligner().align(
+                words: [word("text", 1, 2)],
+                intervals: timeline,
+                audioDuration: 10
+            )
+            XCTAssertFalse(unlabeled.didApplyLabels)
+            XCTAssertEqual(unlabeled.warning, .timingUnavailable)
+            XCTAssertTrue(unlabeled.segments.isEmpty)
+            XCTAssertTrue(unlabeled.normalizedIntervals.isEmpty)
+        }
+    }
+
+    func testNearEqualIntervalStartsHaveStrictDeterministicOrder() {
+        let intervals = [
+            interval("middle", 0.000_000_8, 1.2),
+            interval("earliest", 0, 1),
+            interval("latest", 0.000_001_6, 1.4)
+        ]
+        let expectedStarts = [0, 0.000_000_8, 0.000_001_6]
+        let expectedSpeakerIDs = ["speaker_1", "speaker_2", "speaker_3"]
+
+        for _ in 0..<100 {
+            let result = align(words: [word("text", 0.2, 0.3)], intervals: intervals)
+            XCTAssertEqual(result.normalizedIntervals.map(\.startTime), expectedStarts)
+            XCTAssertEqual(result.normalizedIntervals.map(\.speakerID), expectedSpeakerIDs)
+        }
     }
 
     func testNilAndMalformedTimingsRemainInOrderAsUnknown() {

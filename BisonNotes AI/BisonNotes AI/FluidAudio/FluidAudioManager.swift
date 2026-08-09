@@ -106,7 +106,7 @@ final class FluidAudioManager: ObservableObject {
         startNetworkMonitoring()
     }
 
-    private static func fluidAudioDirectory() -> URL? {
+    nonisolated private static func fluidAudioDirectory() -> URL? {
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
@@ -133,18 +133,22 @@ final class FluidAudioManager: ObservableObject {
         #endif
     }
 
-    private static func deleteModelFiles(for version: FluidAudioModelInfo.ModelVersion) {
+    nonisolated private static func deleteModelFiles(for version: FluidAudioModelInfo.ModelVersion) {
         #if canImport(FluidAudio)
         let modelDir = AsrModels.defaultCacheDirectory(for: asrModelVersion(for: version))
-        try? FileManager.default.removeItem(at: modelDir)
+        try? FluidAudioModelInfo.deleteCacheDirectory(at: modelDir)
         #else
         guard let modelsDir = fluidAudioDirectory()?.appendingPathComponent("Models") else { return }
-        try? FileManager.default.removeItem(at: modelsDir.appendingPathComponent(version.modelFolderName))
+        try? FluidAudioModelInfo.deleteCacheDirectory(
+            at: modelsDir.appendingPathComponent(version.modelFolderName)
+        )
         #endif
     }
 
     #if canImport(FluidAudio)
-    private static func asrModelVersion(for version: FluidAudioModelInfo.ModelVersion) -> AsrModelVersion {
+    nonisolated private static func asrModelVersion(
+        for version: FluidAudioModelInfo.ModelVersion
+    ) -> AsrModelVersion {
         switch version {
         case .v2:
             return .v2
@@ -374,22 +378,31 @@ final class FluidAudioManager: ObservableObject {
 
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion
         AppLog.shared.transcription("Parakeet download starting for \(selectedVersion.rawValue) (stall timeout \(Int(Self.downloadStallTimeoutSeconds))s)")
-        if !isModelReady {
-            Self.deleteModelFiles(for: selectedVersion)
-        }
+        let shouldClearSelectedCache = !isModelReady
 
         // Wrap in a Task so we can support cancellation
         let task = Task { () -> AsrModels in
-            let progressHandler = Self.makeDownloadProgressHandler()
-            let models: AsrModels
-            switch selectedVersion {
-            case .v2:
-                models = try await AsrModels.downloadAndLoad(version: .v2, progressHandler: progressHandler)
-            case .v3:
-                models = try await AsrModels.downloadAndLoad(version: .v3, progressHandler: progressHandler)
+            try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .online) {
+                if shouldClearSelectedCache {
+                    Self.deleteModelFiles(for: selectedVersion)
+                }
+                let progressHandler = Self.makeDownloadProgressHandler()
+                let models: AsrModels
+                switch selectedVersion {
+                case .v2:
+                    models = try await AsrModels.downloadAndLoad(
+                        version: .v2,
+                        progressHandler: progressHandler
+                    )
+                case .v3:
+                    models = try await AsrModels.downloadAndLoad(
+                        version: .v3,
+                        progressHandler: progressHandler
+                    )
+                }
+                try Task.checkCancellation()
+                return models
             }
-            try Task.checkCancellation()
-            return models
         }
         downloadTask = task
 
@@ -510,7 +523,7 @@ final class FluidAudioManager: ObservableObject {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw TranscriptionError.fluidAudioTranscriptionFailed(
                 NSError(domain: "FluidAudioManager", code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Audio file not found at \(audioURL.path)"])
+                        userInfo: [NSLocalizedDescriptionKey: "Parakeet audio file is unavailable."])
             )
         }
 
@@ -572,10 +585,7 @@ final class FluidAudioManager: ObservableObject {
             }
             return FluidAudioTranscriptionOutput(result: transcription, timedWords: timedWords)
         } catch {
-            let detailedError = Self.detailedFluidAudioError(
-                error,
-                originalURL: audioURL
-            )
+            let detailedError = Self.detailedFluidAudioError(error)
             AppLog.shared.transcription(
                 "FluidAudio Parakeet transcription failed: \(detailedError.localizedDescription)",
                 level: .error
@@ -599,15 +609,13 @@ final class FluidAudioManager: ObservableObject {
             throw TranscriptionError.fluidAudioNotReady
         }
 
-        let previousOfflineMode = ModelHub.offlineMode
-        ModelHub.offlineMode = true
-        defer { ModelHub.offlineMode = previousOfflineMode }
-
-        let models = try await AsrModels.load(
-            from: cacheDirectory,
-            version: asrVersion,
-            encoderPrecision: .int8
-        )
+        let models = try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) {
+            try await AsrModels.load(
+                from: cacheDirectory,
+                version: asrVersion,
+                encoderPrecision: .int8
+            )
+        }
         try Task.checkCancellation()
         asrManager = AsrManager(config: Self.parakeetASRConfig, models: models)
         loadedModelVersion = selectedVersion
@@ -620,24 +628,25 @@ final class FluidAudioManager: ObservableObject {
             let duration = try await asset.load(.duration).seconds
             return duration.isFinite && duration > 0 ? duration : 0
         } catch {
-            AppLog.shared.transcription("Could not read Parakeet input duration: \(error.localizedDescription)", level: .debug)
+            let nsError = error as NSError
+            AppLog.shared.transcription(
+                "Could not read Parakeet input duration (\(nsError.domain), code \(nsError.code))",
+                level: .debug
+            )
             return 0
         }
     }
 
-    private static func detailedFluidAudioError(
-        _ error: Error,
-        originalURL: URL
-    ) -> NSError {
+    private static func detailedFluidAudioError(_ error: Error) -> NSError {
         let nsError = error as NSError
-        let message = "Parakeet SDK transcription failed for \(originalURL.lastPathComponent): \(nsError.domain) \(nsError.code) - \(nsError.localizedDescription)"
+        let message = "Parakeet SDK transcription failed (\(nsError.domain), code \(nsError.code))."
         return NSError(
             domain: "FluidAudioManager.Transcription",
             code: nsError.code,
             userInfo: [
                 NSLocalizedDescriptionKey: message,
-                NSUnderlyingErrorKey: nsError,
-                "originalPath": originalURL.path
+                "underlyingDomain": nsError.domain,
+                "underlyingCode": nsError.code
             ]
         )
     }

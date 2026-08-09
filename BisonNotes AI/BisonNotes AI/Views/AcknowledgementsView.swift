@@ -59,7 +59,15 @@ struct AcknowledgementsView: View {
                         }
                     }
                 } footer: {
-                    Text("These are brought in through the app's direct and transitive dependencies. All dependencies are MIT or Apache 2.0 licensed. See each project repository for full terms.")
+                    Text(
+                        "These are brought in through the app's direct and transitive software dependencies. "
+                            + "The software dependencies are MIT or Apache 2.0 licensed as shown; see each "
+                            + "repository for terms."
+                    )
+                }
+
+                Section("Downloaded Model Assets") {
+                    modelAssetLinks
                 }
             }
             .scrollContentBackground(.hidden)
@@ -148,11 +156,16 @@ struct AcknowledgementsView: View {
 
                     Text(
                         "These projects arrive through the direct dependencies above. "
-                            + "Each is licensed under MIT or Apache 2.0; follow its repository link for complete terms."
+                            + "The software dependencies are licensed as shown; follow each repository link "
+                            + "for complete terms."
                     )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                acknowledgementCard(title: "Downloaded Model Assets", systemImage: "arrow.down.circle") {
+                    modelAssetLinks
                 }
             }
             .frame(maxWidth: 680)
@@ -183,7 +196,57 @@ struct AcknowledgementsView: View {
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         }
     }
+
     #endif
+
+    @ViewBuilder
+    private var modelAssetLinks: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(
+                "Speaker-label model assets are downloaded separately from software dependencies and are not bundled "
+                    + "application code."
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Link(
+                "Offline VBx / Pyannote Core ML assets — CC BY 4.0 parent Pyannote; FluidAudio SDK Apache 2.0",
+                destination: URL(string: "https://huggingface.co/FluidInference/speaker-diarization-coreml")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Link(
+                "LS-EEND DIHARD3 Core ML assets — MIT; upstream dataset terms remain",
+                destination: URL(string: "https://huggingface.co/FluidInference/ls-eend-coreml")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Link(
+                "LS-EEND paper — Long-Form Streaming End-to-End Neural Diarization",
+                destination: URL(string: "https://arxiv.org/abs/2410.06670")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Link(
+                "LS-EEND source project — FS-EEND",
+                destination: URL(string: "https://github.com/Audio-WestlakeU/FS-EEND")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Text(
+                "Retain the LS-EEND original paper/source credits and upstream dataset terms from the model card. "
+                    + "BisonNotes does not redistribute evaluation fixtures."
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 }
 
 private struct DependencyCard: Identifiable {
@@ -227,7 +290,8 @@ private let directDependencies: [DependencyCard] = [
     ),
     DependencyCard(
         name: "MLX Swift / MLX Swift LM",
-        description: "Apple Silicon ML framework and language-model utilities used for on-device summarization with Ternary Bonsai models.",
+        description: "Apple Silicon ML framework and language-model utilities used for on-device summarization "
+            + "with Ternary Bonsai models.",
         license: "MIT",
         linkText: "ml-explore/mlx-swift + mlx-swift-lm",
         url: URL(string: "https://github.com/ml-explore/mlx-swift")!
@@ -254,17 +318,24 @@ private let transitiveDependencyGroups: [DependencyGroup] = [
         projects: [
             TransitiveProject(name: "Swift NIO", url: URL(string: "https://github.com/apple/swift-nio")!),
             TransitiveProject(name: "Swift Crypto", url: URL(string: "https://github.com/apple/swift-crypto")!),
-            TransitiveProject(name: "Swift Collections", url: URL(string: "https://github.com/apple/swift-collections")!),
+            TransitiveProject(
+                name: "Swift Collections", url: URL(string: "https://github.com/apple/swift-collections")!
+            ),
             TransitiveProject(name: "Swift Atomics", url: URL(string: "https://github.com/apple/swift-atomics")!),
             TransitiveProject(name: "Swift System", url: URL(string: "https://github.com/apple/swift-system")!),
             TransitiveProject(name: "Swift Numerics", url: URL(string: "https://github.com/apple/swift-numerics")!),
             TransitiveProject(name: "Swift ASN1", url: URL(string: "https://github.com/apple/swift-asn1")!),
             TransitiveProject(name: "Swift Jinja", url: URL(string: "https://github.com/huggingface/swift-jinja")!),
-            TransitiveProject(name: "Swift HuggingFace", url: URL(string: "https://github.com/huggingface/swift-huggingface")!),
+            TransitiveProject(
+                name: "Swift HuggingFace", url: URL(string: "https://github.com/huggingface/swift-huggingface")!
+            ),
             TransitiveProject(name: "SwiftUI Math", url: URL(string: "https://github.com/gonzalezreal/swiftui-math")!),
             TransitiveProject(name: "EventSource", url: URL(string: "https://github.com/mattt/EventSource")!),
             TransitiveProject(name: "yyjson", url: URL(string: "https://github.com/ibireme/yyjson")!),
-            TransitiveProject(name: "Swift Concurrency Extras", url: URL(string: "https://github.com/pointfreeco/swift-concurrency-extras")!)
+            TransitiveProject(
+                name: "Swift Concurrency Extras",
+                url: URL(string: "https://github.com/pointfreeco/swift-concurrency-extras")!
+            )
         ]
     )
 ]

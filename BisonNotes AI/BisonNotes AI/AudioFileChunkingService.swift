@@ -27,10 +27,10 @@ class AudioFileChunkingService: ObservableObject {
 
     /// Determines if a file needs chunking based on the transcription service
     func shouldChunkFile(_ url: URL, for engine: TranscriptionEngine) async throws -> Bool {
-        AppLog.shared.chunking("shouldChunkFile - Checking: \(url.lastPathComponent) for engine: \(engine.rawValue)", level: .debug)
+        AppLog.shared.chunking("shouldChunkFile - Checking source for engine: \(engine.rawValue)", level: .debug)
 
         guard fileManager.fileExists(atPath: url.path) else {
-            AppLog.shared.chunking("shouldChunkFile - File not found: \(url.path)", level: .error)
+            AppLog.shared.chunking("shouldChunkFile - Source file not found", level: .error)
             throw AudioChunkingError.fileNotFound
         }
 
@@ -66,7 +66,7 @@ class AudioFileChunkingService: ObservableObject {
 
         // Prevent recursive chunking - if this is already a chunk file, don't chunk it again
         if url.lastPathComponent.contains("chunk_") {
-            AppLog.shared.chunking("Skipping chunking for already chunked file: \(url.lastPathComponent)")
+            AppLog.shared.chunking("Skipping chunking for an already chunked source")
             let fileInfo = try await AudioFileInfo.create(from: url)
             let singleChunk = AudioChunk(
                 originalURL: url,
@@ -97,7 +97,10 @@ class AudioFileChunkingService: ObservableObject {
             let config = ChunkingConfig.config(for: engine)
             let fileInfo = try await AudioFileInfo.create(from: url)
 
-            EnhancedLogger.shared.logChunkingStart(url, strategy: config.strategy)
+            EnhancedLogger.shared.logChunking(
+                "Starting chunking with strategy: \(config.strategy)",
+                level: .debug
+            )
             EnhancedLogger.shared.logChunking("Duration: \(fileInfo.duration)s, Size: \(fileInfo.fileSize) bytes", level: .debug)
 
             currentStatus = "Checking if chunking is needed..."
@@ -181,7 +184,14 @@ class AudioFileChunkingService: ObservableObject {
     }
 
     /// Reassembles transcript chunks into a complete TranscriptData object
-    func reassembleTranscript(from chunks: [TranscriptChunk], originalURL: URL, recordingName: String, recordingDate: Date, recordingId: UUID) async throws -> ReassemblyResult {
+    func reassembleTranscript(
+        from chunks: [TranscriptChunk],
+        originalURL: URL,
+        recordingName: String,
+        recordingDate: Date,
+        recordingId: UUID,
+        engine: TranscriptionEngine? = nil
+    ) async throws -> ReassemblyResult {
         let startTime = Date()
 
         AppLog.shared.chunking("Reassembling transcript from \(chunks.count) chunks")
@@ -248,7 +258,8 @@ class AudioFileChunkingService: ObservableObject {
             recordingName: recordingName,
             recordingDate: recordingDate,
             segments: allSegments,
-            speakerMappings: speakerMappings
+            speakerMappings: speakerMappings,
+            engine: engine
         )
 
         let reassemblyTime = Date().timeIntervalSince(startTime)
@@ -305,11 +316,11 @@ class AudioFileChunkingService: ObservableObject {
                 do {
                     if fileManager.fileExists(atPath: chunk.chunkURL.path) {
                         try fileManager.removeItem(at: chunk.chunkURL)
-                        AppLog.shared.chunking("Deleted chunk: \(chunk.chunkURL.lastPathComponent)", level: .debug)
+                        AppLog.shared.chunking("Deleted temporary audio chunk", level: .debug)
                         deletedCount += 1
                     }
                 } catch {
-                    AppLog.shared.chunking("Failed to delete chunk \(chunk.chunkURL.lastPathComponent): \(error)", level: .error)
+                    AppLog.shared.chunking("Failed to delete temporary audio chunk: \(error)", level: .error)
                     errors.append(error)
                 }
             }
@@ -344,14 +355,14 @@ class AudioFileChunkingService: ObservableObject {
     func validateChunks(_ chunks: [AudioChunk]) async throws -> Bool {
         for chunk in chunks {
             guard fileManager.fileExists(atPath: chunk.chunkURL.path) else {
-                throw AudioChunkingError.chunkingFailed("Chunk file not found: \(chunk.chunkURL.lastPathComponent)")
+                throw AudioChunkingError.chunkingFailed("A temporary audio chunk is unavailable")
             }
 
             // Verify chunk is readable
             do {
                 _ = try Data(contentsOf: chunk.chunkURL)
             } catch {
-                throw AudioChunkingError.chunkingFailed("Chunk file not readable: \(chunk.chunkURL.lastPathComponent)")
+                throw AudioChunkingError.chunkingFailed("A temporary audio chunk is unreadable")
             }
         }
 
@@ -364,7 +375,7 @@ class AudioFileChunkingService: ObservableObject {
         if !fileManager.fileExists(atPath: url.path) {
             do {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-                AppLog.shared.chunking("Created temp directory: \(url.path)", level: .debug)
+                AppLog.shared.chunking("Created audio chunk temporary directory", level: .debug)
             } catch {
                 AppLog.shared.chunking("Failed to create temp directory: \(error)", level: .error)
                 throw AudioChunkingError.tempDirectoryCreationFailed
@@ -383,7 +394,7 @@ class AudioFileChunkingService: ObservableObject {
 
         if contents.isEmpty || allChunkFiles {
             try fileManager.removeItem(at: tempDir)
-            AppLog.shared.chunking("Cleaned up temp directory: \(tempDir.lastPathComponent)", level: .debug)
+            AppLog.shared.chunking("Cleaned up audio chunk temporary directory", level: .debug)
         }
     }
 

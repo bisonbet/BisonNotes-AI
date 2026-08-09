@@ -169,6 +169,7 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
         let failureSnapshot = await failureFake.snapshot()
         XCTAssertEqual(failureSnapshot.diarizeCallCount, 1)
         XCTAssertEqual(failureSnapshot.unloadCallCount, 1)
+
     }
 
     func testLSEENDOverOneHourIsGuardedWithoutInvokingRunner() async throws {
@@ -278,24 +279,71 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
     }
 }
 
+extension LocalDiarizationOrchestrationTests {
+    func testASRCompletesAndUnloadsBeforeDiarizerStatusAndCompleteFileRun() async throws {
+        let fake = OrchestrationFakeLocalDiarizationService()
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        await fake.recordEvent("asrComplete")
+        _ = try await coordinator.apply(
+            to: makeResult(),
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: URL(fileURLWithPath: "/complete-source.m4a"),
+            audioDuration: 2,
+            unloadASRBeforeDiarization: { await fake.recordEvent("unloadASR") }
+        )
+        let recordedEvents = await fake.snapshot().events
+        XCTAssertEqual(recordedEvents, ["asrComplete", "unloadASR", "modelStatus", "diarize", "unloadDiarizer"])
+    }
+
+    func testInvalidTimelineReturnsBaseTranscriptWithTimingWarning() async throws {
+        let invalidInterval = LocalDiarizationInterval(
+            speakerID: "raw-speaker",
+            startTime: .nan,
+            endTime: .infinity
+        )
+        let fake = OrchestrationFakeLocalDiarizationService(intervals: [invalidInterval])
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        let result = try await coordinator.apply(
+            to: makeResult(),
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true),
+            sourceAudioURL: URL(fileURLWithPath: "/complete-source.m4a"),
+            audioDuration: 2
+        )
+        XCTAssertEqual(result.speakerLabelWarning, .timingUnavailable)
+        XCTAssertEqual(result.segments.map(\.speaker), [""])
+        XCTAssertEqual(result.fullText, "hello world")
+    }
+}
+
 private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelManaging, LocalDiarizing {
     private let isReady: Bool
     private let shouldFail: Bool
     private let shouldCancel: Bool
+    private let intervals: [LocalDiarizationInterval]
     private(set) var diarizeCallCount = 0
     private(set) var modelStatusCallCount = 0
     private(set) var unloadCallCount = 0
     private(set) var methods: [LocalDiarizationMethod] = []
     private(set) var urls: [URL] = []
+    private(set) var events: [String] = []
 
-    init(isReady: Bool = true, shouldFail: Bool = false, shouldCancel: Bool = false) {
+    init(
+        isReady: Bool = true,
+        shouldFail: Bool = false,
+        shouldCancel: Bool = false,
+        intervals: [LocalDiarizationInterval] = [
+            LocalDiarizationInterval(speakerID: "raw-speaker", startTime: 0, endTime: 2)
+        ]
+    ) {
         self.isReady = isReady
         self.shouldFail = shouldFail
         self.shouldCancel = shouldCancel
+        self.intervals = intervals
     }
 
     func modelStatus(for method: LocalDiarizationMethod) async -> LocalDiarizationModelStatus {
         modelStatusCallCount += 1
+        events.append("modelStatus")
         return LocalDiarizationModelStatus(
             method: method,
             state: isReady ? .ready : .downloadRequired,
@@ -314,6 +362,7 @@ private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelMan
 
     func unloadModel(for method: LocalDiarizationMethod) async {
         unloadCallCount += 1
+        events.append("unloadDiarizer")
     }
 
     func deleteModel(for method: LocalDiarizationMethod) async throws {}
@@ -327,11 +376,12 @@ private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelMan
         diarizeCallCount += 1
         methods.append(method)
         urls.append(audioURL)
+        events.append("diarize")
         if shouldCancel { throw CancellationError() }
         if shouldFail { throw FakeDiarizerError.failed }
         progress(LocalDiarizationProgress(method: method, phase: .completed, fractionCompleted: 1))
         return LocalDiarizationResult(
-            intervals: [LocalDiarizationInterval(speakerID: "raw-speaker", startTime: 0, endTime: audioDuration ?? 1)],
+            intervals: intervals,
             audioDuration: audioDuration
         )
     }
@@ -342,8 +392,13 @@ private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelMan
             modelStatusCallCount: modelStatusCallCount,
             unloadCallCount: unloadCallCount,
             methods: methods,
-            urls: urls
+            urls: urls,
+            events: events
         )
+    }
+
+    func recordEvent(_ event: String) {
+        events.append(event)
     }
 
     struct Snapshot {
@@ -352,6 +407,7 @@ private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelMan
         let unloadCallCount: Int
         let methods: [LocalDiarizationMethod]
         let urls: [URL]
+        let events: [String]
     }
 }
 

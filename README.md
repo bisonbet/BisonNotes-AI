@@ -65,6 +65,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1
 - Archive (native macOS): `xcodebuild archive -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI macOS" -destination 'generic/platform=macOS' -configuration Release`
 - Use the watch app scheme to run the watch target. SwiftPM resolves automatically in Xcode.
 - Release validation should follow [docs/testing-regimen.md](docs/testing-regimen.md), including app/watch test plans, native macOS coverage, and manual hardware checks for microphone/device switching, watch transfer, iCloud, Parakeet, share import, Control Center, Action Button, Mac meeting audio, archive restore, and long hidden-window processing.
+- Local Speaker Labels are opt-in and default off. They run once on the complete source audio after Parakeet ASR and transcript reassembly, never during Live Transcription or in real time. Audio remains local; the first speaker-model download is an explicit HTTPS action, and cached models can be used offline afterward. No API key is required.
 - Accessibility validation should include the automated UI audit class:
   `xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:"BisonNotes AIUITests/BisonNotesAIAccessibilityTests"`
 - Real-device accessibility release checks are still required for VoiceOver, Voice Control, Switch Control sampling, Full Keyboard Access on iPad/macOS, largest Dynamic Type, light/dark contrast modes, Reduce Motion, Apple Watch VoiceOver, Control Center, and Action Button.
@@ -198,7 +199,7 @@ The app supports multiple transcription engines for converting audio to text:
 
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
-| **On Device (Parakeet)** | Default. On-device transcription using NVIDIA Parakeet models. Complete privacy. | iOS 17.0+, model download |
+| **On Device (Parakeet)** | Default. On-device transcription using NVIDIA Parakeet models. Complete privacy. Optional Local Speaker Labels run after completed audio. | iOS 18.5+, macOS 15, model download |
 | **Mistral AI** | Cloud transcription using Voxtral Mini with speaker diarization ($0.003/min) | API key, internet |
 | **Whisper (Local Server)** | High-quality transcription using Whisper models on your local server | Whisper server running (REST API or Wyoming protocol) |
 
@@ -210,10 +211,21 @@ Parakeet is the sole on-device transcription engine as of v1.8 (WhisperKit was r
 
 - **Privacy**: 100% local processing - audio never leaves your device
 - **Offline**: Works completely offline after initial model download
-- **Requirements**: iOS 17.0 or later
+- **Requirements**: iOS 18.5 or later; native macOS 15 or later
 - **Models**: Parakeet v2 for English long-form recall and Parakeet v3 for multilingual transcription across 25 European languages
 - **Reliability**: v2.1 recognizes valid cached model files, restores the selected model version when possible, resets stale download state when files are gone, and absorbs very short final tail chunks during long on-device transcriptions
 - **Migration**: Existing users who had WhisperKit selected are automatically switched to Parakeet on first launch of v1.8
+
+#### Local Speaker Labels
+
+Local Speaker Labels are an optional post-processing step for completed Parakeet recordings, imported audio, and transcript re-runs. The setting is off by default and does not affect Live Transcription or any other transcription engine.
+
+- **Offline VBx — Recommended**: the normal local choice; it estimates the number of speakers rather than imposing an app-side two- or three-speaker cap.
+- **LS-EEND — Experimental**: the DIHARD3 500 ms model supports up to 10 speakers, but labels may be over-segmented or less stable. LS-EEND is guarded at one hour; choose VBx for longer meetings.
+- **Model lifecycle**: choose a method, then explicitly download/prepare its speaker model from On Device settings. Enabling labels or switching methods never downloads during transcription. Parakeet, VBx, and LS-EEND readiness, cached files, unload, and delete operations are independent; deleting one does not delete the others. Cached models work offline after the initial HTTPS download.
+- **Failures**: if a model is missing, the one-hour LS-EEND limit is reached, or alignment/diarization fails, the complete unlabeled Parakeet transcript is retained and a visible warning explains what happened. No cloud fallback is used.
+- **Privacy**: audio and diarization stay on the device and no API key is needed. Do not publish model sizes, RAM/device guarantees, speed, or accuracy until the opt-in measurement gate has captured and approved them.
+- **Speaker names**: open the existing transcript speaker controls, rename a speaker, and save. The renamed mapping is reused in speaker-aware transcript and summary presentation.
 
 ### Mistral AI Transcription
 
@@ -288,7 +300,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - **Storage**: Models stored in Application Support (1.3 GB - 4.5 GB each)
 - **Context Window**: 16K tokens (automatically adjusted based on device RAM)
 - **Requirements**:
-  - **Transcription**: iOS 17.0+, 4GB+ RAM (most modern iPhones and iPads). Uses Parakeet on-device transcription by default when supported (requires model download)
+  - **Transcription**: iOS 18.5+ or native macOS 15+, with a Parakeet model download required. Local Speaker Labels are an optional completed-audio step; no new RAM/device guarantee is published here.
   - **AI Summary**: MLX Swift requires 4GB+ RAM. Legacy llama.cpp models require 6GB+ RAM. Apple Native requires iOS 26+ and an Apple Intelligence-capable device.
   - Device capability check prevents downloads on unsupported devices
   - Models are filtered based on available RAM
@@ -299,7 +311,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - User-configurable AI endpoints (compatible API/Ollama/Whisper) are validated via `EndpointSecurityPolicy` — public cleartext destinations are blocked unless the per-service Development Mode override is enabled.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features. `APS_ENVIRONMENT` is set per-configuration so Debug uses `development` and Release uses `production`.
 - Before distributing iCloud sync changes through TestFlight or the App Store, deploy CloudKit development schema changes for `iCloud.Bison-Networking.BisonNotes-AI` to production. Production builds cannot create new CloudKit record types at runtime.
-- For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device.
+- For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device. Local Speaker Labels use a separate explicit speaker-model action; they do not silently download when transcription starts.
 - For on-device AI, device capability checks ensure your device meets requirements (4 GB+ RAM for MLX Swift, 6 GB+ RAM for legacy llama.cpp models, iOS 26+ and an Apple Intelligence-capable device for Apple Native) before allowing downloads.
 
 ## iPhone Action Button Setup
@@ -417,7 +429,12 @@ The direct dependencies bring in a number of excellent open-source libraries fro
 - **UI support**: [SwiftUI Math](https://github.com/gonzalezreal/swiftui-math)
 - **Point-Free**: [Swift Concurrency Extras](https://github.com/pointfreeco/swift-concurrency-extras)
 
-All dependencies are MIT or Apache 2.0 licensed. See each project's repository for full license terms.
+The software dependencies listed above are MIT or Apache 2.0 licensed as shown; see each project's repository for full license terms. Downloaded model assets are separate from software dependencies and have their own terms:
+
+- **Offline VBx / Pyannote Core ML assets**: [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml), CC BY 4.0 for the parent Pyannote material; the FluidAudio SDK is Apache 2.0.
+- **LS-EEND DIHARD3 Core ML assets**: [FluidInference/ls-eend-coreml](https://huggingface.co/FluidInference/ls-eend-coreml), MIT; upstream dataset terms remain applicable.
+
+The LS-EEND model card and original paper/source credits should be reviewed with the model terms before release. BisonNotes does not redistribute consented or evaluation fixtures.
 
 ## Contributing
 Follow the Local Dev Setup above to run and validate changes before opening a PR.

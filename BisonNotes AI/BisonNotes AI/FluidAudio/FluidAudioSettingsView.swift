@@ -16,6 +16,7 @@ struct FluidAudioSettingsView: View {
     @State private var localSpeakerError: String?
     @State private var localSpeakerStatusTask: Task<Void, Never>?
     @State private var localSpeakerPreparationTask: Task<Void, Never>?
+    @State private var localSpeakerOperationID = UUID()
 
     private var selectedLocalSpeakerMethod: LocalDiarizationMethod {
         let normalized = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(
@@ -89,9 +90,14 @@ struct FluidAudioSettingsView: View {
                     }
                 }
 
-                nativeSettingsCard(title: "Local Speaker Labels", systemImage: "person.2.wave.2", tint: .purple) {
+                nativeSettingsCard(
+                    title: "Speaker Labels (After Recording)",
+                    systemImage: "person.2.wave.2",
+                    tint: .purple
+                ) {
                     localSpeakerLabelsControls
                 }
+                .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerLabelsSection)
 
                 localPrivacyNotice
             }
@@ -114,6 +120,7 @@ struct FluidAudioSettingsView: View {
             Label(title, systemImage: systemImage)
                 .font(.headline)
                 .foregroundStyle(tint)
+                .accessibilityAddTraits(.isHeader)
             content()
         }
         .padding(18)
@@ -149,8 +156,12 @@ struct FluidAudioSettingsView: View {
                 }
             }
 
-            Section("Local Speaker Labels") {
+            Section {
                 localSpeakerLabelsControls
+            } header: {
+                Text("Speaker Labels (After Recording)")
+                    .accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerLabelsSection)
             }
 
             Section {
@@ -205,7 +216,20 @@ private extension FluidAudioSettingsView {
                 .foregroundStyle(.secondary)
         }
 
-        HStack(spacing: 10) {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                parakeetModelActions
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                parakeetModelActions
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var parakeetModelActions: some View {
+        Group {
             if manager.isDownloading {
                 Button("Cancel Parakeet Download", role: .destructive) {
                     manager.cancelDownload()
@@ -229,35 +253,31 @@ private extension FluidAudioSettingsView {
     private var localSpeakerLabelsControls: some View {
         Toggle("Local Speaker Labels", isOn: $localSpeakerLabelsEnabled)
             .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerLabelsToggle)
+            .accessibilityLabel("Local Speaker Labels")
             .accessibilityHint(
-                "Applies after completed Parakeet recordings, imports, or re-runs. "
-                    + "It does not affect Live Transcription."
+                "Adds labels after completed Parakeet recordings, imports, and re-runs only. "
+                    + "Does not affect Live Transcription."
             )
             .onChange(of: localSpeakerLabelsEnabled) { _, enabled in
                 localSpeakerLabelsChanged(enabled)
             }
 
         Text(
-            "Labels are applied after a completed Parakeet transcription. "
-                + "Audio stays local after the one-time model download; Live Transcription is unchanged."
+            "Speaker labels apply only after completed Parakeet recordings, imports, and re-runs. "
+                + "They do not affect Live Transcription. Audio stays local after the explicit one-time model download."
         )
             .font(.caption)
             .foregroundStyle(.secondary)
             .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerLabelsHelp)
 
         if localSpeakerLabelsEnabled {
-            Picker("Speaker labeling method", selection: Binding(
-                get: { selectedLocalSpeakerMethod.rawValue },
-                set: { setLocalSpeakerMethod($0) }
-            )) {
-                localMethodRow(.offlineVBx)
-                    .tag(LocalDiarizationMethod.offlineVBx.rawValue)
-                localMethodRow(.experimentalLSEEND)
-                    .tag(LocalDiarizationMethod.experimentalLSEEND.rawValue)
-            }
-            .pickerStyle(.inline)
-            .onChange(of: selectedLocalSpeakerMethod) { _, _ in
-                refreshLocalSpeakerModelStatus()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Speaker labeling method")
+                    .font(.subheadline.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+
+                localMethodButton(.offlineVBx)
+                localMethodButton(.experimentalLSEEND)
             }
 
             Text(localSpeakerMethodDescription)
@@ -268,72 +288,149 @@ private extension FluidAudioSettingsView {
                 Text(localSpeakerStatusText)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerModelStatus)
+                    .accessibilityLabel("\(selectedLocalSpeakerMethod.displayName) speaker model status")
+                    .accessibilityValue(localSpeakerStatusText)
                 Spacer()
             }
 
-            if let progress = localSpeakerProgress?.fractionCompleted {
+            if let progress = selectedLocalSpeakerProgress?.fractionCompleted {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
                     .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerModelProgress)
+                    .accessibilityLabel(
+                        "\(selectedLocalSpeakerMethod.displayName) speaker model download progress"
+                    )
                     .accessibilityValue("\(Int(progress * 100)) percent")
-            } else if localSpeakerStatus?.state == .preparing {
+            } else if selectedLocalSpeakerProgress != nil || localSpeakerStatus?.state == .preparing {
                 ProgressView()
                     .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerModelProgress)
-                    .accessibilityLabel("Preparing speaker model")
+                    .accessibilityLabel(
+                        "Preparing \(selectedLocalSpeakerMethod.displayName) speaker model"
+                    )
+                    .accessibilityValue("In progress")
             }
 
-            if let localSpeakerError {
-                Text(localSpeakerError)
+            if let localSpeakerErrorText {
+                Text(localSpeakerErrorText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("Speaker model error: \(localSpeakerError)")
+                    .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerModelError)
+                    .accessibilityLabel("\(selectedLocalSpeakerMethod.displayName) speaker model error")
+                    .accessibilityValue(localSpeakerErrorText)
+                    .accessibilityHint(
+                        "Try again. If the problem continues, delete and download this speaker model again."
+                    )
             }
 
-            HStack(spacing: 10) {
-                if localSpeakerStatus?.state == .preparing {
-                    Button("Cancel Speaker Model Download", role: .destructive) {
-                        cancelLocalSpeakerModelPreparation()
-                    }
-                    .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerCancelModelButton)
-                } else if localSpeakerStatus?.isReady == true {
-                    Button("Delete Speaker Model", role: .destructive) {
-                        deleteLocalSpeakerModel()
-                    }
-                    .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerDeleteModelButton)
-                } else {
-                    Button("Download / Prepare Speaker Model") {
-                        prepareLocalSpeakerModel()
-                    }
-                    .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerPrepareModelButton)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    localSpeakerActionButton
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    localSpeakerActionButton
                 }
             }
         }
     }
 
-    private func localMethodRow(_ method: LocalDiarizationMethod) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(method.displayName)
-                HStack(spacing: 6) {
-                    if method == .offlineVBx {
-                        Text("Recommended")
-                            .font(.caption2.weight(.semibold))
-                            .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerRecommendedBadge)
-                    } else {
-                        Text("Experimental")
-                            .font(.caption2.weight(.semibold))
-                            .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerExperimentalBadge)
-                    }
-                    Text(method == .experimentalLSEEND ? "Up to 10 speakers" : "Speaker count estimated")
-                        .font(.caption2)
-                }
+    @ViewBuilder
+    private var localSpeakerActionButton: some View {
+        if localSpeakerStatus?.state == .preparing {
+            Button("Cancel Download", role: .destructive) {
+                cancelLocalSpeakerModelPreparation()
             }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerCancelModelButton)
+            .accessibilityLabel("Cancel Download")
+            .accessibilityHint(
+                "Cancels the \(selectedLocalSpeakerMethod.displayName) speaker model download."
+            )
+        } else if localSpeakerStatus?.isReady == true {
+            Button("Delete Speaker Model", role: .destructive) {
+                deleteLocalSpeakerModel()
+            }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerDeleteModelButton)
+            .accessibilityLabel("Delete Speaker Model")
+            .accessibilityHint(
+                "Deletes only the downloaded \(selectedLocalSpeakerMethod.displayName) speaker model."
+            )
+        } else {
+            Button("Download Speaker Model") {
+                prepareLocalSpeakerModel()
+            }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.localSpeakerPrepareModelButton)
+            .accessibilityLabel("Download Speaker Model")
+            .accessibilityHint(
+                "Explicitly downloads the selected \(selectedLocalSpeakerMethod.displayName) speaker model."
+            )
         }
+    }
+
+    private func localMethodButton(_ method: LocalDiarizationMethod) -> some View {
+        Button {
+            setLocalSpeakerMethod(method.rawValue)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                localMethodLabel(method)
+
+                Spacer(minLength: 8)
+
+                Image(
+                    systemName: selectedLocalSpeakerMethod == method
+                        ? "checkmark.circle.fill"
+                        : "circle"
+                )
+                .foregroundStyle(
+                    selectedLocalSpeakerMethod == method ? Color.accentColor : .secondary
+                )
+                .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
         .accessibilityIdentifier(
             method == .offlineVBx
                 ? BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
                 : BisonNotesAccessibilityID.localSpeakerMethodLSEEND
         )
+        .accessibilityLabel(localSpeakerMethodAccessibilityLabel(method))
+        .accessibilityValue(selectedLocalSpeakerMethod == method ? "Selected" : "Not selected")
+        .accessibilityHint(
+            "Selects \(method.displayName). Selection alone does not download a speaker model."
+        )
+    }
+
+    private func localMethodLabel(_ method: LocalDiarizationMethod) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(method.displayName)
+                .font(.body)
+            localMethodMetadata(method)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func localMethodMetadata(_ method: LocalDiarizationMethod) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            localMethodBadge(method)
+            localMethodSpeakerCount(method)
+        }
+    }
+
+    private func localMethodBadge(_ method: LocalDiarizationMethod) -> some View {
+        Text(method == .offlineVBx ? "Recommended" : "Experimental")
+            .font(.subheadline.weight(.semibold))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func localMethodSpeakerCount(_ method: LocalDiarizationMethod) -> some View {
+        Text(
+            method == .experimentalLSEEND
+                ? "up to 10 speakers"
+                : "speaker count estimated"
+        )
+        .font(.subheadline)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var localSpeakerMethodDescription: String {
@@ -347,19 +444,43 @@ private extension FluidAudioSettingsView {
         }
     }
 
+    private func localSpeakerMethodAccessibilityLabel(_ method: LocalDiarizationMethod) -> String {
+        switch method {
+        case .offlineVBx:
+            return "Offline VBx, Recommended, speaker count estimated"
+        case .experimentalLSEEND:
+            return "LS-EEND, Experimental, up to 10 speakers"
+        }
+    }
+
+    private var selectedLocalSpeakerProgress: LocalDiarizationProgress? {
+        guard localSpeakerProgress?.method == selectedLocalSpeakerMethod else { return nil }
+        return localSpeakerProgress
+    }
+
+    private var localSpeakerErrorText: String? {
+        if let localSpeakerError {
+            return localSpeakerError
+        }
+        guard let status = localSpeakerStatus, status.state == .failed else { return nil }
+        return "\(status.method.displayName): Speaker model preparation failed."
+    }
+
     private var localSpeakerStatusText: String {
-        guard let status = localSpeakerStatus else { return "Checking speaker model status..." }
+        guard let status = localSpeakerStatus else {
+            return "\(selectedLocalSpeakerMethod.displayName): Checking speaker model status..."
+        }
         switch status.state {
         case .downloadRequired:
-            return "Download Required"
+            return "\(status.method.displayName): Download Required"
         case .preparing:
-            return "Preparing \(status.method.displayName)..."
+            return "\(status.method.displayName): Preparing"
         case .ready:
-            return "\(status.method.displayName) Ready"
+            return "\(status.method.displayName): Ready"
         case .failed:
-            return "Speaker Model Preparation Failed"
+            return "\(status.method.displayName): Preparation Failed"
         case .cancelled:
-            return "Speaker Model Preparation Cancelled"
+            return "\(status.method.displayName): Download Cancelled"
         }
     }
 
@@ -384,6 +505,7 @@ private extension FluidAudioSettingsView {
         if selectedLocalSpeakerMethodRaw != normalized {
             selectedLocalSpeakerMethodRaw = normalized
         }
+        clearLocalSpeakerTransientState()
         if localSpeakerLabelsEnabled {
             refreshLocalSpeakerModelStatus()
         }
@@ -398,31 +520,26 @@ private extension FluidAudioSettingsView {
         }
 
         selectedLocalSpeakerMethodRaw = normalized
-        localSpeakerPreparationTask?.cancel()
-        localSpeakerProgress = nil
-        localSpeakerError = nil
+        invalidateLocalSpeakerOperation()
         localSpeakerStatus = nil
         Task { @MainActor in
-            await LocalDiarizationManager.shared.cancelModelPreparation(for: previousMethod)
-            await LocalDiarizationManager.shared.unloadModel(for: previousMethod)
-            guard !Task.isCancelled else { return }
+            await cancelAndUnloadLocalSpeakerModel(previousMethod)
+            guard localSpeakerLabelsEnabled,
+                  selectedLocalSpeakerMethod.rawValue == normalized else { return }
             refreshLocalSpeakerModelStatus()
         }
     }
 
     private func localSpeakerLabelsChanged(_ enabled: Bool) {
         let method = selectedLocalSpeakerMethod
-        localSpeakerPreparationTask?.cancel()
-        localSpeakerProgress = nil
-        localSpeakerError = nil
-        Task { @MainActor in
-            await LocalDiarizationManager.shared.cancelModelPreparation(for: method)
-            await LocalDiarizationManager.shared.unloadModel(for: method)
-        }
+        invalidateLocalSpeakerOperation()
         if enabled {
             refreshLocalSpeakerModelStatus()
         } else {
             localSpeakerStatus = nil
+            Task { @MainActor in
+                await cancelAndUnloadLocalSpeakerModel(method)
+            }
         }
     }
 
@@ -430,53 +547,99 @@ private extension FluidAudioSettingsView {
         localSpeakerStatusTask?.cancel()
         let method = selectedLocalSpeakerMethod
         localSpeakerStatusTask = Task { @MainActor in
-            let status = await LocalDiarizationManager.shared.modelStatus(for: method)
-            guard !Task.isCancelled else { return }
+            let status = await resolvedLocalSpeakerModelStatus(for: method)
+            guard !Task.isCancelled,
+                  localSpeakerLabelsEnabled,
+                  selectedLocalSpeakerMethod == method else { return }
             localSpeakerStatus = status
+            if status.state != .preparing {
+                localSpeakerProgress = nil
+            }
+            if status.state != .failed {
+                localSpeakerError = nil
+            }
         }
     }
 
     private func prepareLocalSpeakerModel() {
-        localSpeakerPreparationTask?.cancel()
         let method = selectedLocalSpeakerMethod
+        invalidateLocalSpeakerOperation()
+        let operationID = UUID()
+        localSpeakerOperationID = operationID
         localSpeakerError = nil
         localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .preparing)
         localSpeakerProgress = LocalDiarizationProgress(method: method, phase: .preparing)
+
+        if applyUITestSpeakerModelPreparation(for: method) {
+            return
+        }
+
         localSpeakerPreparationTask = Task { @MainActor in
             do {
                 try await LocalDiarizationManager.shared.prepareModel(for: method) { progress in
                     Task { @MainActor in
+                        guard localSpeakerOperationID == operationID,
+                              localSpeakerLabelsEnabled,
+                              selectedLocalSpeakerMethod == method else { return }
                         localSpeakerProgress = progress
                     }
                 }
+                guard localSpeakerOperationID == operationID,
+                      localSpeakerLabelsEnabled,
+                      selectedLocalSpeakerMethod == method else { return }
+                localSpeakerProgress = nil
+                localSpeakerError = nil
                 refreshLocalSpeakerModelStatus()
             } catch is CancellationError {
-                refreshLocalSpeakerModelStatus()
+                guard localSpeakerOperationID == operationID,
+                      selectedLocalSpeakerMethod == method else { return }
+                localSpeakerProgress = nil
+                localSpeakerError = nil
+                localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .cancelled)
             } catch {
-                localSpeakerError = error.localizedDescription
-                refreshLocalSpeakerModelStatus()
+                guard localSpeakerOperationID == operationID,
+                      localSpeakerLabelsEnabled,
+                      selectedLocalSpeakerMethod == method else { return }
+                localSpeakerProgress = nil
+                localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .failed)
+                localSpeakerError = "\(method.displayName): Speaker model preparation failed."
             }
         }
     }
 
     private func cancelLocalSpeakerModelPreparation() {
         let method = selectedLocalSpeakerMethod
-        localSpeakerPreparationTask?.cancel()
+        invalidateLocalSpeakerOperation()
+        localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .cancelled)
         Task { @MainActor in
-            await LocalDiarizationManager.shared.cancelModelPreparation(for: method)
-            refreshLocalSpeakerModelStatus()
+            await cancelLocalSpeakerModelPreparationIfNeeded(method)
         }
     }
 
     private func deleteLocalSpeakerModel() {
         let method = selectedLocalSpeakerMethod
-        localSpeakerError = nil
+        invalidateLocalSpeakerOperation()
+        if applyUITestSpeakerModelDeletion(for: method) {
+            return
+        }
+
         Task { @MainActor in
             do {
                 try await LocalDiarizationManager.shared.deleteModel(for: method)
-                refreshLocalSpeakerModelStatus()
+                guard localSpeakerLabelsEnabled,
+                      selectedLocalSpeakerMethod == method else { return }
+                localSpeakerProgress = nil
+                localSpeakerError = nil
+                localSpeakerStatus = LocalDiarizationModelStatus(
+                    method: method,
+                    state: .downloadRequired
+                )
             } catch {
-                localSpeakerError = error.localizedDescription
+                guard localSpeakerLabelsEnabled,
+                      selectedLocalSpeakerMethod == method else { return }
+                localSpeakerProgress = nil
+                localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .failed)
+                localSpeakerError = "\(method.displayName): Speaker model deletion failed."
             }
         }
     }
@@ -493,10 +656,84 @@ private extension FluidAudioSettingsView {
 
     private func cancelLocalSpeakerTasks() {
         localSpeakerStatusTask?.cancel()
-        localSpeakerPreparationTask?.cancel()
         let method = selectedLocalSpeakerMethod
+        invalidateLocalSpeakerOperation()
         Task {
-            await LocalDiarizationManager.shared.cancelModelPreparation(for: method)
+            await cancelLocalSpeakerModelPreparationIfNeeded(method)
         }
+    }
+
+    private func clearLocalSpeakerTransientState() {
+        localSpeakerProgress = nil
+        localSpeakerError = nil
+    }
+
+    private func invalidateLocalSpeakerOperation() {
+        localSpeakerStatusTask?.cancel()
+        localSpeakerPreparationTask?.cancel()
+        localSpeakerOperationID = UUID()
+        clearLocalSpeakerTransientState()
+    }
+
+    private func resolvedLocalSpeakerModelStatus(
+        for method: LocalDiarizationMethod
+    ) async -> LocalDiarizationModelStatus {
+        #if DEBUG
+        if let status = BisonNotesUITestSupport.localSpeakerModelStatusOverride(for: method) {
+            return status
+        }
+        #endif
+        return await LocalDiarizationManager.shared.modelStatus(for: method)
+    }
+
+    @MainActor
+    private func cancelAndUnloadLocalSpeakerModel(_ method: LocalDiarizationMethod) async {
+        #if DEBUG
+        guard !BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return }
+        #endif
+        await LocalDiarizationManager.shared.cancelModelPreparation(for: method)
+        await LocalDiarizationManager.shared.unloadModel(for: method)
+    }
+
+    private func cancelLocalSpeakerModelPreparationIfNeeded(
+        _ method: LocalDiarizationMethod
+    ) async {
+        #if DEBUG
+        guard !BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return }
+        #endif
+        await LocalDiarizationManager.shared.cancelModelPreparation(for: method)
+    }
+
+    private func applyUITestSpeakerModelPreparation(
+        for method: LocalDiarizationMethod
+    ) -> Bool {
+        #if DEBUG
+        guard BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return false }
+        localSpeakerProgress = nil
+        if BisonNotesUITestSupport.shouldFailLocalSpeakerModelPreparation {
+            localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .failed)
+            localSpeakerError = "\(method.displayName): Speaker model preparation failed."
+        } else {
+            localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .ready)
+            localSpeakerError = nil
+        }
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private func applyUITestSpeakerModelDeletion(
+        for method: LocalDiarizationMethod
+    ) -> Bool {
+        #if DEBUG
+        guard BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return false }
+        localSpeakerProgress = nil
+        localSpeakerError = nil
+        localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .downloadRequired)
+        return true
+        #else
+        return false
+        #endif
     }
 }

@@ -55,6 +55,16 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertFalse(manager.isSensitiveSettingKey("compatibleAPIMaxTokens"))
     }
 
+    func testLocalSpeakerBackupIncludesChoicesButExcludesLifecycleState() {
+        let keys = Set(iCloudStorageManager.backedUpSettingsKeys)
+
+        XCTAssertTrue(keys.contains(FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled))
+        XCTAssertTrue(keys.contains(FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod))
+        XCTAssertFalse(keys.contains("localSpeakerLabelsModelReady"))
+        XCTAssertFalse(keys.contains("localSpeakerLabelsDownloadProgress"))
+        XCTAssertFalse(keys.contains("localSpeakerLabelsCachePath"))
+    }
+
     func testRemovedAWSSettingsAreRecognized() {
         XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("AWSCredentials"))
         XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("awsBedrockModel"))

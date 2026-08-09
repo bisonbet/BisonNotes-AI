@@ -156,11 +156,158 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertEqual(makeRunnerCallCount, 0)
     }
 
+    func testModelHubGateSerializesSuspendingOperations() async throws {
+        let gate = FluidAudioModelHubGate()
+        let probe = ModelHubGateProbe()
+
+        async let first: Void = gate.withExclusiveAccess(mode: .online) {
+            await probe.runOperation()
+        }
+        async let second: Void = gate.withExclusiveAccess(mode: .offline) {
+            await probe.runOperation()
+        }
+
+        _ = try await (first, second)
+        let maximumConcurrentOperations = await probe.maximumConcurrentOperations
+        XCTAssertEqual(maximumConcurrentOperations, 1)
+    }
+
+    func testCancellationWaitsForPreparationToTerminateWithoutDeletingCache() async throws {
+        let provider = FakeLocalDiarizationModelProvider(blockPreparationUntilCancelled: true)
+        let manager = LocalDiarizationManager(provider: provider)
+        let preparation = Task {
+            try await manager.prepareModel(for: .offlineVBx, progress: { _ in })
+        }
+
+        await waitUntil { await provider.isPreparing }
+        await manager.cancelModelPreparation(for: .offlineVBx)
+
+        do {
+            try await preparation.value
+            XCTFail("Cancelled preparation should throw")
+        } catch is CancellationError {
+            // Expected.
+        }
+
+        let isPreparing = await provider.isPreparing
+        let deleteCallCount = await provider.deleteCallCount
+        let status = await manager.modelStatus(for: .offlineVBx)
+        XCTAssertFalse(isPreparing)
+        XCTAssertEqual(deleteCallCount, 0)
+        XCTAssertEqual(status.state, .cancelled)
+    }
+
+    func testDeleteWaitsForPreparationBeforeRemovingOnlySelectedCache() async throws {
+        let provider = FakeLocalDiarizationModelProvider(
+            readyMethods: [.experimentalLSEEND],
+            blockPreparationUntilCancelled: true
+        )
+        let manager = LocalDiarizationManager(provider: provider)
+        let preparation = Task {
+            try await manager.prepareModel(for: .offlineVBx, progress: { _ in })
+        }
+
+        await waitUntil { await provider.isPreparing }
+        try await manager.deleteModel(for: .offlineVBx)
+        _ = try? await preparation.value
+
+        let snapshot = await provider.lifecycleSnapshot()
+        XCTAssertFalse(snapshot.isPreparing)
+        XCTAssertFalse(snapshot.deleteObservedDuringPreparation)
+        XCTAssertEqual(snapshot.deletedMethods, [.offlineVBx])
+        XCTAssertTrue(snapshot.readyMethods.contains(.experimentalLSEEND))
+    }
+
+    func testFailedPreparationRetryForceRedownloadSurvivesStatusRefresh() async throws {
+        let provider = FakeLocalDiarizationModelProvider(failedPreparationAttempts: 1)
+        let manager = LocalDiarizationManager(provider: provider)
+
+        do {
+            try await manager.prepareModel(for: .offlineVBx, progress: { _ in })
+            XCTFail("The first preparation should fail")
+        } catch {
+            // Expected.
+        }
+        _ = await manager.modelStatus(for: .offlineVBx)
+        try await manager.prepareModel(for: .offlineVBx, progress: { _ in })
+
+        let forceRedownloadValues = await provider.forceRedownloadValues
+        let readyStatus = await manager.modelStatus(for: .offlineVBx)
+        XCTAssertEqual(forceRedownloadValues, [false, true])
+        XCTAssertTrue(readyStatus.isReady)
+    }
+
+    func testPreparationProgressIsReflectedInModelStatus() async throws {
+        let provider = FakeLocalDiarizationModelProvider(blockPreparationUntilCancelled: true)
+        let manager = LocalDiarizationManager(provider: provider)
+        let preparation = Task {
+            try await manager.prepareModel(for: .offlineVBx, progress: { _ in })
+        }
+
+        await waitUntil {
+            await manager.modelStatus(for: .offlineVBx).fractionCompleted == 0.4
+        }
+        let status = await manager.modelStatus(for: .offlineVBx)
+        XCTAssertEqual(status.state, .preparing)
+        XCTAssertEqual(status.fractionCompleted, 0.4)
+
+        await manager.cancelModelPreparation(for: .offlineVBx)
+        _ = try? await preparation.value
+    }
+
+    func testStructuralReadinessRejectsEmptyOrMalformedAssets() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local-diarization-assets-\(UUID().uuidString)", isDirectory: true)
+        let model = root.appendingPathComponent("model.mlmodelc", isDirectory: true)
+        let weights = model.appendingPathComponent("weights.bin")
+        let parameters = root.appendingPathComponent("plda.json")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: model, withIntermediateDirectories: true)
+        try Data().write(to: weights)
+        XCTAssertFalse(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
+        try Data([1]).write(to: weights)
+        XCTAssertTrue(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: model))
+
+        try Data("{}".utf8).write(to: parameters)
+        XCTAssertFalse(LocalDiarizationAssetValidator.pldaParametersAreValid(at: parameters))
+        let validParameters: [String: Any] = [
+            "tensors": [
+                "psi": ["data_base64": Data([0, 0, 0, 0]).base64EncodedString()]
+            ]
+        ]
+        try JSONSerialization.data(withJSONObject: validParameters).write(to: parameters)
+        XCTAssertTrue(LocalDiarizationAssetValidator.pldaParametersAreValid(at: parameters))
+    }
+
     private func makeTemporaryAudioPlaceholder() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-diarization-test-\(UUID().uuidString)")
         try? Data([0]).write(to: url)
         return url
+    }
+
+    private func waitUntil(
+        attempts: Int = 200,
+        condition: @escaping () async -> Bool
+    ) async {
+        for _ in 0..<attempts {
+            if await condition() { return }
+            await Task.yield()
+        }
+        XCTFail("Timed out waiting for asynchronous test condition")
+    }
+}
+
+private actor ModelHubGateProbe {
+    private(set) var maximumConcurrentOperations = 0
+    private var activeOperations = 0
+
+    func runOperation() async {
+        activeOperations += 1
+        maximumConcurrentOperations = max(maximumConcurrentOperations, activeOperations)
+        try? await Task.sleep(for: .milliseconds(20))
+        activeOperations -= 1
     }
 }
 
@@ -195,20 +342,36 @@ private actor FakeLocalDiarizationRunner: LocalDiarizationRunner {
     }
 }
 
+private struct FakeLifecycleSnapshot: Sendable {
+    let isPreparing: Bool
+    let deleteObservedDuringPreparation: Bool
+    let deletedMethods: [LocalDiarizationMethod]
+    let readyMethods: Set<LocalDiarizationMethod>
+}
+
 private actor FakeLocalDiarizationModelProvider: LocalDiarizationModelProvider {
     private var readyMethods: Set<LocalDiarizationMethod>
     private let runner: (any LocalDiarizationRunner)?
+    private let blockPreparationUntilCancelled: Bool
+    private var remainingFailedPreparationAttempts: Int
     private(set) var prepareCallCount = 0
     private(set) var makeRunnerCallCount = 0
     private(set) var deleteCallCount = 0
     private(set) var deletedMethods: [LocalDiarizationMethod] = []
+    private(set) var forceRedownloadValues: [Bool] = []
+    private(set) var isPreparing = false
+    private(set) var deleteObservedDuringPreparation = false
 
     init(
         readyMethods: Set<LocalDiarizationMethod> = [],
-        runner: (any LocalDiarizationRunner)? = nil
+        runner: (any LocalDiarizationRunner)? = nil,
+        blockPreparationUntilCancelled: Bool = false,
+        failedPreparationAttempts: Int = 0
     ) {
         self.readyMethods = readyMethods
         self.runner = runner
+        self.blockPreparationUntilCancelled = blockPreparationUntilCancelled
+        self.remainingFailedPreparationAttempts = failedPreparationAttempts
     }
 
     func cacheDirectory(for method: LocalDiarizationMethod) async -> URL? {
@@ -226,6 +389,23 @@ private actor FakeLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws {
         prepareCallCount += 1
+        forceRedownloadValues.append(forceRedownload)
+        if remainingFailedPreparationAttempts > 0 {
+            remainingFailedPreparationAttempts -= 1
+            throw LocalDiarizationError.modelPreparationFailed(method)
+        }
+        isPreparing = true
+        defer { isPreparing = false }
+        progressHandler(
+            LocalDiarizationProgress(
+                method: method,
+                phase: .downloading,
+                fractionCompleted: 0.4
+            )
+        )
+        if blockPreparationUntilCancelled {
+            try await Task.sleep(for: .seconds(60))
+        }
         readyMethods.insert(method)
         progressHandler(
             LocalDiarizationProgress(
@@ -243,8 +423,18 @@ private actor FakeLocalDiarizationModelProvider: LocalDiarizationModelProvider {
     }
 
     func delete(for method: LocalDiarizationMethod) async throws {
+        deleteObservedDuringPreparation = deleteObservedDuringPreparation || isPreparing
         deleteCallCount += 1
         deletedMethods.append(method)
         readyMethods.remove(method)
+    }
+
+    func lifecycleSnapshot() -> FakeLifecycleSnapshot {
+        FakeLifecycleSnapshot(
+            isPreparing: isPreparing,
+            deleteObservedDuringPreparation: deleteObservedDuringPreparation,
+            deletedMethods: deletedMethods,
+            readyMethods: readyMethods
+        )
     }
 }

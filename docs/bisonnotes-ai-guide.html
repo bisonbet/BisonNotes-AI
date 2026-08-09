@@ -326,7 +326,7 @@
 
     <h4>Requirements</h4>
     <ul>
-      <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM. Uses Parakeet (default) for on-device transcription.</li>
+      <li><strong>Transcription:</strong> iOS 18.5+ or native macOS 15+, with a Parakeet model download. No additional Local Speaker Labels RAM/device guarantee is published without measured evidence.</li>
       <li><strong>AI Summary (MLX Swift):</strong> 4GB+ RAM. Uses Ternary Bonsai models scaled to your device.</li>
       <li><strong>Legacy AI Summary (llama.cpp):</strong> 6GB+ RAM. Available as On Device AI (Legacy).</li>
       <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Legacy llama.cpp models are about 1.3 GB to 4.5 GB; Parakeet transcription downloads separately.</li>
@@ -573,7 +573,7 @@ ollama pull mistral-small3.2</code></pre>
   <table>
     <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
     <tbody>
-      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
+      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>Optional Local Speaker Labels after completed audio</td><td>Free (Default)</td></tr>
       <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
       <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
     </tbody>
@@ -591,11 +591,23 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
       <li><strong>Choose a model:</strong> Parakeet v2 is English-only with stronger long-form English recall. Parakeet v3 supports multilingual transcription across 25 European languages.</li>
       <li><strong>Download the model:</strong> Tap "Download" to get the selected Parakeet model. Progress now shows checking, downloading, preparing, and ready states.</li>
-      <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
+      <li><strong>Requirements:</strong> iOS 18.5+ or native macOS 15+, model download required.</li>
     </ol>
 
     <div class="bn-info"><strong>Migration note:</strong> WhisperKit was removed in v1.8. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
     <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
+
+    <h4>Local Speaker Labels (Optional)</h4>
+    <p>Local Speaker Labels are opt-in and off by default. They run only after a completed Parakeet recording, imported audio file, or transcript re-run. They run once against the complete source audio after Parakeet ASR and reassembly; they never run during Live Transcription or in real time.</p>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> In On Device settings, turn on <strong>Local Speaker Labels</strong>. Enabling the toggle does not download a model.</li>
+      <li><strong>Choose a method:</strong> <strong>Offline VBx — Recommended</strong> estimates the number of speakers without an app-side two- or three-speaker cap. <strong>LS-EEND — Experimental</strong> uses the DIHARD3 500 ms model and supports up to 10 speakers; labels may be over-segmented or less stable, and LS-EEND is limited to complete files up to one hour.</li>
+      <li><strong>Prepare explicitly:</strong> Tap <strong>Download Speaker Model</strong> for the selected method. This is the initial HTTPS download; cached use works offline afterward, audio stays on the device, and no API key is required.</li>
+      <li><strong>Manage models:</strong> Parakeet, Offline VBx, and LS-EEND have independent readiness, cached files, unload, and delete state. Deleting a speaker model does not delete Parakeet or the other speaker model. Switching methods preserves caches and does not silently prepare a model.</li>
+      <li><strong>Rename speakers:</strong> Open the completed transcript, use its existing speaker controls to rename a speaker, and save. The saved mapping is used by speaker-aware transcript and summary views.</li>
+    </ol>
+    <div class="bn-warn"><strong>Fallback:</strong> If the selected model is missing, LS-EEND exceeds one hour, or timing/alignment/diarization fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a visible warning. It does not silently switch methods or upload audio.</div>
+    <div class="bn-info"><strong>Measured limits:</strong> This guide does not publish model sizes, RAM/device guarantees, performance, or accuracy. Those claims require the opt-in model/accuracy gate in the regression regimen.</div>
   </div>
 </details>
 

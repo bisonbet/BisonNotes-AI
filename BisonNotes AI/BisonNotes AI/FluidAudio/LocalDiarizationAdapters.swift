@@ -39,10 +39,8 @@ import FluidAudio
 
 /// Pinned FluidAudio implementation of the local speaker-model provider.
 ///
-/// This adapter is an actor because `ModelHub.offlineMode` is a process-wide
-/// SDK switch used to prevent a missing/corrupt cache from triggering a network
-/// fetch during transcription-time loading. Provider operations are serialized
-/// while that switch is scoped and restored.
+/// Hub-backed operations additionally pass through `FluidAudioModelHubGate`
+/// because `ModelHub.offlineMode` is process-global across all providers.
 actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
     private let appSupportDirectory: URL?
 
@@ -79,19 +77,21 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         }
         try Task.checkCancellation()
 
-        switch method {
-        case .offlineVBx:
-            try await prepareOfflineVBx(
-                at: directory,
-                forceRedownload: forceRedownload,
-                progressHandler: progressHandler
-            )
-        case .experimentalLSEEND:
-            try await prepareLSEEND(
-                at: directory,
-                forceRedownload: forceRedownload,
-                progressHandler: progressHandler
-            )
+        try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .online) { [self] in
+            switch method {
+            case .offlineVBx:
+                try await prepareOfflineVBx(
+                    at: directory,
+                    forceRedownload: forceRedownload,
+                    progressHandler: progressHandler
+                )
+            case .experimentalLSEEND:
+                try await prepareLSEEND(
+                    at: directory,
+                    forceRedownload: forceRedownload,
+                    progressHandler: progressHandler
+                )
+            }
         }
 
         try Task.checkCancellation()
@@ -109,17 +109,19 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             throw LocalDiarizationError.downloadRequired(method)
         }
 
-        switch method {
-        case .offlineVBx:
-            let models = try await loadOfflineVBxModelsWithoutNetwork(from: directory)
-            let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
-            manager.initialize(models: models)
-            return OfflineVBxRunner(manager: manager)
-        case .experimentalLSEEND:
-            let modelURL = Self.lseendModelURL(at: directory)
-            let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
-            let diarizer = try LSEENDDiarizer(model: model)
-            return LSEENDRunner(diarizer: diarizer)
+        return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) { [self] in
+            switch method {
+            case .offlineVBx:
+                let models = try await loadOfflineVBxModelsFromCache(from: directory)
+                let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+                manager.initialize(models: models)
+                return OfflineVBxRunner(manager: manager)
+            case .experimentalLSEEND:
+                let modelURL = Self.lseendModelURL(at: directory)
+                let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
+                let diarizer = try LSEENDDiarizer(model: model)
+                return LSEENDRunner(diarizer: diarizer)
+            }
         }
     }
 
@@ -127,7 +129,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         guard let directory = await cacheDirectory(for: method) else {
             throw LocalDiarizationError.unsupportedMethod(method)
         }
-        try FileManager.default.removeItemIfPresent(at: directory)
+        try FluidAudioModelInfo.deleteCacheDirectory(at: directory)
     }
 
     private func prepareOfflineVBx(
@@ -136,7 +138,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws {
         if forceRedownload {
-            try FileManager.default.removeItemIfPresent(at: directory)
+            try FluidAudioModelInfo.deleteCacheDirectory(at: directory)
         }
 
         let configuration = MLModelConfiguration()
@@ -156,7 +158,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws {
         if forceRedownload {
-            try FileManager.default.removeItemIfPresent(at: directory)
+            try FluidAudioModelInfo.deleteCacheDirectory(at: directory)
         }
 
         // The pinned LS-EEND loader accepts a progress handler but does not
@@ -175,13 +177,9 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         try Task.checkCancellation()
     }
 
-    private func loadOfflineVBxModelsWithoutNetwork(
+    private func loadOfflineVBxModelsFromCache(
         from directory: URL
     ) async throws -> OfflineDiarizerModels {
-        let previousOfflineMode = ModelHub.offlineMode
-        ModelHub.offlineMode = true
-        defer { ModelHub.offlineMode = previousOfflineMode }
-
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuOnly
         return try await OfflineDiarizerModels.load(
@@ -227,8 +225,11 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             ModelNames.OfflineDiarizer.embeddingFile,
             ModelNames.OfflineDiarizer.pldaRhoFile
         ]
-        guard requiredModelFiles.allSatisfy({
-            fileManager.fileExists(atPath: repoDirectory.appendingPathComponent($0).path)
+        guard requiredModelFiles.allSatisfy({ modelFile in
+            LocalDiarizationAssetValidator.compiledModelBundleIsValid(
+                at: repoDirectory.appendingPathComponent(modelFile),
+                fileManager: fileManager
+            )
         }) else {
             return false
         }
@@ -237,7 +238,9 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             directory.appendingPathComponent(ModelNames.OfflineDiarizer.pldaParameters),
             repoDirectory.appendingPathComponent(ModelNames.OfflineDiarizer.pldaParameters)
         ]
-        return parameterLocations.contains { fileManager.fileExists(atPath: $0.path) }
+        return parameterLocations.contains {
+            LocalDiarizationAssetValidator.pldaParametersAreValid(at: $0)
+        }
     }
 
     private static func lseendModelURL(at directory: URL) -> URL {
@@ -255,7 +258,10 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         at directory: URL,
         fileManager: FileManager
     ) -> Bool {
-        fileManager.fileExists(atPath: lseendModelURL(at: directory).path)
+        LocalDiarizationAssetValidator.compiledModelBundleIsValid(
+            at: lseendModelURL(at: directory),
+            fileManager: fileManager
+        )
     }
 }
 
@@ -371,10 +377,4 @@ private actor LSEENDRunner: LocalDiarizationRunner {
     }
 }
 
-private extension FileManager {
-    func removeItemIfPresent(at url: URL) throws {
-        guard fileExists(atPath: url.path) else { return }
-        try removeItem(at: url)
-    }
-}
 #endif

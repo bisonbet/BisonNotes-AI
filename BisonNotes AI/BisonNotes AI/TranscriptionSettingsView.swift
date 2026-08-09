@@ -191,7 +191,7 @@ struct TranscriptionSettingsView: View {
                     Button(action: {
                         openSettings(for: selectedEngine)
                     }) {
-                        Label("Configure", systemImage: "gear")
+                        Label(configurationButtonTitle(for: selectedEngine), systemImage: "gear")
                             .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -243,6 +243,7 @@ struct TranscriptionSettingsView: View {
                 Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
                     .font(.subheadline.weight(.semibold))
             }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptionResetButton)
         }
     }
 
@@ -256,6 +257,10 @@ struct TranscriptionSettingsView: View {
             }
         }
     }
+
+}
+
+private extension TranscriptionSettingsView {
 
     // MARK: - Live Transcription Section
 
@@ -528,6 +533,10 @@ struct TranscriptionSettingsView: View {
         .buttonStyle(.plain)
     }
 
+}
+
+private extension TranscriptionSettingsView {
+
     // MARK: - Selected Engine Configuration
 
     private var selectedEngineConfigurationSection: some View {
@@ -552,7 +561,7 @@ struct TranscriptionSettingsView: View {
                             }) {
                                 HStack {
                                     Image(systemName: "gear")
-                                    Text("Configure")
+                                    Text(configurationButtonTitle(for: selectedEngine))
                                 }
                                 .font(.caption)
                                 .padding(.horizontal, 12)
@@ -597,6 +606,10 @@ struct TranscriptionSettingsView: View {
         default:
             return ""
         }
+    }
+
+    private func configurationButtonTitle(for engine: TranscriptionEngine) -> String {
+        engine == .fluidAudio ? "Configure On Device" : "Configure"
     }
 
     private func engineColor(for engine: TranscriptionEngine) -> Color {
@@ -741,6 +754,13 @@ struct TranscriptionSettingsView: View {
     }
 
     private func resetToDefaults() {
+        let previousMethodRaw = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(
+            UserDefaults.standard.string(
+                forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+            ) ?? FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue
+        )
+        let previousMethod = LocalDiarizationMethod(rawValue: previousMethodRaw) ?? .offlineVBx
+
         showTranscriptionProgress = true
         enableLiveTranscription = false
         selectedTranscriptionEngine = TranscriptionEngine.fluidAudio.rawValue
@@ -752,6 +772,14 @@ struct TranscriptionSettingsView: View {
             FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue,
             forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
         )
+
+        Task {
+            #if DEBUG
+            guard !BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return }
+            #endif
+            await LocalDiarizationManager.shared.cancelModelPreparation(for: previousMethod)
+            await LocalDiarizationManager.shared.unloadModel(for: previousMethod)
+        }
     }
 }
 

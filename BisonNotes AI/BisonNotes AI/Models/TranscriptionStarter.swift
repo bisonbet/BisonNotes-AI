@@ -111,7 +111,7 @@ final class TranscriptionStarter: ObservableObject {
             }
             do {
                 let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
-                AppLog.shared.transcription("Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)", level: .debug)
+                AppLog.shared.transcription("Cleaned audio created at a temporary location", level: .debug)
 
                 // Copy cleaned file into Documents so ProcessingJob can resolve it.
                 guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -181,6 +181,7 @@ final class TranscriptionStarter: ObservableObject {
                         using: selectedEngine,
                         recordingId: recordingId
                     )
+                    try Task.checkCancellation()
                     lastTranscriptionWarning = result.speakerLabelWarning
                     if let warning = result.speakerLabelWarning {
                         AppLog.shared.transcription(
@@ -203,8 +204,11 @@ final class TranscriptionStarter: ObservableObject {
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
                             segments: result.segments,
-                            speakerMappings: result.speakerMappings ?? [:]
+                            speakerMappings: result.speakerMappings ?? [:],
+                            engine: selectedEngine,
+                            processingTime: result.processingTime
                         )
+                        try Task.checkCancellation()
                         let transcriptId = appCoordinator.addTranscript(
                             for: recordingId,
                             segments: transcriptData.segments,
@@ -232,7 +236,7 @@ final class TranscriptionStarter: ObservableObject {
                 // Clean up source audio on fallback-path failure (no BG manager to do it).
                 if let cleanupURL = sourceAudioURL, cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
                     try? FileManager.default.removeItem(at: cleanupURL)
-                    AppLog.shared.transcription("Cleaned up source audio file after fallback: \(cleanupURL.lastPathComponent)", level: .debug)
+                    AppLog.shared.transcription("Cleaned up temporary source audio after fallback", level: .debug)
                 }
             }
         }

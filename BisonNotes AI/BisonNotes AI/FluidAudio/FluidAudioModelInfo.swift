@@ -23,7 +23,7 @@ struct FluidAudioModelInfo {
         }
     }
 
-    enum ModelVersion: String, CaseIterable {
+    enum ModelVersion: String, CaseIterable, Sendable {
         case v2
         case v3
 
@@ -114,5 +114,13 @@ struct FluidAudioModelInfo {
         default:
             return nil
         }
+    }
+
+    static func deleteCacheDirectory(
+        at directory: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        guard fileManager.fileExists(atPath: directory.path) else { return }
+        try fileManager.removeItem(at: directory)
     }
 }

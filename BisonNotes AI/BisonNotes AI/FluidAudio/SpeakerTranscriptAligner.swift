@@ -16,7 +16,7 @@ struct SpeakerTranscriptAligner {
     // swiftlint:disable function_body_length
     /// Convert FluidAudio-style SentencePiece/TDT pieces into app-owned words.
     /// Word-boundary markers are retained as spacing metadata, punctuation is
-    /// attached to the preceding word when possible, and only explicit blank
+    /// attached according to its opening/closing role, and only explicit blank
     /// or pad pieces are ignored because they contain no transcript text.
     static func reconstructWords(from tokens: [TimedTranscriptToken]) -> [TimedTranscriptWord] {
         var words: [TimedTranscriptWord] = []
@@ -66,7 +66,7 @@ struct SpeakerTranscriptAligner {
                     startTime: currentStart,
                     endTime: currentEnd,
                     confidence: confidence,
-                    hasLeadingSpace: words.isEmpty ? false : currentHasLeadingSpace
+                    hasLeadingSpace: currentHasLeadingSpace
                 )
             )
             currentText = ""
@@ -89,38 +89,32 @@ struct SpeakerTranscriptAligner {
             } else {
                 piece = token.text
             }
-            let isPunctuation = isPunctuationOnly(piece)
-
-            if currentText.isEmpty {
-                currentText = piece
-                currentHasLeadingSpace = hasBoundary
-                pendingBoundary = false
-                updateTiming(with: token)
-                continue
-            }
-
-            if hasBoundary && !isPunctuation && !piece.isEmpty {
-                flush()
-                currentText = piece
-                currentHasLeadingSpace = true
-                updateTiming(with: token)
-                continue
-            }
-
-            if pendingBoundary && !isPunctuation && !piece.isEmpty {
-                flush()
-                currentText = piece
-                currentHasLeadingSpace = true
-                updateTiming(with: token)
-                continue
-            }
 
             if hasBoundary && piece.isEmpty {
                 pendingBoundary = true
-            } else {
-                currentText += piece
-                pendingBoundary = false
+                continue
             }
+
+            let startsAtBoundary = hasBoundary || pendingBoundary
+
+            if currentText.isEmpty {
+                currentText = piece
+                currentHasLeadingSpace = startsAtBoundary
+                pendingBoundary = false
+                updateTiming(with: token)
+                continue
+            }
+
+            if startsAtBoundary && !isClosingPunctuationOnly(piece) {
+                flush()
+                currentText = piece
+                currentHasLeadingSpace = true
+                updateTiming(with: token)
+                continue
+            }
+
+            currentText += piece
+            pendingBoundary = false
             updateTiming(with: token)
         }
 
@@ -139,9 +133,14 @@ struct SpeakerTranscriptAligner {
     ) -> LocalSpeakerLabelingResult {
         let sanitizedDuration = sanitizeDuration(audioDuration)
         let normalizedIntervals = normalizeIntervals(intervals, duration: sanitizedDuration)
+        let nonemptyWords = words.filter { !$0.text.isEmpty }
+
+        guard nonemptyWords.isEmpty || !normalizedIntervals.isEmpty else {
+            return .unlabeled(warning: .timingUnavailable)
+        }
 
         var segmentBuilders: [SpeakerAlignmentSegmentBuilder] = []
-        for word in words where !word.text.isEmpty {
+        for word in nonemptyWords {
             let range = sanitizeRange(
                 start: word.startTime,
                 end: word.endTime,
@@ -225,8 +224,11 @@ extension SpeakerTranscriptAligner {
         }
 
         validIntervals.sort {
-            if abs($0.range.lowerBound - $1.range.lowerBound) > comparisonEpsilon {
+            if $0.range.lowerBound != $1.range.lowerBound {
                 return $0.range.lowerBound < $1.range.lowerBound
+            }
+            if $0.range.upperBound != $1.range.upperBound {
+                return $0.range.upperBound < $1.range.upperBound
             }
             return $0.inputOrder < $1.inputOrder
         }
@@ -372,27 +374,25 @@ extension SpeakerTranscriptAligner {
         }
         return result
     }
-
     private static func startsWithoutSpace(_ text: String) -> Bool {
-        guard let first = text.first else { return false }
-        return CharacterSet.punctuationCharacters.contains(first.unicodeScalars.first!)
-            || CharacterSet.symbols.contains(first.unicodeScalars.first!)
-            || ")]}".contains(first)
+        guard let scalar = text.unicodeScalars.first else { return false }
+        return closingPunctuationCharacters.contains(scalar)
     }
-
     private static func endsWithoutSpace(_ text: String) -> Bool {
-        guard let last = text.last else { return false }
-        return "([{«“‘".contains(last)
+        guard let scalar = text.unicodeScalars.last else { return false }
+        return openingPunctuationCharacters.contains(scalar)
+    }
+    private static func isClosingPunctuationOnly(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        return text.unicodeScalars.allSatisfy(closingPunctuationCharacters.contains)
     }
 
-    private static func isPunctuationOnly(_ text: String) -> Bool {
-        guard !text.isEmpty else { return false }
-        return text.unicodeScalars.allSatisfy {
-            CharacterSet.punctuationCharacters.contains($0)
-                || CharacterSet.symbols.contains($0)
-        }
-    }
+    private static let openingPunctuationCharacters = CharacterSet(charactersIn: "([{<«‹“‘„‚¿¡「『【〔〖〘〚〈《")
+    private static let closingPunctuationCharacters = CharacterSet(
+        charactersIn: ")]}>»›”’.,!?;:%…。、，！？；：؟،؛٪）］｝〉》」』】〕〗〙〛"
+    )
 }
+
 private extension String {
     var lastCharacterIsWhitespace: Bool {
         last?.isWhitespace == true
