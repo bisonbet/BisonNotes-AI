@@ -38,6 +38,8 @@ The app has **migrated from legacy file-based storage to Core Data-only architec
 3. **AI Processing** → Various AI engines → Core Data
 4. **Background Processing** → `BackgroundProcessingManager` → Core Data
 
+For completed Parakeet recordings, imports, and re-runs, optional **Local Speaker Labels** are a post-ASR enrichment step. `AudioFileChunkingService.reassembleTranscript` remains the single reassembly path: ASR words are reassembled with absolute timing first, then the selected local diarizer runs once against the complete source audio. Labels are off by default and never run during Live Transcription. Offline VBx is Recommended; LS-EEND DIHARD3 is Experimental and supports up to 10 speakers. A failure retains the unlabeled Parakeet transcript and surfaces a warning.
+
 #### AI Integration
 The app supports multiple AI engines:
 - **Apple Intelligence**: Local processing using Apple frameworks
@@ -65,6 +67,7 @@ BisonNotes AI/
 │   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
 │   └── DataMigrationView.swift
 ├── ViewModels/          # View model layer
+├── FluidAudio/          # Parakeet plus Local Speaker Labels adapters/settings
 ├── AI Engines/         # Various AI service integrations
 └── Background/         # Background processing
 ```
@@ -132,7 +135,13 @@ For AI-generated content display:
 - `Models/AppDataCoordinator.swift`: Unified data coordination
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
+- `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
+- `FluidAudio/LocalDiarizationManager.swift`: Independent VBx/LS-EEND model lifecycle and adapters
+- `FluidAudio/SpeakerTranscriptAligner.swift`: Complete-source speaker timeline alignment
+- `AudioFileChunkingService.swift`: Shared ASR reassembly before post-ASR enrichment
 - `BackgroundProcessingManager.swift`: Background job management
 - `FutureAIEngines.swift`: AI engine implementations
 - `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
+
+The active supported deployment minimums are iOS 18.5 and native macOS 15. Speaker models are explicitly downloaded over HTTPS, cached for offline use, and kept independent from Parakeet assets; they are never fetched implicitly when a transcription starts. See the user guide and testing regimen for user workflow and release-gate details.

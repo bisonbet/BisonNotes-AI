@@ -85,13 +85,90 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             originalURL: originalURL,
             recordingName: "Chunked Recording",
             recordingDate: Date(),
-            recordingId: recordingId
+            recordingId: recordingId,
+            engine: .fluidAudio
         )
 
         XCTAssertEqual(result.transcriptData.recordingId, recordingId)
         XCTAssertEqual(result.transcriptData.segments.map(\.text), ["first", "second"])
         XCTAssertEqual(result.transcriptData.segments.map(\.startTime), [0, 10])
         XCTAssertEqual(result.totalSegments, 2)
+        XCTAssertEqual(result.transcriptData.engine, .fluidAudio)
+    }
+
+    @MainActor
+    func testSingleChunkReassemblyPreservesFluidAudioEngineMetadata() async throws {
+        let service = AudioFileChunkingService()
+        let recordingId = UUID()
+        let originalURL = tempDirectory.appendingPathComponent("single.m4a")
+        let chunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 0,
+            transcript: "single chunk",
+            segments: [
+                TranscriptSegment(speaker: "", text: "single chunk", startTime: 0, endTime: 1)
+            ],
+            startTime: 0,
+            endTime: 1,
+            timedWords: [
+                TimedTranscriptWord(text: "single", startTime: 0, endTime: 0.4, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "chunk", startTime: 0.5, endTime: 1)
+            ]
+        )
+
+        let result = try await service.reassembleTranscript(
+            from: [chunk],
+            originalURL: originalURL,
+            recordingName: "Single Chunk",
+            recordingDate: Date(),
+            recordingId: recordingId,
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(result.transcriptData.engine, .fluidAudio)
+        XCTAssertEqual(result.transcriptData.plainText, "single chunk")
+        XCTAssertEqual(result.timedWords?.map(\.text), ["single", "chunk"])
+    }
+
+    @MainActor
+    func testReassemblyKeepsMalformedTimedWordsInSourceOrder() async throws {
+        let service = AudioFileChunkingService()
+        let recordingId = UUID()
+        let originalURL = tempDirectory.appendingPathComponent("malformed-timing.m4a")
+        let firstChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 0,
+            transcript: "missing first",
+            segments: [TranscriptSegment(speaker: "", text: "missing first", startTime: 0, endTime: 1)],
+            startTime: 0,
+            endTime: 1,
+            timedWords: [
+                TimedTranscriptWord(text: "missing", startTime: nil, endTime: nil, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "first", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+        let secondChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 1,
+            transcript: "second",
+            segments: [TranscriptSegment(speaker: "", text: "second", startTime: 0, endTime: 1)],
+            startTime: 1,
+            endTime: 2,
+            timedWords: [
+                TimedTranscriptWord(text: "second", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+
+        let result = try await service.reassembleTranscript(
+            from: [secondChunk, firstChunk],
+            originalURL: originalURL,
+            recordingName: "Malformed Timing",
+            recordingDate: Date(),
+            recordingId: recordingId,
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(result.timedWords?.map(\.text), ["missing", "first", "second"])
     }
 
     @MainActor

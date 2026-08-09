@@ -8,6 +8,12 @@
 import Foundation
 import AVFoundation
 
+private struct TimedWordReassemblyItem {
+    let word: TimedTranscriptWord
+    let sourceOrder: Int
+    let sourceChunk: Int
+}
+
 @MainActor
 class AudioFileChunkingService: ObservableObject {
 
@@ -27,10 +33,10 @@ class AudioFileChunkingService: ObservableObject {
 
     /// Determines if a file needs chunking based on the transcription service
     func shouldChunkFile(_ url: URL, for engine: TranscriptionEngine) async throws -> Bool {
-        AppLog.shared.chunking("shouldChunkFile - Checking: \(url.lastPathComponent) for engine: \(engine.rawValue)", level: .debug)
+        AppLog.shared.chunking("shouldChunkFile - Checking source for engine: \(engine.rawValue)", level: .debug)
 
         guard fileManager.fileExists(atPath: url.path) else {
-            AppLog.shared.chunking("shouldChunkFile - File not found: \(url.path)", level: .error)
+            AppLog.shared.chunking("shouldChunkFile - Source file not found", level: .error)
             throw AudioChunkingError.fileNotFound
         }
 
@@ -66,7 +72,7 @@ class AudioFileChunkingService: ObservableObject {
 
         // Prevent recursive chunking - if this is already a chunk file, don't chunk it again
         if url.lastPathComponent.contains("chunk_") {
-            AppLog.shared.chunking("Skipping chunking for already chunked file: \(url.lastPathComponent)")
+            AppLog.shared.chunking("Skipping chunking for an already chunked source")
             let fileInfo = try await AudioFileInfo.create(from: url)
             let singleChunk = AudioChunk(
                 originalURL: url,
@@ -97,7 +103,10 @@ class AudioFileChunkingService: ObservableObject {
             let config = ChunkingConfig.config(for: engine)
             let fileInfo = try await AudioFileInfo.create(from: url)
 
-            EnhancedLogger.shared.logChunkingStart(url, strategy: config.strategy)
+            EnhancedLogger.shared.logChunking(
+                "Starting chunking with strategy: \(config.strategy)",
+                level: .debug
+            )
             EnhancedLogger.shared.logChunking("Duration: \(fileInfo.duration)s, Size: \(fileInfo.fileSize) bytes", level: .debug)
 
             currentStatus = "Checking if chunking is needed..."
@@ -181,7 +190,14 @@ class AudioFileChunkingService: ObservableObject {
     }
 
     /// Reassembles transcript chunks into a complete TranscriptData object
-    func reassembleTranscript(from chunks: [TranscriptChunk], originalURL: URL, recordingName: String, recordingDate: Date, recordingId: UUID) async throws -> ReassemblyResult {
+    func reassembleTranscript(
+        from chunks: [TranscriptChunk],
+        originalURL: URL,
+        recordingName: String,
+        recordingDate: Date,
+        recordingId: UUID,
+        engine: TranscriptionEngine? = nil
+    ) async throws -> ReassemblyResult {
         let startTime = Date()
 
         AppLog.shared.chunking("Reassembling transcript from \(chunks.count) chunks")
@@ -203,6 +219,9 @@ class AudioFileChunkingService: ObservableObject {
         // Combine all segments with time offset adjustments
         var allSegments: [TranscriptSegment] = []
         var speakerMappings: [String: String] = [:]
+        var allTimedWords: [TimedWordReassemblyItem] = []
+        var sourceOrder = 0
+        var hasPreviousTimedWord = false
 
         for chunk in sortedChunks {
             for segment in chunk.segments {
@@ -220,10 +239,37 @@ class AudioFileChunkingService: ObservableObject {
                     speakerMappings[segment.speaker] = segment.speaker
                 }
             }
+
+            var hasTimedWordInChunk = false
+            for word in chunk.timedWords ?? [] {
+                let forceLeadingSpace = !word.text.isEmpty
+                    && !hasTimedWordInChunk
+                    && hasPreviousTimedWord
+                allTimedWords.append(
+                    TimedWordReassemblyItem(
+                        word: offsetTimedWord(
+                            word,
+                            by: chunk.startTime,
+                            forceLeadingSpace: forceLeadingSpace
+                        ),
+                        sourceOrder: sourceOrder,
+                        sourceChunk: chunk.sequenceNumber
+                    )
+                )
+                sourceOrder += 1
+                if !word.text.isEmpty {
+                    hasTimedWordInChunk = true
+                    hasPreviousTimedWord = true
+                }
+            }
         }
 
         // Remove duplicate segments that might occur due to overlap
         allSegments = removeDuplicateSegments(allSegments)
+        let absoluteTimedWords = reassembleTimedWords(
+            allTimedWords,
+            audioDuration: sortedChunks.map(\.endTime).max()
+        )
 
         // Create the complete transcript with recording ID
         let transcriptData = TranscriptData(
@@ -232,7 +278,8 @@ class AudioFileChunkingService: ObservableObject {
             recordingName: recordingName,
             recordingDate: recordingDate,
             segments: allSegments,
-            speakerMappings: speakerMappings
+            speakerMappings: speakerMappings,
+            engine: engine
         )
 
         let reassemblyTime = Date().timeIntervalSince(startTime)
@@ -243,12 +290,18 @@ class AudioFileChunkingService: ObservableObject {
             transcriptData: transcriptData,
             totalSegments: allSegments.count,
             reassemblyTime: reassemblyTime,
-            chunks: sortedChunks
+            chunks: sortedChunks,
+            timedWords: sortedChunks.contains(where: { $0.timedWords != nil }) ? absoluteTimedWords : nil
         )
     }
 
     /// Creates transcript chunks from transcription results
-    func createTranscriptChunk(from transcriptText: String, audioChunk: AudioChunk, segments: [TranscriptSegment] = []) -> TranscriptChunk {
+    func createTranscriptChunk(
+        from transcriptText: String,
+        audioChunk: AudioChunk,
+        segments: [TranscriptSegment] = [],
+        timedWords: [TimedTranscriptWord]? = nil
+    ) -> TranscriptChunk {
         // If no segments provided, create a single segment from the transcript text
         let chunkSegments = segments.isEmpty ? [
             TranscriptSegment(
@@ -265,7 +318,8 @@ class AudioFileChunkingService: ObservableObject {
             transcript: transcriptText,
             segments: chunkSegments,
             startTime: audioChunk.startTime,
-            endTime: audioChunk.endTime
+            endTime: audioChunk.endTime,
+            timedWords: timedWords
         )
     }
 
@@ -282,11 +336,11 @@ class AudioFileChunkingService: ObservableObject {
                 do {
                     if fileManager.fileExists(atPath: chunk.chunkURL.path) {
                         try fileManager.removeItem(at: chunk.chunkURL)
-                        AppLog.shared.chunking("Deleted chunk: \(chunk.chunkURL.lastPathComponent)", level: .debug)
+                        AppLog.shared.chunking("Deleted temporary audio chunk", level: .debug)
                         deletedCount += 1
                     }
                 } catch {
-                    AppLog.shared.chunking("Failed to delete chunk \(chunk.chunkURL.lastPathComponent): \(error)", level: .error)
+                    AppLog.shared.chunking("Failed to delete temporary audio chunk: \(error)", level: .error)
                     errors.append(error)
                 }
             }
@@ -321,14 +375,14 @@ class AudioFileChunkingService: ObservableObject {
     func validateChunks(_ chunks: [AudioChunk]) async throws -> Bool {
         for chunk in chunks {
             guard fileManager.fileExists(atPath: chunk.chunkURL.path) else {
-                throw AudioChunkingError.chunkingFailed("Chunk file not found: \(chunk.chunkURL.lastPathComponent)")
+                throw AudioChunkingError.chunkingFailed("A temporary audio chunk is unavailable")
             }
 
             // Verify chunk is readable
             do {
                 _ = try Data(contentsOf: chunk.chunkURL)
             } catch {
-                throw AudioChunkingError.chunkingFailed("Chunk file not readable: \(chunk.chunkURL.lastPathComponent)")
+                throw AudioChunkingError.chunkingFailed("A temporary audio chunk is unreadable")
             }
         }
 
@@ -341,7 +395,7 @@ class AudioFileChunkingService: ObservableObject {
         if !fileManager.fileExists(atPath: url.path) {
             do {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-                AppLog.shared.chunking("Created temp directory: \(url.path)", level: .debug)
+                AppLog.shared.chunking("Created audio chunk temporary directory", level: .debug)
             } catch {
                 AppLog.shared.chunking("Failed to create temp directory: \(error)", level: .error)
                 throw AudioChunkingError.tempDirectoryCreationFailed
@@ -360,7 +414,7 @@ class AudioFileChunkingService: ObservableObject {
 
         if contents.isEmpty || allChunkFiles {
             try fileManager.removeItem(at: tempDir)
-            AppLog.shared.chunking("Cleaned up temp directory: \(tempDir.lastPathComponent)", level: .debug)
+            AppLog.shared.chunking("Cleaned up audio chunk temporary directory", level: .debug)
         }
     }
 
@@ -381,6 +435,154 @@ class AudioFileChunkingService: ObservableObject {
         }
 
         return uniqueSegments
+    }
+
+    private func offsetTimedWord(
+        _ word: TimedTranscriptWord,
+        by offset: TimeInterval,
+        forceLeadingSpace: Bool = false
+    ) -> TimedTranscriptWord {
+        TimedTranscriptWord(
+            text: word.text,
+            startTime: offsetTime(word.startTime, by: offset),
+            endTime: offsetTime(word.endTime, by: offset),
+            confidence: word.confidence,
+            hasLeadingSpace: word.hasLeadingSpace || forceLeadingSpace
+        )
+    }
+
+    private func offsetTime(_ value: TimeInterval?, by offset: TimeInterval) -> TimeInterval? {
+        guard let value, value.isFinite, offset.isFinite else { return nil }
+        return value + offset
+    }
+
+    /// Normalize chunk-local word timings in the same reassembly pass that
+    /// already sorts and de-duplicates transcript segments. Identical words
+    /// with overlapping valid ranges are retained from the earliest chunk.
+    /// Within one chunk, only an effectively identical range is considered a
+    /// duplicate so legitimate repeated words are not dropped.
+    private func reassembleTimedWords(
+        _ words: [TimedWordReassemblyItem],
+        audioDuration: TimeInterval?
+    ) -> [TimedTranscriptWord] {
+        let duration = audioDuration.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        let normalizedItems = words.map { item in
+            TimedWordReassemblyItem(
+                word: clampTimedWord(item.word, to: duration),
+                sourceOrder: item.sourceOrder,
+                sourceChunk: item.sourceChunk
+            )
+        }
+
+        // Sort only words with complete finite timing. Malformed words remain
+        // anchored at their source positions so they can reach the aligner as
+        // Unknown without reordering the ASR transcript.
+        let sortedTimedItems = normalizedItems
+            .filter { $0.word.startTime != nil && $0.word.endTime != nil }
+            .sorted { lhs, rhs in
+                let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
+                let rhsStart = rhs.word.startTime ?? .greatestFiniteMagnitude
+                if lhsStart != rhsStart { return lhsStart < rhsStart }
+
+                let lhsEnd = lhs.word.endTime ?? .greatestFiniteMagnitude
+                let rhsEnd = rhs.word.endTime ?? .greatestFiniteMagnitude
+                if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
+                return lhs.sourceOrder < rhs.sourceOrder
+            }
+
+        var orderedItems = [TimedWordReassemblyItem?](
+            repeating: nil,
+            count: normalizedItems.count
+        )
+        for item in normalizedItems where item.word.startTime == nil || item.word.endTime == nil {
+            orderedItems[item.sourceOrder] = item
+        }
+
+        var timedItemIndex = 0
+        for index in orderedItems.indices where orderedItems[index] == nil {
+            orderedItems[index] = sortedTimedItems[timedItemIndex]
+            timedItemIndex += 1
+        }
+
+        let normalized = orderedItems.compactMap { $0 }
+
+        var result: [TimedTranscriptWord] = []
+        var activeWordsByText: [String: [(word: TimedTranscriptWord, sourceChunk: Int)]] = [:]
+        for item in normalized {
+            guard let start = item.word.startTime,
+                  item.word.endTime != nil else {
+                result.append(item.word)
+                continue
+            }
+
+            var activeWords = activeWordsByText[item.word.text, default: []]
+            activeWords.removeAll { word in
+                guard let existingEnd = word.word.endTime else { return true }
+                return existingEnd < start - 0.001
+            }
+            let isDuplicate = activeWords.contains { existing in
+                guard rangesOverlap(existing.word, item.word) else { return false }
+                return existing.sourceChunk != item.sourceChunk
+                    || sameTimedWordRange(existing.word, item.word)
+            }
+            activeWords.append((word: item.word, sourceChunk: item.sourceChunk))
+            activeWordsByText[item.word.text] = activeWords
+
+            guard !isDuplicate else {
+                continue
+            }
+            result.append(item.word)
+        }
+        return result
+    }
+
+    private func sameTimedWordRange(_ lhs: TimedTranscriptWord, _ rhs: TimedTranscriptWord) -> Bool {
+        guard let lhsStart = lhs.startTime,
+              let rhsStart = rhs.startTime,
+              let lhsEnd = lhs.endTime,
+              let rhsEnd = rhs.endTime else {
+            return false
+        }
+        return abs(lhsStart - rhsStart) <= 0.001 && abs(lhsEnd - rhsEnd) <= 0.001
+    }
+
+    private func clampTimedWord(_ word: TimedTranscriptWord, to duration: TimeInterval?) -> TimedTranscriptWord {
+        let start = clampTime(word.startTime, to: duration)
+        let end = clampTime(word.endTime, to: duration)
+        let orderedStart: TimeInterval?
+        let orderedEnd: TimeInterval?
+        if let start, let end {
+            orderedStart = min(start, end)
+            orderedEnd = max(start, end)
+        } else {
+            orderedStart = start
+            orderedEnd = end
+        }
+
+        return TimedTranscriptWord(
+            text: word.text,
+            startTime: orderedStart,
+            endTime: orderedEnd,
+            confidence: word.confidence,
+            hasLeadingSpace: word.hasLeadingSpace
+        )
+    }
+
+    private func clampTime(_ value: TimeInterval?, to duration: TimeInterval?) -> TimeInterval? {
+        guard let value, value.isFinite else { return nil }
+        let nonNegative = max(0, value)
+        guard let duration else { return nonNegative }
+        return min(nonNegative, duration)
+    }
+
+    private func rangesOverlap(_ lhs: TimedTranscriptWord, _ rhs: TimedTranscriptWord) -> Bool {
+        guard let lhsStart = lhs.startTime,
+              let lhsEnd = lhs.endTime,
+              let rhsStart = rhs.startTime,
+              let rhsEnd = rhs.endTime else {
+            return false
+        }
+        return max(lhsStart, rhsStart) <= min(lhsEnd, rhsEnd) + 0.001
     }
 
     private func chunkEndTime(

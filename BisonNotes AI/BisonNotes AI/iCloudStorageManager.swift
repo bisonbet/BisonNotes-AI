@@ -2617,6 +2617,8 @@ extension iCloudStorageManager {
         "whisperServerURL",
         "whisperPort",
         "whisperProtocol",
+        FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled,
+        FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod,
         OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM,
         OnDeviceLLMModelInfo.SettingsKeys.selectedModelId,
         OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels,

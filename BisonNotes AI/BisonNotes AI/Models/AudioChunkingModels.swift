@@ -44,9 +44,21 @@ struct TranscriptChunk: Identifiable, Codable {
     let startTime: TimeInterval
     let endTime: TimeInterval
     let processingTime: TimeInterval?
+    /// Chunk-local Parakeet word timings. These remain ephemeral until the
+    /// existing reassembly path offsets them to the complete source timeline.
+    let timedWords: [TimedTranscriptWord]?
     let createdAt: Date
 
-    init(chunkId: UUID, sequenceNumber: Int, transcript: String, segments: [TranscriptSegment], startTime: TimeInterval, endTime: TimeInterval, processingTime: TimeInterval? = nil) {
+    init(
+        chunkId: UUID,
+        sequenceNumber: Int,
+        transcript: String,
+        segments: [TranscriptSegment],
+        startTime: TimeInterval,
+        endTime: TimeInterval,
+        processingTime: TimeInterval? = nil,
+        timedWords: [TimedTranscriptWord]? = nil
+    ) {
         self.id = UUID()
         self.chunkId = chunkId
         self.sequenceNumber = sequenceNumber
@@ -55,6 +67,7 @@ struct TranscriptChunk: Identifiable, Codable {
         self.startTime = startTime
         self.endTime = endTime
         self.processingTime = processingTime
+        self.timedWords = timedWords
         self.createdAt = Date()
     }
 }
@@ -137,6 +150,9 @@ struct ReassemblyResult {
     let totalSegments: Int
     let reassemblyTime: TimeInterval
     let chunks: [TranscriptChunk]
+    /// One absolute, sorted, clamped, overlap-deduplicated word collection
+    /// produced by `reassembleTranscript`. Nil means no chunk carried timing.
+    let timedWords: [TimedTranscriptWord]?
 }
 
 // MARK: - Audio File Info
@@ -150,8 +166,7 @@ struct AudioFileInfo {
     let channels: Int
 
     static func create(from url: URL) async throws -> AudioFileInfo {
-        AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
-        AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
+        AppLog.shared.chunking("AudioFileInfo.create - Analyzing audio source", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
 
         let asset = AVURLAsset(url: url)

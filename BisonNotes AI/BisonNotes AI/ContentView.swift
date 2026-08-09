@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var showingUnsupportedFileAlert = false
     @State private var showingCrashReport = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
+    @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     @State private var showSplash = true
 
     var body: some View {
@@ -99,6 +100,26 @@ struct ContentView: View {
         }
         .task {
             handleActionButtonLaunchIfNeeded()
+        }
+        .alert(
+            "Transcription Completed Without Speaker Labels",
+            isPresented: Binding(
+                get: { transcriptionStarter.lastTranscriptionWarning != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        transcriptionStarter.clearLastTranscriptionWarning()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                transcriptionStarter.clearLastTranscriptionWarning()
+            }
+        } message: {
+            Text(
+                transcriptionStarter.lastTranscriptionWarning?.userVisibleMessage
+                    ?? "The transcript was saved without local speaker labels."
+            )
         }
     }
 
