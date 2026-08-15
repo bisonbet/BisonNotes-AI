@@ -250,6 +250,7 @@ public protocol LocalDiarizing: Sendable {
 public enum LocalSpeakerLabelWarning: Codable, Equatable, Sendable {
     case modelNotReady(method: LocalDiarizationMethod)
     case timingUnavailable
+    case textAlignmentMismatch
     case diarizationFailed(method: LocalDiarizationMethod)
     case cancelled
     case experimentalDurationLimit(duration: TimeInterval, maximumDuration: TimeInterval)
@@ -261,6 +262,9 @@ public enum LocalSpeakerLabelWarning: Codable, Equatable, Sendable {
                 + "Download the speaker model in Settings before trying again."
         case .timingUnavailable:
             return "Transcription completed without speaker labels because timing data was unavailable."
+        case .textAlignmentMismatch:
+            return "Transcription completed without speaker labels because the diarized timing text "
+                + "could not be reconciled with the original transcript."
         case .diarizationFailed:
             return "Transcription completed without speaker labels."
         case .cancelled:

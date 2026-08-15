@@ -328,6 +328,30 @@ extension LocalSpeakerAlignmentTests {
         )
     }
 
+    func testContentEquivalenceIgnoresDecoderBoundaryWhitespaceButNotContentChanges() {
+        XCTAssertTrue(
+            SpeakerTranscriptAligner.contentEquivalent(
+                "I paid $ 100 today.",
+                "I paid $100 today."
+            )
+        )
+        XCTAssertTrue(
+            SpeakerTranscriptAligner.contentEquivalent(
+                "Tim 's well - being",
+                "Tim's well-being"
+            )
+        )
+        XCTAssertFalse(
+            SpeakerTranscriptAligner.contentEquivalent(
+                "I paid $ 100 today.",
+                "I paid $101 today."
+            )
+        )
+        XCTAssertFalse(
+            SpeakerTranscriptAligner.contentEquivalent("hello world", "helloworld")
+        )
+    }
+
     private func align(
         words: [TimedTranscriptWord],
         intervals: [LocalDiarizationInterval],

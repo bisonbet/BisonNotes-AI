@@ -1805,7 +1805,9 @@ struct EnhancedTaskRowView: View {
     let task: TaskItem
     let recordingName: String
     @StateObject private var integrationManager = SystemIntegrationManager()
-    @State private var showingIntegrationSelection = false
+    @State private var activeIntegrationSheet: SystemIntegrationSheet?
+    @State private var pendingIntegrationDestination: SystemIntegrationDestination?
+    @State private var calendarEditorResult: CalendarEventEditorResult?
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
 
@@ -1853,7 +1855,7 @@ struct EnhancedTaskRowView: View {
                     Spacer()
 
                     Button(action: {
-                        showingIntegrationSelection = true
+                        activeIntegrationSheet = .selection
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "plus.circle")
@@ -1880,39 +1882,30 @@ struct EnhancedTaskRowView: View {
         .padding(.horizontal, 12)
         .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .sheet(isPresented: $showingIntegrationSelection) {
-            IntegrationSelectionView(
-                title: "Add Task to System",
-                subtitle: "Choose where you'd like to add this task",
-                onRemindersSelected: {
-                    Task {
-                        let success = await integrationManager.addTaskToReminders(task, recordingName: recordingName)
-                        await MainActor.run {
-                            if success {
-                                showingSuccessAlert = true
-                            } else {
-                                showingErrorAlert = true
-                            }
-                        }
+        .sheet(item: $activeIntegrationSheet, onDismiss: handleIntegrationSheetDismissed) { sheet in
+            switch sheet {
+            case .selection:
+                IntegrationSelectionView(
+                    title: "Add Task to System",
+                    subtitle: "Choose where you'd like to add this task",
+                    onRemindersSelected: {
+                        pendingIntegrationDestination = .reminders
+                    },
+                    onCalendarSelected: {
+                        pendingIntegrationDestination = .calendar
+                    },
+                    onGoogleCalendarSelected: {
+                        pendingIntegrationDestination = .googleCalendar
                     }
-                },
-                onCalendarSelected: {
-                    Task {
-                        let success = await integrationManager.addTaskToCalendar(task, recordingName: recordingName)
-                        await MainActor.run {
-                            if success {
-                                showingSuccessAlert = true
-                            } else {
-                                showingErrorAlert = true
-                            }
-                        }
-                    }
-                },
-                onGoogleCalendarSelected: {
-                    integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
+                )
+                .nativeMacModalSizing(width: 560, height: 500)
+
+            case .calendar(let draft):
+                CalendarEventEditorView(draft: draft) { result in
+                    calendarEditorResult = result
+                    activeIntegrationSheet = nil
                 }
-            )
-            .nativeMacModalSizing(width: 560, height: 500)
+            }
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }
@@ -1931,6 +1924,51 @@ struct EnhancedTaskRowView: View {
         .accessibilityValue(
             "\(task.text.sanitizedPlainText()), \(task.priority.rawValue) priority, \(task.category.rawValue)"
         )
+    }
+
+    private func handleIntegrationSheetDismissed() {
+        if let destination = pendingIntegrationDestination {
+            pendingIntegrationDestination = nil
+
+            Task { @MainActor in
+                switch destination {
+                case .reminders:
+                    let success = await integrationManager.addTaskToReminders(task, recordingName: recordingName)
+                    if success {
+                        showingSuccessAlert = true
+                    } else {
+                        showingErrorAlert = true
+                    }
+
+                case .calendar:
+                    guard let draft = await integrationManager.prepareTaskCalendarEvent(
+                        task,
+                        recordingName: recordingName
+                    ) else {
+                        showingErrorAlert = true
+                        return
+                    }
+                    activeIntegrationSheet = .calendar(draft)
+
+                case .googleCalendar:
+                    integrationManager.addTaskToGoogleCalendar(task, recordingName: recordingName)
+                }
+            }
+            return
+        }
+
+        guard let result = calendarEditorResult else { return }
+        calendarEditorResult = nil
+
+        switch result {
+        case .saved:
+            showingSuccessAlert = true
+        case .failed(let message):
+            integrationManager.lastError = message
+            showingErrorAlert = true
+        case .canceled, .deleted:
+            break
+        }
     }
 
     private var priorityColor: Color {
@@ -1961,7 +1999,9 @@ struct EnhancedReminderRowView: View {
     let reminder: ReminderItem
     let recordingName: String
     @StateObject private var integrationManager = SystemIntegrationManager()
-    @State private var showingIntegrationSelection = false
+    @State private var activeIntegrationSheet: SystemIntegrationSheet?
+    @State private var pendingIntegrationDestination: SystemIntegrationDestination?
+    @State private var calendarEditorResult: CalendarEventEditorResult?
     @State private var showingSuccessAlert = false
     @State private var showingErrorAlert = false
 
@@ -2004,7 +2044,7 @@ struct EnhancedReminderRowView: View {
                     Spacer()
 
                     Button(action: {
-                        showingIntegrationSelection = true
+                        activeIntegrationSheet = .selection
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "plus.circle")
@@ -2031,39 +2071,30 @@ struct EnhancedReminderRowView: View {
         .padding(.horizontal, 12)
         .background(Color(.secondarySystemGroupedBackground).opacity(0.5))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .sheet(isPresented: $showingIntegrationSelection) {
-            IntegrationSelectionView(
-                title: "Add Reminder to System",
-                subtitle: "Choose where you'd like to add this reminder",
-                onRemindersSelected: {
-                    Task {
-                        let success = await integrationManager.addReminderToReminders(reminder, recordingName: recordingName)
-                        await MainActor.run {
-                            if success {
-                                showingSuccessAlert = true
-                            } else {
-                                showingErrorAlert = true
-                            }
-                        }
+        .sheet(item: $activeIntegrationSheet, onDismiss: handleIntegrationSheetDismissed) { sheet in
+            switch sheet {
+            case .selection:
+                IntegrationSelectionView(
+                    title: "Add Reminder to System",
+                    subtitle: "Choose where you'd like to add this reminder",
+                    onRemindersSelected: {
+                        pendingIntegrationDestination = .reminders
+                    },
+                    onCalendarSelected: {
+                        pendingIntegrationDestination = .calendar
+                    },
+                    onGoogleCalendarSelected: {
+                        pendingIntegrationDestination = .googleCalendar
                     }
-                },
-                onCalendarSelected: {
-                    Task {
-                        let success = await integrationManager.addReminderToCalendar(reminder, recordingName: recordingName)
-                        await MainActor.run {
-                            if success {
-                                showingSuccessAlert = true
-                            } else {
-                                showingErrorAlert = true
-                            }
-                        }
-                    }
-                },
-                onGoogleCalendarSelected: {
-                    integrationManager.addReminderToGoogleCalendar(reminder, recordingName: recordingName)
+                )
+                .nativeMacModalSizing(width: 560, height: 500)
+
+            case .calendar(let draft):
+                CalendarEventEditorView(draft: draft) { result in
+                    calendarEditorResult = result
+                    activeIntegrationSheet = nil
                 }
-            )
-            .nativeMacModalSizing(width: 560, height: 500)
+            }
         }
         .alert("Success", isPresented: $showingSuccessAlert) {
             Button("OK") { }
@@ -2080,6 +2111,57 @@ struct EnhancedReminderRowView: View {
         .accessibilityValue(
             "\(reminder.text.sanitizedPlainText()), \(reminder.urgency.rawValue), \(reminder.timeReference.displayText)"
         )
+    }
+
+    private func handleIntegrationSheetDismissed() {
+        if let destination = pendingIntegrationDestination {
+            pendingIntegrationDestination = nil
+
+            Task { @MainActor in
+                switch destination {
+                case .reminders:
+                    let success = await integrationManager.addReminderToReminders(
+                        reminder,
+                        recordingName: recordingName
+                    )
+                    if success {
+                        showingSuccessAlert = true
+                    } else {
+                        showingErrorAlert = true
+                    }
+
+                case .calendar:
+                    guard let draft = await integrationManager.prepareReminderCalendarEvent(
+                        reminder,
+                        recordingName: recordingName
+                    ) else {
+                        showingErrorAlert = true
+                        return
+                    }
+                    activeIntegrationSheet = .calendar(draft)
+
+                case .googleCalendar:
+                    integrationManager.addReminderToGoogleCalendar(
+                        reminder,
+                        recordingName: recordingName
+                    )
+                }
+            }
+            return
+        }
+
+        guard let result = calendarEditorResult else { return }
+        calendarEditorResult = nil
+
+        switch result {
+        case .saved:
+            showingSuccessAlert = true
+        case .failed(let message):
+            integrationManager.lastError = message
+            showingErrorAlert = true
+        case .canceled, .deleted:
+            break
+        }
     }
 
     private var urgencyColor: Color {

@@ -225,14 +225,41 @@ struct LocalSpeakerLabelingCoordinator {
                     .filter { $0 != LocalSpeakerLabeledSegment.unknownSpeakerID }
             ).count
             let normalizedBaseText = SpeakerTranscriptAligner.normalizedPlainText(baseResult.fullText)
-            let wordTextMatches = normalizedBaseText ==
-                SpeakerTranscriptAligner.normalizedPlainText(from: words)
-            let segmentTextMatches = normalizedBaseText ==
-                SpeakerTranscriptAligner.normalizedPlainText(from: labeling.segments)
+            let timedWordText = SpeakerTranscriptAligner.plainText(from: words)
+            let labeledSegmentText = SpeakerTranscriptAligner.joinWordText(
+                labeling.segments.map { (text: $0.text, hasLeadingSpace: $0.hasLeadingSpace) }
+            )
+            let normalizedTimedWordText = SpeakerTranscriptAligner.normalizedPlainText(timedWordText)
+            let normalizedLabeledSegmentText = SpeakerTranscriptAligner.normalizedPlainText(labeledSegmentText)
+            let wordTextMatches = normalizedBaseText == normalizedTimedWordText
+            let segmentTextMatches = normalizedBaseText == normalizedLabeledSegmentText
+            let wordContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                baseResult.fullText,
+                timedWordText
+            )
+            let segmentContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                baseResult.fullText,
+                labeledSegmentText
+            )
+            let timedAndLabeledContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                timedWordText,
+                labeledSegmentText
+            )
             // Speaker turns are presentation boundaries, but they must retain
             // the source word-boundary metadata. Validate both the timed-word
             // sequence and the segment representation before persisting it.
-            let textMatches = wordTextMatches && segmentTextMatches
+            // Decoder-boundary whitespace is formatting, not transcript
+            // content, so allow it when every non-whitespace character still
+            // matches in order.
+            let textMatches = wordContentMatches && segmentContentMatches && timedAndLabeledContentMatches
+            let reconciliation: String
+            if wordTextMatches && segmentTextMatches {
+                reconciliation = "strict"
+            } else if textMatches {
+                reconciliation = "contentOnly"
+            } else {
+                reconciliation = "contentMismatch"
+            }
             AppLog.shared.backgroundProcessing(
                 "Local speaker labels alignment: words=\(words.count), finiteWordRanges=\(finiteWordRanges.count), "
                     + "wordRange=\(Self.timeRangeDescription(finiteWordRanges)), "
@@ -241,7 +268,13 @@ struct LocalSpeakerLabelingCoordinator {
                     + "normalizedIntervals=\(labeling.normalizedIntervals.count), "
                     + "duration=\(Self.timeDescription(effectiveDuration)), "
                     + "alignedSegments=\(labeling.segments.count), knownSpeakers=\(alignedKnownSpeakerCount), "
-                    + "wordTextMatches=\(wordTextMatches), segmentTextMatches=\(segmentTextMatches)",
+                    + "wordTextMatches=\(wordTextMatches), segmentTextMatches=\(segmentTextMatches), "
+                    + "wordContentMatches=\(wordContentMatches), segmentContentMatches=\(segmentContentMatches), "
+                    + "timedAndLabeledContentMatches=\(timedAndLabeledContentMatches), "
+                    + "baseContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(baseResult.fullText)), "
+                    + "timedContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(timedWordText)), "
+                    + "labeledContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(labeledSegmentText)), "
+                    + "reconciliation=\(reconciliation)",
                 level: .debug
             )
             guard labeling.didApplyLabels else {
@@ -289,15 +322,48 @@ struct LocalSpeakerLabelingCoordinator {
                 return baseResult
             }
 
-            guard textMatches else {
+            guard timedAndLabeledContentMatches else {
                 AppLog.shared.backgroundProcessing(
-                    "Local speaker labels fallback: reason=alignedTextMismatch",
+                    "Local speaker labels fallback: reason=timedLabelTextMismatch",
                     level: .debug
                 )
-                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+                return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
             }
 
-            let segments = labeling.segments.map { segment in
+            var segmentsForPersistence = labeling.segments
+            if baseResult.fullText != timedWordText || baseResult.fullText != labeledSegmentText {
+                guard let reconciled = SpeakerTranscriptAligner.reconcileCanonicalText(
+                    canonicalText: baseResult.fullText,
+                    with: labeling.segments
+                ) else {
+                    AppLog.shared.backgroundProcessing(
+                        "Local speaker labels fallback: reason=alignedTextMismatch",
+                        level: .debug
+                    )
+                    return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
+                }
+                segmentsForPersistence = reconciled.segments
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels canonical reconciliation: outcome=success, "
+                        + "segments=\(segmentsForPersistence.count), "
+                        + "unmatchedCanonicalContentCharacters=\(reconciled.unmatchedCanonicalContentCharacters), "
+                        + "unmatchedTimedContentCharacters=\(reconciled.unmatchedTimedContentCharacters)",
+                    level: .debug
+                )
+            }
+
+            let persistedSegmentText = SpeakerTranscriptAligner.joinWordText(
+                segmentsForPersistence.map { (text: $0.text, hasLeadingSpace: $0.hasLeadingSpace) }
+            )
+            guard SpeakerTranscriptAligner.contentEquivalent(baseResult.fullText, persistedSegmentText) else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=canonicalTextVerificationFailed",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
+            }
+
+            let segments = segmentsForPersistence.map { segment in
                 TranscriptSegment(
                     speaker: segment.speakerID,
                     text: segment.text,
@@ -306,7 +372,7 @@ struct LocalSpeakerLabelingCoordinator {
                     hasLeadingSpace: segment.hasLeadingSpace
                 )
             }
-            let speakerMappings = defaultSpeakerMappings(for: labeling.segments)
+            let speakerMappings = defaultSpeakerMappings(for: segmentsForPersistence)
             return baseResult.with(
                 speakerMappings: speakerMappings,
                 speakerLabelWarning: nil,

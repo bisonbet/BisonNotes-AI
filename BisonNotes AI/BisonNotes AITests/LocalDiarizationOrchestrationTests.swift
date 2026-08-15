@@ -49,7 +49,12 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
         XCTAssertEqual(reassembly.timedWords?.map(\.endTime), [2, 11.5])
 
         let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")
-        let fake = OrchestrationFakeLocalDiarizationService()
+        let fake = OrchestrationFakeLocalDiarizationService(
+            intervals: [
+                LocalDiarizationInterval(speakerID: "first", startTime: 0, endTime: 5),
+                LocalDiarizationInterval(speakerID: "second", startTime: 5, endTime: 12)
+            ]
+        )
         let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
         let base = TranscriptionResult(
             fullText: "hello world",

@@ -95,6 +95,10 @@
 	<true/>
 	<key>NSCalendarsUsageDescription</key>
 	<string>This app uses calendar access to add events from your audio recordings.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>This app uses calendar access to add events from your audio recordings.</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>This app uses calendar access to create events from your audio recordings.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -104,6 +108,8 @@
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>BisonNotes uses screen capture access only to record audio playing from other Mac apps during a meeting. It does not save screen video.</string>
 	<key>NSRemindersUsageDescription</key>
+	<string>This app uses reminders access to add tasks and reminders from your audio recordings.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
 	<string>This app uses reminders access to add tasks and reminders from your audio recordings.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>This app uses speech recognition to generate transcripts of your audio recordings.</string>
