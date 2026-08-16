@@ -28,7 +28,7 @@ enum ComedyMode: String {
         return ComedyMode(rawValue: style) ?? .snarky
     }
 
-    /// Returns prompt modifier text to append to summary system prompts, or nil if comedy mode is off
+    /// Returns prompt modifier text to append to narrative summary prompts, or nil if comedy mode is off.
     var promptModifier: String? {
         switch self {
         case .off:
@@ -36,32 +36,59 @@ enum ComedyMode: String {
         case .snarky:
             return """
 
-            **IMPORTANT STYLE OVERRIDE — Snarky Comedy Mode:**
-            - Write the summary in the voice of an AGGRESSIVELY snarky comedian who roasts absolutely everything
-            - Keep ALL the factual information accurate and complete — don't skip anything important
-            - Be ruthlessly sarcastic — drip with condescension, mock bad ideas, question obvious statements, and add biting commentary after nearly every point
-            - Use heavy sarcasm tags like "oh how groundbreaking", "truly shocking", "what a revelation", "nobody saw that coming"
-            - Editorialize constantly — if something is boring, say it's boring. If something is obvious, mock it for being obvious. If a decision is questionable, tear it apart
-            - Add parenthetical asides that break the fourth wall and commiserate with the reader about having to sit through this
-            - Channel the energy of a comedian who was forced to attend this meeting/conversation and is NOT happy about it
-            - Keep it PG and family-friendly — no profanity or crude humor, but absolutely DO NOT hold back on the snark, sarcasm, and roasting
-            - Every paragraph should have at least one zinger. If you're not making the reader smirk, you're not being snarky enough
-            - Think: the lovechild of a grumpy critic and a roast comedian, not a polite observer with mild wit
+            **Snarky Comedy Mode — summary narrative only:**
+            - Use a dry, playful, clearly comedic voice with occasional gentle sarcasm and witty asides.
+            - Keep every fact, name, number, date, quote, medical detail, and decision accurate and complete.
+            - Jokes must not become new claims.
+              Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive, task, or reminder.
+            - Do not mock health concerns, trauma, grief, disability, abuse, or private individuals.
+              Use gentle humor when the subject is sensitive.
+            - Keep it PG and family-friendly with no profanity, crude humor, or sexual jokes.
             """
         case .funny:
             return """
 
-            **IMPORTANT STYLE OVERRIDE — Funny Comedy Mode:**
-            - Write the summary in an over-the-top, hilariously goofy style with wild descriptions and absurd analogies
-            - Keep ALL the factual information accurate and complete — don't skip anything important
-            - Use ridiculous metaphors, dramatic exaggerations, and colorful language to describe mundane things
-            - Throw in unexpected comparisons, silly sound effects (written out), and comedic tangents
-            - Write like an excited, slightly unhinged narrator who finds everything absolutely fascinating and bonkers
-            - Keep it PG and family-friendly — no profanity or crude humor, just wholesome absurdity
-            - The goal is to make the reader laugh out loud while still getting all the key information
-            - Think: an enthusiastic cartoon narrator meets a nature documentary voiceover
+            **Funny Comedy Mode — summary narrative only:**
+            - Use a lively, goofy voice with a few playful metaphors and light absurdity.
+            - Keep every fact, name, number, date, quote, medical detail, and decision accurate and complete.
+            - Playful language must not become new claims.
+              Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive, task, or reminder.
+            - Do not make health concerns, trauma, grief, disability, abuse, or private individuals the punchline.
+              Use gentle humor when the subject is sensitive.
+            - Keep it PG and family-friendly with no profanity, crude humor, or sexual jokes.
             """
         }
+    }
+
+    /// Returns a comedy modifier for responses that contain structured metadata.
+    /// Humor is explicitly limited to the narrative summary so it cannot corrupt
+    /// tasks, reminders, titles, or the required response format.
+    var structuredPromptModifier: String? {
+        let style: String
+        switch self {
+        case .off:
+            return nil
+        case .snarky:
+            style = "dry, lightly snarky wit"
+        case .funny:
+            style = "playful, goofy humor"
+        }
+
+        return """
+
+        **COMEDY SCOPE — \(style), summary field only:**
+        - Apply comedy only inside the narrative `summary` value or Summary section.
+        - Treat `tasks`, `reminders`, `titles`, and `contentType` as factual metadata.
+          Keep them literal, concise, professional, and grounded only in the transcript.
+        - Never invent or embellish a task or reminder. If the transcript does not explicitly
+          contain one, return an empty array or leave the section empty.
+        - Titles must describe the actual discussion in Title Case, use 4-6 words when possible,
+          and contain no Markdown or ending punctuation.
+        - Do not let comedy change names, numbers, dates, medical details, quoted language,
+          decisions, urgency, or task/reminder meaning.
+        - Preserve the exact requested output format, section/field names, and field types.
+          Do not add commentary outside the requested response.
+        """
     }
 }
 
@@ -95,10 +122,9 @@ class ChatCompletionPromptGenerator {
 
         let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
 
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
-
         switch type {
         case .summary:
+            let comedyModifier = ComedyMode.current.promptModifier ?? ""
             return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt() + comedyModifier
         case .tasks:
             return basePrompt + "\n\n" + createTasksPrompt()
@@ -107,6 +133,7 @@ class ChatCompletionPromptGenerator {
         case .titles:
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
+            let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
             return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt() + comedyModifier
         }
     }
@@ -159,7 +186,8 @@ class ChatCompletionPromptGenerator {
     private static func createSummaryPrompt() -> String {
         return """
         **Summary Generation Guidelines:**
-        - Create a comprehensive summary using Markdown formatting (aim for 15-20% of the original transcript length)
+        - Create a summary using Markdown formatting at the selected detail level.
+        \(SummaryDetailLevel.current.promptInstructions())
         - Use **bold** for key points and important information
         - Use *italic* for emphasis and highlights
         - Use ## headers for main sections
@@ -168,9 +196,6 @@ class ChatCompletionPromptGenerator {
         - Use 1. numbered lists for sequential items
         - Use > blockquotes for important quotes or statements
         - Keep the summary well-structured and informative
-        - Focus on capturing all important details, context, and nuances
-        - Include key points, main ideas, specific details, and overall themes
-        - Balance comprehensiveness with conciseness
         """
     }
 
@@ -235,7 +260,8 @@ class ChatCompletionPromptGenerator {
     private static func createCompletePrompt() -> String {
         return """
         **Complete Analysis Guidelines:**
-        - Provide a comprehensive analysis in a single response
+        - Provide a complete analysis in a single response.
+        \(SummaryDetailLevel.current.promptInstructions())
         - Include summary, tasks, reminders, and titles
         - Use the standardized title generation logic
         - Ensure all components are properly formatted
@@ -262,8 +288,14 @@ class ChatCompletionPromptGenerator {
     }
 
     private static func createSummaryUserPrompt(_ text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount(of: text)
+        )
+
         return """
-        Please provide a comprehensive summary of the following content using proper Markdown formatting:
+        Please provide a summary of the following content using proper Markdown formatting.
+
+        \(detailInstructions)
 
         \(text)
         """
@@ -344,11 +376,15 @@ class ChatCompletionPromptGenerator {
     }
 
     private static func createCompleteUserPrompt(_ text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount(of: text)
+        )
+
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "A detailed summary using Markdown formatting with **bold**, *italic*, ## headers, • bullet points, 1. numbered lists, > blockquotes, etc. (aim for 15-20% of the original transcript length)",
+            "summary": "\(SummaryDetailLevel.current.schemaDescription) Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes.",
             "tasks": [
                 {
                     "text": "task description",
@@ -387,8 +423,14 @@ class ChatCompletionPromptGenerator {
         - Do not include trailing commas
         - Escape special characters in JSON strings (quotes, backslashes, newlines)
 
+        \(detailInstructions)
+
         Content to analyze:
         \(text)
         """
+    }
+
+    private static func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
     }
 }

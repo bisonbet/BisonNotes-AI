@@ -76,7 +76,11 @@ struct OpenAICompatibleSettingsView: View {
 
         Task {
             do {
-                let modelIds = try await OpenAICompatibleService.fetchCompatibleModels(apiKey: apiKey, baseURL: baseURL)
+                let modelIds = try await OpenAICompatibleService.fetchCompatibleModels(
+                    apiKey: apiKey,
+                    baseURL: baseURL,
+                    allowInsecurePublicEndpoints: allowInsecurePublicEndpoints
+                )
 
                 await MainActor.run {
                     availableModelIds = modelIds

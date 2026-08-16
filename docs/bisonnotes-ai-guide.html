@@ -33,7 +33,9 @@
         <li><a href="#bn-combine">Combining Recordings</a></li>
       </ul>
     </li>
-    <li><a href="#bn-ai">AI Engine Configuration</a></li>
+    <li><a href="#bn-ai">AI Engine Configuration</a>
+      <ul><li><a href="#bn-ollama">Ollama on Mac</a></li></ul>
+    </li>
     <li><a href="#bn-transcription">Transcription Configuration</a></li>
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
@@ -86,7 +88,7 @@
       <ul>
         <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
         <li><strong>On Device AI:</strong> Private, on-device processing. No data leaves your device. Uses MLX Swift for summaries on 4GB+ devices and Parakeet for transcription. Models download once, then run locally.</li>
-        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, Mistral AI, Compatible API, and Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, Mistral AI, Compatible API, and Ollama on native macOS. If you already have an AI provider configured, your existing settings are preserved.</li>
       </ul>
     </div>
     <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
@@ -444,6 +446,8 @@
     <ul>
       <li><strong>Mistral Large (25.12)</strong> — Most capable, 128K context (Premium)</li>
       <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard) &mdash; <em>default after guided setup</em></li>
+      <li><strong>Mistral Small 4 (26.03)</strong> — Efficient hybrid instruct/reasoning model with a controllable light reasoning pass (Standard)</li>
+      <li><strong>Mistral Medium 3.5</strong> — Current medium model with adjustable reasoning effort and a 128K app context cap (Standard)</li>
       <li><strong>Magistral Medium (25.09)</strong> — Economy, 40K context</li>
     </ul>
 
@@ -500,27 +504,36 @@
 </details>
 
 <!-- Ollama -->
-<details>
-  <summary>6. Ollama — Local LLM Server</summary>
+<details id="bn-ollama">
+  <summary>6. Ollama — Local LLM Server (native Mac only)</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">Local</span>
     <span class="bn-badge bn-b-free">Free</span>
-    <p><strong>Type:</strong> Local server &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Not required</p>
+    <p><strong>Type:</strong> Local server on the native Mac app &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Required for installation and model downloads only</p>
 
-    <h4>Setup</h4>
+    <div class="bn-info"><strong>Mac only:</strong> Ollama is available in BisonNotes only on native macOS. It is not offered as an iPhone or iPad engine. BisonNotes connects to Ollama running on the same Mac through the loopback address <code>http://localhost:11434</code>.</div>
+    <div class="bn-info"><strong>Existing iPhone/iPad users:</strong> If an older version saved Ollama as your engine, BisonNotes automatically switches to the best available on-device engine when you next launch the app. If the device cannot run an on-device model, it uses another configured fallback.</div>
+
+    <h4>Install Ollama on your Mac</h4>
     <ol class="bn-sl">
-      <li>Install <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> on your machine.</li>
-      <li>Download models:
-        <pre><code>ollama pull qwen3:30b
-ollama pull llama3.2
-ollama pull mistral-small3.2</code></pre>
+      <li>Open the official <a href="https://ollama.com/download/mac" target="_blank" rel="noopener">Ollama for macOS download</a> page. The current macOS app requires macOS 14 Sonoma or later.</li>
+      <li>Open the downloaded disk image, drag <strong>Ollama</strong> to <strong>Applications</strong>, and launch it.</li>
+      <li>Open Terminal and download at least one model, for example:
+        <pre><code>ollama pull llama3.2</code></pre>
+        You can choose another model from the <a href="https://ollama.com/library" target="_blank" rel="noopener">Ollama model library</a>; larger models need more memory and storage.
       </li>
-      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
-      <li>Set server URL and port (default: <code>http://localhost:11434</code>).</li>
-      <li>Tap refresh to scan for models, select one, test connection.</li>
+      <li>Leave Ollama running. If you use the command line instead of the Mac app, <code>ollama serve</code> starts the local server.</li>
     </ol>
 
-    <div class="bn-info"><strong>Tips:</strong> Use your server's IP for network access (e.g., <code>http://192.168.1.100:11434</code>). Larger models = better results but more RAM.</div>
+    <h4>Connect BisonNotes to Ollama</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
+      <li>On the native Mac app, leave Server URL as <code>http://localhost</code> and Port as <code>11434</code>. BisonNotes seeds these values when you choose Ollama unless you already configured a custom server.</li>
+      <li>Choose <strong>Test Connection</strong>; once connected, the available model list loads. Select the model you downloaded, then save/dismiss Ollama Settings.</li>
+      <li>Select Ollama in the Engine Library and generate a summary from a transcript.</li>
+    </ol>
+
+    <div class="bn-info"><strong>Troubleshooting:</strong> If the connection test fails, open Ollama from Applications and try again. You can verify the local API in Terminal with <code>curl http://localhost:11434/api/tags</code>. The default loopback connection keeps transcript text on the Mac.</div>
     <p><strong>Best for:</strong> Privacy, customizable models, offline use</p>
   </div>
 </details>
@@ -726,7 +739,7 @@ ollama pull mistral-small3.2</code></pre>
     <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
-      <li>All AI engines, including On Device AI (MLX Swift), On Device AI (Legacy), cloud providers, Ollama, and Apple Native</li>
+      <li>All AI engines, including On Device AI (MLX Swift), On Device AI (Legacy), cloud providers, Ollama on native macOS, and Apple Native</li>
       <li>All transcription engines</li>
       <li>Microphone selection</li>
       <li>Preferences, iCloud, background processing, diagnostics, and experimental model toggles</li>
@@ -747,7 +760,7 @@ ollama pull mistral-small3.2</code></pre>
 
 <h3>AI Settings</h3>
 <ul>
-  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama, and Apple Native engines</li>
+  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama on native macOS, and Apple Native engines</li>
   <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
   <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
   <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
@@ -835,7 +848,7 @@ ollama pull mistral-small3.2</code></pre>
 </ul>
 
 <h3>Endpoint safety</h3>
-<p>User-configurable AI services (compatible API, Ollama, Whisper) are checked against an endpoint policy:</p>
+<p>User-configurable AI services (compatible API, Ollama on native macOS, and Whisper) are checked against an endpoint policy:</p>
 <ul>
   <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
   <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>

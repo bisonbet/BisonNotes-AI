@@ -129,4 +129,107 @@ final class BisonNotesAITests: XCTestCase {
         XCTAssertEqual(result.tasks.map(\.text), ["Combined task"])
         XCTAssertTrue(result.reminders.isEmpty)
     }
+
+    func testBothComedyModesPersistAndScopeHumorToSummaryNarrative() {
+        let defaults = UserDefaults.standard
+        let enabledKey = ComedyMode.SettingsKeys.enabled
+        let styleKey = ComedyMode.SettingsKeys.style
+        let originalEnabled = defaults.object(forKey: enabledKey)
+        let originalStyle = defaults.object(forKey: styleKey)
+
+        defer {
+            if let originalEnabled {
+                defaults.set(originalEnabled, forKey: enabledKey)
+            } else {
+                defaults.removeObject(forKey: enabledKey)
+            }
+
+            if let originalStyle {
+                defaults.set(originalStyle, forKey: styleKey)
+            } else {
+                defaults.removeObject(forKey: styleKey)
+            }
+        }
+
+        for mode in [ComedyMode.snarky, .funny] {
+            defaults.set(true, forKey: enabledKey)
+            defaults.set(mode.rawValue, forKey: styleKey)
+
+            XCTAssertEqual(ComedyMode.current.rawValue, mode.rawValue)
+
+            let summaryPrompt = ChatCompletionPromptGenerator.createSystemPrompt(
+                for: .summary,
+                contentType: .general
+            )
+            XCTAssertTrue(summaryPrompt.contains("summary narrative only"))
+
+            let completePrompt = ChatCompletionPromptGenerator.createSystemPrompt(
+                for: .complete,
+                contentType: .general
+            )
+            XCTAssertTrue(completePrompt.contains("COMEDY SCOPE"))
+            XCTAssertTrue(completePrompt.contains("summary field only"))
+            XCTAssertTrue(completePrompt.contains("Treat `tasks`, `reminders`, `titles`"))
+            XCTAssertTrue(completePrompt.contains("exact requested output format"))
+
+            let tasksPrompt = ChatCompletionPromptGenerator.createSystemPrompt(
+                for: .tasks,
+                contentType: .general
+            )
+            XCTAssertFalse(tasksPrompt.contains("Comedy Mode"))
+        }
+    }
+
+    func testCompleteParserRejectsUnstructuredResponseThatWouldLoseMetadata() {
+        let unstructuredResponse = """
+        ## Summary
+
+        A summary without the required task, reminder, and title fields.
+        """
+
+        XCTAssertThrowsError(
+            try ChatCompletionResponseParser.parseCompleteResponseFromJSON(unstructuredResponse)
+        )
+    }
+
+    func testTitleAndRecordingNameCleaningRemoveMarkdownArtifactsAndTrailingPunctuation() throws {
+        XCTAssertEqual(
+            RecordingNameGenerator.cleanStandardizedTitleResponse("Visit Ed **Intercourse,"),
+            "Visit Ed Intercourse"
+        )
+        XCTAssertEqual(
+            RecordingNameGenerator.validateAndFixRecordingName(
+                "Visit Ed **Intercourse,",
+                originalName: "Recording"
+            ),
+            "Visit Ed Intercourse"
+        )
+
+        let json = """
+        {
+          "summary": "## Summary\\n\\nFacts from the transcript.",
+          "tasks": [],
+          "reminders": [
+            {
+              "text": "Call the clinic tomorrow",
+              "urgency": "today",
+              "timeReference": "tomorrow",
+              "confidence": 0.9
+            }
+          ],
+          "titles": [
+            {
+              "text": "**Project Budget Review,",
+              "category": "general",
+              "confidence": 0.9
+            }
+          ]
+        }
+        """
+
+        let parsed = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(json)
+        XCTAssertTrue(parsed.tasks.isEmpty)
+        XCTAssertEqual(parsed.reminders.count, 1)
+        XCTAssertEqual(parsed.titles.first?.text, "Project Budget Review")
+    }
 }

@@ -91,6 +91,64 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// Ollama is supported only by the native Mac app. Move legacy iPhone and
+    /// iPad selections to the best available on-device engine before startup
+    /// can try to restore the unsupported provider.
+    static func migrateIOSOllamaSelection() {
+#if os(macOS)
+        return
+#else
+        let defaults = UserDefaults.standard
+        let aiEngineKey = "SelectedAIEngine"
+        guard defaults.string(forKey: aiEngineKey) == AIEngineType.localLLM.rawValue else {
+            return
+        }
+
+        let replacement: AIEngineType
+        if let onDeviceEngine = AIEngineType.preferredOnDeviceMigrationEngine(
+            supportsMLX: DeviceCapabilities.supportsMLX,
+            supportsOnDeviceLLM: DeviceCapabilities.supportsOnDeviceLLM
+        ) {
+            replacement = onDeviceEngine
+            switch onDeviceEngine {
+            case .mlxSwift:
+                let defaultModelId = DeviceCapabilities.totalRAMInGB < 6.0
+                    ? MLXModelOption.smallModelId
+                    : MLXSwiftSettingsKeys.defaultModelId
+                defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+                defaults.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+            case .onDeviceLLM:
+                defaults.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
+                if defaults.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) == nil {
+                    defaults.set(
+                        OnDeviceLLMModelInfo.defaultSummarizationModel.id,
+                        forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId
+                    )
+                }
+            default:
+                break
+            }
+        } else if AIEngineFactory.createEngine(type: .appleNative).isAvailable {
+            replacement = .appleNative
+        } else if let fallback = AIEngineType.availableCases.first(where: { engineType in
+            engineType != .localLLM && AIEngineFactory.createEngine(type: engineType).isAvailable
+        }) {
+            replacement = fallback
+        } else {
+            defaults.set("None", forKey: aiEngineKey)
+            defaults.set(false, forKey: "enableOllama")
+            defaults.set(true, forKey: "showOllamaMigrationAlert")
+            NSLog("⚠️ Ollama is Mac-only; no replacement engine is currently available on this device")
+            return
+        }
+
+        defaults.set(replacement.rawValue, forKey: aiEngineKey)
+        defaults.set(false, forKey: "enableOllama")
+        defaults.set(true, forKey: "showOllamaMigrationAlert")
+        NSLog("✅ Migrated iOS Ollama selection to \(replacement.displayName)")
+#endif
+    }
+
     /// Migrates selections that depended on removed provider options.
     /// Existing compatible-API summarization selections are preserved.
     private func migrateRemovedProviderSelections() {
@@ -596,6 +654,7 @@ struct BisonNotesAIApp: App {
         setupBackgroundTasks()
         setupAppShortcuts()
         migrateAIEngineSelection()
+        Self.migrateIOSOllamaSelection()
         migrateRemovedProviderSelections()
         migrateAppleIntelligenceToOnDeviceLLM()
         migrateWhisperKitToParakeet()

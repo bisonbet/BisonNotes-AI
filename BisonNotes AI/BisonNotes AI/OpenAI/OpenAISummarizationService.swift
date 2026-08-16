@@ -53,7 +53,10 @@ class OpenAICompatibleService: ObservableObject {
             messages: messages,
             temperature: effectiveTemperature(config.temperature),
             maxCompletionTokens: config.maxTokens,
-            reasoningEffort: reasoningEffort()
+            reasoningEffort: reasoningEffort(),
+            enableThinking: thinkingOptions.enableThinking,
+            thinkingBudget: thinkingOptions.thinkingBudget,
+            chatTemplateKwargs: thinkingOptions.chatTemplateKwargs
         )
 
         let response = try await makeAPICall(request: request)
@@ -62,7 +65,7 @@ class OpenAICompatibleService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
         }
 
-        return choice.message.content
+        return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: choice.message.content)
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
@@ -80,7 +83,10 @@ class OpenAICompatibleService: ObservableObject {
             messages: messages,
             temperature: effectiveTemperature(0.1),
             maxCompletionTokens: 1024,
-            reasoningEffort: reasoningEffort()
+            reasoningEffort: nil,
+            enableThinking: nil,
+            thinkingBudget: nil,
+            chatTemplateKwargs: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -107,7 +113,10 @@ class OpenAICompatibleService: ObservableObject {
             messages: messages,
             temperature: effectiveTemperature(0.1),
             maxCompletionTokens: 1024,
-            reasoningEffort: reasoningEffort()
+            reasoningEffort: nil,
+            enableThinking: nil,
+            thinkingBudget: nil,
+            chatTemplateKwargs: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -152,7 +161,10 @@ class OpenAICompatibleService: ObservableObject {
             temperature: effectiveTemperature(config.temperature),
             maxCompletionTokens: config.maxTokens,
             responseFormat: nil,
-            reasoningEffort: reasoningEffort()
+            reasoningEffort: reasoningEffort(),
+            enableThinking: thinkingOptions.enableThinking,
+            thinkingBudget: thinkingOptions.thinkingBudget,
+            chatTemplateKwargs: thinkingOptions.chatTemplateKwargs
         )
 
         AppLog.shared.networking("Provider: \(config.baseURL), format: \(cachedMessageFormat.displayName), response_format: none", level: .debug)
@@ -165,9 +177,12 @@ class OpenAICompatibleService: ObservableObject {
 
         // Parse the JSON response with flexible format handling
         // Supports: standard format, wrapped format, markdown code blocks, plain text fallback
-        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(choice.message.content)
+        let cleanedContent = SummaryThinkingResponseCleaner.stripDelimitedThinking(
+            from: choice.message.content
+        )
+        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(cleanedContent)
         return SummarizationResult(
-            summary: result.summary,
+            summary: SummaryThinkingResponseCleaner.stripDelimitedThinking(from: result.summary),
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles,
@@ -192,14 +207,23 @@ class OpenAICompatibleService: ObservableObject {
 
     /// Fetch available models from a compatible API endpoint.
     /// Returns raw model IDs that can be used with the configured provider.
-    static func fetchCompatibleModels(apiKey: String, baseURL: String) async throws -> [String] {
+    static func fetchCompatibleModels(
+        apiKey: String,
+        baseURL: String,
+        allowInsecurePublicEndpoints: Bool = UserDefaults.standard.bool(
+            forKey: EndpointSecurityPolicy.allowInsecurePublicEndpointsKey
+        )
+    ) async throws -> [String] {
         guard !apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
         }
 
         let normalizedBaseURL = Self.normalizedBaseURL(baseURL)
 
-        if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
+        if let message = EndpointSecurityPolicy.validationMessage(
+            for: normalizedBaseURL,
+            allowInsecurePublicEndpoints: allowInsecurePublicEndpoints
+        ) {
             throw SummarizationError.aiServiceUnavailable(service: message)
         }
 
@@ -282,7 +306,17 @@ class OpenAICompatibleService: ObservableObject {
     /// Returns reasoning effort for reasoning models, nil for others.
     /// Values: "low" (faster, fewer tokens), "medium" (balanced), "high" (more thorough)
     private func reasoningEffort() -> String? {
-        return isReasoningModel() ? "low" : nil
+        return thinkingOptions.reasoningEffort
+    }
+
+    /// Translates the shared summary preference into the request contract for
+    /// the selected compatible model family. `.none` returns all nil fields.
+    private var thinkingOptions: SummaryThinkingRequestOptions {
+        SummaryThinkingModelCatalog.requestOptions(
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
     }
 
     private func makeAPICall(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {

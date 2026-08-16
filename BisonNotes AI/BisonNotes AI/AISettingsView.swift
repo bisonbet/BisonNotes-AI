@@ -20,6 +20,29 @@ struct AppSettingsKeys {
         static let ollamaPort = 11434
         static let ollamaModelName = "llama3.2"
     }
+
+#if os(macOS)
+    /// Seeds the native Mac Ollama connection with its local server defaults.
+    /// Existing custom values are preserved so selecting Ollama never overwrites
+    /// a server the user intentionally configured.
+    static func applyOllamaMacDefaultsIfNeeded(to defaults: UserDefaults = .standard) {
+        let savedServerURL = defaults.string(forKey: ollamaServerURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if savedServerURL?.isEmpty != false {
+            defaults.set(Defaults.ollamaServerURL, forKey: ollamaServerURL)
+        }
+
+        if defaults.integer(forKey: ollamaPort) <= 0 {
+            defaults.set(Defaults.ollamaPort, forKey: ollamaPort)
+        }
+
+        let savedModelName = defaults.string(forKey: ollamaModelName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if savedModelName?.isEmpty != false {
+            defaults.set(Defaults.ollamaModelName, forKey: ollamaModelName)
+        }
+    }
+#endif
 }
 
 /// A dedicated view model to manage the state and logic for the AISettingsView.
@@ -58,6 +81,17 @@ final class AISettingsViewModel: ObservableObject {
 
     /// Moves the engine selection logic into the view model.
     func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
+        guard engineType.isSupportedOnCurrentPlatform else {
+            AppLog.shared.general("Ignored unsupported AI engine selection: \(engineType.rawValue)")
+            return
+        }
+
+#if os(macOS)
+        if engineType == .localLLM {
+            AppSettingsKeys.applyOllamaMacDefaultsIfNeeded()
+        }
+#endif
+
         let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let newEngine = engineType.rawValue
 
@@ -104,6 +138,10 @@ struct AISettingsView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
     @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
+    @AppStorage(SummaryDetailLevel.storageKey)
+    private var summaryDetailRawValue: Int = SummaryDetailLevel.defaultLevel.rawValue
+    @AppStorage(SummaryThinkingLevel.storageKey)
+    private var summaryThinkingRawValue: Int = SummaryThinkingLevel.defaultLevel.rawValue
     @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
 
     @Environment(\.dismiss) private var dismiss
@@ -129,7 +167,21 @@ struct AISettingsView: View {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
         let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
-        return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
+        return AIEngineType.allCases.first {
+            $0.rawValue == currentEngineName && $0.isSupportedOnCurrentPlatform
+        }
+    }
+
+    private var selectedSummaryDetailLevel: SummaryDetailLevel {
+        SummaryDetailLevel(rawValue: summaryDetailRawValue) ?? SummaryDetailLevel.defaultLevel
+    }
+
+    private var selectedSummaryThinkingLevel: SummaryThinkingLevel {
+        SummaryThinkingLevel(rawValue: summaryThinkingRawValue) ?? SummaryThinkingLevel.defaultLevel
+    }
+
+    private var currentSummaryThinkingProfile: SummaryThinkingProfile {
+        SummaryThinkingModelCatalog.currentProfile()
     }
 
     private func refreshEngineStatuses() {
@@ -142,7 +194,7 @@ struct AISettingsView: View {
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
 
             // Check each engine type
-            for engineType in AIEngineType.allCases {
+            for engineType in AIEngineType.allCases where engineType.isSupportedOnCurrentPlatform {
                 let isCurrent = engineType.rawValue == currentEngine
                 let isAvailable = checkEngineAvailability(engineType)
 
@@ -296,11 +348,6 @@ struct AISettingsView: View {
             MLXSwiftSettingsView()
         }
         #else
-        .sheet(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView(onConfigurationChanged: {
-                self.refreshEngineStatuses()
-            })
-        }
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
                 Task { refreshEngineStatuses() }
@@ -346,6 +393,8 @@ struct AISettingsView: View {
                 modernCurrentEngineSection
                 modernEngineLibrarySection
                 modernTimeoutSection
+                modernSummaryDetailSection
+                modernSummaryThinkingSection
                 modernSummaryManagementSection
             }
             .padding(.horizontal, 20)
@@ -466,6 +515,134 @@ struct AISettingsView: View {
                 }
                 .font(.caption)
             }
+        }
+    }
+
+    private var modernSummaryDetailSection: some View {
+        let selectedLevel = selectedSummaryDetailLevel
+
+        return AISettingsCard(title: "Summary Detail", systemImage: "text.alignleft", tint: .indigo) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose how much description, context, and supporting data AI summaries should include.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Slider(
+                    value: Binding(
+                        get: { Double(selectedLevel.rawValue) },
+                        set: { newValue in
+                            summaryDetailRawValue = SummaryDetailLevel(
+                                rawValue: Int(newValue.rounded())
+                            )?.rawValue ?? SummaryDetailLevel.defaultLevel.rawValue
+                        }
+                    ),
+                    in: 0...2,
+                    step: 1
+                )
+                .accessibilityLabel("Summary detail")
+                .accessibilityValue(selectedLevel.displayName)
+                .accessibilityHint(
+                    "Brief keeps key points only. Balanced includes useful context. "
+                        + "Detailed includes more supporting information."
+                )
+
+                HStack {
+                    ForEach(SummaryDetailLevel.allCases) { level in
+                        Text(level.displayName)
+                            .font(.caption.weight(level == selectedLevel ? .semibold : .regular))
+                            .foregroundColor(level == selectedLevel ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedLevel.displayName)
+                        .font(.headline)
+                    Text(selectedLevel.userDescription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Text(
+                    "This affects the narrative summary for every AI engine. Tasks, reminders, titles, "
+                        + "and content type remain grounded in transcript facts."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var modernSummaryThinkingSection: some View {
+        let selectedLevel = selectedSummaryThinkingLevel
+        let profile = currentSummaryThinkingProfile
+        let modelName = profile.modelName.isEmpty ? "the selected model" : profile.modelName
+
+        return AISettingsCard(title: "Summary Thinking", systemImage: "brain", tint: .teal) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Use a short reasoning pass for models that expose a safe thinking control.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Slider(
+                    value: Binding(
+                        get: { Double(selectedLevel.rawValue) },
+                        set: { newValue in
+                            summaryThinkingRawValue = SummaryThinkingLevel(
+                                rawValue: Int(newValue.rounded())
+                            )?.rawValue ?? SummaryThinkingLevel.defaultLevel.rawValue
+                        }
+                    ),
+                    in: 0...1,
+                    step: 1
+                )
+                .accessibilityLabel("Summary thinking")
+                .accessibilityValue(selectedLevel.displayName)
+                .accessibilityHint("Off sends no thinking override. Light requests a short reasoning pass when supported.")
+
+                HStack {
+                    ForEach(SummaryThinkingLevel.allCases) { level in
+                        Text(level.displayName)
+                            .font(.caption.weight(level == selectedLevel ? .semibold : .regular))
+                            .foregroundColor(level == selectedLevel ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedLevel.displayName)
+                        .font(.headline)
+                    Text(selectedLevel.userDescription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                thinkingCapabilityMessage(for: profile.support, modelName: modelName)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thinkingCapabilityMessage(
+        for support: SummaryThinkingSupport,
+        modelName: String
+    ) -> some View {
+        switch support {
+        case .unsupported:
+            Label(
+                "Ignored for \(modelName); no supported thinking control was found.",
+                systemImage: "info.circle"
+            )
+        case .thinkingOnly:
+            Label(
+                "\(modelName) controls thinking itself. BisonNotes will not add a heavier or unsupported override.",
+                systemImage: "checkmark.circle"
+            )
+        case .controllable:
+            Label(
+                "Light is available for \(modelName). Thinking traces are not included in the summary.",
+                systemImage: "checkmark.circle"
+            )
         }
     }
 
@@ -716,7 +893,11 @@ private extension AISettingsView {
         case .openAICompatible:
             showingOpenAICompatibleSettings = true
         case .localLLM:
+#if os(macOS)
             showingOllamaSettings = true
+#else
+            break
+#endif
         case .googleAIStudio:
             showingGoogleAIStudioSettings = true
         case .mistralAI:

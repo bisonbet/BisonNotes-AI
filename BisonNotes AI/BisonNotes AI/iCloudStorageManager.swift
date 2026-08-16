@@ -2403,6 +2403,7 @@ struct CloudReconcileResult {
 private struct CodableSettingsBackupPayload: Codable {
     let createdAt: Date
     let includesSensitiveValues: Bool
+    let sourcePlatform: String?
     let values: [String: Data]
 }
 
@@ -2492,6 +2493,27 @@ extension iCloudStorageManager {
     private static let activeManifestSchemaVersion = 2
     private static let backupStateSignatureKey = "iCloudBackupStateSignatureV1"
     private static let activeManifestMigrationCompletedKey = "iCloudActiveManifestMigrationCompletedV2"
+
+    private static var currentSettingsPlatform: String {
+#if os(macOS)
+        return "macOS"
+#else
+        return "iOS"
+#endif
+    }
+
+    private static let ollamaSettingsKeys: Set<String> = [
+        "ollamaServerURL",
+        "ollamaPort",
+        "ollamaModelName",
+        "ollamaMaxTokens",
+        "ollamaTemperature",
+        "ollamaContextTokens",
+        "enableOllama"
+    ]
+
+    private static let platformSpecificSettingsKeys: Set<String> =
+        ollamaSettingsKeys.union(["SelectedAIEngine"])
     private static let quarantinedBackupRecordNamesKey = "iCloudQuarantinedBackupRecordNamesV2"
     private static let quarantinedLegacySummaryRecordNamesKey = "iCloudQuarantinedLegacySummaryRecordNamesV2"
     private static let pendingDeletionMarkersKey = "iCloudPendingDeletionMarkersV1"
@@ -2581,6 +2603,8 @@ extension iCloudStorageManager {
         "selectedTranscriptionEngine",
         "showTranscriptionProgress",
         "summarizationTimeout",
+        SummaryDetailLevel.storageKey,
+        SummaryThinkingLevel.storageKey,
         "user_preference_time_format",
         "WatchIntegrationEnabled",
         "WatchAutoSync",
@@ -5438,6 +5462,7 @@ extension iCloudStorageManager {
         let payload = CodableSettingsBackupPayload(
             createdAt: Date(),
             includesSensitiveValues: settingsValues.includedSensitiveSettings,
+            sourcePlatform: Self.currentSettingsPlatform,
             values: settingsValues.values
         )
         let payloadData = try JSONEncoder().encode(payload)
@@ -5514,6 +5539,18 @@ extension iCloudStorageManager {
         let defaults = UserDefaults.standard
 
         for (key, encodedValue) in payload.values {
+            guard shouldApplySettingsKey(
+                key,
+                encodedValue: encodedValue,
+                sourcePlatform: payload.sourcePlatform
+            ) else {
+                AppLog.shared.iCloudSync(
+                    "Skipped platform-specific setting '\(key)' from \(payload.sourcePlatform ?? "legacy") backup",
+                    level: .debug
+                )
+                continue
+            }
+
             if KeychainSecretStore.isLegacyAWSSettingKey(key) {
                 // Never restore settings from the removed AWS provider. This
                 // also handles backups created before AWS settings were removed
@@ -5539,6 +5576,43 @@ extension iCloudStorageManager {
         }
 
         defaults.synchronize()
+    }
+
+    private func shouldApplySettingsKey(
+        _ key: String,
+        encodedValue: Data,
+        sourcePlatform: String?
+    ) -> Bool {
+        guard Self.platformSpecificSettingsKeys.contains(key) else {
+            return true
+        }
+
+        if let sourcePlatform {
+            return sourcePlatform == Self.currentSettingsPlatform
+        }
+
+        // Older payloads did not identify their source platform. Protect iOS
+        // from restoring Ollama state from those legacy Mac backups while
+        // preserving the existing behavior for other settings.
+        guard !AIEngineType.localLLM.isSupportedOnCurrentPlatform else {
+            return true
+        }
+
+        if Self.ollamaSettingsKeys.contains(key) {
+            return false
+        }
+
+        guard key == "SelectedAIEngine",
+              let rawValue = try? PropertyListSerialization.propertyList(
+                  from: encodedValue,
+                  options: [],
+                  format: nil
+              ),
+              let selectedEngine = rawValue as? String else {
+            return true
+        }
+
+        return selectedEngine != AIEngineType.localLLM.rawValue
     }
 
     private func applyLegacySensitiveSetting(_ rawValue: Any, forKey key: String) -> Bool {

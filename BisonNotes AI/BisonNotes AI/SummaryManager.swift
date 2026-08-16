@@ -1427,7 +1427,7 @@ class SummaryManager: ObservableObject {
         // Select top sentences based on boosted importance score
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         if topSentences.isEmpty {
@@ -1649,7 +1649,7 @@ class SummaryManager: ObservableObject {
 
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         let bulletPoints = topSentences.map { sentence in
@@ -1706,7 +1706,7 @@ class SummaryManager: ObservableObject {
 
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         let bulletPoints = topSentences.map { sentence in

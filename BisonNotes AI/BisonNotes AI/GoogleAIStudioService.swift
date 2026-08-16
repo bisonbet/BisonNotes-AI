@@ -24,6 +24,24 @@ class GoogleAIStudioService: ObservableObject {
         KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
     }
 
+    private var thinkingOptions: SummaryThinkingRequestOptions {
+        SummaryThinkingModelCatalog.requestOptions(
+            modelName: selectedModel,
+            engine: .googleAIStudio
+        )
+    }
+
+    private var geminiThinkingConfig: ThinkingConfig? {
+        let options = thinkingOptions
+        guard options.thinkingLevel != nil || options.thinkingBudget != nil else {
+            return nil
+        }
+        return ThinkingConfig(
+            thinkingLevel: options.thinkingLevel,
+            thinkingBudget: options.thinkingBudget
+        )
+    }
+
     // MARK: - API Response Models
 
     struct GeminiRequest: Codable {
@@ -37,6 +55,12 @@ class GoogleAIStudioService: ObservableObject {
 
     struct Part: Codable {
         let text: String
+        let thought: Bool?
+
+        init(text: String, thought: Bool? = nil) {
+            self.text = text
+            self.thought = thought
+        }
     }
 
     struct GenerationConfig: Codable {
@@ -44,6 +68,12 @@ class GoogleAIStudioService: ObservableObject {
         let responseSchema: Schema
         let temperature: Double?
         let maxOutputTokens: Int?
+        let thinkingConfig: ThinkingConfig?
+    }
+
+    struct ThinkingConfig: Codable {
+        let thinkingLevel: String?
+        let thinkingBudget: Int?
     }
 
     struct Schema: Codable {
@@ -185,7 +215,7 @@ class GoogleAIStudioService: ObservableObject {
             "properties": [
                 "summary": [
                     "type": "string",
-                    "description": "A concise summary of the main content"
+                    "description": SummaryDetailLevel.current.schemaDescription
                 ],
                 "tasks": [
                     "type": "array",
@@ -220,7 +250,24 @@ class GoogleAIStudioService: ObservableObject {
             "propertyOrdering": ["summary", "tasks", "reminders", "titles", "contentType"]
         ]
 
-        // Create a custom GenerationConfig that accepts JSON data
+        // Create a custom GenerationConfig that accepts JSON data.
+        var generationConfig: [String: Any] = [
+            "responseMimeType": "application/json",
+            "responseSchema": schemaDict,
+            "temperature": temperature,
+            "maxOutputTokens": maxTokens
+        ]
+        if let thinkingConfig = geminiThinkingConfig {
+            var thinkingConfigDict: [String: Any] = [:]
+            if let thinkingLevel = thinkingConfig.thinkingLevel {
+                thinkingConfigDict["thinkingLevel"] = thinkingLevel
+            }
+            if let thinkingBudget = thinkingConfig.thinkingBudget {
+                thinkingConfigDict["thinkingBudget"] = thinkingBudget
+            }
+            generationConfig["thinkingConfig"] = thinkingConfigDict
+        }
+
         let requestDict: [String: Any] = [
             "contents": [
                 [
@@ -231,12 +278,7 @@ class GoogleAIStudioService: ObservableObject {
                     ]
                 ]
             ],
-            "generationConfig": [
-                "responseMimeType": "application/json",
-                "responseSchema": schemaDict,
-                "temperature": temperature,
-                "maxOutputTokens": maxTokens
-            ]
+            "generationConfig": generationConfig
         ]
 
         return try JSONSerialization.data(withJSONObject: requestDict)
@@ -254,7 +296,8 @@ class GoogleAIStudioService: ObservableObject {
                     propertyOrdering: []
                 ),
                 temperature: temperature,
-                maxOutputTokens: maxTokens
+                maxOutputTokens: maxTokens,
+                thinkingConfig: geminiThinkingConfig
             )
         )
 
@@ -262,13 +305,16 @@ class GoogleAIStudioService: ObservableObject {
     }
 
     private func createStructuredPrompt(_ text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions()
+
         return """
         Analyze the following text and extract key information in a structured format:
 
         \(text)
 
         Please provide:
-        1. A comprehensive summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
+        1. A summary using proper Markdown formatting at the selected detail level:
+           \(detailInstructions)
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
@@ -276,8 +322,7 @@ class GoogleAIStudioService: ObservableObject {
            - Use • bullet points for lists
            - Use 1. numbered lists for sequential items
            - Use > blockquotes for important quotes or statements
-           - Focus on capturing all important details, context, and nuances
-           - Include key points, main ideas, specific details, and overall themes
+           - Include only information supported by the source text
 
         2. Personal and relevant actionable tasks — extract ONLY if the speaker mentions THEIR OWN action items:
            - "I need to call John" → YES
@@ -303,7 +348,7 @@ class GoogleAIStudioService: ObservableObject {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "detailed markdown-formatted summary of the content",
+          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
           "tasks": ["personal task1", "personal task2"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -314,7 +359,7 @@ class GoogleAIStudioService: ObservableObject {
         - Return ONLY personal, relevant content for tasks and reminders
         - If no personal tasks exist, use an empty array: "tasks": []
         - If no personal reminders exist, use an empty array: "reminders": []
-        \(ComedyMode.current.promptModifier ?? "")
+        \(ComedyMode.current.structuredPromptModifier ?? "")
         """
     }
 
@@ -324,28 +369,29 @@ class GoogleAIStudioService: ObservableObject {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
 
         guard let candidate = response.candidates.first,
-              let textPart = candidate.content.parts.first else {
+              let textPart = candidate.content.parts.last(where: { $0.thought != true }) else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
 
-        logger.info("GoogleAIStudioService: Raw response length: \(textPart.text.count) characters")
+        let cleanedText = SummaryThinkingResponseCleaner.stripDelimitedThinking(from: textPart.text)
+        logger.info("GoogleAIStudioService: Raw response length: \(cleanedText.count) characters")
 
         // Try to parse as JSON first
-        if let jsonData = textPart.text.data(using: .utf8) {
+        if let jsonData = cleanedText.data(using: .utf8) {
             do {
                 let summaryResponse = try JSONDecoder().decode(SummaryResponse.self, from: jsonData)
                 logger.info("GoogleAIStudioService: Successfully parsed JSON response")
                 return formatStructuredResponse(summaryResponse)
             } catch {
                 logger.warning("GoogleAIStudioService: Failed to parse JSON response: \(error)")
-                logger.warning("GoogleAIStudioService: Raw response length: \(textPart.text.count) chars, starts with valid JSON: \(textPart.text.hasPrefix("{"))")
+                logger.warning("GoogleAIStudioService: Raw response length: \(cleanedText.count) chars, starts with valid JSON: \(cleanedText.hasPrefix("{"))")
 
                 // Check if the response is truncated
-                if textPart.text.contains("\"summary\"") && !textPart.text.hasSuffix("}") {
+                if cleanedText.contains("\"summary\"") && !cleanedText.hasSuffix("}") {
                     logger.error("GoogleAIStudioService: Response appears to be truncated")
 
                     // Try to extract partial information from truncated JSON
-                    if let partialResponse = extractPartialResponse(from: textPart.text) {
+                    if let partialResponse = extractPartialResponse(from: cleanedText) {
                         logger.info("GoogleAIStudioService: Successfully extracted partial response")
                         return formatStructuredResponse(partialResponse)
                     }
@@ -353,22 +399,22 @@ class GoogleAIStudioService: ObservableObject {
                     throw SummarizationError.processingFailed(reason: "Response was truncated by API")
                 }
 
-                return textPart.text
+                return cleanedText
             }
         }
 
-        return textPart.text
+        return cleanedText
     }
 
     private func parseSimpleResponse(data: Data) throws -> String {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
 
         guard let candidate = response.candidates.first,
-              let textPart = candidate.content.parts.first else {
+              let textPart = candidate.content.parts.last(where: { $0.thought != true }) else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
 
-        return textPart.text
+        return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: textPart.text)
     }
 
     private func formatStructuredResponse(_ response: SummaryResponse) -> String {

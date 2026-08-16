@@ -26,6 +26,11 @@ class AppDataCoordinator: ObservableObject {
         self.coreDataManager = CoreDataManager(persistenceController: persistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: persistenceController)
 
+        // SummaryManager initializes its engine registry during first access.
+        // Migrate the Mac-only Ollama selection before that access so an older
+        // iPhone/iPad install cannot restore an unsupported engine into memory.
+        BisonNotesAIApp.migrateIOSOllamaSelection()
+
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
         SummaryManager.shared.configure(with: self)

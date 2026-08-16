@@ -127,6 +127,21 @@ class ChatCompletionResponseParser {
                 throw SummarizationError.aiServiceUnavailable(service: "Compatible API returned empty JSON - check credentials and model configuration")
             }
 
+            // The complete endpoint is contractually JSON. Do not silently
+            // turn an unstructured model response into a summary with missing
+            // tasks/reminders/titles; the caller can retry instead.
+            let lowercasedResponse = jsonString.lowercased()
+            let hasCompleteSections = lowercasedResponse.contains("summary") &&
+                lowercasedResponse.contains("task") &&
+                lowercasedResponse.contains("reminder") &&
+                lowercasedResponse.contains("title")
+            guard hasCompleteSections else {
+                AppLog.shared.networking("Compatible API returned an incomplete unstructured response", level: .error)
+                throw SummarizationError.aiServiceUnavailable(
+                    service: "Compatible API returned an incomplete structured response"
+                )
+            }
+
             // Fallback: try to extract information from plain text
             let summary = extractSummaryFromPlainText(jsonString)
             let tasks = extractTasksFromPlainText(jsonString)

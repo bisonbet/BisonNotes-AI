@@ -50,6 +50,9 @@ struct ChatCompletionRequest: Codable {
     let presencePenalty: Double?
     let responseFormat: ResponseFormat?
     let reasoningEffort: String?  // For reasoning models: "low", "medium", "high"
+    let enableThinking: Bool?      // Qwen-compatible hosted APIs
+    let thinkingBudget: Int?       // Qwen/Gemini-compatible hosted APIs
+    let chatTemplateKwargs: [String: Bool]? // vLLM/llama.cpp-compatible APIs
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -61,9 +64,25 @@ struct ChatCompletionRequest: Codable {
         case presencePenalty = "presence_penalty"
         case responseFormat = "response_format"
         case reasoningEffort = "reasoning_effort"
+        case enableThinking = "enable_thinking"
+        case thinkingBudget = "thinking_budget"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
-    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil, reasoningEffort: String? = nil) {
+    init(
+        model: String,
+        messages: [ChatMessage],
+        temperature: Double? = nil,
+        maxCompletionTokens: Int? = nil,
+        topP: Double? = nil,
+        frequencyPenalty: Double? = nil,
+        presencePenalty: Double? = nil,
+        responseFormat: ResponseFormat? = nil,
+        reasoningEffort: String? = nil,
+        enableThinking: Bool? = nil,
+        thinkingBudget: Int? = nil,
+        chatTemplateKwargs: [String: Bool]? = nil
+    ) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
@@ -73,6 +92,9 @@ struct ChatCompletionRequest: Codable {
         self.presencePenalty = presencePenalty
         self.responseFormat = responseFormat
         self.reasoningEffort = reasoningEffort
+        self.enableThinking = enableThinking
+        self.thinkingBudget = thinkingBudget
+        self.chatTemplateKwargs = chatTemplateKwargs
     }
 }
 
@@ -96,6 +118,49 @@ enum MessageContentFormat {
 struct ContentBlock: Codable {
     let type: String
     let text: String
+
+    init(type: String, text: String) {
+        self.type = type
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case content
+        case thinking
+        case reasoning
+    }
+
+    /// Mistral reasoning responses may represent thinking as nested blocks,
+    /// while other compatible providers use a flat `text` field. Keep decoding
+    /// permissive and let ChatMessage.content hide reasoning blocks later.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "text"
+
+        if let textValue = try container.decodeIfPresent(String.self, forKey: .text) {
+            text = textValue
+        } else if let contentValue = try container.decodeIfPresent(String.self, forKey: .content) {
+            text = contentValue
+        } else if let thinkingBlocks = try? container.decode([ContentBlock].self, forKey: .thinking) {
+            text = thinkingBlocks.map(\.text).joined(separator: "\n")
+        } else if let thinkingText = try? container.decode(String.self, forKey: .thinking) {
+            text = thinkingText
+        } else if let reasoningBlocks = try? container.decode([ContentBlock].self, forKey: .reasoning) {
+            text = reasoningBlocks.map(\.text).joined(separator: "\n")
+        } else if let reasoningText = try? container.decode(String.self, forKey: .reasoning) {
+            text = reasoningText
+        } else {
+            text = ""
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+    }
 }
 
 struct ChatMessage: Codable {
@@ -140,8 +205,12 @@ struct ChatMessage: Codable {
         if let stringContent = stringContent {
             return stringContent
         } else if let blockContent = blockContent, !blockContent.isEmpty {
-            // Filter out non-text blocks and combine text blocks
-            let textBlocks = blockContent.filter { $0.type == "text" }
+            // Filter out reasoning blocks so hidden traces never reach summary
+            // parsing or the user-facing summary view.
+            let textBlocks = blockContent.filter {
+                let type = $0.type.lowercased()
+                return type != "thinking" && type != "reasoning" && type != "thought"
+            }
             guard !textBlocks.isEmpty else { return "" }
             return textBlocks.map { $0.text }.joined(separator: "\n")
         }

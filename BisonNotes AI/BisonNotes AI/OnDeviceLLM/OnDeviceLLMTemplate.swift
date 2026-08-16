@@ -202,15 +202,21 @@ extension LLMTemplate {
     // MARK: - Qwen3.5 Format
 
     /// Qwen3.5 format for Alibaba's Qwen3.5 models (2B, 4B, 9B)
-    /// Small models (0.8B–9B) have thinking DISABLED by default — no special prefix needed.
-    /// The official way to control thinking is via llama.cpp's --chat-template-kwargs
-    /// '{"enable_thinking":false}' (CLI/server only; framework API does not expose this).
-    /// Since thinking is off by default for these sizes, standard ChatML format is correct.
+    /// Small models (0.8B–9B) have thinking disabled by default. The supported
+    /// soft switch for a user-selected reasoning pass is `/think` in the user
+    /// turn; this wrapper does not expose a token-budget parameter.
     /// Any <think>...</think> blocks that do appear are stripped in cleanupResponse().
-    public static func qwen35(_ systemPrompt: String? = nil) -> LLMTemplate {
+    public static func qwen35(
+        _ systemPrompt: String? = nil,
+        thinkingLevel: SummaryThinkingLevel = .none
+    ) -> LLMTemplate {
+        let userSuffix = thinkingLevel == .light
+            ? "\n/think<|im_end|>\n"
+            : "<|im_end|>\n"
+
         return LLMTemplate(
             system: ("<|im_start|>system\n", "<|im_end|>\n"),
-            user: ("<|im_start|>user\n", "<|im_end|>\n"),
+            user: ("<|im_start|>user\n", userSuffix),
             bot: ("<|im_start|>assistant\n", "<|im_end|>\n"),
             stopSequences: [
                 "<|im_end|>",
@@ -259,7 +265,8 @@ extension LLMTemplate {
 extension LLMTemplate {
 
     /// System prompt for generating summaries from transcripts
-    public static let summarizationSystemPrompt = """
+    public static var summarizationSystemPrompt: String {
+        """
 You are an expert summarizer. Your task is to create clear, well-structured summaries of transcribed audio content.
 
 Guidelines:
@@ -269,7 +276,8 @@ Guidelines:
 - Be concise but comprehensive
 - Preserve important names, dates, and specific details
 - Use **bold** for key terms and *italic* for emphasis
-"""
+""" + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    }
 
     /// System prompt for extracting tasks from transcripts
     public static let taskExtractionSystemPrompt = """
@@ -296,7 +304,8 @@ Guidelines:
 """
 
     /// System prompt for complete transcript processing
-    public static let completeProcessingSystemPrompt = """
+    public static var completeProcessingSystemPrompt: String {
+        """
 You are an AI assistant specialized in processing audio transcripts. Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
 CRITICAL:
@@ -308,11 +317,12 @@ CRITICAL:
 - Base titles on the ACTUAL topics discussed, not generic examples
 
 Provide:
-1. A comprehensive summary using Markdown formatting based on what was actually discussed
+1. A summary at the selected detail level using Markdown formatting based on what was actually discussed
 2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
 3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
 4. Suggested titles based on the ACTUAL main topics discussed
 
-Be thorough but concise. Focus on information that is personally relevant to the speaker and actually appears in the transcript.
-"""
+Follow the selected summary detail level for the narrative summary. Keep information personally relevant to the speaker and grounded in the transcript.
+""" + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    }
 }

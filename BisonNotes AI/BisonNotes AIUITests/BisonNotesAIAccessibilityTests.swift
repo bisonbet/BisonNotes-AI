@@ -58,7 +58,9 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
         app.navigateToSection("Summaries")
         XCTAssertTrue(app.buttons["View Summary for UI Test Recording"].waitForExistence(timeout: 8))
         app.buttons["View Summary for UI Test Recording"].tap()
-        XCTAssertTrue(app.collectionViews["bisonnotes.summary.detail"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["bisonnotes.summary.detail"].waitForExistence(timeout: 8)
+        )
         try performAccessibilityAudit(named: "Summary detail", app: app)
     }
 

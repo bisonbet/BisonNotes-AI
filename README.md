@@ -33,7 +33,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 - ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
 - 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
 - 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
-- 🤖 **Pluggable AI Engines** — On-device (MLX Swift, llama.cpp legacy), Apple Foundation Models, OpenAI, OpenAI-compatible, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper, Wyoming, and Ollama
+- 🤖 **Pluggable AI Engines** — On-device (MLX Swift, llama.cpp legacy), Apple Foundation Models, OpenAI, OpenAI-compatible, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper, Wyoming, and Ollama on native macOS
 - 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
 - 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
 - ☁️ **Guarded iCloud Sync** — Per-recording **Keep on This Device** exclusions, durable deletion markers, and explicit review of older cloud-only items
@@ -78,7 +78,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1
 
 ## Architecture
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs. Sensitive API keys live in the iOS Keychain, never on disk in plaintext.
-- Engines: Pluggable services for On Device transcription, compatible APIs, Mistral AI, Google AI Studio, Whisper (REST), Wyoming streaming, Ollama, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
+- Engines: Pluggable services for On Device transcription, compatible APIs, Mistral AI, Google AI Studio, Whisper (REST), Wyoming streaming, Ollama (native macOS only), On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
 - Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS and `AVAudioEngine`/`AVAudioFile` on native macOS (`AudioRecorderViewModel+MacEngine.swift`) — with shared Pause/Resume support, optional Mac meeting-audio capture through `MacSystemAudioCapture`, first-buffer and stall monitoring, independent track validation, recoverable PCM segments, and crash-safe interruption handling.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, complete-file transfers, duplicate protection, queued acknowledgments, and import recovery. Watch complications and a Control Center recording widget are bundled as separate targets.
@@ -168,7 +168,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **iPhone Action Button Support**: Quick-start recording from the Action Button on iPhone 15 Pro/Pro Max, iPhone 16 Pro/Pro Max, and future Pro models. Press the Action Button to launch the app and start recording instantly, even when your phone is locked.
 - **Watch App & Complications**: Single-button Apple Watch recorder with tap-to-record/tap-to-stop, mute as pause/resume on the same file, pulsing capture state, low-battery warning, automatic complete-file sync, and watch-face complications.
 - **Control Center Recording Widget**: Start/stop recordings from Control Center on iOS 18+ via the bundled Controls widget.
-- **Multiple AI Engines**: Support for Google AI Studio, Mistral AI, compatible endpoints, Ollama, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Apple Intelligence).
+- **Multiple AI Engines**: Support for Google AI Studio, Mistral AI, compatible endpoints, Ollama on native macOS, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Apple Intelligence).
 - **Apple Native AI Engine**: On-device summarization using Apple's Foundation Models framework (iOS 26+, iPhone 15 Pro+). No data leaves the device.
 - **On Device AI**: Default local summarization path using MLX Swift and Ternary Bonsai models. Supports 4 GB+ devices with model choices scaled by RAM.
 - **Mistral AI (Free & Paid Tiers)**: Guided in-app setup wizard for Mistral's free tier -- transcription and summarization with no credit card required. Paid tiers available for higher rate limits. Cloud transcription via Voxtral Mini with speaker diarization support.
@@ -286,9 +286,9 @@ The app supports multiple AI engines for summarization and content analysis:
 |--------|-------------|--------------|
 | **Apple Native** | Apple Intelligence (Foundation Models) — fully on-device | iOS 26+, iPhone 15 Pro+ |
 | **Compatible API** | Any compatible chat-completion API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
-| **Mistral AI** | Mistral Large (25.12), Medium (25.08), Magistral Medium (25.09) | API key, internet |
+| **Mistral AI** | Mistral Large (25.12), Medium (25.08), Small 4 (26.03), Medium 3.5, Magistral Medium (25.09) | API key, internet |
 | **Google AI Studio** | Gemini 3 Flash Preview (default), Gemini 3.1 Flash Lite Preview | API key, internet |
-| **Ollama** | Local LLM server (recommended: qwen3:30b, llama3.2, mistral-small3.2) | Ollama server running |
+| **Ollama** | Local LLM server on native macOS (recommended: qwen3:30b, llama3.2, mistral-small3.2) | Ollama server running on the Mac |
 | **On Device AI** | Default on-device summarization with MLX Swift and Ternary Bonsai models | 4 GB+ RAM, model download |
 | **On Device AI (Legacy)** | Fully offline llama.cpp summaries with GGUF models | 6 GB+ RAM, model download |
 
@@ -300,6 +300,8 @@ Summarization models:
 
 - **Mistral Large (25.12)**: Most capable Mistral model with 128K context window (Premium tier)
 - **Mistral Medium (25.08)**: Balanced performance and cost with 128K context (Standard tier)
+- **Mistral Small 4 (26.03)**: Efficient hybrid instruct/reasoning model with controllable light reasoning (Standard tier)
+- **Mistral Medium 3.5**: Current medium model with adjustable reasoning effort and 128K app context cap (Standard tier)
 - **Magistral Medium (25.09)**: Economy option with 40K context window (Economy tier)
 
 ### Google AI Studio Models
@@ -346,8 +348,9 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - **Downloads**: WiFi by default with optional cellular download support
 
 ## Configuration
-- Secrets are entered in‑app via setup views (compatible API, Mistral AI, Google, Ollama, Whisper). All keys/tokens are persisted to the iOS Keychain through `KeychainSecretStore`; legacy `UserDefaults` values are migrated automatically on first launch of v1.11. Do not commit API keys.
-- User-configurable AI endpoints (compatible API/Ollama/Whisper) are validated via `EndpointSecurityPolicy` — public cleartext destinations are blocked unless the per-service Development Mode override is enabled.
+- Secrets are entered in‑app via setup views (compatible API, Mistral AI, Google, Whisper). All keys/tokens are persisted to the iOS Keychain through `KeychainSecretStore`; legacy `UserDefaults` values are migrated automatically on first launch of v1.11. Do not commit API keys.
+- User-configurable AI endpoints (compatible API, Ollama on native macOS, and Whisper) are validated via `EndpointSecurityPolicy` — public cleartext destinations are blocked unless the per-service Development Mode override is enabled. Ollama defaults to the Mac-local server at `http://localhost:11434`.
+- Legacy iPhone/iPad Ollama selections migrate to MLX/on-device AI when the device supports it; native macOS keeps Ollama as a local engine.
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features. `APS_ENVIRONMENT` is set per-configuration so Debug uses `development` and Release uses `production`.
 - Before distributing iCloud sync changes through TestFlight or the App Store, deploy CloudKit development schema changes for `iCloud.Bison-Networking.BisonNotes-AI` to production. Production builds cannot create new CloudKit record types at runtime.
 - For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device. Local Speaker Labels use a separate explicit speaker-model action; they do not silently download when transcription starts.

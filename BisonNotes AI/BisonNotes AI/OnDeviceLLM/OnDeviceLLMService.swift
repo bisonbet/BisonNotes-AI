@@ -76,7 +76,10 @@ public class OnDeviceLLMService: ObservableObject {
         }
 
         let modelURL = config.modelInfo.fileURL
-        let template = config.modelInfo.templateType.template(systemPrompt: LLMTemplate.summarizationSystemPrompt)
+        let template = config.modelInfo.templateType.template(
+            systemPrompt: LLMTemplate.summarizationSystemPrompt,
+            thinkingLevel: SummaryThinkingLevel.current
+        )
 
         // Use device-appropriate context size based on RAM
         // 8k for devices with <8GB RAM, 16k for devices with >=8GB RAM
@@ -149,7 +152,10 @@ public class OnDeviceLLMService: ObservableObject {
         // Create summarization prompt
         let prompt = createSummarizationPrompt(text: text, contentType: contentType)
 
-        llm.template = config.modelInfo.templateType.template(systemPrompt: LLMTemplate.summarizationSystemPrompt)
+        llm.template = config.modelInfo.templateType.template(
+            systemPrompt: LLMTemplate.summarizationSystemPrompt,
+            thinkingLevel: SummaryThinkingLevel.current
+        )
 
         // Generate response
         let result = await llm.generate(from: prompt)
@@ -185,7 +191,8 @@ public class OnDeviceLLMService: ObservableObject {
         let prompt = createTaskExtractionPrompt(text: text)
 
         llm.template = config.modelInfo.templateType.template(
-            systemPrompt: LLMTemplate.taskExtractionSystemPrompt
+            systemPrompt: LLMTemplate.taskExtractionSystemPrompt,
+            thinkingLevel: .none
         )
 
         let result = await llm.generate(from: prompt)
@@ -204,7 +211,8 @@ public class OnDeviceLLMService: ObservableObject {
         let prompt = createReminderExtractionPrompt(text: text)
 
         llm.template = config.modelInfo.templateType.template(
-            systemPrompt: LLMTemplate.reminderExtractionSystemPrompt
+            systemPrompt: LLMTemplate.reminderExtractionSystemPrompt,
+            thinkingLevel: .none
         )
 
         let result = await llm.generate(from: prompt)
@@ -223,7 +231,8 @@ public class OnDeviceLLMService: ObservableObject {
         let prompt = createTitleExtractionPrompt(text: text)
 
         llm.template = config.modelInfo.templateType.template(
-            systemPrompt: nil
+            systemPrompt: nil,
+            thinkingLevel: .none
         )
 
         let result = await llm.generate(from: prompt)
@@ -249,7 +258,8 @@ public class OnDeviceLLMService: ObservableObject {
         let prompt = createCompleteProcessingPrompt(text: text)
 
         llm.template = config.modelInfo.templateType.template(
-            systemPrompt: LLMTemplate.completeProcessingSystemPrompt
+            systemPrompt: LLMTemplate.completeProcessingSystemPrompt,
+            thinkingLevel: SummaryThinkingLevel.current
         )
 
         let result = await llm.generate(from: prompt)
@@ -403,19 +413,19 @@ public class OnDeviceLLMService: ObservableObject {
     // MARK: - Prompt Creation
 
     private func createSummarizationPrompt(text: String, contentType: ContentType) -> String {
-        // Calculate approx 15% target length in words (min 200 words) to encourage longer output
-        let wordCount = text.split(separator: " ").count
-        let targetWords = max(200, Int(Double(wordCount) * 0.15))
+        let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount
+        )
 
         let comedyModifier = ComedyMode.current.promptModifier ?? ""
 
         return """
-        Please analyze the following \(contentType.rawValue) transcript and create a DETAILED STRUCTURED OUTLINE.
+        Please analyze the following \(contentType.rawValue) transcript and create a \(SummaryDetailLevel.current.displayName.lowercased()) structured outline.
 
         CRITICAL REQUIREMENTS:
-        - The summary MUST be approximately \(targetWords) words long.
+        \(detailInstructions)
         - Use a hierarchical outline format with clear sections.
-        - Do NOT be concise. Capture all important details, facts, and nuances.
 
         REQUIRED SECTIONS:
         ## 1. Overview
@@ -481,18 +491,18 @@ public class OnDeviceLLMService: ObservableObject {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
-        // Calculate approx 15% target length in words (min 200 words) to encourage longer output
-        let wordCount = text.split(separator: " ").count
-        let targetWords = max(200, Int(Double(wordCount) * 0.15))
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+        let wordCount = text.split(whereSeparator: { $0.isWhitespace }).count
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount
+        )
+        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
 
         return """
         Analyze the following transcript and extract the actual content discussed. Base your response ONLY on what is actually mentioned in the transcript.
 
-        1. A STRUCTURED OUTLINE SUMMARY
-           - CRITICAL: The summary must be approximately \(targetWords) words long.
+        1. A STRUCTURED OUTLINE SUMMARY at the selected detail level
+           \(detailInstructions)
            - Use sections: Overview, Key Facts, Important Notes, Conclusions.
-           - Expand on details using nested bullet points.
            - Write about what was ACTUALLY discussed in the transcript, not generic examples.
         2. A list of actionable tasks (personal items only) - ONLY include tasks that are actually mentioned
         3. Time-sensitive reminders and deadlines - ONLY include reminders that are actually mentioned
@@ -964,7 +974,10 @@ extension OnDeviceLLMService {
 
             // Simple test prompt
             let testPrompt = "Say 'OK' if you're working."
-            llm.template = config.modelInfo.templateType.template(systemPrompt: nil)
+            llm.template = config.modelInfo.templateType.template(
+                systemPrompt: nil,
+                thinkingLevel: .none
+            )
 
             let result = await llm.generate(from: testPrompt)
             return !result.isEmpty

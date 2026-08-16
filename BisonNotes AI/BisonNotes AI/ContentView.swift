@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var showingLocationPermission = false
     @State private var pendingActionButtonRecording = false
     @State private var showingAppleIntelligenceMigrationAlert = false
+    @State private var showingOllamaMigrationAlert = false
     @State private var showingOnDeviceLLMSettings = false
     @State private var showingWhisperKitRemovedAlert = false
     @State private var showingWhisperKitSwitchedAlert = false
@@ -166,6 +167,15 @@ struct ContentView: View {
             }
         } message: {
             Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
+        }
+        .alert("Ollama Is Now Mac Only", isPresented: $showingOllamaMigrationAlert) {
+            Button("OK") { }
+        } message: {
+            Text(
+                "Ollama is now available only in the native macOS app. "
+                    + "This device was switched to an on-device AI engine when supported. "
+                    + "Open Setup → AI Settings to download or configure its model."
+            )
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {
             NavigationStack {
@@ -388,6 +398,14 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             showingAppleIntelligenceMigrationAlert = true
                             UserDefaults.standard.removeObject(forKey: "showAppleIntelligenceMigrationAlert")
+                        }
+                    }
+
+                    // Check if a legacy Ollama selection was moved off iOS/iPadOS.
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showOllamaMigrationAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingOllamaMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showOllamaMigrationAlert")
                         }
                     }
 

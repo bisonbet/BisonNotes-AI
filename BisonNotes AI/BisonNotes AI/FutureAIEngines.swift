@@ -17,10 +17,15 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let description: String = "Privacy-focused local language model processing using Ollama"
     let version: String = "1.0"
     var metadataName: String {
-        return UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        return UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
     }
 
     var isAvailable: Bool {
+        guard AIEngineType.localLLM.isSupportedOnCurrentPlatform else {
+            return false
+        }
+
         // Check if Ollama is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
         let keyExists = UserDefaults.standard.object(forKey: "enableOllama") != nil
@@ -40,7 +45,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
         // Check if server URL is configured (use defaults if not set)
         _ = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
-        _ = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        _ = UserDefaults.standard.string(forKey: "ollamaModelName") ?? AppSettingsKeys.Defaults.ollamaModelName
 
         // For Ollama to be considered available, we need to have both URL and model
         // But we should also check if this is actually a real Ollama server
@@ -72,7 +77,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         // Initialize with saved configuration
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
@@ -519,7 +525,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     func updateConfiguration() {
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
@@ -851,6 +858,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         // Combine all summaries into a final meta-summary
         let combinedSummary = summaries.joined(separator: "\n\n")
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
         let finalSummary: String
 
         if TokenManager.needsChunking(combinedSummary, maxTokens: TokenManager.googleAIStudioContextWindow) {
@@ -859,7 +869,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
         } else {
             // Generate a meta-summary from all chunk summaries
             let metaPrompt = """
-            Please create a comprehensive summary by combining these section summaries:
+            Please create a summary by combining these section summaries at the selected detail level.
+
+            \(detailInstructions)
 
             \(combinedSummary)
 
@@ -906,8 +918,14 @@ class GoogleAIStudioEngine: SummarizationEngine {
     // MARK: - Private Helper Methods
 
     private func createSummaryPrompt(text: String, contentType: ContentType) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+
         return """
-        Please provide a comprehensive summary of the following content using proper Markdown formatting:
+        Please provide a summary of the following content using proper Markdown formatting.
+
+        \(detailInstructions)
 
         Use the following Markdown elements as appropriate:
         - **Bold text** for key points and important information
@@ -924,7 +942,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         Content type: \(contentType.rawValue)
 
-        Focus on the key points and main ideas. Keep the summary clear, informative, and well-structured with proper markdown formatting.
+        Keep the summary clear, informative, and well-structured with proper Markdown formatting.
         """
     }
 
@@ -1057,13 +1075,18 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+
         return """
         Analyze the following transcript and extract comprehensive information:
 
         \(text)
 
         Please provide a structured response with:
-        1. A detailed summary using proper Markdown formatting:
+        1. A summary using proper Markdown formatting at the selected detail level:
+           \(detailInstructions)
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
@@ -1090,7 +1113,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "detailed markdown-formatted summary of the content",
+          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
           "tasks": ["personal task1", "personal task2", "personal task3"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -1240,7 +1263,7 @@ class AIEngineFactory {
     }
 
     static func getAvailableEngines() -> [AIEngineType] {
-        return AIEngineType.allCases.filter { type in
+        return AIEngineType.availableCases.filter { type in
             let engine = createEngine(type: type)
             return engine.isAvailable
         }
@@ -1271,9 +1294,28 @@ enum AIEngineType: String, CaseIterable {
         }
     }
 
+    /// Ollama uses a server hosted by the native Mac app. It is intentionally
+    /// not exposed to iPhone, iPad, or other non-native-Mac targets.
+    var isSupportedOnCurrentPlatform: Bool {
+        switch self {
+        case .localLLM:
+#if os(macOS)
+            return true
+#else
+            return false
+#endif
+        default:
+            return true
+        }
+    }
+
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
         return allCases.filter { engineType in
+            guard engineType.isSupportedOnCurrentPlatform else {
+                return false
+            }
+
             switch engineType {
             case .mlxSwift:
                 return DeviceCapabilities.supportsMLX
@@ -1283,6 +1325,19 @@ enum AIEngineType: String, CaseIterable {
                 return true
             }
         }
+    }
+
+    static func preferredOnDeviceMigrationEngine(
+        supportsMLX: Bool,
+        supportsOnDeviceLLM: Bool
+    ) -> AIEngineType? {
+        if supportsMLX {
+            return .mlxSwift
+        }
+        if supportsOnDeviceLLM {
+            return .onDeviceLLM
+        }
+        return nil
     }
 
     var description: String {

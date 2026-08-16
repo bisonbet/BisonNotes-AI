@@ -121,7 +121,17 @@ class RecordingNameGenerator {
     }
 
     static func validateAndFixRecordingName(_ name: String, originalName: String) -> String {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Recording names are displayed as plain text and may come from a
+        // provider path that did not use the standardized title parser.
+        trimmedName = trimmedName
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "`", with: "")
+            .replacingOccurrences(of: #"[.!?;:,]+$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         // List of generic or problematic names to avoid
         let genericNames = ["the", "a", "an", "this", "that", "it", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by"]

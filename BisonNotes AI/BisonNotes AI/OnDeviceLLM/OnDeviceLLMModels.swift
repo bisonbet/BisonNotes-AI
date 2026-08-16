@@ -23,7 +23,10 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
     case simple
 
     /// Get the LLMTemplate for this type
-    public func template(systemPrompt: String?) -> LLMTemplate {
+    public func template(
+        systemPrompt: String?,
+        thinkingLevel: SummaryThinkingLevel = .none
+    ) -> LLMTemplate {
         switch self {
         case .chatML:
             return .chatML(systemPrompt)
@@ -40,7 +43,7 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
         case .olmoe:
             return .olmoe(systemPrompt)
         case .qwen35:
-            return .qwen35(systemPrompt)
+            return .qwen35(systemPrompt, thinkingLevel: thinkingLevel)
         case .gemma3:
             return .gemma3(systemPrompt)
         case .simple:

@@ -20,6 +20,8 @@ import Foundation
 enum MistralAIModel: String, CaseIterable {
     case mistralLarge2512 = "mistral-large-2512"
     case mistralMedium2508 = "mistral-medium-2508"
+    case mistralSmall2603 = "mistral-small-2603"
+    case mistralMedium35 = "mistral-medium-3-5"
     case magistralMedium2509 = "magistral-medium-2509"
 
     var displayName: String {
@@ -28,6 +30,10 @@ enum MistralAIModel: String, CaseIterable {
             return "Mistral Large (25.12)"
         case .mistralMedium2508:
             return "Mistral Medium (25.08)"
+        case .mistralSmall2603:
+            return "Mistral Small 4 (26.03)"
+        case .mistralMedium35:
+            return "Mistral Medium 3.5"
         case .magistralMedium2509:
             return "Magistral Medium (25.09)"
         }
@@ -39,6 +45,10 @@ enum MistralAIModel: String, CaseIterable {
             return "Flagship large-context model tuned for high-quality reasoning and summarization"
         case .mistralMedium2508:
             return "Balanced model for fast, cost-effective summarization and task extraction"
+        case .mistralSmall2603:
+            return "Hybrid reasoning model with a fast mode and a controllable light reasoning pass"
+        case .mistralMedium35:
+            return "Current medium model with adjustable reasoning effort for higher-quality summaries"
         case .magistralMedium2509:
             return "Instruction-tuned medium model optimized for structured outputs"
         }
@@ -48,7 +58,7 @@ enum MistralAIModel: String, CaseIterable {
         switch self {
         case .mistralLarge2512:
             return 8192
-        case .mistralMedium2508, .magistralMedium2509:
+        case .mistralMedium2508, .mistralSmall2603, .mistralMedium35, .magistralMedium2509:
             return 4096
         }
     }
@@ -58,6 +68,8 @@ enum MistralAIModel: String, CaseIterable {
         case .mistralLarge2512:
             return 128_000
         case .mistralMedium2508:
+            return 128_000
+        case .mistralSmall2603, .mistralMedium35:
             return 128_000
         case .magistralMedium2509:
             return 40_000
@@ -69,6 +81,8 @@ enum MistralAIModel: String, CaseIterable {
         case .mistralLarge2512:
             return "Premium"
         case .mistralMedium2508:
+            return "Standard"
+        case .mistralSmall2603, .mistralMedium35:
             return "Standard"
         case .magistralMedium2509:
             return "Economy"
@@ -85,6 +99,8 @@ enum MistralAIModel: String, CaseIterable {
         case .mistralLarge2512:
             return 500_000_000 // 500ms for premium model (more conservative)
         case .mistralMedium2508:
+            return 300_000_000 // 300ms for standard model
+        case .mistralSmall2603, .mistralMedium35:
             return 300_000_000 // 300ms for standard model
         case .magistralMedium2509:
             return 200_000_000 // 200ms for economy model (faster processing)
@@ -134,6 +150,7 @@ struct MistralChatCompletionRequest: Codable {
     let temperature: Double?
     let maxTokens: Int?
     let responseFormat: ResponseFormat?
+    let reasoningEffort: String?
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -141,5 +158,22 @@ struct MistralChatCompletionRequest: Codable {
         case temperature
         case maxTokens = "max_tokens"
         case responseFormat = "response_format"
+        case reasoningEffort = "reasoning_effort"
+    }
+
+    init(
+        model: String,
+        messages: [ChatMessage],
+        temperature: Double?,
+        maxTokens: Int?,
+        responseFormat: ResponseFormat?,
+        reasoningEffort: String? = nil
+    ) {
+        self.model = model
+        self.messages = messages
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+        self.responseFormat = responseFormat
+        self.reasoningEffort = reasoningEffort
     }
 }

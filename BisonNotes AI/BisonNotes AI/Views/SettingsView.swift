@@ -546,7 +546,10 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
             }
 
-            Text("Make AI summaries entertaining with a comedic twist. All information is preserved.")
+            Text(
+                "Add humor to the summary narrative while keeping tasks, reminders, titles, "
+                    + "and facts grounded in the transcript."
+            )
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -980,7 +983,10 @@ struct SettingsView: View {
                 }
             }
         } footer: {
-            Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
+            Text(
+                "Add humor to the summary narrative while keeping tasks, reminders, titles, "
+                    + "and facts grounded in the transcript."
+            )
         }
     }
 

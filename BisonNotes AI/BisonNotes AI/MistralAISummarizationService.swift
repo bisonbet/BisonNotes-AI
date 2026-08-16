@@ -28,6 +28,14 @@ class MistralAISummarizationService {
     private let session: URLSession
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "MistralAISummarizationService")
 
+    private var thinkingOptions: SummaryThinkingRequestOptions {
+        SummaryThinkingModelCatalog.requestOptions(
+            modelName: config.model.rawValue,
+            engine: .mistralAI,
+            baseURL: config.baseURL
+        )
+    }
+
     // MARK: - Initialization
 
     init(config: MistralAIConfig) {
@@ -60,7 +68,8 @@ class MistralAISummarizationService {
             messages: messages,
             temperature: config.temperature,
             maxTokens: config.maxTokens,
-            responseFormat: nil
+            responseFormat: nil,
+            reasoningEffort: thinkingOptions.reasoningEffort
         )
 
         let response = try await makeAPICall(request: request)
@@ -69,7 +78,7 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
-        return choice.message.content
+        return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: choice.message.content)
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
@@ -86,7 +95,8 @@ class MistralAISummarizationService {
             messages: messages,
             temperature: 0.1,
             maxTokens: 1024,
-            responseFormat: nil
+            responseFormat: nil,
+            reasoningEffort: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -112,7 +122,8 @@ class MistralAISummarizationService {
             messages: messages,
             temperature: 0.1,
             maxTokens: 1024,
-            responseFormat: nil
+            responseFormat: nil,
+            reasoningEffort: nil
         )
 
         let response = try await makeAPICall(request: request)
@@ -149,7 +160,8 @@ class MistralAISummarizationService {
             messages: messages,
             temperature: config.temperature,
             maxTokens: config.maxTokens,
-            responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil
+            responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil,
+            reasoningEffort: thinkingOptions.reasoningEffort
         )
 
         logger.debug("Mistral AI Provider: \(self.config.baseURL, privacy: .public)")
@@ -161,9 +173,12 @@ class MistralAISummarizationService {
             throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
         }
 
-        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(choice.message.content)
+        let cleanedContent = SummaryThinkingResponseCleaner.stripDelimitedThinking(
+            from: choice.message.content
+        )
+        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(cleanedContent)
         return SummarizationResult(
-            summary: result.summary,
+            summary: SummaryThinkingResponseCleaner.stripDelimitedThinking(from: result.summary),
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles,

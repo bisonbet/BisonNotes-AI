@@ -312,10 +312,9 @@ extension MLXSwiftDownloadManager {
 // MARK: MLX Service Actor
 
 private actor MLXSwiftService {
-    private static let thinkingTokenAllowance = 4_096
-    #if os(macOS)
-    private static let thinkingModelId = "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
-    #endif
+    /// Extra generation room reserved for a selected Light thinking pass.
+    /// This is deliberately below the previous always-on allowance.
+    private static let thinkingTokenAllowance = 1_536
 
     private var modelContainer: ModelContainer?
     private var loadedModelId: String?
@@ -438,21 +437,26 @@ private actor MLXSwiftService {
             )
         }
 
-        return try await consolidate(chunkResults: chunkResults, originalContentType: ContentAnalyzer.classifyContent(text))
+        return try await consolidate(
+            chunkResults: chunkResults,
+            originalContentType: ContentAnalyzer.classifyContent(text),
+            originalWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
     }
 
     private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> SummarizationResult {
-        let wordCount = transcript.split(separator: " ").count
-        let targetWords = max(200, Int(Double(wordCount) * 0.15))
+        let wordCount = transcript.split(whereSeparator: { $0.isWhitespace }).count
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount
+        )
 
         let prompt = """
         Analyze the following transcript and extract the actual content discussed. \
         Base your response ONLY on what is actually mentioned in the transcript.
 
-        1. A STRUCTURED OUTLINE SUMMARY
-           - CRITICAL: The summary must be approximately \(targetWords) words long.
+        1. A STRUCTURED OUTLINE SUMMARY at the selected detail level
+           \(detailInstructions)
            - Use sections: Overview, Key Facts, Important Notes, Conclusions.
-           - Expand on details using nested bullet points.
            - Write about what was ACTUALLY discussed in the transcript, not generic examples.
         2. A list of actionable tasks (personal items only) - ONLY include tasks that are actually mentioned
         3. Time-sensitive reminders and deadlines - ONLY include reminders that are actually mentioned
@@ -499,7 +503,8 @@ private actor MLXSwiftService {
 
     private func consolidate(
         chunkResults: [MLXSwiftStructuredResponse],
-        originalContentType: ContentType
+        originalContentType: ContentType,
+        originalWordCount: Int
     ) async throws -> SummarizationResult {
         let encodedChunks = chunkResults.enumerated().map { index, result in
             """
@@ -518,11 +523,16 @@ private actor MLXSwiftService {
             """
         }.joined(separator: "\n\n")
 
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: originalWordCount
+        )
+
         let prompt = """
         Merge these partial transcript analyses into one cohesive final result.
 
         Rules:
-        - Combine the summaries into one unified summary preserving all key details.
+        - Combine the summaries into one unified summary at the selected detail level.
+        \(detailInstructions)
         - Deduplicate tasks and reminders across chunks.
         - Keep the best 3-5 titles.
         - Write about what was ACTUALLY discussed, not generic examples.
@@ -559,7 +569,8 @@ private actor MLXSwiftService {
         return MLXSwiftResponseParser.parseMarkdown(rawResponse, fallbackText: encodedChunks)
     }
 
-    private static let systemInstruction = """
+    private var systemInstruction: String {
+        """
     You are an AI assistant specialized in processing audio transcripts. \
     Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
@@ -574,14 +585,15 @@ private actor MLXSwiftService {
     - Base titles on the ACTUAL topics discussed, not generic examples
 
     Provide:
-    1. A comprehensive summary using Markdown formatting based on what was actually discussed
+    1. A summary at the selected detail level using Markdown formatting based on what was actually discussed
     2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
     3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
     4. Suggested titles based on the ACTUAL main topics discussed
 
-    Be thorough but concise. Focus on information that is personally relevant to the speaker \
+    Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker \
     and actually appears in the transcript.
-    """
+    """ + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    }
 
     private func generate(prompt: String) async throws -> String {
         let container = try await loadContainer()
@@ -600,7 +612,7 @@ private actor MLXSwiftService {
         if isThinkingModeEnabled {
             templateContext = ["enable_thinking": true]
             AppLog.shared.summarization(
-                "[MLXSwift] Thinking mode enabled: \(Self.thinkingTokenAllowance)-token hidden reasoning allowance, "
+                "[MLXSwift] Light thinking enabled: \(Self.thinkingTokenAllowance)-token hidden reasoning allowance, "
                 + "\(configuredMaxTokens)-token final-output target"
             )
         } else {
@@ -609,7 +621,7 @@ private actor MLXSwiftService {
 
         let session = ChatSession(
             container,
-            instructions: Self.systemInstruction,
+            instructions: systemInstruction,
             generateParameters: parameters,
             additionalContext: templateContext
         )
@@ -710,13 +722,12 @@ private actor MLXSwiftService {
     }
 
     private var isThinkingModeEnabled: Bool {
-        #if os(macOS)
+        guard SummaryThinkingLevel.current == .light else { return false }
         let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
             ?? MLXSwiftSettingsKeys.defaultModelId
-        return modelId == Self.thinkingModelId
-        #else
-        return false
-        #endif
+        let profile = SummaryThinkingModelCatalog.profile(modelName: modelId, engine: .mlxSwift)
+        guard case .controllable(let transport) = profile.support else { return false }
+        return transport == .mlx
     }
 
     private var configuredContextTokens: Int {

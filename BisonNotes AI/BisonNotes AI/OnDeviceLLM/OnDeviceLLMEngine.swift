@@ -461,17 +461,21 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     ///   - service: The LLM service to use for combination
     ///   - contentType: The content type of the original transcript
     ///   - originalWordCount: Word count of the ORIGINAL transcript (not the summaries)
-    /// - Returns: A single consolidated summary that is 15% of the original transcript length
+    /// - Returns: A single consolidated summary at the user's selected detail level
     private func combineChunkSummaries(
         _ summaries: [String],
         service: OnDeviceLLMService,
         contentType: ContentType,
         originalWordCount: Int
     ) async throws -> String {
-        // Calculate target word count based on ORIGINAL transcript (15% detail level)
-        // This ensures the final consolidated summary is proportional to the original transcript,
-        // not the already-summarized chunks (which would be much smaller)
-        let targetWords = max(200, Int(Double(originalWordCount) * 0.15))
+        // Calculate the target from the ORIGINAL transcript, not the already summarized chunks.
+        // This keeps the selected detail level proportional to the recording's actual length.
+        let detailLevel = SummaryDetailLevel.current
+        let targetRange = detailLevel.targetWordRange(for: originalWordCount)
+        let targetWords = targetRange.upperBound
+        let detailInstructions = detailLevel.promptInstructions(
+            forSourceWordCount: originalWordCount
+        )
 
         let combinedSummariesText = summaries.joined(separator: "\n\n=== SECTION ===\n\n")
 
@@ -480,11 +484,11 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         You are consolidating summaries from different parts of a single recording into ONE unified, comprehensive Structured Outline.
 
         CRITICAL REQUIREMENTS:
-        - The final summary MUST be approximately \(targetWords) words long.
+        - The final summary must follow the selected detail level.
+        \(detailInstructions)
         - Create a SINGLE, COHERENT outline that covers the ENTIRE recording.
         - Use the EXACT same structured format as the input summaries.
         - Do NOT simply concatenate - merge, deduplicate, and synthesize information.
-        - Maintain the 15% detail level - do not over-condense.
 
         REQUIRED OUTPUT FORMAT:
         ## 1. Overview

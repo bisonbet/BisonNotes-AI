@@ -26,7 +26,7 @@ struct OllamaConfig {
     static let `default` = OllamaConfig(
         serverURL: "http://localhost",
         port: 11434,
-        modelName: "llama2:7b",
+        modelName: AppSettingsKeys.Defaults.ollamaModelName,
         maxTokens: 2048,
         temperature: 0.1,
         maxContextTokens: 4096,
@@ -50,6 +50,17 @@ struct OllamaModel: Codable {
     }
 }
 
+enum OllamaThinkValue: Equatable {
+    case level(String)
+
+    var jsonValue: String {
+        switch self {
+        case .level(let value):
+            return value
+        }
+    }
+}
+
 struct OllamaGenerateRequest {
     let model: String
     let prompt: String
@@ -57,7 +68,7 @@ struct OllamaGenerateRequest {
     let format: OllamaFormat?
     let options: OllamaOptions?
     let tools: [OllamaTool]?
-    let think: Bool?
+    let think: OllamaThinkValue?
 }
 
 // MARK: - Structured Output Format Support
@@ -105,7 +116,7 @@ extension OllamaGenerateRequest {
         }
 
         if let think = think {
-            jsonDict["think"] = think
+            jsonDict["think"] = think.jsonValue
         }
 
         return try JSONSerialization.data(withJSONObject: jsonDict, options: [])
@@ -116,12 +127,13 @@ extension OllamaGenerateRequest {
 
 struct OllamaJSONSchemas {
 
-    static let completeAnalysisSchema: [String: Any] = [
+    static var completeAnalysisSchema: [String: Any] {
+        [
         "type": "object",
         "properties": [
             "summary": [
                 "type": "string",
-                "description": "The main comprehensive summary of the entire transcript (15-20% of original length). CRITICAL: This should be a LONG, detailed summary with complete overview, all key points, insights, takeaways, main themes and conclusions. Use markdown formatting with ## headers, **bold**, • bullets. This is the primary content field and must be substantial (minimum 500 characters for short transcripts, 2000+ for longer ones).",
+                "description": SummaryDetailLevel.current.schemaDescription,
                 "minLength": 100
             ],
             "tasks": [
@@ -172,7 +184,8 @@ struct OllamaJSONSchemas {
             ]
         ],
         "required": ["summary", "tasks", "reminders", "titles", "contentType"]
-    ]
+        ]
+    }
 
     static let tasksRemindersSchema: [String: Any] = [
         "type": "object",
@@ -286,6 +299,7 @@ struct OllamaGenerateResponse: Codable {
     let model: String
     let created_at: String
     let response: String
+    let thinking: String?
     let done: Bool
     let done_reason: String?
     let context: [Int]?
@@ -674,7 +688,8 @@ class OllamaService: ObservableObject {
             let response = try await generateStructuredResponse(
                 prompt: structuredPrompt,
                 model: config.modelName,
-                schema: OllamaJSONSchemas.completeAnalysisSchema
+                schema: OllamaJSONSchemas.completeAnalysisSchema,
+                useThinking: true
             )
 
             AppLog.shared.networking("OllamaService: Got structured output response, parsing...")
@@ -689,7 +704,11 @@ class OllamaService: ObservableObject {
         // Fallback to traditional prompting
         let prompt = createRobustCompleteProcessingPrompt(from: text)
 
-        let response = try await generateResponse(prompt: prompt, model: config.modelName)
+        let response = try await generateResponse(
+            prompt: prompt,
+            model: config.modelName,
+            useThinking: true
+        )
 
         // Debug logging (verbose only)
         if PerformanceOptimizer.shouldLogEngineInitialization() {
@@ -844,7 +863,12 @@ class OllamaService: ObservableObject {
         let prompt = createRobustSummaryPrompt(from: text)
 
         do {
-            return try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            return try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
         } catch OllamaError.parsingError(let message) {
             AppLog.shared.networking("OllamaService: Summary generation failed with parsing error: \(message)", level: .error)
             throw OllamaError.serverError("Failed to generate summary: \(message)")
@@ -866,10 +890,24 @@ class OllamaService: ObservableObject {
 
         // Standard Ollama tool calling
         let tools = [createSummaryTool()]
-        let prompt = "Please analyze the following transcript and create a comprehensive summary using the create_summary function:\n\n\(text)"
+        let comedyModifier = comedyPromptModifier(for: "summary")
+        let detailInstructions = summaryDetailInstructions(for: text)
+        let prompt = """
+        Please analyze the following transcript and create a summary using the create_summary function.
+        Follow these summary detail instructions:
+        \(detailInstructions)
+        \(comedyModifier)
+
+        \(text)
+        """
 
         do {
-            let response = try await generateResponseWithTools(prompt: prompt, model: config.modelName, tools: tools)
+            let response = try await generateResponseWithTools(
+                prompt: prompt,
+                model: config.modelName,
+                tools: tools,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
@@ -896,6 +934,23 @@ class OllamaService: ObservableObject {
 
     // MARK: - Tool Definitions
 
+    private func comedyPromptModifier(for type: String) -> String {
+        switch type {
+        case "summary":
+            return ComedyMode.current.promptModifier ?? ""
+        case "complete":
+            return ComedyMode.current.structuredPromptModifier ?? ""
+        default:
+            return ""
+        }
+    }
+
+    private func summaryDetailInstructions(for text: String) -> String {
+        SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+    }
+
     private func createSummaryTool() -> OllamaTool {
         return OllamaTool(
             type: "function",
@@ -907,7 +962,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            "A comprehensive markdown-formatted summary (approximately 10% of original transcript length) with ## headers, **bold** text, • bullet points, and proper structure. Aim for substantive, detailed content."
+                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
                         )
                     ],
                     required: ["summary"]
@@ -927,7 +982,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            "Comprehensive markdown-formatted summary with ## headers, **bold** text, • bullets"
+                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
                         ),
                         "tasks": OllamaProperty.array(
                             "array",
@@ -986,35 +1041,21 @@ class OllamaService: ObservableObject {
     // MARK: - Robust Prompt Generation
 
     private func createRobustSummaryPrompt(from text: String) -> String {
-        // Calculate target summary length
-        let transcriptWordCount = text.split(separator: " ").count
-        let targetWordCount = max(100, Int(Double(transcriptWordCount) * 0.10)) // 10% of transcript, minimum 100 words
-
-        // Also calculate based on max tokens (assuming ~1.3 tokens per word)
-        let maxTokens = config.maxTokens
-        let maxWordsFromTokens = Int(Double(maxTokens) * 0.90 / 1.3) // 90% of max tokens to leave room for formatting
-
-        // Use the smaller of the two targets
-        let finalTargetWords = min(targetWordCount, maxWordsFromTokens)
-        let targetParagraphs = max(3, finalTargetWords / 100) // Rough estimate of paragraphs
-
+        let detailInstructions = summaryDetailInstructions(for: text)
         let comedyModifier = ComedyMode.current.promptModifier ?? ""
 
         return """
         <INSTRUCTIONS>
-        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create comprehensive, well-structured summaries that capture the essential information.
+        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create well-structured summaries at the requested detail level.
 
-        CRITICAL LENGTH REQUIREMENT:
-        - TARGET: Approximately \(finalTargetWords) words (about 10% of the transcript length)
-        - This translates to roughly \(targetParagraphs) paragraphs of substantive content
-        - Provide detailed, comprehensive information within this target length
-        - Do not exceed this length - be concise but thorough
+        SUMMARY DETAIL REQUIREMENT:
+        \(detailInstructions)
 
         CRITICAL REQUIREMENTS:
         1. Focus on main points, key decisions, important information, and actionable items
         2. Use proper Markdown formatting throughout your response
         3. Structure your response logically with clear sections
-        4. Be comprehensive yet concise - maximize information density
+        4. Match the selected detail level without padding or repeating the transcript
         5. Maintain professional, clear language
 
         MARKDOWN FORMATTING RULES:
@@ -1049,12 +1090,13 @@ class OllamaService: ObservableObject {
         </TRANSCRIPT>
 
         <OUTPUT>
-        Please provide your comprehensive, well-formatted summary below:
+        Please provide your well-formatted summary at the selected detail level below:
         """
     }
 
     private func createRobustCompleteProcessingPrompt(from text: String) -> String {
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+        let detailInstructions = summaryDetailInstructions(for: text)
+        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
@@ -1101,7 +1143,7 @@ class OllamaService: ObservableObject {
         - **bold** for emphasis
         - • for bullet points
         - \\n for line breaks in the JSON string
-        - Aim for 15-20% of original length
+        \(detailInstructions)
 
         CONTENT TYPE: Choose one: "Meeting", "Personal", "Technical", or "General"
         \(comedyModifier)
@@ -1378,10 +1420,21 @@ class OllamaService: ObservableObject {
 
         // Standard Ollama tool calling
         let tools = [createCompleteAnalysisTool()]
-        let prompt = "Please analyze the following transcript and provide a complete analysis using the complete_analysis function:\n\n\(text)"
+        let comedyModifier = comedyPromptModifier(for: "complete")
+        let prompt = """
+        Please analyze the following transcript and provide a complete analysis using the complete_analysis function.
+        \(comedyModifier)
+
+        \(text)
+        """
 
         do {
-            let response = try await generateResponseWithTools(prompt: prompt, model: config.modelName, tools: tools)
+            let response = try await generateResponseWithTools(
+                prompt: prompt,
+                model: config.modelName,
+                tools: tools,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
@@ -1481,19 +1534,33 @@ class OllamaService: ObservableObject {
     }
 
     private func supportsThinking(_ modelName: String) -> Bool {
-        let lowerModel = modelName.lowercased()
-        return lowerModel.contains("qwen") ||
-               lowerModel.contains("deepseek") ||
-               lowerModel.contains("r1") ||
-               lowerModel.contains("gpt-oss") ||
-               lowerModel.contains("magistral")
+        SummaryThinkingModelCatalog.profile(
+            modelName: modelName,
+            engine: .localLLM
+        ).support.isControllable
+    }
+
+    private func thinkingValue(for modelName: String, useThinking: Bool) -> OllamaThinkValue? {
+        guard useThinking else { return nil }
+        guard supportsThinking(modelName) else { return nil }
+        let options = SummaryThinkingModelCatalog.requestOptions(
+            modelName: modelName,
+            engine: .localLLM
+        )
+        guard let level = options.ollamaThinkLevel else { return nil }
+        return .level(level)
     }
 
     private func generateSummaryWithQwenTools(from text: String) async throws -> String? {
         let prompt = createQwenToolPrompt(for: "summary", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCallResult = parseQwenToolCall(response) {
@@ -1518,7 +1585,12 @@ class OllamaService: ObservableObject {
         let prompt = createQwenToolPrompt(for: "complete", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCallResult = parseQwenToolCall(response) {
@@ -1580,6 +1652,9 @@ class OllamaService: ObservableObject {
     }
 
     private func createQwenToolPrompt(for type: String, text: String) -> String {
+        let comedyModifier = comedyPromptModifier(for: type)
+        let detailInstructions = summaryDetailInstructions(for: text)
+
         switch type {
         case "summary":
             return """
@@ -1598,7 +1673,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "A comprehensive markdown-formatted summary (15-20% of original length) with ## headers, **bold** text, • bullet points, and proper structure"
+                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
                       }
                     },
                     "required": ["summary"]
@@ -1607,6 +1682,11 @@ class OllamaService: ObservableObject {
               }
             ]
             </tools>
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
+
+            \(comedyModifier)
 
             IMPORTANT: You MUST respond by calling the create_summary function using this exact format:
             <tool_call>
@@ -1638,7 +1718,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "Comprehensive markdown-formatted summary with ## headers, **bold** text, • bullets"
+                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
                       },
                       "tasks": {
                         "type": "array",
@@ -1691,6 +1771,11 @@ class OllamaService: ObservableObject {
               }
             ]
             </tools>
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
+
+            \(comedyModifier)
 
             IMPORTANT: You MUST respond by calling the complete_analysis function using this exact format:
             <tool_call>
@@ -1896,7 +1981,12 @@ class OllamaService: ObservableObject {
         let prompt = createGPTOSSToolPrompt(for: "summary", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response with channel routing
             if let toolCallResult = parseGPTOSSToolCall(response) {
@@ -1921,7 +2011,12 @@ class OllamaService: ObservableObject {
         let prompt = createGPTOSSToolPrompt(for: "complete", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCallResult = parseGPTOSSToolCall(response) {
@@ -1941,6 +2036,9 @@ class OllamaService: ObservableObject {
     }
 
     private func createGPTOSSToolPrompt(for type: String, text: String) -> String {
+        let comedyModifier = comedyPromptModifier(for: type)
+        let detailInstructions = summaryDetailInstructions(for: text)
+
         switch type {
         case "summary":
             return """
@@ -1949,7 +2047,12 @@ class OllamaService: ObservableObject {
             Available function: create_summary
             Description: Create a comprehensive summary of the transcript with proper Markdown formatting
             Parameters:
-            - summary (string): A comprehensive markdown-formatted summary (15-20% of original length) with ## headers, **bold** text, • bullet points, and proper structure
+            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
+
+            \(comedyModifier)
 
             Please analyze the following transcript and use the create_summary function to generate a well-structured summary:
 
@@ -1965,11 +2068,16 @@ class OllamaService: ObservableObject {
             Available function: complete_analysis
             Description: Perform complete analysis extracting summary, tasks, reminders, titles, and content type
             Parameters:
-            - summary (string): Comprehensive markdown-formatted summary with ## headers, **bold** text, • bullets
+            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
             - tasks (array): Array of task objects with text, priority (High/Medium/Low), category (Call/Email/Meeting/Purchase/Research/Travel/Health/General), timeReference
             - reminders (array): Array of reminder objects with text, urgency (Immediate/Today/This Week/Later), timeReference
             - titles (array): Array of title objects with text (40-60 chars), category (Meeting/Personal/Technical/General), confidence (0.0-1.0)
             - contentType (string): Classification as Meeting/Personal/Technical/General
+
+            \(comedyModifier)
 
             Please analyze the following transcript and use the complete_analysis function to provide comprehensive analysis:
 
@@ -2105,7 +2213,12 @@ class OllamaService: ObservableObject {
         let prompt = createMagistralToolPrompt(for: "summary", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response with [TOOL_CALLS] format
             if let toolCallResult = parseMagistralToolCall(response) {
@@ -2130,7 +2243,12 @@ class OllamaService: ObservableObject {
         let prompt = createMagistralToolPrompt(for: "complete", text: text)
 
         do {
-            let response = try await generateResponse(prompt: prompt, model: config.modelName, cleanForJSON: false)
+            let response = try await generateResponse(
+                prompt: prompt,
+                model: config.modelName,
+                cleanForJSON: false,
+                useThinking: true
+            )
 
             // Check if we got a tool call response
             if let toolCallResult = parseMagistralToolCall(response) {
@@ -2150,6 +2268,9 @@ class OllamaService: ObservableObject {
     }
 
     private func createMagistralToolPrompt(for type: String, text: String) -> String {
+        let comedyModifier = comedyPromptModifier(for: type)
+        let detailInstructions = summaryDetailInstructions(for: text)
+
         switch type {
         case "summary":
             return """
@@ -2166,13 +2287,18 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "A comprehensive markdown-formatted summary (15-20% of original length) with ## headers, **bold** text, • bullet points, and proper structure"
+                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
                     }
                   },
                   "required": ["summary"]
                 }
               }
             ]
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
+
+            \(comedyModifier)
 
             [INST]Please analyze the following transcript and use the create_summary tool to generate a well-structured summary:
 
@@ -2199,7 +2325,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "Comprehensive markdown-formatted summary with ## headers, **bold** text, • bullets"
+                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
                     },
                     "tasks": {
                       "type": "array",
@@ -2244,6 +2370,11 @@ class OllamaService: ObservableObject {
                 }
               }
             ]
+
+            SUMMARY DETAIL REQUIREMENT:
+            \(detailInstructions)
+
+            \(comedyModifier)
 
             [INST]Please analyze the following transcript and use the complete_analysis tool to provide comprehensive analysis:
 
@@ -2386,7 +2517,12 @@ class OllamaService: ObservableObject {
 
     // MARK: - Tool Calling Core Method
 
-    private func generateResponseWithTools(prompt: String, model: String, tools: [OllamaTool]) async throws -> OllamaGenerateResponse {
+    private func generateResponseWithTools(
+        prompt: String,
+        model: String,
+        tools: [OllamaTool],
+        useThinking: Bool = false
+    ) async throws -> OllamaGenerateResponse {
         guard isConnected else {
             throw OllamaError.notConnected
         }
@@ -2410,7 +2546,7 @@ class OllamaService: ObservableObject {
                 top_k: 20
             ),
             tools: tools,
-            think: false  // Disable thinking for tool calling to get direct responses
+            think: thinkingValue(for: model, useThinking: useThinking)
         )
 
         request.httpBody = try generateRequest.toJSONData()
@@ -2463,7 +2599,12 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func generateResponse(prompt: String, model: String, cleanForJSON: Bool = true) async throws -> String {
+    private func generateResponse(
+        prompt: String,
+        model: String,
+        cleanForJSON: Bool = true,
+        useThinking: Bool = false
+    ) async throws -> String {
         guard isConnected else {
             throw OllamaError.notConnected
         }
@@ -2474,8 +2615,6 @@ class OllamaService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let shouldUseThinking = supportsThinking(model) && !cleanForJSON
 
         let generateRequest = OllamaGenerateRequest(
             model: model,
@@ -2489,7 +2628,7 @@ class OllamaService: ObservableObject {
                 top_k: cleanForJSON ? 20 : 50           // More token choices for summaries
             ),
             tools: nil,  // No tools for traditional prompting
-            think: shouldUseThinking  // Enable thinking for supported models when not generating JSON
+            think: thinkingValue(for: model, useThinking: useThinking)
         )
 
         request.httpBody = try generateRequest.toJSONData()
@@ -2555,7 +2694,12 @@ class OllamaService: ObservableObject {
 
     // MARK: - Structured Output Generation
 
-    private func generateStructuredResponse(prompt: String, model: String, schema: [String: Any]) async throws -> String {
+    private func generateStructuredResponse(
+        prompt: String,
+        model: String,
+        schema: [String: Any],
+        useThinking: Bool = false
+    ) async throws -> String {
         guard isConnected else {
             throw OllamaError.notConnected
         }
@@ -2579,7 +2723,7 @@ class OllamaService: ObservableObject {
                 top_k: 40          // More choices for richer responses
             ),
             tools: nil,  // No tools when using structured outputs
-            think: false  // Disable thinking for structured outputs to ensure clean JSON
+            think: thinkingValue(for: model, useThinking: useThinking)
         )
 
         request.httpBody = try generateRequest.toJSONData()
@@ -2632,7 +2776,8 @@ class OllamaService: ObservableObject {
     // MARK: - Structured Output Helper Methods
 
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+        let detailInstructions = summaryDetailInstructions(for: text)
+        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
@@ -2649,11 +2794,11 @@ class OllamaService: ObservableObject {
         CRITICAL INSTRUCTIONS FOR SUMMARY:
         - DO NOT write "This is a transcript of..." or "The text appears to be..."
         - DO write what was ACTUALLY DISCUSSED in the content
-        - Your summary should be 15-20% of the original length (aim for 2000-4000 characters for long transcripts)
-        - Include ALL major topics, key points, important details, names, dates, decisions, and conclusions
+        - Follow the selected summary detail level:
+        \(detailInstructions)
+        - Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level
         - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
         - Structure the summary logically by topic or chronologically
-        - Be comprehensive - include details, not just high-level observations
 
         TASKS - Extract ONLY if the speaker mentions THEIR OWN action items:
         - "I need to call John" → YES, extract this

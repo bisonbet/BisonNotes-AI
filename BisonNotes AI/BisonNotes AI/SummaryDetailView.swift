@@ -121,10 +121,17 @@ struct SummaryDetailView: View {
                 }
                 .listStyle(.inset)
                 #else
-                // NavigationStack { Form } is the only sheet pattern that
-                // scrolls reliably on Mac.
-                Form {
-                    summarySections
+                if #available(iOS 27.0, *) {
+                    // iOS 27 beta can recycle and remeasure variable-height
+                    // Form rows while reversing direction, which makes a
+                    // long summary jump toward its previous lower position.
+                    // Keep the detail content eager on affected OS versions
+                    // so the scroll container has stable section geometry.
+                    summaryDetailScrollView
+                } else {
+                    Form {
+                        summarySections
+                    }
                 }
                 #endif
             }
@@ -363,6 +370,30 @@ struct SummaryDetailView: View {
         Section { dateTimeEditorSection }
         Section { metadataSection }
         Section { regenerateSection }
+    }
+
+    /// iOS 27 workaround for the beta Form remeasurement/jumping regression.
+    /// The eager stack is intentionally limited to the summary detail screen;
+    /// the native Form remains in use on earlier iOS releases and macOS.
+    private var summaryDetailScrollView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                locationSection
+                headerSection
+                summarySection
+                tasksSection
+                remindersSection
+                titlesSection
+                attachmentsSection
+                dateTimeEditorSection
+                metadataSection
+                regenerateSection
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.visible)
     }
 
     // MARK: - Geocoding Helpers
