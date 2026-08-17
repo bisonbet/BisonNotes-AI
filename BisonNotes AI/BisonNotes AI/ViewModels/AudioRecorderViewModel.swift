@@ -255,9 +255,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	deinit {
-		// Timer properties are MainActor-isolated and cannot be accessed from
-		// this nonisolated deinitializer. Releasing the owner releases the timer;
-		// its callback captures the view model weakly.
+		// Timer properties are MainActor-isolated and cannot be reached from this
+		// nonisolated deinitializer, and Timer.invalidate() must run on the thread
+		// that installed the timer — which a deinit cannot guarantee either. So
+		// releasing the owner does NOT stop a scheduled timer: the run loop holds
+		// it until it is invalidated. Each repeating timer's block instead checks
+		// for a released owner and invalidates itself on its own run loop.
 		#if os(macOS)
 		macInputDeviceChangeTask?.cancel()
 		#endif
@@ -946,7 +949,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Timer Management
 
 	func startRecordingTimer() {
-		recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
+		recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+			guard self != nil else { timer.invalidate(); return }
 			Task { @MainActor [weak self] in
 				guard let self else { return }
 				// Failsafe: if the underlying AVAudioRecorder stopped, try to resume before giving up.
@@ -1019,7 +1027,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startPlayingTimer() {
 		stopPlayingTimer() // Ensure no duplicate timers
 
-		playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
+		playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+			guard self != nil else { timer.invalidate(); return }
 			Task { @MainActor [weak self] in
 				guard let self, let player = self.audioPlayer, self.isPlaying else {
 					return

@@ -17,10 +17,15 @@ extension AudioRecorderViewModel {
 
     func startMacCaptureHealthMonitoring() {
         stopMacCaptureHealthMonitoring()
+        // The run loop retains a scheduled timer until it is invalidated, so a
+        // dropped property does not stop it. The nonisolated deinit cannot
+        // invalidate it either (invalidate() must run on the installing thread),
+        // so the block self-invalidates on its own run loop once the owner is gone.
         macCaptureHealthTimer = Timer.scheduledTimer(
             withTimeInterval: 1,
             repeats: true
-        ) { [weak self] _ in
+        ) { [weak self] timer in
+            guard self != nil else { timer.invalidate(); return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let isCapturing = self.isStartingRecording || self.isRecording
