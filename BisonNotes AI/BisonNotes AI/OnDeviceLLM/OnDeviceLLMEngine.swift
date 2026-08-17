@@ -129,15 +129,26 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
 
                 AppLog.shared.summarization("[OnDeviceLLMEngine] App will terminate - releasing llama.cpp Metal resources")
 
+                // Stop any in-flight inference FIRST. `unloadModel()` is isolated
+                // to the inference actor, so on its own it queues behind a running
+                // token-generation loop — which can easily outlast the timeout
+                // below, letting the process exit with Metal buffers still live.
+                // This flag is nonisolated, so it lands immediately and the loop
+                // bails at its next per-token checkpoint.
+                guard service.requestInferenceAbort() else { return }
+
                 // The unload runs on the inference actor, which never hops back
                 // to the main actor, so blocking here cannot deadlock. The cap
-                // keeps a wedged unload from stalling quit indefinitely.
+                // keeps a wedged unload from stalling quit indefinitely; with the
+                // abort above, the actor should drain within a token or two. A
+                // single llama_decode already in flight cannot be interrupted, so
+                // the cap is sized for one batch rather than a whole generation.
                 let semaphore = DispatchSemaphore(value: 0)
                 Task.detached(priority: .userInitiated) {
                     await service.unloadModel()
                     semaphore.signal()
                 }
-                if semaphore.wait(timeout: .now() + 3) == .timedOut {
+                if semaphore.wait(timeout: .now() + 5) == .timedOut {
                     AppLog.shared.summarization(
                         "[OnDeviceLLMEngine] Timed out waiting for model unload during termination",
                         level: .error
