@@ -318,7 +318,11 @@ private actor MLXSwiftService {
 
     private var modelContainer: ModelContainer?
     private var loadedModelId: String?
-    private var memoryObserver: NSObjectProtocol?
+    /// Held outside actor isolation so the nonisolated deinit can unregister
+    /// the memory-warning observer; NotificationCenter keeps block observers
+    /// alive until `removeObserver`, regardless of the weak capture below.
+    private let memoryObservers = LifecycleObserverTokens()
+    private var hasMemoryObserver = false
     private var receivedMemoryWarning = false
 
     /// Maximum input tokens per chunk for MLX inference. With the Metal buffer
@@ -329,23 +333,17 @@ private actor MLXSwiftService {
     init() {}
 
     private func ensureMemoryObserver() {
-        guard memoryObserver == nil else { return }
+        guard !hasMemoryObserver else { return }
 
-        let observer = NotificationCenter.default.addObserver(
+        memoryObservers.add(NotificationCenter.default.addObserver(
             forName: PlatformLifecycle.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
             Task { await self.handleMemoryWarning() }
-        }
-        self.memoryObserver = observer
-    }
-
-    deinit {
-        if let memoryObserver {
-            NotificationCenter.default.removeObserver(memoryObserver)
-        }
+        })
+        hasMemoryObserver = true
     }
 
     private func handleMemoryWarning() {
@@ -649,11 +647,13 @@ private actor MLXSwiftService {
             }
         }
         guard result == KERN_SUCCESS else { return 0 }
-        let pageSize = UInt64(vm_kernel_page_size)
-        let free = UInt64(stats.free_count) * pageSize
-        let inactive = UInt64(stats.inactive_count) * pageSize
-        let speculative = UInt64(stats.speculative_count) * pageSize
-        let purgeable = UInt64(stats.purgeable_count) * pageSize
+		var pageSizeValue: vm_size_t = 0
+		guard host_page_size(mach_host_self(), &pageSizeValue) == KERN_SUCCESS else { return 0 }
+		let pageSizeBytes = UInt64(pageSizeValue)
+		let free = UInt64(stats.free_count) * pageSizeBytes
+		let inactive = UInt64(stats.inactive_count) * pageSizeBytes
+		let speculative = UInt64(stats.speculative_count) * pageSizeBytes
+		let purgeable = UInt64(stats.purgeable_count) * pageSizeBytes
         return free + inactive + speculative + purgeable
         #else
         return UInt64(os_proc_available_memory())

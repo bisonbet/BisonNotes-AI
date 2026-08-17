@@ -2,6 +2,7 @@ import Foundation
 
 // MARK: - Connection Testing Protocol
 
+@MainActor
 protocol ConnectionTestable {
     func testConnection() async -> Bool
 }
@@ -16,6 +17,7 @@ struct SummarizationResult: Sendable {
     let contentType: ContentType
 }
 
+@MainActor
 protocol SummarizationEngine {
     var name: String { get }
     var engineType: String { get }
@@ -189,7 +191,7 @@ enum SummaryDetailLevel: Int, CaseIterable, Identifiable, Equatable, Sendable {
 
 // MARK: - Processing Configuration
 
-struct SummarizationConfig {
+struct SummarizationConfig: Sendable {
     let maxSummaryLength: Int
     let maxTasks: Int
     let maxReminders: Int
@@ -260,10 +262,10 @@ struct SummarizationTimeouts {
 ///   - operation: Async work to perform.
 /// - Returns: The value produced by `operation` if it completes before the timeout.
 /// - Throws: `timeoutError` when the timeout elapses, or any error thrown by `operation`.
-func withTimeout<T>(
+func withTimeout<T: Sendable>(
     seconds: TimeInterval,
     timeoutError: Error = SummarizationError.processingTimeout,
-    operation: @escaping () async throws -> T
+    operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask {

@@ -9,6 +9,7 @@ import SwiftUI
 
 // MARK: - Compatible API Settings View
 
+@MainActor
 struct OpenAICompatibleSettingsView: View {
     @SecureStorage(KeychainSecretStore.openAICompatibleAPIKey) private var apiKey: String = ""
     @AppStorage("openAICompatibleModel") private var selectedModel: String = ""
@@ -74,7 +75,11 @@ struct OpenAICompatibleSettingsView: View {
         modelFetchError = ""
         showingModelFetchError = false
 
-        Task {
+        let apiKey = apiKey
+        let baseURL = baseURL
+        let allowInsecurePublicEndpoints = allowInsecurePublicEndpoints
+
+        Task { @MainActor in
             do {
                 let modelIds = try await OpenAICompatibleService.fetchCompatibleModels(
                     apiKey: apiKey,
@@ -82,26 +87,22 @@ struct OpenAICompatibleSettingsView: View {
                     allowInsecurePublicEndpoints: allowInsecurePublicEndpoints
                 )
 
-                await MainActor.run {
-                    availableModelIds = modelIds
-                    if !modelIds.isEmpty && selectedModel.isEmpty {
-                        selectedModel = modelIds.first!
-                    }
+                availableModelIds = modelIds
+                if !modelIds.isEmpty && selectedModel.isEmpty {
+                    selectedModel = modelIds.first!
+                }
 
-                    isLoadingModels = false
+                isLoadingModels = false
 
-                    AppLog.shared.general("Successfully loaded \(modelIds.count) models")
-                    if !modelIds.isEmpty {
-                        AppLog.shared.general("Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")", level: .debug)
-                    }
+                AppLog.shared.general("Successfully loaded \(modelIds.count) models")
+                if !modelIds.isEmpty {
+                    AppLog.shared.general("Models: \(modelIds.prefix(5).joined(separator: ", "))\(modelIds.count > 5 ? "..." : "")", level: .debug)
                 }
             } catch {
-                await MainActor.run {
-                    modelFetchError = error.localizedDescription
-                    showingModelFetchError = true
-                    isLoadingModels = false
-                    AppLog.shared.general("Failed to load models: \(error)", level: .error)
-                }
+                modelFetchError = error.localizedDescription
+                showingModelFetchError = true
+                isLoadingModels = false
+                AppLog.shared.general("Failed to load models: \(error)", level: .error)
             }
         }
     }
@@ -112,29 +113,26 @@ struct OpenAICompatibleSettingsView: View {
         isTestingConnection = true
         showingConnectionResult = false
 
-        Task {
-            let config = OpenAICompatibleConfig(
-                apiKey: apiKey,
-                modelID: selectedModel,
-                baseURL: baseURL,
-                temperature: temperature,
-                maxTokens: maxTokens,
-                timeout: SummarizationTimeouts.current(),
-                dynamicModelId: selectedModel
-            )
+        let config = OpenAICompatibleConfig(
+            apiKey: apiKey,
+            modelID: selectedModel,
+            baseURL: baseURL,
+            temperature: temperature,
+            maxTokens: maxTokens,
+            timeout: SummarizationTimeouts.current(),
+            dynamicModelId: selectedModel
+        )
+        let service = OpenAICompatibleService(config: config)
 
-            let service = OpenAICompatibleService(config: config)
-
+        Task { @MainActor in
             let success = await service.testConnection()
 
-            await MainActor.run {
-                connectionTestResult = success
-                    ? "Connection successful! API key is valid and model is accessible."
-                    : "Connection failed. Please check your API key and configuration."
-                isConnectionSuccessful = success
-                showingConnectionResult = true
-                isTestingConnection = false
-            }
+            connectionTestResult = success
+                ? "Connection successful! API key is valid and model is accessible."
+                : "Connection failed. Please check your API key and configuration."
+            isConnectionSuccessful = success
+            showingConnectionResult = true
+            isTestingConnection = false
         }
     }
 

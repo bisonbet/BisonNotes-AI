@@ -99,7 +99,6 @@ class PerformanceOptimizer: ObservableObject {
     @Published var optimizationLevel: OptimizationLevel = .balanced
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "Performance")
-    private let processingQueue = DispatchQueue(label: "com.audiojournal.processing", qos: .userInitiated)
     private let cacheQueue = DispatchQueue(label: "com.audiojournal.cache", qos: .utility)
     private let streamingQueue = DispatchQueue(label: "com.audiojournal.streaming", qos: .utility)
 
@@ -472,22 +471,16 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Background Processing with Battery Optimization
 
-    func processInBackgroundWithBatteryOptimization<T>(_ operation: @escaping () async throws -> T) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            let queue = batteryInfo.shouldOptimizeForBattery ?
-                DispatchQueue(label: "com.audiojournal.processing.battery", qos: .utility) :
-                processingQueue
+    func processInBackgroundWithBatteryOptimization<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let priority: TaskPriority = batteryInfo.shouldOptimizeForBattery ? .utility : .userInitiated
+        let task = Task.detached(priority: priority, operation: operation)
 
-            queue.async {
-                Task {
-                    do {
-                        let result = try await operation()
-                        continuation.resume(returning: result)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -624,18 +617,15 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Background Processing
 
-    func processInBackground<T>(_ operation: @escaping () async throws -> T) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            processingQueue.async {
-                Task {
-                    do {
-                        let result = try await operation()
-                        continuation.resume(returning: result)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
+    func processInBackground<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let task = Task.detached(priority: .userInitiated, operation: operation)
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 

@@ -14,6 +14,24 @@ import AppKit
 import UserNotifications
 import MetricKit
 
+/// Carries a UserNotifications completion handler from the nonisolated delegate
+/// callback to the MainActor task that finishes the action. The handler is a
+/// framework-owned, non-Sendable closure; it is called exactly once, from the
+/// main actor, and is never touched concurrently — which is the whole of the
+/// unchecked conformance below.
+private final class NotificationActionCompletion: @unchecked Sendable {
+    private let handler: () -> Void
+
+    init(_ handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+
+    @MainActor
+    func run() {
+        handler()
+    }
+}
+
 /// Platform-neutral app-delegate logic (notification actions, MetricKit,
 /// badge clearing). The platform-specific AppDelegate subclasses below only
 /// differ in the launch callback that triggers `completeLaunchSetup()`.
@@ -21,7 +39,7 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
     // Reference to AudioRecorderViewModel for handling resume actions
     // This will be set by the main app
-    static weak var recorderViewModel: AudioRecorderViewModel?
+    @MainActor static weak var recorderViewModel: AudioRecorderViewModel?
 
     func completeLaunchSetup() {
         // Set notification delegate
@@ -100,41 +118,49 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
         let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let actionIdentifier = response.actionIdentifier
+        let recordingURLString = response.notification.request.content.userInfo["recordingURL"] as? String
 
         AppLog.shared.general("Received notification action: category=\(categoryIdentifier), action=\(actionIdentifier)")
 
-        if categoryIdentifier == "RESUME_RECORDING" {
-            Task { @MainActor in
-                guard let recorderVM = AppDelegateCore.recorderViewModel else {
-                    AppLog.shared.general("AudioRecorderViewModel not available for notification action", level: .error)
-                    completionHandler()
-                    return
-                }
-
-                if actionIdentifier == "RESUME_ACTION" {
-                    AppLog.shared.general("User chose to resume recording")
-
-                    // Extract recording URL from notification user info
-                    if let urlString = response.notification.request.content.userInfo["recordingURL"] as? String,
-                       let url = URL(string: urlString) {
-                        // Resume recording
-                        recorderVM.recordingState = .recording
-                        await recorderVM.resumeRecordingAfterInterruption(url: url)
-                    } else {
-                        AppLog.shared.general("No recording URL found in notification", level: .error)
-                    }
-
-                } else if actionIdentifier == "DISCARD_ACTION" {
-                    AppLog.shared.general("User chose to stop recording")
-
-                    // Stop recording gracefully
-                    recorderVM.handleInterruptedRecording(reason: "User chose to stop after long call")
-                }
-
-                completionHandler()
-            }
-        } else {
+        // The delegate callback owns the framework response, so only immutable
+        // values are extracted before handing work to the MainActor. The
+        // completion handler must still be called *after* the selected action
+        // finishes — calling it early tells the system the app is done and lets
+        // it suspend before the recording is resumed or saved.
+        guard categoryIdentifier == "RESUME_RECORDING" else {
             completionHandler()
+            return
+        }
+
+        let completion = NotificationActionCompletion(completionHandler)
+
+        Task { @MainActor in
+            defer { completion.run() }
+
+            guard let recorderVM = AppDelegateCore.recorderViewModel else {
+                AppLog.shared.general("AudioRecorderViewModel not available for notification action", level: .error)
+                return
+            }
+
+            if actionIdentifier == "RESUME_ACTION" {
+                AppLog.shared.general("User chose to resume recording")
+
+                // Extract recording URL from notification user info
+                if let recordingURLString,
+                   let url = URL(string: recordingURLString) {
+                    // Resume recording
+                    recorderVM.recordingState = .recording
+                    await recorderVM.resumeRecordingAfterInterruption(url: url)
+                } else {
+                    AppLog.shared.general("No recording URL found in notification", level: .error)
+                }
+
+            } else if actionIdentifier == "DISCARD_ACTION" {
+                AppLog.shared.general("User chose to stop recording")
+
+                // Stop recording gracefully
+                recorderVM.handleInterruptedRecording(reason: "User chose to stop after long call")
+            }
         }
     }
 

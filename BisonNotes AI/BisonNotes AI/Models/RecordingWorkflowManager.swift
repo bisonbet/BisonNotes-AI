@@ -17,9 +17,10 @@ class RecordingWorkflowManager: ObservableObject {
     private let context: NSManagedObjectContext
     private var appCoordinator: AppDataCoordinator?
 
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
+    init(persistenceController: PersistenceController? = nil) {
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.context = resolvedPersistenceController.container.viewContext
         self.appCoordinator = nil // Will be set later to avoid circular dependency
     }
 

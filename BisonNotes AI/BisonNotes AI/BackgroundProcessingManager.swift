@@ -518,7 +518,6 @@ class BackgroundProcessingManager: ObservableObject {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        staleJobMonitor?.cancel() // Defensive: class is a singleton so deinit rarely fires
     }
 
     // MARK: - Performance Optimization Setup

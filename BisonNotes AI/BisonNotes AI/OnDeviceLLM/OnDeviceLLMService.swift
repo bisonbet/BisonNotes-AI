@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Service Configuration
 
 /// Configuration for the on-device LLM service
-public struct OnDeviceLLMConfig {
+public struct OnDeviceLLMConfig: Sendable {
     public let modelInfo: OnDeviceLLMModelInfo
     public let temperature: Float
     public let maxTokens: Int
@@ -47,11 +47,45 @@ public struct OnDeviceLLMConfig {
 // MARK: - On-Device LLM Service
 
 /// Service class for performing on-device LLM inference
+/// A nonisolated handle to the live model.
+///
+/// `OnDeviceLLM.isAppBackgrounded` is already lock-backed and nonisolated, and
+/// the generation loop consults it per token, but `llm` itself is isolated to
+/// the inference actor — so the only way to reach the flag was through an
+/// isolated method, which queues behind the very loop it needs to stop. This
+/// handle lets an owner signal the abort synchronously from any context.
+private final class ActiveLLMHandle: @unchecked Sendable {
+    private let lock = NSLock()
+    private var llm: OnDeviceLLM?
+
+    func set(_ llm: OnDeviceLLM?) {
+        lock.lock()
+        self.llm = llm
+        lock.unlock()
+    }
+
+    /// Signals the running generation loop to stop at its next checkpoint.
+    /// Returns false when no model is live.
+    @discardableResult
+    func requestAbort() -> Bool {
+        lock.lock()
+        let current = llm
+        lock.unlock()
+
+        current?.isAppBackgrounded = true
+        return current != nil
+    }
+}
+
+@InferenceActor
 public class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Properties
 
-    private var llm: OnDeviceLLM?
+    private var llm: OnDeviceLLM? {
+        didSet { activeLLM.set(llm) }
+    }
+    private let activeLLM = ActiveLLMHandle()
     private var config: OnDeviceLLMConfig
     private var isLoaded = false
     @Published public var lastMetrics: InferenceMetrics?
@@ -63,7 +97,7 @@ public class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Initialization
 
-    public init(config: OnDeviceLLMConfig = .current) {
+    nonisolated public init(config: OnDeviceLLMConfig = .current) {
         self.config = config
     }
 
@@ -112,6 +146,21 @@ public class OnDeviceLLMService: ObservableObject {
         llm = nil
         isLoaded = false
         AppLog.shared.summarization("[OnDeviceLLMService] Model unloaded")
+    }
+
+    /// Signals any in-flight inference to stop, without hopping onto the
+    /// inference actor.
+    ///
+    /// Termination needs this: `unloadModel()` is actor-isolated, so it queues
+    /// behind a running token-generation loop, which routinely outlives any
+    /// reasonable shutdown timeout. Flipping the nonisolated abort flag first
+    /// makes the loop bail at its next per-token checkpoint, so the actor drains
+    /// and the unload can actually run before the process exits.
+    ///
+    /// - Returns: false when no model is live, so callers can skip the wait.
+    @discardableResult
+    nonisolated public func requestInferenceAbort() -> Bool {
+        activeLLM.requestAbort()
     }
 
     /// Set the app background state on the LLM to prevent Metal crashes

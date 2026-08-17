@@ -9,8 +9,8 @@ import Foundation
 import Security
 import SwiftUI
 
-enum KeychainSecretStoreError: Equatable, LocalizedError {
-    enum Operation: String {
+enum KeychainSecretStoreError: Equatable, LocalizedError, Sendable {
+    enum Operation: String, Sendable {
         case add
         case update
         case delete
@@ -29,7 +29,7 @@ enum KeychainSecretStoreError: Equatable, LocalizedError {
     }
 }
 
-final class KeychainSecretStore {
+final class KeychainSecretStore: Sendable {
     static let shared = KeychainSecretStore()
 
     static let openAIAPIKey = "openAIAPIKey"

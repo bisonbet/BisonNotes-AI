@@ -8,6 +8,7 @@
 
 import Foundation
 
+@MainActor
 final class TemporaryFileCleanupService {
     static let shared = TemporaryFileCleanupService()
 

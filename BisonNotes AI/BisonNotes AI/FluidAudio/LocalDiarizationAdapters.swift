@@ -109,13 +109,18 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             throw LocalDiarizationError.downloadRequired(method)
         }
 
-        return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) { [self] in
+        return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) {
             switch method {
             case .offlineVBx:
-                let models = try await loadOfflineVBxModelsFromCache(from: directory)
-                let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
-                manager.initialize(models: models)
-                return OfflineVBxRunner(manager: manager)
+                // Load the models here, under the gate, with offline mode forced.
+                // `OfflineDiarizerManager.prepareModels` purges its cache and
+                // re-downloads on any load failure, so it must never run outside
+                // this gate — models are downloaded explicitly, never implicitly
+                // when a transcription starts. `OfflineDiarizerModels` is Sendable,
+                // so it crosses back out safely; the non-Sendable manager is then
+                // built from it inside the runner actor.
+                let models = try await Self.loadOfflineVBxModelsFromCache(from: directory)
+                return OfflineVBxRunner(models: models)
             case .experimentalLSEEND:
                 let modelURL = Self.lseendModelURL(at: directory)
                 let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
@@ -177,7 +182,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         try Task.checkCancellation()
     }
 
-    private func loadOfflineVBxModelsFromCache(
+    private nonisolated static func loadOfflineVBxModelsFromCache(
         from directory: URL
     ) async throws -> OfflineDiarizerModels {
         let configuration = MLModelConfiguration()
@@ -266,10 +271,14 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
 }
 
 private actor OfflineVBxRunner: LocalDiarizationRunner {
-    private var manager: OfflineDiarizerManager?
+    /// The models are loaded once, under the model-hub gate, before this runner
+    /// is constructed. `OfflineDiarizerManager` itself is not Sendable, so it is
+    /// built here — inside the actor — from those already-loaded models rather
+    /// than being passed across an isolation boundary.
+    private var models: OfflineDiarizerModels?
 
-    init(manager: OfflineDiarizerManager) {
-        self.manager = manager
+    init(models: OfflineDiarizerModels) {
+        self.models = models
     }
 
     func process(
@@ -278,17 +287,12 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws -> LocalDiarizationResult {
         try Task.checkCancellation()
-        guard let manager else { throw LocalDiarizationError.runnerUnavailable }
-        let result = try await manager.process(audioURL) { processed, total in
-            let fraction = total > 0 ? Double(processed) / Double(total) : nil
-            progressHandler(
-                LocalDiarizationProgress(
-                    method: .offlineVBx,
-                    phase: .processing,
-                    fractionCompleted: fraction
-                )
-            )
-        }
+        guard let models else { throw LocalDiarizationError.runnerUnavailable }
+        let result = try await Self.process(
+            models: models,
+            audioURL: audioURL,
+            progressHandler: progressHandler
+        )
         try Task.checkCancellation()
 
         let intervals = result.segments.map { segment in
@@ -303,7 +307,31 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
     }
 
     func cleanup() async {
-        manager = nil
+        models = nil
+    }
+
+    /// `OfflineDiarizerManager` is not Sendable, so it is created and consumed
+    /// entirely inside this nonisolated call rather than stored on the actor.
+    /// Construction is cheap — `initialize(models:)` just retains the already
+    /// loaded models — so the expensive, network-capable load still happens
+    /// exactly once, inside `FluidAudioModelHubGate` at `makeRunner` time.
+    private nonisolated static func process(
+        models: OfflineDiarizerModels,
+        audioURL: URL,
+        progressHandler: @escaping LocalDiarizationProgressHandler
+    ) async throws -> DiarizationResult {
+        let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+        manager.initialize(models: models)
+        return try await manager.process(audioURL) { processed, total in
+            let fraction = total > 0 ? Double(processed) / Double(total) : nil
+            progressHandler(
+                LocalDiarizationProgress(
+                    method: .offlineVBx,
+                    phase: .processing,
+                    fractionCompleted: fraction
+                )
+            )
+        }
     }
 
     private static func finiteDouble(_ value: Float) -> Double? {

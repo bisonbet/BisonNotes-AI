@@ -1,10 +1,16 @@
 import Foundation
 
-struct WebImportTransferResult {
+struct WebImportTransferResult: Sendable {
     let response: HTTPURLResponse
     let route: WebImportRoute
 }
 
+// URLSession invokes this delegate on its serial OperationQueue while task
+// cancellation may arrive from the awaiting task. Every mutable field below is
+// protected by `lock`; `finish` clears the continuation before resuming it and
+// is the single completion gate for success, failure, cancellation, and
+// delegate teardown. The class-level unchecked conformance is retained only
+// for that explicit lock/lifetime invariant.
 final class BoundedWebImportTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let configuration: URLSessionConfiguration
     private let stagingURL: URL
@@ -21,6 +27,7 @@ final class BoundedWebImportTransfer: NSObject, URLSessionDataDelegate, @uncheck
     private var activeSizeLimit: Int64 = 0
     private var receivedBytes: Int64 = 0
     private var isComplete = false
+    private var hasStarted = false
 
     init(
         configuration: URLSessionConfiguration,
@@ -38,11 +45,21 @@ final class BoundedWebImportTransfer: NSObject, URLSessionDataDelegate, @uncheck
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
+                // `isComplete` here means the cancellation handler already ran
+                // (the task was cancelled before start), which is a cancellation
+                // — not a second caller. Reporting `importInProgress` for it
+                // shows the user "Another import is already in progress".
                 guard !isComplete else {
                     lock.unlock()
                     continuation.resume(throwing: CancellationError())
                     return
                 }
+                guard !hasStarted else {
+                    lock.unlock()
+                    continuation.resume(throwing: WebImportError.importInProgress)
+                    return
+                }
+                hasStarted = true
                 self.continuation = continuation
                 let delegateQueue = OperationQueue()
                 delegateQueue.maxConcurrentOperationCount = 1

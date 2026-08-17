@@ -6,10 +6,11 @@
 //
 
 import Foundation
+import os
 
 // MARK: - Ollama Configuration
 
-struct OllamaConfig {
+struct OllamaConfig: Sendable {
     let serverURL: String
     let port: Int
     let modelName: String
@@ -36,11 +37,11 @@ struct OllamaConfig {
 
 // MARK: - Ollama API Models
 
-struct OllamaListResponse: Codable {
+struct OllamaListResponse: Codable, Sendable {
     let models: [OllamaModel]
 }
 
-struct OllamaModel: Codable {
+struct OllamaModel: Codable, Sendable {
     let name: String
     let modified_at: String
     let size: Int64
@@ -50,7 +51,7 @@ struct OllamaModel: Codable {
     }
 }
 
-enum OllamaThinkValue: Equatable {
+enum OllamaThinkValue: Equatable, Sendable {
     case level(String)
 
     var jsonValue: String {
@@ -187,7 +188,8 @@ struct OllamaJSONSchemas {
         ]
     }
 
-    static let tasksRemindersSchema: [String: Any] = [
+    static var tasksRemindersSchema: [String: Any] {
+        [
         "type": "object",
         "properties": [
             "tasks": [
@@ -217,9 +219,11 @@ struct OllamaJSONSchemas {
             ]
         ],
         "required": ["tasks", "reminders"]
-    ]
+        ]
+    }
 
-    static let titlesSchema: [String: Any] = [
+    static var titlesSchema: [String: Any] {
+        [
         "type": "object",
         "properties": [
             "titles": [
@@ -236,7 +240,8 @@ struct OllamaJSONSchemas {
             ]
         ],
         "required": ["titles"]
-    ]
+        ]
+    }
 }
 
 // MARK: - Tool Calling Support
@@ -288,14 +293,14 @@ class OllamaProperty: Codable {
     }
 }
 
-struct OllamaOptions: Codable {
+struct OllamaOptions: Codable, Sendable {
     let num_predict: Int
     let temperature: Double
     let top_p: Double
     let top_k: Int
 }
 
-struct OllamaGenerateResponse: Codable {
+struct OllamaGenerateResponse: Codable, Sendable {
     let model: String
     let created_at: String
     let response: String
@@ -312,21 +317,26 @@ struct OllamaGenerateResponse: Codable {
     let tool_calls: [OllamaToolCall]?
 }
 
-struct OllamaToolCall: Codable {
+struct OllamaToolCall: Codable, Sendable {
     let function: OllamaToolCallFunction
 }
 
-struct OllamaToolCallFunction: Codable {
+struct OllamaToolCallFunction: Codable, Sendable {
     let name: String
     let arguments: String
 }
 
 // MARK: - Ollama Service
 
+@MainActor
 class OllamaService: ObservableObject {
     private let config: OllamaConfig
     private let session: URLSession
-    private static var requestCounter = 0
+    private static let requestCounter = OSAllocatedUnfairLock(initialState: 0)
+
+    private static func recordRequest() {
+        requestCounter.withLock { $0 += 1 }
+    }
 
     @Published var isConnected: Bool = false
     @Published var availableModels: [OllamaModel] = []
@@ -374,26 +384,20 @@ class OllamaService: ObservableObject {
                     AppLog.shared.networking("OllamaService: Error response received (\(data.count) bytes)", level: .error)
                 }
 
-                await MainActor.run {
-                    self.isConnected = success
-                    self.connectionError = success ? nil : "Server returned status code \(httpResponse.statusCode)"
-                }
+                self.isConnected = success
+                self.connectionError = success ? nil : "Server returned status code \(httpResponse.statusCode)"
                 return success
             }
 
             AppLog.shared.networking("OllamaService: Invalid response type from server", level: .error)
-            await MainActor.run {
-                self.isConnected = false
-                self.connectionError = "Invalid response from server"
-            }
+            self.isConnected = false
+            self.connectionError = "Invalid response from server"
             return false
 
         } catch {
             AppLog.shared.networking("OllamaService: Connection test failed: \(error.localizedDescription)", level: .error)
-            await MainActor.run {
-                self.isConnected = false
-                self.connectionError = error.localizedDescription
-            }
+            self.isConnected = false
+            self.connectionError = error.localizedDescription
             return false
         }
     }
@@ -414,9 +418,7 @@ class OllamaService: ObservableObject {
 
         let listResponse = try JSONDecoder().decode(OllamaListResponse.self, from: data)
 
-        await MainActor.run {
-            self.availableModels = listResponse.models
-        }
+        self.availableModels = listResponse.models
 
         return listResponse.models
     }
@@ -2551,7 +2553,7 @@ class OllamaService: ObservableObject {
 
         request.httpBody = try generateRequest.toJSONData()
 
-        Self.requestCounter += 1
+        Self.recordRequest()
         AppLog.shared.networking("OllamaService: Sending tool calling request with \(tools.count) tools", level: .debug)
 
         let (data, response): (Data, URLResponse)
@@ -2633,7 +2635,7 @@ class OllamaService: ObservableObject {
 
         request.httpBody = try generateRequest.toJSONData()
 
-        Self.requestCounter += 1
+        Self.recordRequest()
 
         let (data, response): (Data, URLResponse)
         do {
@@ -2728,7 +2730,7 @@ class OllamaService: ObservableObject {
 
         request.httpBody = try generateRequest.toJSONData()
 
-        Self.requestCounter += 1
+        Self.recordRequest()
 
         let (data, response): (Data, URLResponse)
         do {

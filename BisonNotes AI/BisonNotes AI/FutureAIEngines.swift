@@ -1243,6 +1243,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 // MARK: - Engine Factory
 
 class AIEngineFactory {
+    @MainActor
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
         case .mistralAI:
@@ -1262,6 +1263,7 @@ class AIEngineFactory {
         }
     }
 
+    @MainActor
     static func getAvailableEngines() -> [AIEngineType] {
         return AIEngineType.availableCases.filter { type in
             let engine = createEngine(type: type)

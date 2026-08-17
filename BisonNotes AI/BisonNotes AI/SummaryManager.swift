@@ -67,6 +67,7 @@ struct LegacySummaryMigrationReport: Equatable, Sendable {
     }
 }
 
+@MainActor
 func extractTasksAndRemindersFromCompleteResult(
     using engine: SummarizationEngine,
     text: String
@@ -1256,7 +1257,9 @@ class SummaryManager: ObservableObject {
         summaryBackgroundTaskID = PlatformBackgroundTask.begin(name: "AISummarization") { [weak self] in
             // Expiration handler — iOS is about to kill us
             AppLog.shared.summarization("Background task expiring for summarization", level: .default)
-            self?.endSummaryBackgroundTask()
+            Task { @MainActor [weak self] in
+                self?.endSummaryBackgroundTask()
+            }
         }
         if summaryBackgroundTaskID != .invalid {
             let remaining = PlatformBackgroundTask.remainingTime

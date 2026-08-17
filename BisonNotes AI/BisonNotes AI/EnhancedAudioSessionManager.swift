@@ -17,6 +17,7 @@ import UIKit
 
 #if os(iOS)
 /// Enhanced audio session manager for recording, playback, and background operations.
+@MainActor
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Published Properties
@@ -28,8 +29,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Private Properties
     private lazy var session = AVAudioSession.sharedInstance()
-    private var interruptionObserver: NSObjectProtocol?
-    private var routeChangeObserver: NSObjectProtocol?
+    /// Held outside actor isolation so the nonisolated Swift 6 deinit can still
+    /// unregister them. The weak captures in the observer blocks prevent a
+    /// retain cycle but do not remove the registrations themselves.
+    private let sessionObservers = LifecycleObserverTokens()
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -73,15 +76,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
 
-    deinit {
-        // Remove observers synchronously since deinit cannot be async
-        if let observer = interruptionObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-        if let observer = routeChangeObserver {
-            NotificationCenter.default.removeObserver(observer)
-        }
-    }
+	deinit {
+		sessionObservers.removeAll()
+	}
 
     // MARK: - Public Methods
 
@@ -346,50 +343,40 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
         // flooding the log with "cannot add handler" messages.
         // Audio interruption observer
-        interruptionObserver = NotificationCenter.default.addObserver(
+        sessionObservers.add(NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: session,
             queue: .main
         ) { [weak self] notification in
-            // Capture the notification data we need before entering Task
-            let userInfo = notification.userInfo
-            let interruptionType = userInfo?[AVAudioSessionInterruptionTypeKey] as? AVAudioSession.InterruptionType
+            let interruptionTypeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
 
-            Task { @MainActor in
-                guard let self = self else { return }
-                // Create a new notification with only the data we need
-                if let type = interruptionType {
-                    let newUserInfo: [String: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
-                    let newNotification = Notification(name: AVAudioSession.interruptionNotification, object: nil, userInfo: newUserInfo)
-                    self.handleAudioInterruption(newNotification)
-                }
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let interruptionTypeValue,
+                      let interruptionType = AVAudioSession.InterruptionType(rawValue: interruptionTypeValue) else { return }
+                self.handleAudioInterruption(type: interruptionType)
             }
-        }
+        })
 
         // Route change observer
-        routeChangeObserver = NotificationCenter.default.addObserver(
+        sessionObservers.add(NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: session,
             queue: .main
         ) { [weak self] notification in
-            // Capture the notification data we need before entering Task
-            let userInfo = notification.userInfo
-            let routeChangeReason = userInfo?[AVAudioSessionRouteChangeReasonKey] as? AVAudioSession.RouteChangeReason
+            let routeChangeReasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
 
-            Task { @MainActor in
-                guard let self = self else { return }
-                // Create a new notification with only the data we need
-                if let reason = routeChangeReason {
-                    let newUserInfo: [String: Any] = [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
-                    let newNotification = Notification(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: newUserInfo)
-                    self.handleRouteChange(newNotification)
-                    if reason == .newDeviceAvailable {
-                        // Prefer Bluetooth HFP when it becomes available
-                        await self.autoSelectBestInput()
-                    }
+            Task { @MainActor [weak self] in
+                guard let self,
+                      let routeChangeReasonValue,
+                      let routeChangeReason = AVAudioSession.RouteChangeReason(rawValue: routeChangeReasonValue) else { return }
+                self.handleRouteChange(reason: routeChangeReason)
+                if routeChangeReason == .newDeviceAvailable {
+                    // Prefer Bluetooth HFP when it becomes available
+                    await self.autoSelectBestInput()
                 }
             }
-        }
+        })
     }
 
     // MARK: - Notification Handlers
@@ -400,6 +387,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
               let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
             return
         }
+
+        handleAudioInterruption(type: type)
+    }
+
+    private func handleAudioInterruption(type: AVAudioSession.InterruptionType) {
 
         switch type {
         case .began:
@@ -417,7 +409,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     EnhancedLogger.shared.logAudioSession("Audio session restored after interruption", level: .info)
                 } catch {
                     EnhancedLogger.shared.logAudioSession("Failed to restore audio session after interruption: \(error.localizedDescription)", level: .error)
-                    await EnhancedErrorHandler().handleAudioProcessingError(.audioSessionConfigurationFailed(error.localizedDescription), context: "Interruption Recovery")
+					EnhancedErrorHandler().handleAudioProcessingError(.audioSessionConfigurationFailed(error.localizedDescription), context: "Interruption Recovery")
                 }
             }
 
@@ -432,6 +424,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
             return
         }
+
+        handleRouteChange(reason: reason)
+    }
+
+    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
 
         switch reason {
         case .newDeviceAvailable:
@@ -493,6 +490,7 @@ final class AVAudioSessionPortDescription: NSObject {
     }
 }
 
+@MainActor
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
     @Published var isConfigured = false
     @Published var isMixedAudioEnabled = false
@@ -504,7 +502,8 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     private var inputDeviceMonitor: MacInputDeviceMonitor?
 
     deinit {
-        stopInputDeviceMonitoring()
+        // MacInputDeviceMonitor removes its Core Audio listeners from its own
+        // deinitializer; the main-actor manager cannot call into it here.
     }
 
     func configureMixedAudioSession() async throws {

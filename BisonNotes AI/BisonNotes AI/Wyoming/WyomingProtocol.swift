@@ -19,7 +19,7 @@ struct WyomingConstants {
 
 // MARK: - Message Types
 
-enum WyomingMessageType: String, Codable {
+enum WyomingMessageType: String, Codable, Sendable {
     case info = "info"
     case transcript = "transcript"
     case transcribe = "transcribe"
@@ -32,7 +32,7 @@ enum WyomingMessageType: String, Codable {
 
 // MARK: - Base Message Structure
 
-struct WyomingMessage: Codable {
+struct WyomingMessage: Codable, Sendable {
     let type: WyomingMessageType
     let data: WyomingAnyCodable?
     let timestamp: Double?
@@ -76,60 +76,85 @@ struct WyomingMessage: Codable {
 
 // MARK: - Message Data Protocol
 
-protocol WyomingMessageData: Codable {}
+protocol WyomingMessageData: Codable, Sendable {}
 
 // MARK: - Type-erased Codable wrapper
 
-struct WyomingAnyCodable: Codable {
-    let value: Any
-
-    init<T: Codable>(_ value: T) {
-        self.value = value
-    }
+/// A JSON value that can safely cross the asynchronous TCP/WebSocket boundaries.
+///
+/// The previous implementation stored `Any`, which made every Wyoming message
+/// non-Sendable even though the wire format is restricted to JSON values. Keeping
+/// the type-erased representation recursive preserves the existing JSON shape
+/// without requiring an unsafe Sendable escape.
+enum WyomingJSONValue: Codable, Sendable {
+    case null
+    case bool(Bool)
+    case integer(Int)
+    case double(Double)
+    case string(String)
+    case array([WyomingJSONValue])
+    case object([String: WyomingJSONValue])
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
-        if let intValue = try? container.decode(Int.self) {
-            value = intValue
-        } else if let doubleValue = try? container.decode(Double.self) {
-            value = doubleValue
-        } else if let stringValue = try? container.decode(String.self) {
-            value = stringValue
+        if container.decodeNil() {
+            self = .null
         } else if let boolValue = try? container.decode(Bool.self) {
-            value = boolValue
+            self = .bool(boolValue)
+        } else if let intValue = try? container.decode(Int.self) {
+            self = .integer(intValue)
+        } else if let doubleValue = try? container.decode(Double.self) {
+            self = .double(doubleValue)
+        } else if let stringValue = try? container.decode(String.self) {
+            self = .string(stringValue)
+        } else if let arrayValue = try? container.decode([WyomingJSONValue].self) {
+            self = .array(arrayValue)
         } else {
-            // Try to decode as a dictionary for complex objects
-            let dictValue = try container.decode([String: WyomingAnyCodable].self)
-            value = dictValue
+            self = .object(try container.decode([String: WyomingJSONValue].self))
         }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        switch value {
-        case let intValue as Int:
-            try container.encode(intValue)
-        case let doubleValue as Double:
-            try container.encode(doubleValue)
-        case let stringValue as String:
-            try container.encode(stringValue)
-        case let boolValue as Bool:
-            try container.encode(boolValue)
-        case let codableValue as Codable:
-            try container.encode(WyomingAnyEncodable(codableValue))
-        default:
-            throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: [], debugDescription: "Cannot encode value"))
+        switch self {
+        case .null:
+            try container.encodeNil()
+        case .bool(let value):
+            try container.encode(value)
+        case .integer(let value):
+            try container.encode(value)
+        case .double(let value):
+            try container.encode(value)
+        case .string(let value):
+            try container.encode(value)
+        case .array(let value):
+            try container.encode(value)
+        case .object(let value):
+            try container.encode(value)
         }
     }
 }
 
-private struct WyomingAnyEncodable: Encodable {
-    let value: Encodable
+struct WyomingAnyCodable: Codable, Sendable {
+    let value: WyomingJSONValue
 
-    init(_ value: Encodable) {
-        self.value = value
+    init<T: Codable>(_ value: T) {
+        // WyomingMessageData is Codable and the protocol only sends JSON. The
+        // fallback keeps this non-throwing initializer compatible with the
+        // existing message factories; all production message payloads encode
+        // successfully and therefore retain their exact wire representation.
+        if let data = try? JSONEncoder().encode(value),
+           let jsonValue = try? JSONDecoder().decode(WyomingJSONValue.self, from: data) {
+            self.value = jsonValue
+        } else {
+            self.value = .null
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        value = try WyomingJSONValue(from: decoder)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -144,7 +169,7 @@ struct WyomingInfoData: WyomingMessageData {
     let attribution: WyomingAttribution?
 }
 
-struct WyomingASRInfo: Codable {
+struct WyomingASRInfo: Codable, Sendable {
     let name: String
     let description: String?
     let attribution: WyomingAttribution?
@@ -154,7 +179,7 @@ struct WyomingASRInfo: Codable {
     let supports_transcript_streaming: Bool?
 }
 
-struct WyomingASRModel: Codable {
+struct WyomingASRModel: Codable, Sendable {
     let name: String
     let description: String?
     let attribution: WyomingAttribution?
@@ -163,7 +188,7 @@ struct WyomingASRModel: Codable {
     let languages: [String]?
 }
 
-struct WyomingAttribution: Codable {
+struct WyomingAttribution: Codable, Sendable {
     let name: String
     let url: String?
 }
@@ -282,12 +307,7 @@ extension WyomingMessage {
     func parseData<T: WyomingMessageData>(as type: T.Type) -> T? {
         guard let anyCodableData = self.data else { return nil }
 
-        // Try to decode the WyomingAnyCodable value as the requested type
-        if let codableValue = anyCodableData.value as? T {
-            return codableValue
-        }
-
-        // If direct casting fails, try JSON round-trip decoding
+        // Decode the Sendable JSON representation into the requested payload.
         do {
             let jsonData = try JSONEncoder().encode(anyCodableData)
             return try JSONDecoder().decode(type, from: jsonData)
@@ -358,7 +378,7 @@ extension WyomingMessage {
 
 // MARK: - Wyoming Errors
 
-enum WyomingError: Error, LocalizedError {
+enum WyomingError: Error, LocalizedError, Sendable {
     case connectionFailed
     case encodingFailed
     case decodingFailed

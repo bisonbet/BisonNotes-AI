@@ -87,7 +87,7 @@ extension AudioRecorderViewModel {
 					.replacingOccurrences(of: ".m4a", with: "")
 				let cleanDisplayName = "Audio Recording \(displayName)"
 
-				let recordingId = await appCoordinator.addWatchRecording(
+					let recordingId = appCoordinator.addWatchRecording(
 					url: permanentURL,
 					name: cleanDisplayName,
 					date: syncRequest.createdAt,

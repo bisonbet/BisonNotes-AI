@@ -6,6 +6,7 @@
 import XCTest
 @testable import BisonNotes_AI
 
+@MainActor
 final class OpenAICompatibleRegressionTests: XCTestCase {
     func testNormalizesBaseURLForAllCompatibleAPIPaths() {
         XCTAssertEqual(

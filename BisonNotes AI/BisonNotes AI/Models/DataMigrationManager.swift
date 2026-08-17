@@ -100,10 +100,11 @@ class DataMigrationManager: ObservableObject {
     @Published var migrationStatus: String = ""
     @Published var isCompleted: Bool = false
 
-    init(persistenceController: PersistenceController = PersistenceController.shared,
+    init(persistenceController: PersistenceController? = nil,
          iCloudStorageManager: iCloudStorageManager? = nil) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.context = resolvedPersistenceController.container.viewContext
         self.iCloudStorageManager = iCloudStorageManager
     }
 

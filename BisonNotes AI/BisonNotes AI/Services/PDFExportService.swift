@@ -15,6 +15,7 @@ import CoreLocation
 import CoreText
 
 #if canImport(UIKit)
+@MainActor
 class PDFExportService {
     static let shared = PDFExportService()
 
@@ -23,6 +24,13 @@ class PDFExportService {
     private struct HeaderMapImages {
         let close: UIImage?
         let wide: UIImage?
+    }
+
+    private struct MapSnapshotPayload: Sendable {
+        let imageData: Data
+        let scale: Double
+        let pointX: Double
+        let pointY: Double
     }
 
     // MARK: - Helper Methods
@@ -686,9 +694,11 @@ class PDFExportService {
         options.pointOfInterestFilter = .excludingAll
 
         let snapshotter = MKMapSnapshotter(options: options)
+        let latitude = locationData.latitude
+        let longitude = locationData.longitude
 
         do {
-            let snapshot: MKMapSnapshotter.Snapshot = try await withCheckedThrowingContinuation { continuation in
+            let snapshot: MapSnapshotPayload = try await withCheckedThrowingContinuation { continuation in
                 snapshotter.start { snapshot, error in
                     if let error {
                         continuation.resume(throwing: error)
@@ -698,21 +708,49 @@ class PDFExportService {
                         continuation.resume(throwing: NSError(domain: "PDFExportService", code: -1, userInfo: nil))
                         return
                     }
-                    continuation.resume(returning: snapshot)
+                    guard let imageData = snapshot.image.pngData() else {
+                        continuation.resume(throwing: NSError(domain: "PDFExportService", code: -2, userInfo: nil))
+                        return
+                    }
+                    let point = snapshot.point(for: CLLocationCoordinate2D(
+                        latitude: latitude,
+                        longitude: longitude
+                    ))
+                    // PNG carries pixels but not the snapshot's scale. Send the
+                    // scale across with it so the image can be rebuilt in the
+                    // same point space that `point` was measured in.
+                    continuation.resume(returning: MapSnapshotPayload(
+                        imageData: imageData,
+                        scale: Double(snapshot.image.scale),
+                        pointX: Double(point.x),
+                        pointY: Double(point.y)
+                    ))
                 }
             }
 
-            let renderer = UIGraphicsImageRenderer(size: snapshot.image.size)
+            // `UIImage(data:)` always yields scale 1.0, which would make `size`
+            // report pixels and push the pin to roughly 1/scale of its correct
+            // position. Rebuild at the original scale so the point space matches.
+            guard let decodedImage = UIImage(data: snapshot.imageData),
+                  let cgImage = decodedImage.cgImage else {
+                return nil
+            }
+            let snapshotImage = UIImage(
+                cgImage: cgImage,
+                scale: CGFloat(snapshot.scale),
+                orientation: decodedImage.imageOrientation
+            )
+
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = CGFloat(snapshot.scale)
+            let renderer = UIGraphicsImageRenderer(size: snapshotImage.size, format: format)
             let pinImage = UIImage(systemName: "mappin.circle.fill")?
                 .withTintColor(.systemRed, renderingMode: .alwaysOriginal)
 
             return renderer.image { _ in
-                snapshot.image.draw(at: .zero)
+                snapshotImage.draw(at: .zero)
                 if let pinImage {
-                    let point = snapshot.point(for: CLLocationCoordinate2D(
-                        latitude: locationData.latitude,
-                        longitude: locationData.longitude
-                    ))
+                    let point = CGPoint(x: snapshot.pointX, y: snapshot.pointY)
                     let pinSize = CGSize(width: 26, height: 26)
                     let pinRect = CGRect(
                         x: point.x - pinSize.width / 2,
@@ -984,6 +1022,7 @@ class PDFExportService {
     }
 }
 #else
+@MainActor
 class PDFExportService {
     static let shared = PDFExportService()
     @MainActor

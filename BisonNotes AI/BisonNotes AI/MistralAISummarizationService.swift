@@ -20,6 +20,7 @@ import os.log
 /// **Thread Safety:**
 /// This service is designed to be used from async contexts. The config is immutable after initialization,
 /// ensuring thread-safe access across multiple concurrent operations.
+@MainActor
 class MistralAISummarizationService {
 
     // MARK: - Properties

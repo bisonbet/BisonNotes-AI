@@ -86,7 +86,7 @@ open class OnDeviceLLM: ObservableObject {
     /// Current generated output text
     @Published public private(set) var output = ""
 
-    @MainActor public func setOutput(to newOutput: consuming String) {
+    @InferenceActor public func setOutput(to newOutput: consuming String) {
         output = newOutput
     }
 
@@ -105,6 +105,8 @@ open class OnDeviceLLM: ObservableObject {
     private var sampler: UnsafeMutablePointer<llama_sampler>?
     private var stopSequences: [ContiguousArray<CChar>] = []
     private var stopSequenceLengths: [Int] = []
+    private var stopMatchIndices: [Int] = []
+    private var stopMatchLetters: [CChar] = []
     private let totalTokenCount: Int
     private var updateProgress: (Double) -> Void = { _ in }
     private var nPast: Int32 = 0
@@ -117,11 +119,15 @@ open class OnDeviceLLM: ObservableObject {
     /// Configure llama.cpp/GGML logging to reduce verbosity
     /// Only shows WARN and ERROR level messages, suppressing DEBUG, INFO, and CONT
     /// GGML log levels: 0=NONE, 1=DEBUG, 2=INFO, 3=WARN, 4=ERROR, 5=CONT
-    private static var loggingConfigured = false
+    private static let loggingConfigurationLock = OSAllocatedUnfairLock(initialState: false)
 
     private static func configureLogging() {
-        guard !loggingConfigured else { return }
-        loggingConfigured = true
+        let shouldConfigure = loggingConfigurationLock.withLock { configured -> Bool in
+            guard !configured else { return false }
+            configured = true
+            return true
+        }
+        guard shouldConfigure else { return }
 
         // Set up custom log callback BEFORE backend initialization
         // This ensures all logs (including GGML) are filtered
@@ -344,33 +350,35 @@ open class OnDeviceLLM: ObservableObject {
         history.removeAll()
         nPast = 0
         outputTokenCount = 0
-        await setOutput(to: "")
+        setOutput(to: "")
         context = nil
         savedState = nil
         self.batch.clear()
     }
 
     /// Generates a response to the given input (main entry point for summarization)
+    @InferenceActor
     open func respond(to input: String) async {
         if let savedState = OnDeviceLLMFeatureFlags.useLLMCaching ? self.savedState : nil {
-            await restoreState(from: savedState)
+            restoreState(from: savedState)
         }
 
-        await performInference(to: input) { [self] response in
-            await setOutput(to: "")
+        await performInference(to: input) { @InferenceActor [self] response in
+            setOutput(to: "")
             for await responseDelta in response {
                 update(responseDelta)
-                await setOutput(to: output + responseDelta)
+                setOutput(to: output + responseDelta)
             }
             update(nil)
             let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
             // Note: Rollback is now handled in performInference before context is cleared
-            await setOutput(to: trimmedOutput.isEmpty ? "..." : trimmedOutput)
+            setOutput(to: trimmedOutput.isEmpty ? "..." : trimmedOutput)
             return output
         }
     }
 
     /// Single-shot generation without streaming (useful for programmatic use)
+    @InferenceActor
     public func generate(from input: String) async -> String {
         await respond(to: input)
         return output
@@ -515,10 +523,6 @@ open class OnDeviceLLM: ObservableObject {
 
     @InferenceActor
     private func emitDecoded(token: Token, to output: borrowing AsyncStream<String>.Continuation) -> Bool {
-        struct saved {
-            static var matchIndices: [Int] = []
-            static var letters: [CChar] = []
-        }
         guard self.inferenceTask != nil else { return false }
         guard token != model.endToken else { return false }
 
@@ -529,8 +533,8 @@ open class OnDeviceLLM: ObservableObject {
             return true
         }
 
-        if saved.matchIndices.count != stopSequences.count {
-            saved.matchIndices = Array(repeating: 0, count: stopSequences.count)
+        if stopMatchIndices.count != stopSequences.count {
+            stopMatchIndices = Array(repeating: 0, count: stopSequences.count)
         }
 
         for letter in word.utf8CString {
@@ -540,18 +544,18 @@ open class OnDeviceLLM: ObservableObject {
             var fullMatch = false
 
             for (index, sequence) in stopSequences.enumerated() {
-                let matchIndex = saved.matchIndices[index]
+                let matchIndex = stopMatchIndices[index]
                 if letter == sequence[matchIndex] {
-                    saved.matchIndices[index] += 1
-                    if saved.matchIndices[index] > stopSequenceLengths[index] {
+                    stopMatchIndices[index] += 1
+                    if stopMatchIndices[index] > stopSequenceLengths[index] {
                         fullMatch = true
                         break
                     }
                     anyMatch = true
                 } else {
-                    saved.matchIndices[index] = 0
+                    stopMatchIndices[index] = 0
                     if letter == sequence[0] {
-                        saved.matchIndices[index] = 1
+                        stopMatchIndices[index] = 1
                         if 0 == stopSequenceLengths[index] {
                             fullMatch = true
                             break
@@ -562,20 +566,23 @@ open class OnDeviceLLM: ObservableObject {
             }
 
             if fullMatch {
-                saved.matchIndices = Array(repeating: 0, count: stopSequences.count)
-                saved.letters.removeAll()
+                stopMatchIndices = Array(repeating: 0, count: stopSequences.count)
+                stopMatchLetters.removeAll()
                 return false
             }
 
             if anyMatch {
-                saved.letters.append(letter)
+                stopMatchLetters.append(letter)
             } else {
-                if !saved.letters.isEmpty {
-                    let prefix = String(cString: saved.letters + [0])
+                if !stopMatchLetters.isEmpty {
+                    let prefix = String(
+                        decoding: stopMatchLetters.map { UInt8(bitPattern: $0) },
+                        as: UTF8.self
+                    )
                     output.yield(prefix)
-                    saved.letters.removeAll()
+                    stopMatchLetters.removeAll()
                 }
-                output.yield(String(cString: [letter, 0]))
+                output.yield(String(decoding: [UInt8(bitPattern: letter)], as: UTF8.self))
             }
         }
         return true
@@ -645,9 +652,12 @@ open class OnDeviceLLM: ObservableObject {
     }
 
     @InferenceActor
-    public func performInference(to input: String, with makeOutputFrom: @escaping (AsyncStream<String>) async -> String) async {
+    public func performInference(
+        to input: String,
+        with makeOutputFrom: @escaping @InferenceActor (AsyncStream<String>) async -> String
+    ) async {
         self.inferenceTask?.cancel()
-        self.inferenceTask = Task { [weak self] in
+        self.inferenceTask = Task { @InferenceActor [weak self] in
             guard let self = self else { return }
 
             self.input = input
@@ -659,12 +669,10 @@ open class OnDeviceLLM: ObservableObject {
             // Note: Rollback is now handled in generateResponseStream's defer block
             // before context is cleared, so we don't need to do it here
 
-            await MainActor.run {
-                if !output.isEmpty {
-                    self.history.append(LLMChat(role: .bot, content: output))
-                }
-                self.postprocess(output)
+            if !output.isEmpty {
+                self.history.append(LLMChat(role: .bot, content: output))
             }
+            self.postprocess(output)
 
             self.inputTokenCount = 0
             if OnDeviceLLMFeatureFlags.useLLMCaching {

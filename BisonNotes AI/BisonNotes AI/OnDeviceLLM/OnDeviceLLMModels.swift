@@ -10,7 +10,7 @@ import Foundation
 // MARK: - Model Template Type
 
 /// Supported template types for different model architectures
-public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
+public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable, Sendable {
     case chatML
     case phi3
     case llama
@@ -55,7 +55,7 @@ public enum OnDeviceLLMTemplateType: String, Codable, CaseIterable {
 // MARK: - Model Purpose
 
 /// The intended use case for a model
-public enum OnDeviceLLMModelPurpose: String, Codable {
+public enum OnDeviceLLMModelPurpose: String, Codable, Sendable {
     case summarization
     case transcriptProcessing
     case generalPurpose
@@ -64,7 +64,7 @@ public enum OnDeviceLLMModelPurpose: String, Codable {
 // MARK: - Default Model Settings
 
 /// Default sampling parameters for a model
-public struct OnDeviceLLMDefaultSettings: Equatable, Codable {
+public struct OnDeviceLLMDefaultSettings: Equatable, Codable, Sendable {
     public let temperature: Float
     public let topK: Int32
     public let topP: Float
@@ -98,7 +98,7 @@ public struct OnDeviceLLMDefaultSettings: Equatable, Codable {
 // MARK: - Model Info Structure
 
 /// Represents a downloadable on-device LLM model
-public struct OnDeviceLLMModelInfo: Identifiable, Equatable, Codable {
+public struct OnDeviceLLMModelInfo: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let displayName: String
     public let description: String

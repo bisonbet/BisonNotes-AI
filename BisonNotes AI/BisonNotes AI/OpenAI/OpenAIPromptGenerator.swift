@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - Comedy Mode
 
-enum ComedyMode: String {
+enum ComedyMode: String, Sendable {
     case off = "off"
     case snarky = "snarky"
     case funny = "funny"
@@ -164,11 +164,11 @@ enum ComedyMode: String {
 
 // MARK: - Chat Completion Prompt Generator
 
-class ChatCompletionPromptGenerator {
+enum ChatCompletionPromptGenerator {
 
     // MARK: - Prompt Types
 
-    enum PromptType {
+    enum PromptType: Sendable {
         case summary
         case tasks
         case reminders

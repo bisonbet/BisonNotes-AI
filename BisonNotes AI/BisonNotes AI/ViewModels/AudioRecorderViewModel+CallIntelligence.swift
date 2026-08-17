@@ -16,18 +16,29 @@ import CallKit
 // MARK: - CallKit Observer Delegate (Phase 1)
 
 extension AudioRecorderViewModel: CXCallObserverDelegate {
+	private struct CallStateEvent: Sendable {
+		let hasEnded: Bool
+		let hasConnected: Bool
+		let isOutgoing: Bool
+	}
+
 	nonisolated func callObserver(_ callObserver: CXCallObserver, callChanged call: CXCall) {
-		Task { @MainActor in
-			await handleCallStateChange(call)
+		let event = CallStateEvent(
+			hasEnded: call.hasEnded,
+			hasConnected: call.hasConnected,
+			isOutgoing: call.isOutgoing
+		)
+		Task { @MainActor [weak self] in
+			await self?.handleCallStateChange(event)
 		}
 	}
 
 	@MainActor
-	private func handleCallStateChange(_ call: CXCall) async {
-		if call.hasEnded {
+	private func handleCallStateChange(_ event: CallStateEvent) async {
+		if event.hasEnded {
 			// Call has ended
-			await handleCallEnded(call: call)
-		} else if call.hasConnected || call.isOutgoing {
+			await handleCallEnded()
+		} else if event.hasConnected || event.isOutgoing {
 			// Call started (either incoming call was answered or outgoing call connected)
 			handleCallStarted()
 		}
@@ -40,7 +51,7 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 	}
 
 	@MainActor
-	private func handleCallEnded(call: CXCall) async {
+	private func handleCallEnded() async {
 		// Only process if we're currently in an interrupted state due to phone call
 		guard case .interrupted(.phoneCall, let startedAt) = recordingState else {
 			AppLog.shared.audioSession("Call ended but not in phoneCall interrupted state, ignoring", level: .debug)

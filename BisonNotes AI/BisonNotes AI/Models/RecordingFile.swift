@@ -37,6 +37,7 @@ struct RecordingFile: Identifiable, Equatable {
         self.isCloudSyncDisabled = isCloudSyncDisabled
     }
 
+    @MainActor
     var dateString: String {
         return UserPreferences.shared.formatMediumDateTime(date)
     }

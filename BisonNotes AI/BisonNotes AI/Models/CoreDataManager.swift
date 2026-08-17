@@ -51,9 +51,10 @@ class CoreDataManager: ObservableObject {
     }
     #endif
 
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
+    init(persistenceController: PersistenceController? = nil) {
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.context = resolvedPersistenceController.container.viewContext
     }
 
     // MARK: - Context Management

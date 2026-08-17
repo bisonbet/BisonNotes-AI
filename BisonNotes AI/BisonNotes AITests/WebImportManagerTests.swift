@@ -128,6 +128,7 @@ final class WebImportManagerTests: XCTestCase {
         XCTAssertFalse(WebImportDownloader.isAllowedDownloadURL(insecureURL))
     }
 
+    @MainActor
     func testTemporaryCleanupRemovesStaleWebImportArtifacts() throws {
         let fileManager = FileManager.default
         let importsDirectory = fileManager.temporaryDirectory

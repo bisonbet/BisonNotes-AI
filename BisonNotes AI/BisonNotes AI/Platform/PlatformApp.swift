@@ -18,6 +18,7 @@ import AppKit
 
 // MARK: - App-level services
 
+@MainActor
 enum PlatformApp {
     /// Open a URL in the default browser/handler. For use from managers;
     /// views should use @Environment(\.openURL).
@@ -64,6 +65,7 @@ enum PlatformApp {
 
 // MARK: - Pasteboard
 
+@MainActor
 enum PlatformPasteboard {
     /// The general pasteboard's plain-text contents.
     static var string: String? {
@@ -201,6 +203,7 @@ final class PlatformSharingPresenter: NSObject, @preconcurrency NSSharingService
 
 // MARK: - Device
 
+@MainActor
 enum PlatformDevice {
     /// True on native macOS or when the iOS app runs on a Mac.
     /// Battery APIs are unreliable or absent in both cases.
@@ -260,12 +263,13 @@ enum PlatformLifecycle {
 /// A platform assertion for user-initiated work that must continue when the app
 /// is not frontmost. iOS uses a finite UIKit background task. Mac uses a
 /// ProcessInfo activity to prevent App Nap while still allowing idle system sleep.
+@MainActor
 enum PlatformBackgroundTask {
     #if canImport(UIKit)
     typealias ID = UIBackgroundTaskIdentifier
     static let invalidID: ID = .invalid
 
-    static func begin(name: String, expirationHandler: (() -> Void)? = nil) -> ID {
+    static func begin(name: String, expirationHandler: (@Sendable () -> Void)? = nil) -> ID {
         UIApplication.shared.beginBackgroundTask(withName: name, expirationHandler: expirationHandler)
     }
 
@@ -286,7 +290,7 @@ enum PlatformBackgroundTask {
     static let invalidID: ID = .invalid
     private static let activityRegistry = ActivityRegistry()
 
-    static func begin(name: String, expirationHandler: (() -> Void)? = nil) -> ID {
+    static func begin(name: String, expirationHandler: (@Sendable () -> Void)? = nil) -> ID {
         ID(rawValue: activityRegistry.begin(name: name))
     }
 

@@ -8,6 +8,10 @@
 import CoreData
 
 struct PersistenceController {
+    /// Core Data's container and view context are confined to the main actor.
+    /// The shared controller is only used to construct the main-actor data
+    /// managers; it is not a Sendable value that may cross actor boundaries.
+    @MainActor
     static let shared = PersistenceController()
 
     @MainActor

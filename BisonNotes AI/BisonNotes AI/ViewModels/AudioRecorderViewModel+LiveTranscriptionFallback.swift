@@ -7,7 +7,7 @@ extension AudioRecorderViewModel {
         case avAudioRecorder
     }
 
-    static var liveTranscriptionFallbackBackend: LiveTranscriptionFallbackBackend {
+    nonisolated static var liveTranscriptionFallbackBackend: LiveTranscriptionFallbackBackend {
         #if os(macOS)
         return .macAudioEngine
         #else

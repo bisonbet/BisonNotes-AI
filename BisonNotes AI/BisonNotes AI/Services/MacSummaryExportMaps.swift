@@ -103,12 +103,22 @@ private extension MacSummaryExportRenderer {
 
         let snapshotter = MKMapSnapshotter(options: options)
         do {
-            let snapshot: MKMapSnapshotter.Snapshot = try await withCheckedThrowingContinuation { continuation in
+            let imageData: Data = try await withCheckedThrowingContinuation { continuation in
                 snapshotter.start(with: .main) { snapshot, error in
                     if let error {
                         continuation.resume(throwing: error)
                     } else if let snapshot {
-                        continuation.resume(returning: snapshot)
+                        guard let imageData = snapshot.image.tiffRepresentation else {
+                            continuation.resume(
+                                throwing: NSError(
+                                    domain: "MacSummaryExportRenderer",
+                                    code: -2,
+                                    userInfo: [NSLocalizedDescriptionKey: "Map snapshot image could not be encoded."]
+                                )
+                            )
+                            return
+                        }
+                        continuation.resume(returning: imageData)
                     } else {
                         continuation.resume(
                             throwing: NSError(
@@ -120,7 +130,7 @@ private extension MacSummaryExportRenderer {
                     }
                 }
             }
-            return snapshot.image
+            return NSImage(data: imageData)
         } catch {
             AppLog.shared.fileManagement(
                 "MacSummaryExportRenderer: Map generation failed: \(error.localizedDescription)",

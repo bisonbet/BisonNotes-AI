@@ -10,12 +10,13 @@ import Foundation
 #if canImport(UIKit)
 import UIKit
 #endif
+import os
 import os.log
 import AVFoundation
 
 // MARK: - Log Categories
 
-enum LogCategory: String, CaseIterable {
+enum LogCategory: String, CaseIterable, Sendable {
     case audioSession = "AudioSession"
     case recording = "Recording"
     case transcription = "Transcription"
@@ -35,7 +36,7 @@ enum LogCategory: String, CaseIterable {
 
 // MARK: - App Logger
 
-class AppLog {
+final class AppLog: Sendable {
     static let shared = AppLog()
 
     private static let subsystem = Bundle.main.bundleIdentifier ?? "com.bisonnotes.app"
@@ -74,9 +75,13 @@ class AppLog {
     private static let maxBreadcrumbLines = 750
     private static let cleanShutdownKey = "AppLog_CleanShutdown"
     private let sessionId = UUID().uuidString
+    private let lifecycleState = OSAllocatedUnfairLock(initialState: false)
 
     /// Captured at launch before the flag is reset so the value survives the whole session.
-    private(set) var previousSessionCrashed: Bool = false
+    private(set) var previousSessionCrashed: Bool {
+        get { lifecycleState.withLock { $0 } }
+        set { lifecycleState.withLock { $0 = newValue } }
+    }
 
     /// Call on app launch. Reads the previous session's shutdown state, then resets the flag.
     /// Must be called before anything checks `previousSessionCrashed`.
@@ -260,8 +265,7 @@ class AppLog {
 
     // MARK: - Performance Tracking
 
-    private var performanceMetrics: [String: PerformanceMetric] = [:]
-    private let performanceQueue = DispatchQueue(label: "com.bisonnotes.performance", qos: .utility)
+    private let performanceMetrics = OSAllocatedUnfairLock(initialState: [String: PerformanceMetric]())
 
     func startPerformanceTracking(_ operation: String, context: String = "") {
         let metric = PerformanceMetric(
@@ -270,18 +274,16 @@ class AppLog {
             startTime: Date(),
             memoryUsage: Self.currentMemoryUsage
         )
-        performanceQueue.async {
-            self.performanceMetrics[operation] = metric
-        }
+        performanceMetrics.withLock { $0[operation] = metric }
         performance("Started tracking: \(operation)", level: .debug)
     }
 
     func endPerformanceTracking(_ operation: String) -> PerformanceResult? {
-        return performanceQueue.sync {
-            guard let metric = performanceMetrics.removeValue(forKey: operation) else { return nil }
+        let result = performanceMetrics.withLock { metrics -> PerformanceResult? in
+            guard let metric = metrics.removeValue(forKey: operation) else { return nil }
             let duration = Date().timeIntervalSince(metric.startTime)
             let endMemory = Self.currentMemoryUsage
-            let result = PerformanceResult(
+            return PerformanceResult(
                 operation: operation,
                 context: metric.context,
                 duration: duration,
@@ -289,9 +291,11 @@ class AppLog {
                 memoryDelta: endMemory - metric.memoryUsage,
                 timestamp: Date()
             )
-            performance("Completed: \(operation) in \(String(format: "%.2f", duration))s")
-            return result
         }
+        if let result {
+            performance("Completed: \(operation) in \(String(format: "%.2f", result.duration))s")
+        }
+        return result
     }
 
     // MARK: - Diagnostic Info
@@ -317,6 +321,7 @@ class AppLog {
         return "Unknown"
     }
 
+    @MainActor
     func generateDiagnosticReport() -> DiagnosticReport {
         #if canImport(UIKit)
         let model = UIDevice.current.model
@@ -462,14 +467,14 @@ extension AppLog {
 
 // MARK: - Supporting Types
 
-struct PerformanceMetric {
+struct PerformanceMetric: Sendable {
     let operation: String
     let context: String
     let startTime: Date
     let memoryUsage: Double
 }
 
-struct PerformanceResult {
+struct PerformanceResult: Sendable {
     let operation: String
     let context: String
     let duration: TimeInterval
@@ -482,7 +487,7 @@ struct PerformanceResult {
     }
 }
 
-struct DiagnosticReport {
+struct DiagnosticReport: Sendable {
     let timestamp: Date
     let deviceInfo: DeviceDiagnosticInfo
 
@@ -501,7 +506,7 @@ struct DiagnosticReport {
     }
 }
 
-struct DeviceDiagnosticInfo {
+struct DeviceDiagnosticInfo: Sendable {
     let model: String
     let systemVersion: String
     let appVersion: String

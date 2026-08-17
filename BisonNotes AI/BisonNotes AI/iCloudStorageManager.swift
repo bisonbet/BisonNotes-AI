@@ -119,7 +119,7 @@ struct CloudReviewItem: Identifiable, Equatable {
 
 // MARK: - Network Status
 
-enum NetworkStatus {
+enum NetworkStatus: Sendable {
     case available
     case unavailable
     case limited
@@ -2002,13 +2002,6 @@ class iCloudStorageManager: ObservableObject {
             compressionRatio: compressionRatio,
             confidence: confidence
         )
-    }
-
-    // MARK: - Cleanup
-
-    deinit {
-        syncDebounceTimer?.invalidate()
-        syncDebounceTimer = nil
     }
 
     /// Clears all sync state (useful for testing or resetting)
@@ -5696,9 +5689,9 @@ extension CKError {
 class NetworkMonitor {
     private let monitor = NWPathMonitor()
     private let queue = DispatchQueue(label: "NetworkMonitor")
-    private let statusCallback: (NetworkStatus) -> Void
+    private let statusCallback: @Sendable (NetworkStatus) -> Void
 
-    init(statusCallback: @escaping (NetworkStatus) -> Void) {
+    init(statusCallback: @escaping @Sendable (NetworkStatus) -> Void) {
         self.statusCallback = statusCallback
 
         // Skip network monitoring in preview environments
@@ -5715,7 +5708,8 @@ class NetworkMonitor {
     }
 
     private func startMonitoring() {
-        monitor.pathUpdateHandler = { [weak self] path in
+        let statusCallback = statusCallback
+        monitor.pathUpdateHandler = { path in
             let status: NetworkStatus
 
             if path.status == .satisfied {
@@ -5728,7 +5722,7 @@ class NetworkMonitor {
                 status = .unavailable
             }
 
-            self?.statusCallback(status)
+            statusCallback(status)
         }
 
         monitor.start(queue: queue)

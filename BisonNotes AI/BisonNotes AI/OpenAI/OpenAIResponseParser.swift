@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - Chat Completion Response Parser
 
-class ChatCompletionResponseParser {
+enum ChatCompletionResponseParser {
 
     private struct CompleteResponse: Codable {
         let summary: String
