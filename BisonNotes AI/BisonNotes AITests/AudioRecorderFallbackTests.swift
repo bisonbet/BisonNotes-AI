@@ -1,6 +1,7 @@
 import XCTest
 @testable import BisonNotes_AI
 
+@MainActor
 final class AudioRecorderFallbackTests: XCTestCase {
     func testLiveTranscriptionFailureUsesThePlatformRecordingBackend() {
         #if os(macOS)

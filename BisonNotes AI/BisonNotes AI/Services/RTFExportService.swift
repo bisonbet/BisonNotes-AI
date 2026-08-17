@@ -23,6 +23,7 @@ enum RTFExportError: LocalizedError {
 }
 
 #if canImport(UIKit)
+@MainActor
 final class RTFExportService {
     static let shared = RTFExportService()
 
@@ -563,6 +564,7 @@ final class RTFExportService {
     }
 }
 #else
+@MainActor
 final class RTFExportService {
     static let shared = RTFExportService()
 

@@ -20,27 +20,24 @@ extension AudioRecorderViewModel {
         macCaptureHealthTimer = Timer.scheduledTimer(
             withTimeInterval: 1,
             repeats: true
-        ) { [weak self] timer in
-            guard let self else {
-                timer.invalidate()
-                return
-            }
-            let isCapturing = self.isStartingRecording || self.isRecording
-            guard isCapturing, !self.isPaused else { return }
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let isCapturing = self.isStartingRecording || self.isRecording
+                guard isCapturing, !self.isPaused else { return }
 
-            let assessment = self.macCaptureHealth.assessment(
-                firstBufferTimeout: Self.firstMicrophoneBufferTimeout,
-                stallTimeout: Self.microphoneStallTimeout
-            )
-            switch assessment {
-            case .noInitialAudio, .stalled, .writeFailed:
-                timer.invalidate()
-                self.macCaptureHealthTimer = nil
-                Task { @MainActor [weak self] in
-                    await self?.handleMacCaptureHealthFailure(assessment)
+                let assessment = self.macCaptureHealth.assessment(
+                    firstBufferTimeout: Self.firstMicrophoneBufferTimeout,
+                    stallTimeout: Self.microphoneStallTimeout
+                )
+                switch assessment {
+                case .noInitialAudio, .stalled, .writeFailed:
+                    self.macCaptureHealthTimer?.invalidate()
+                    self.macCaptureHealthTimer = nil
+                    await self.handleMacCaptureHealthFailure(assessment)
+                case .inactive, .starting, .healthy:
+                    break
                 }
-            case .inactive, .starting, .healthy:
-                break
             }
         }
     }

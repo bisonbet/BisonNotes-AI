@@ -10,7 +10,10 @@ import Network
 
 // MARK: - Timeout Helper
 
-func wyomingTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+func wyomingTimeout<T: Sendable>(
+    seconds: TimeInterval,
+    operation: @escaping @Sendable () async throws -> T
+) async throws -> T {
     return try await withThrowingTaskGroup(of: T.self) { group in
         group.addTask {
             try await operation()
@@ -60,6 +63,7 @@ class WyomingTCPClient: ObservableObject {
     private let serverPort: Int
     private var messageHandlers: [WyomingMessageType: (WyomingMessage) -> Void] = [:]
     private var connectionContinuation: CheckedContinuation<Void, Error>?
+    private var connectionCancellationRequested = false
 
     // MARK: - Initialization
 
@@ -70,15 +74,6 @@ class WyomingTCPClient: ObservableObject {
 
     deinit {
         AppLog.shared.transcription("WyomingTCPClient deinit", level: .debug)
-
-        // Clear any pending continuation
-        if let continuation = connectionContinuation {
-            connectionContinuation = nil
-            continuation.resume(throwing: WyomingError.connectionFailed)
-        }
-
-        // Clear handlers to break potential retain cycles
-        messageHandlers.removeAll()
 
         // Cancel connection synchronously without Task
         let actor = connectionActor
@@ -92,6 +87,8 @@ class WyomingTCPClient: ObservableObject {
     func connect() async throws {
         guard !isConnected else { return }
 
+        connectionCancellationRequested = false
+
         AppLog.shared.transcription("Connecting to Wyoming TCP server: \(serverHost):\(serverPort)", level: .debug)
 
         // Create TCP connection
@@ -102,27 +99,57 @@ class WyomingTCPClient: ObservableObject {
         let connection = NWConnection(to: endpoint, using: .tcp)
         await connectionActor.setConnection(connection)
 
-        return try await withCheckedThrowingContinuation { [weak self] continuation in
-            guard let self = self else {
-                continuation.resume(throwing: WyomingError.connectionFailed)
-                return
-            }
-
-            self.connectionContinuation = continuation
-
-            connection.stateUpdateHandler = { [weak self] state in
-                Task { @MainActor in
-                    await self?.handleConnectionStateUpdate(state)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { [weak self] continuation in
+                guard let self = self else {
+                    continuation.resume(throwing: WyomingError.connectionFailed)
+                    return
                 }
+
+                guard !self.connectionCancellationRequested else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+
+                self.connectionContinuation = continuation
+
+                connection.stateUpdateHandler = { [weak self] state in
+                    Task { @MainActor in
+                        await self?.handleConnectionStateUpdate(state)
+                    }
+                }
+
+                // Start the connection
+                let queue = DispatchQueue(label: "wyoming-tcp")
+                connection.start(queue: queue)
+
+                // Start receiving data
+                self.startReceiving()
             }
-
-            // Start the connection
-            let queue = DispatchQueue(label: "wyoming-tcp")
-            connection.start(queue: queue)
-
-            // Start receiving data
-            self.startReceiving()
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.cancelPendingConnection()
+            }
         }
+    }
+
+    private func cancelPendingConnection() {
+        connectionCancellationRequested = true
+        if let continuation = connectionContinuation {
+            connectionContinuation = nil
+            continuation.resume(throwing: CancellationError())
+        }
+
+        let actor = connectionActor
+        Task {
+            await actor.cancelConnection()
+        }
+    }
+
+    private func finishConnection(_ result: Result<Void, Error>) {
+        guard let continuation = connectionContinuation else { return }
+        connectionContinuation = nil
+        continuation.resume(with: result)
     }
 
     private func handleConnectionStateUpdate(_ state: NWConnection.State) async {
@@ -132,25 +159,20 @@ class WyomingTCPClient: ObservableObject {
             isConnected = true
             connectionError = nil
 
-            // Resume connection continuation if waiting
-            if let continuation = connectionContinuation {
-                connectionContinuation = nil
-                continuation.resume()
-            }
+            // Resume connection continuation if waiting.
+            finishConnection(.success(()))
 
         case .failed(let error):
             AppLog.shared.transcription("Wyoming TCP connection failed: \(error)", level: .error)
             isConnected = false
             connectionError = error.localizedDescription
 
-            if let continuation = connectionContinuation {
-                connectionContinuation = nil
-                continuation.resume(throwing: error)
-            }
+            finishConnection(.failure(error))
 
         case .cancelled:
             AppLog.shared.transcription("Wyoming TCP connection cancelled", level: .debug)
             isConnected = false
+            finishConnection(.failure(CancellationError()))
 
         case .waiting(let error):
             AppLog.shared.transcription("Wyoming TCP connection waiting: \(error)", level: .debug)
@@ -166,26 +188,21 @@ class WyomingTCPClient: ObservableObject {
         }
     }
 
-    nonisolated func disconnect() {
+    func disconnect() {
         AppLog.shared.transcription("Disconnecting from Wyoming TCP server", level: .debug)
+
+        connectionCancellationRequested = true
+        finishConnection(.failure(WyomingError.connectionFailed))
 
         Task {
             await connectionActor.cancelConnection()
-
-            await MainActor.run {
-                // Clear any pending continuation
-                if let continuation = self.connectionContinuation {
-                    self.connectionContinuation = nil
-                    continuation.resume(throwing: WyomingError.connectionFailed)
-                }
-
-                self.isConnected = false
-                self.connectionError = nil
-
-                // Clear handlers to break retain cycles
-                self.messageHandlers.removeAll()
-            }
         }
+
+        isConnected = false
+        connectionError = nil
+
+        // Clear handlers to break retain cycles
+        messageHandlers.removeAll()
     }
 
     // MARK: - Message Sending

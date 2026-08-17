@@ -21,10 +21,11 @@ class AppDataCoordinator: ObservableObject {
     private var lastAutomaticiCloudReconcileDate: Date?
     private let automaticiCloudReconcileMinInterval: TimeInterval = 300
 
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
+    init(persistenceController: PersistenceController? = nil) {
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         // Initialize Core Data system
-        self.coreDataManager = CoreDataManager(persistenceController: persistenceController)
-        self.workflowManager = RecordingWorkflowManager(persistenceController: persistenceController)
+        self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
+        self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
 
         // SummaryManager initializes its engine registry during first access.
         // Migrate the Mac-only Ollama selection before that access so an older

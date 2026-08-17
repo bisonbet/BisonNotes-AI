@@ -132,7 +132,7 @@ struct LocalSpeakerLabelingCoordinator {
         configuration: LocalSpeakerLabelsConfiguration,
         sourceAudioURL: URL,
         audioDuration: TimeInterval,
-        unloadASRBeforeDiarization: () async -> Void = {}
+        unloadASRBeforeDiarization: @escaping @Sendable () async -> Void = {}
     ) async throws -> TranscriptionResult {
         guard configuration.isEnabled, baseResult.success else {
             return baseResult
@@ -583,10 +583,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     }
 
     deinit {
-        // Clean up resources when the manager is deallocated
-        currentTask?.cancel()
-        currentTask = nil
-        speechRecognizer = nil
+        // Speech framework objects are main-actor isolated and cannot be
+        // touched from Swift 6's nonisolated deinitializer. Recognition tasks
+        // are cancelled by their owner before releasing this manager.
     }
 
     // MARK: - Background Task Management
@@ -910,11 +909,12 @@ private func transcribeSingleChunk(url: URL) async throws -> TranscriptionResult
             throw TranscriptionError.speechRecognizerUnavailable
         }
 
-        // Add timeout to prevent infinite CPU usage
-        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
-            // Main transcription task
-            group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
+        // Create both operations on the main actor before entering the task group.
+        // The group only awaits task handles, so Speech framework objects do not
+        // cross into a sending child closure.
+        let recognitionTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+                return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
 
                     let request = SFSpeechURLRecognitionRequest(url: url)
                     request.shouldReportPartialResults = false
@@ -996,19 +996,25 @@ if transcriptText.isEmpty {
                         }
                     }
                 }
-            }
+        }
 
-// Timeout task
-            group.addTask {
+        let timeoutTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
                 try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
-                await MainActor.run {
-                    self.currentTask?.cancel()
-                    self.currentTask = nil
-                    self.isTranscribing = false
-                    self.currentStatus = "Transcription timed out"
-                }
+                self?.currentTask?.cancel()
+                self?.currentTask = nil
+                self?.isTranscribing = false
+                self?.currentStatus = "Transcription timed out"
                 throw TranscriptionError.timeout
             }
+
+        defer {
+            recognitionTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            group.addTask { try await recognitionTask.value }
+            group.addTask { try await timeoutTask.value }
 
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
@@ -1277,11 +1283,12 @@ for (index, chunk) in chunks.enumerated() {
             throw TranscriptionError.speechRecognizerUnavailable
         }
 
-        // Add timeout to prevent infinite CPU usage
-        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
-            // Main transcription task
-            group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
+        // Create both operations on the main actor before entering the task group.
+        // The group only awaits task handles, so Speech framework objects do not
+        // cross into a sending child closure.
+        let recognitionTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+                return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
 
                     let request = SFSpeechURLRecognitionRequest(url: url)
                     request.shouldReportPartialResults = false
@@ -1379,17 +1386,23 @@ for (index, chunk) in chunks.enumerated() {
                         }
                     }
                 }
-            }
+        }
 
-            // Timeout task
-            group.addTask {
+        let timeoutTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
                 try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
-                await MainActor.run {
-                    self.currentTask?.cancel()
-                    self.currentTask = nil
-                }
+                self?.currentTask?.cancel()
+                self?.currentTask = nil
                 throw TranscriptionError.timeout
             }
+
+        defer {
+            recognitionTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            group.addTask { try await recognitionTask.value }
+            group.addTask { try await timeoutTask.value }
 
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
@@ -1435,34 +1448,38 @@ for (index, chunk) in chunks.enumerated() {
 
         AppLog.shared.transcription("Starting export", level: .debug)
 
-        // Use async/await with timeout and progress monitoring
-        return try await withThrowingTaskGroup(of: URL.self) { group in
-                                            // Export task
-                group.addTask { [weak session] in
-                    // Unwrap session before the continuation to avoid sendability issues
-                    guard let session = session else {
-                        throw TranscriptionError.audioExtractionFailed
-                    }
+        // Create the export and timeout operations on the main actor before
+        // entering the task group. The group only awaits task handles, so the
+        // non-Sendable AVAssetExportSession never crosses a sending closure.
+        let exportTask = Task<URL, Error> { @MainActor [weak session] in
+            guard let session else {
+                throw TranscriptionError.audioExtractionFailed
+            }
 
-                    // Use the modern async/await approach directly
-                    if #available(iOS 18.0, *) {
-                        // Use the new export method for iOS 18+
-                        try await session.export(to: outputURL, as: .m4a)
-                    } else {
-                        // For iOS < 18, use the deprecated but available export method
-                        await session.export()
-                    }
+            if #available(iOS 18.0, *) {
+                try await session.export(to: outputURL, as: .m4a)
+            } else {
+                await session.export()
+            }
 
-                    return outputURL
-                }
+            return outputURL
+        }
 
-            // Timeout task
-            group.addTask { [weak session] in
+        let timeoutTask = Task<URL, Error> { @MainActor [weak session] in
                 try await Task.sleep(nanoseconds: UInt64(120 * 1_000_000_000)) // 2 minute timeout
                 AppLog.shared.transcription("Chunk export timeout reached, cancelling", level: .error)
                 session?.cancelExport()
                 throw TranscriptionError.timeout
             }
+
+        defer {
+            exportTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask { try await exportTask.value }
+            group.addTask { try await timeoutTask.value }
 
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
@@ -1608,7 +1625,7 @@ return result
                 audioDuration: duration,
                 unloadASRBeforeDiarization: {
                     await MainActor.run {
-                        manager.unloadModel()
+                        FluidAudioManager.shared.unloadModel()
                     }
                 }
             )

@@ -290,7 +290,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
         } else if let systemError = error as? SystemError {
             return .system(systemError)
         } else {
-            return .system(.unknown(underlying: error, context: context))
+            return .system(.unknown(underlying: error.localizedDescription, context: context))
         }
     }
 }

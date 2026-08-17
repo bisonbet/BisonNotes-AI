@@ -17,18 +17,21 @@ private struct RecordingTimestampMetadata: Codable {
 
 extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 	nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
-		Task { @MainActor in
+		let errorDescription = error?.localizedDescription
+		Task { @MainActor [weak self] in
+			guard let self else { return }
 			if isRecording {
 				audioRecorder?.stop()
 				isRecording = false
 				stopRecordingTimer()
 			}
-			errorMessage = "Recording stopped due to an encoding error\(error.map { ": \($0.localizedDescription)" } ?? ".")"
+			errorMessage = "Recording stopped due to an encoding error\(errorDescription.map { ": \($0)" } ?? ".")"
 		}
 	}
 
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
-		Task { @MainActor in
+		Task { @MainActor [weak self] in
+			guard let self else { return }
 			// Check if we're still in recording mode - if so, this was an interruption, not a user stop
 			// In this case, don't save as a finished recording - let the interruption handler deal with it
 			if isRecording {
@@ -101,16 +104,18 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				recordingBeingProcessed = false
 
 				// Deactivate audio session to restore high-quality music playback
-				Task {
-					try? await enhancedAudioSessionManager.deactivateSession()
+				Task { @MainActor [weak self] in
+					guard let self else { return }
+					try? await self.enhancedAudioSessionManager.deactivateSession()
 				}
 			} else {
 				errorMessage = "Recording failed"
 				recordingBeingProcessed = false // Reset flag on failure too
 
 				// Also deactivate session on failure
-				Task {
-					try? await enhancedAudioSessionManager.deactivateSession()
+				Task { @MainActor [weak self] in
+					guard let self else { return }
+					try? await self.enhancedAudioSessionManager.deactivateSession()
 				}
 			}
 
@@ -345,7 +350,7 @@ extension AudioRecorderViewModel {
 	}
 
 	/// Creates a standardized name for imported files
-	static func generateImportedFileName(originalName: String) -> String {
+	nonisolated static func generateImportedFileName(originalName: String) -> String {
 		// Remove file extension if present
 		let nameWithoutExtension = (originalName as NSString).deletingPathExtension
 

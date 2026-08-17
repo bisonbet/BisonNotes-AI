@@ -109,13 +109,10 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             throw LocalDiarizationError.downloadRequired(method)
         }
 
-        return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) { [self] in
+        return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) {
             switch method {
             case .offlineVBx:
-                let models = try await loadOfflineVBxModelsFromCache(from: directory)
-                let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
-                manager.initialize(models: models)
-                return OfflineVBxRunner(manager: manager)
+                return OfflineVBxRunner(modelDirectory: directory)
             case .experimentalLSEEND:
                 let modelURL = Self.lseendModelURL(at: directory)
                 let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
@@ -175,18 +172,6 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             progressHandler: { _ in }
         )
         try Task.checkCancellation()
-    }
-
-    private func loadOfflineVBxModelsFromCache(
-        from directory: URL
-    ) async throws -> OfflineDiarizerModels {
-        let configuration = MLModelConfiguration()
-        configuration.computeUnits = .cpuOnly
-        return try await OfflineDiarizerModels.load(
-            from: directory,
-            configuration: configuration,
-            progressHandler: nil
-        )
     }
 
     private static func localProgress(
@@ -266,10 +251,10 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
 }
 
 private actor OfflineVBxRunner: LocalDiarizationRunner {
-    private var manager: OfflineDiarizerManager?
+    private var modelDirectory: URL?
 
-    init(manager: OfflineDiarizerManager) {
-        self.manager = manager
+    init(modelDirectory: URL) {
+        self.modelDirectory = modelDirectory
     }
 
     func process(
@@ -278,17 +263,12 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws -> LocalDiarizationResult {
         try Task.checkCancellation()
-        guard let manager else { throw LocalDiarizationError.runnerUnavailable }
-        let result = try await manager.process(audioURL) { processed, total in
-            let fraction = total > 0 ? Double(processed) / Double(total) : nil
-            progressHandler(
-                LocalDiarizationProgress(
-                    method: .offlineVBx,
-                    phase: .processing,
-                    fractionCompleted: fraction
-                )
-            )
-        }
+        guard let modelDirectory else { throw LocalDiarizationError.runnerUnavailable }
+        let result = try await Self.process(
+            audioURL: audioURL,
+            modelDirectory: modelDirectory,
+            progressHandler: progressHandler
+        )
         try Task.checkCancellation()
 
         let intervals = result.segments.map { segment in
@@ -303,7 +283,31 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
     }
 
     func cleanup() async {
-        manager = nil
+        modelDirectory = nil
+    }
+
+    private nonisolated static func process(
+        audioURL: URL,
+        modelDirectory: URL,
+        progressHandler: @escaping LocalDiarizationProgressHandler
+    ) async throws -> DiarizationResult {
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuOnly
+        let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+        try await manager.prepareModels(
+            directory: modelDirectory,
+            configuration: configuration
+        )
+        return try await manager.process(audioURL) { processed, total in
+            let fraction = total > 0 ? Double(processed) / Double(total) : nil
+            progressHandler(
+                LocalDiarizationProgress(
+                    method: .offlineVBx,
+                    phase: .processing,
+                    fractionCompleted: fraction
+                )
+            )
+        }
     }
 
     private static func finiteDouble(_ value: Float) -> Double? {

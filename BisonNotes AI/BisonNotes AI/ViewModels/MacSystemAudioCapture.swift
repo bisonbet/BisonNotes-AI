@@ -29,7 +29,13 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private var didReceiveAudio = false
 	private var audibleAudioDuration: Double = 0
 	private var isPaused = false
-	private var stopError: Error?
+	private var stopErrorDescription: String?
+
+	private struct StopSnapshot: Sendable {
+		let didReceiveAudio: Bool
+		let audibleAudioDuration: Double
+		let stopErrorDescription: String?
+	}
 
 	private static let audibleAmplitudeThreshold: Float = 0.001
 	private static let minimumAudibleDuration = 0.05
@@ -39,6 +45,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		super.init()
 	}
 
+	@MainActor
 	func start() async throws {
 		let fileManager = FileManager.default
 		if fileManager.fileExists(atPath: outputURL.path) {
@@ -89,9 +96,20 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: discardedVideoQueue)
 		try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
 
-		self.assetWriter = writer
-		self.audioInput = input
-		self.stream = stream
+		sampleQueue.sync {
+			self.assetWriter = writer
+			self.audioInput = input
+			self.stream = stream
+			self.firstSampleTime = nil
+			self.lastSourceTime = nil
+			self.lastAdjustedTime = nil
+			self.pauseStartedAt = nil
+			self.accumulatedPausedDuration = .zero
+			self.didReceiveAudio = false
+			self.audibleAudioDuration = 0
+			self.isPaused = false
+			self.stopErrorDescription = nil
+		}
 
 		try await stream.startCapture()
 		AppLog.shared.recording("Mac system audio capture started")
@@ -124,6 +142,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 	}
 
+	@MainActor
 	func stop() async throws -> URL? {
 		if let stream {
 			do {
@@ -133,25 +152,24 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 			}
 		}
 
-		await performOnSampleQueue { [weak self] in
-			self?.audioInput?.markAsFinished()
-		}
-
-		if let writer = assetWriter {
-			await finish(writer)
-		}
+		await finishWriterOnSampleQueue()
+		let snapshot = await snapshotOnSampleQueue()
 
 		stream = nil
 		assetWriter = nil
 		audioInput = nil
 
-		if let stopError {
-			throw stopError
+		if let stopErrorDescription = snapshot.stopErrorDescription {
+			throw NSError(
+				domain: "MacSystemAudioCapture",
+				code: -4,
+				userInfo: [NSLocalizedDescriptionKey: stopErrorDescription]
+			)
 		}
 
 		let fileManager = FileManager.default
-		guard didReceiveAudio,
-		      audibleAudioDuration >= Self.minimumAudibleDuration,
+		guard snapshot.didReceiveAudio,
+		      snapshot.audibleAudioDuration >= Self.minimumAudibleDuration,
 		      fileManager.fileExists(atPath: outputURL.path),
 		      (try? fileManager.attributesOfItem(atPath: outputURL.path)[.size] as? Int64) ?? 0 > 0 else {
 			try? fileManager.removeItem(at: outputURL)
@@ -227,7 +245,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 				}
 			}
 		} else if let error = writer.error {
-			stopError = error
+			stopErrorDescription = error.localizedDescription
 			AppLog.shared.recording("Mac system audio append failed: \(error.localizedDescription)", level: .error)
 		}
 	}
@@ -312,8 +330,11 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func stream(_ stream: SCStream, didStopWithError error: Error) {
-		stopError = error
-		AppLog.shared.recording("Mac system audio stream stopped with error: \(error.localizedDescription)", level: .error)
+		let errorDescription = error.localizedDescription
+		sampleQueue.async { [weak self] in
+			self?.stopErrorDescription = errorDescription
+		}
+		AppLog.shared.recording("Mac system audio stream stopped with error: \(errorDescription)", level: .error)
 	}
 
 	private func copy(_ sampleBuffer: CMSampleBuffer, withPresentationTime presentationTime: CMTime) -> CMSampleBuffer? {
@@ -346,19 +367,45 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		return copiedBuffer
 	}
 
-	private func finish(_ writer: AVAssetWriter) async {
+	@MainActor
+	private func finishWriterOnSampleQueue() async {
+		let sampleQueue = sampleQueue
 		await withCheckedContinuation { continuation in
-			writer.finishWriting {
-				continuation.resume()
+			sampleQueue.async { [weak self] in
+				guard let self else {
+					continuation.resume()
+					return
+				}
+				self.audioInput?.markAsFinished()
+				guard let writer = self.assetWriter else {
+					continuation.resume()
+					return
+				}
+				writer.finishWriting {
+					continuation.resume()
+				}
 			}
 		}
 	}
 
-	private func performOnSampleQueue(_ work: @escaping () -> Void) async {
-		await withCheckedContinuation { continuation in
-			sampleQueue.async {
-				work()
-				continuation.resume()
+	@MainActor
+	private func snapshotOnSampleQueue() async -> StopSnapshot {
+		let sampleQueue = sampleQueue
+		return await withCheckedContinuation { continuation in
+			sampleQueue.async { [weak self] in
+				guard let self else {
+					continuation.resume(returning: StopSnapshot(
+						didReceiveAudio: false,
+						audibleAudioDuration: 0,
+						stopErrorDescription: nil
+					))
+					return
+				}
+				continuation.resume(returning: StopSnapshot(
+					didReceiveAudio: self.didReceiveAudio,
+					audibleAudioDuration: self.audibleAudioDuration,
+					stopErrorDescription: self.stopErrorDescription
+				))
 			}
 		}
 	}

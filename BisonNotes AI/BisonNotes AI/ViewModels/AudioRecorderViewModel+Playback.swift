@@ -118,16 +118,16 @@ extension AudioRecorderViewModel {
 
 extension AudioRecorderViewModel: AVAudioPlayerDelegate {
 	nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-		Task {
-			await MainActor.run {
-				isPlaying = false
-				audioPlayer = nil
-				stopPlayingTimer()
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			isPlaying = false
+			audioPlayer = nil
+			stopPlayingTimer()
 
-				// Deactivate audio session when playback finishes to restore other audio apps
-				Task {
-					try? await enhancedAudioSessionManager.deactivateSession()
-				}
+			// Deactivate audio session when playback finishes to restore other audio apps
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				try? await self.enhancedAudioSessionManager.deactivateSession()
 			}
 		}
 	}

@@ -8,6 +8,7 @@
 
 import Foundation
 import UniformTypeIdentifiers
+import os
 
 enum ShareExtensionContract {
     static let appGroupIdentifier = "group.bisonnotesai.shared"
@@ -69,14 +70,14 @@ enum ShareExtensionContract {
 
     static func destinationFileName(
         sourceURL: URL,
-        provider: NSItemProvider,
+        providerSuggestedName: String?,
         typeIdentifier: String
     ) -> String? {
         var sourceName = sourceURL.lastPathComponent
         var fileExtension = sourceURL.pathExtension.lowercased()
 
         if fileExtension.isEmpty,
-           let suggestedName = provider.suggestedName,
+           let suggestedName = providerSuggestedName,
            !suggestedName.isEmpty {
             sourceName = URL(fileURLWithPath: suggestedName).lastPathComponent
             fileExtension = URL(fileURLWithPath: sourceName).pathExtension.lowercased()
@@ -98,10 +99,26 @@ enum ShareExtensionContract {
         let safeName = URL(fileURLWithPath: sourceName).lastPathComponent
         return "\(UUID().uuidString)_\(safeName)"
     }
+
+    /// Compatibility overload for synchronous callers and existing tests.
+    /// The asynchronous processor snapshots `suggestedName` before entering
+    /// its Sendable file-representation callback instead of capturing the
+    /// framework provider there.
+    static func destinationFileName(
+        sourceURL: URL,
+        provider: NSItemProvider,
+        typeIdentifier: String
+    ) -> String? {
+        destinationFileName(
+            sourceURL: sourceURL,
+            providerSuggestedName: provider.suggestedName,
+            typeIdentifier: typeIdentifier
+        )
+    }
 }
 
 final class ShareExtensionProcessor {
-    struct Result {
+    struct Result: Sendable {
         let savedFileCount: Int
         let importURL: URL?
     }
@@ -110,8 +127,7 @@ final class ShareExtensionProcessor {
         NSLog("📎 Share Extension: processing \(items.count) extension item(s)")
 
         let group = DispatchGroup()
-        let countLock = NSLock()
-        var savedFileCount = 0
+        let savedFileCount = OSAllocatedUnfairLock(initialState: 0)
 
         for item in items {
             let attachments = item.attachments ?? []
@@ -125,41 +141,41 @@ final class ShareExtensionProcessor {
                     continue
                 }
 
-                group.enter()
-                provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { [weak self] url, error in
-                    defer { group.leave() }
+                let providerSuggestedName = provider.suggestedName
 
+                group.enter()
+                provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
                     if let error {
                         NSLog("❌ Share Extension: loadFileRepresentation failed: \(error.localizedDescription)")
+                        group.leave()
                         return
                     }
 
-                    guard let self, let url else {
+                    guard let url else {
                         NSLog("❌ Share Extension: loadFileRepresentation returned nil URL")
+                        group.leave()
                         return
                     }
 
-                    guard self.saveToSharedContainer(
+                    guard Self.saveToSharedContainer(
                         sourceURL: url,
-                        provider: provider,
+                        providerSuggestedName: providerSuggestedName,
                         typeIdentifier: typeIdentifier
                     ) else {
+                        group.leave()
                         return
                     }
 
-                    countLock.lock()
-                    savedFileCount += 1
-                    countLock.unlock()
+                    savedFileCount.withLock { $0 += 1 }
+                    group.leave()
                 }
             }
         }
 
-        group.notify(queue: .main) { [weak self] in
-            countLock.lock()
-            let finalCount = savedFileCount
-            countLock.unlock()
+        group.notify(queue: .main) {
+            let finalCount = savedFileCount.withLock { $0 }
 
-            guard finalCount > 0, let token = self?.createImportToken() else {
+            guard finalCount > 0, let token = Self.createImportToken() else {
                 NSLog("📎 Share Extension: done, saved \(finalCount) file(s)")
                 completion(Result(savedFileCount: finalCount, importURL: nil))
                 return
@@ -182,14 +198,14 @@ final class ShareExtensionProcessor {
         )
     }
 
-    private func saveToSharedContainer(
+    private static func saveToSharedContainer(
         sourceURL: URL,
-        provider: NSItemProvider,
+        providerSuggestedName: String?,
         typeIdentifier: String
     ) -> Bool {
         guard let destinationName = ShareExtensionContract.destinationFileName(
             sourceURL: sourceURL,
-            provider: provider,
+            providerSuggestedName: providerSuggestedName,
             typeIdentifier: typeIdentifier
         ) else {
             return false
@@ -212,7 +228,7 @@ final class ShareExtensionProcessor {
         }
     }
 
-    private func createImportToken() -> String? {
+    private static func createImportToken() -> String? {
         guard let inboxURL = sharedInboxURL() else {
             return nil
         }
@@ -236,7 +252,7 @@ final class ShareExtensionProcessor {
         }
     }
 
-    private func sharedInboxURL() -> URL? {
+    private static func sharedInboxURL() -> URL? {
         guard let containerURL = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: ShareExtensionContract.appGroupIdentifier
         ) else {
@@ -261,7 +277,7 @@ final class ShareExtensionProcessor {
         }
     }
 
-    private func applyFileProtection(to url: URL) {
+    private static func applyFileProtection(to url: URL) {
 #if os(iOS)
         try? FileManager.default.setAttributes(
             [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],

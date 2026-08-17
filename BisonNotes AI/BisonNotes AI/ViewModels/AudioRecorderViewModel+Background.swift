@@ -19,7 +19,9 @@ extension AudioRecorderViewModel {
 		AppLog.shared.backgroundProcessing("Starting background task for recording")
 		backgroundTask = PlatformBackgroundTask.begin(name: "Recording") { [weak self] in
 			AppLog.shared.backgroundProcessing("Recording background task expiring", level: .error)
-			self?.endBackgroundTask()
+			Task { @MainActor [weak self] in
+				self?.endBackgroundTask()
+			}
 		}
 	}
 
@@ -41,22 +43,22 @@ extension AudioRecorderViewModel {
 
 		// Check remaining background time every 30 seconds
 		backgroundTimeMonitor = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-			let remaining = PlatformBackgroundTask.remainingTime
+			Task { @MainActor [weak self] in
+				let remaining = PlatformBackgroundTask.remainingTime
 
-			// Only log/warn if actually limited (not infinite)
-			if remaining < Double.greatestFiniteMagnitude {
-				AppLog.shared.backgroundProcessing("Background time remaining: \(Int(remaining))s", level: .debug)
+				// Only log/warn if actually limited (not infinite)
+				if remaining < Double.greatestFiniteMagnitude {
+					AppLog.shared.backgroundProcessing("Background time remaining: \(Int(remaining))s", level: .debug)
 
-				// Warn user when less than 1 minute remains
-				if remaining < 60 {
-					Task { @MainActor in
+					// Warn user when less than 1 minute remains
+					if remaining < 60 {
 						await self?.sendWarningNotification(
 							title: "Limited Background Time",
 							body: "iOS may stop background recording soon. Bring app to foreground to continue.",
 							isCritical: true
 						)
-					}
 				}
+			}
 			}
 		}
 		#endif

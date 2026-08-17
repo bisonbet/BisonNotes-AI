@@ -263,7 +263,9 @@ extension AudioRecorderViewModel {
 
 	private func installMacInputTap() {
 		guard let engine = macAudioEngine,
-		      let format = macEngineFormat else { return }
+		      let format = macEngineFormat,
+		      let file = macAudioFile else { return }
+		let captureHealth = macCaptureHealth
 
 		// The scratch file uses the input node's native PCM format, so the tap
 		// can write each buffer directly without invoking a compressed encoder
@@ -273,19 +275,18 @@ extension AudioRecorderViewModel {
 			bufferSize: 4096,
 			format: format
 		) { [weak self] buffer, _ in
-			guard let self, let file = self.macAudioFile else { return }
 			do {
 				try file.write(from: buffer)
-				let isFirstWrite = self.macCaptureHealth.recordSuccessfulWrite(
+				let isFirstWrite = captureHealth.recordSuccessfulWrite(
 					frameCount: Int64(buffer.frameLength)
 				)
 				if isFirstWrite {
-					DispatchQueue.main.async { [weak self] in
+					Task { @MainActor [weak self] in
 						self?.handleMacFirstSuccessfulWrite()
 					}
 				}
 			} catch {
-				if self.macCaptureHealth.recordWriteFailure(error.localizedDescription) {
+				if captureHealth.recordWriteFailure(error.localizedDescription) {
 					AppLog.shared.recording(
 						"Mac microphone file write failed: \(error.localizedDescription)",
 						level: .error

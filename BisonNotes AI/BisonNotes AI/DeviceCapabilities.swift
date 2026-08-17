@@ -41,6 +41,7 @@ struct DeviceCapabilities {
     /// Action Button is only available on supported iPhone hardware. Apple
     /// does not expose a direct capability API, so gate the setup guidance by
     /// known device identifier families and keep Mac/iPad hidden.
+    @MainActor
     static var supportsActionButton: Bool {
         #if os(macOS)
         return false
@@ -121,6 +122,7 @@ struct DeviceCapabilities {
     }
 
     /// Get a detailed capability report
+    @MainActor
     static func getCapabilityReport() -> String {
         var report = "Device Capabilities Report\n"
         report += "==========================\n"

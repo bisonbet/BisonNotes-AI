@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - Compatible API Configuration
 
-struct OpenAICompatibleConfig: Equatable {
+struct OpenAICompatibleConfig: Equatable, Sendable {
     let apiKey: String
     let modelID: String
     let baseURL: String
@@ -40,7 +40,7 @@ struct OpenAICompatibleConfig: Equatable {
 
 // MARK: - Chat Completion Request/Response Models
 
-struct ChatCompletionRequest: Codable {
+struct ChatCompletionRequest: Codable, Sendable {
     let model: String
     let messages: [ChatMessage]
     let temperature: Double?
@@ -100,7 +100,7 @@ struct ChatCompletionRequest: Codable {
 
 // MARK: - Message Content Models
 
-enum MessageContentFormat {
+enum MessageContentFormat: Equatable, Sendable {
     case string      // Standard chat-completion format: "content": "text"
     case blocks      // Nebius/Anthropic format: "content": [{"type": "text", "text": "..."}]
 
@@ -115,7 +115,7 @@ enum MessageContentFormat {
     }
 }
 
-struct ContentBlock: Codable {
+struct ContentBlock: Codable, Sendable {
     let type: String
     let text: String
 
@@ -163,7 +163,7 @@ struct ContentBlock: Codable {
     }
 }
 
-struct ChatMessage: Codable {
+struct ChatMessage: Codable, Sendable {
     let role: String
     private let stringContent: String?
     private let blockContent: [ContentBlock]?
@@ -501,7 +501,7 @@ class MessageFormatDetector {
 
 }
 
-struct ChatCompletionResponse: Codable {
+struct ChatCompletionResponse: Codable, Sendable {
     let id: String
     let object: String
     let created: Int
@@ -510,7 +510,7 @@ struct ChatCompletionResponse: Codable {
     let usage: Usage?
 }
 
-struct Choice: Codable {
+struct Choice: Codable, Sendable {
     let index: Int
     let message: ChatMessage
     let finishReason: String?
@@ -522,7 +522,7 @@ struct Choice: Codable {
     }
 }
 
-struct Usage: Codable {
+struct Usage: Codable, Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let totalTokens: Int
@@ -536,7 +536,7 @@ struct Usage: Codable {
 
 // MARK: - Structured Output Support
 
-struct ResponseFormat: Codable {
+struct ResponseFormat: Codable, Sendable {
     let type: String
     let jsonSchema: JSONSchema?
 
@@ -545,7 +545,7 @@ struct ResponseFormat: Codable {
         case jsonSchema = "json_schema"
     }
 
-    static func jsonSchema(name: String, schema: [String: Any], strict: Bool = true) -> ResponseFormat {
+    static func jsonSchema(name: String, schema: [String: JSONSchemaValue], strict: Bool = true) -> ResponseFormat {
         return ResponseFormat(
             type: "json_schema",
             jsonSchema: JSONSchema(name: name, schema: schema, strict: strict)
@@ -555,9 +555,9 @@ struct ResponseFormat: Codable {
     static let json = ResponseFormat(type: "json_object", jsonSchema: nil)
 }
 
-struct JSONSchema: Codable {
+struct JSONSchema: Codable, Sendable {
     let name: String
-    let schema: [String: Any]
+    let schema: [String: JSONSchemaValue]
     let strict: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -566,7 +566,7 @@ struct JSONSchema: Codable {
         case strict
     }
 
-    init(name: String, schema: [String: Any], strict: Bool? = true) {
+    init(name: String, schema: [String: JSONSchemaValue], strict: Bool? = true) {
         self.name = name
         self.schema = schema
         self.strict = strict
@@ -577,13 +577,7 @@ struct JSONSchema: Codable {
         try container.encode(name, forKey: .name)
         try container.encode(strict, forKey: .strict)
 
-        // Encode the schema as a raw JSON object
-        let jsonData = try JSONSerialization.data(withJSONObject: schema, options: [])
-        if let jsonObject = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
-            try container.encode(AnyCodable(jsonObject), forKey: .schema)
-        } else {
-            try container.encode(schema.mapValues { AnyCodable($0) }, forKey: .schema)
-        }
+        try container.encode(schema, forKey: .schema)
     }
 
     init(from decoder: Decoder) throws {
@@ -591,53 +585,107 @@ struct JSONSchema: Codable {
         name = try container.decode(String.self, forKey: .name)
         strict = try container.decodeIfPresent(Bool.self, forKey: .strict)
 
-        let anyCodable = try container.decode(AnyCodable.self, forKey: .schema)
-        schema = anyCodable.value as? [String: Any] ?? [:]
+        // Preserve the previous permissive fallback for malformed or
+        // non-object schema payloads while keeping valid schemas Sendable.
+        schema = (try? container.decode([String: JSONSchemaValue].self, forKey: .schema)) ?? [:]
     }
 }
 
-// Helper for encoding Any types
-struct AnyCodable: Codable {
-    let value: Any
+/// A recursive, Sendable representation for the JSON values used in provider
+/// response schemas. It preserves integer-versus-floating-point numbers and
+/// encodes to the same JSON primitives that the previous Any-based helper used.
+indirect enum JSONSchemaValue: Codable, Equatable, Sendable {
+    case string(String)
+    case integer(Int)
+    case number(Double)
+    case boolean(Bool)
+    case array([JSONSchemaValue])
+    case object([String: JSONSchemaValue])
+    case null
 
-    init(_ value: Any) {
-        self.value = value
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self = .null
+        } else if let string = try? container.decode(String.self) {
+            self = .string(string)
+        } else if let boolean = try? container.decode(Bool.self) {
+            self = .boolean(boolean)
+        } else if let integer = try? container.decode(Int.self) {
+            self = .integer(integer)
+        } else if let number = try? container.decode(Double.self) {
+            self = .number(number)
+        } else if let array = try? container.decode([JSONSchemaValue].self) {
+            self = .array(array)
+        } else if let object = try? container.decode([String: JSONSchemaValue].self) {
+            self = .object(object)
+        } else {
+            throw DecodingError.typeMismatch(
+                JSONSchemaValue.self,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Could not decode a JSON schema value"
+                )
+            )
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        if let intVal = value as? Int {
-            try container.encode(intVal)
-        } else if let stringVal = value as? String {
-            try container.encode(stringVal)
-        } else if let boolVal = value as? Bool {
-            try container.encode(boolVal)
-        } else if let arrayVal = value as? [Any] {
-            try container.encode(arrayVal.map { AnyCodable($0) })
-        } else if let dictVal = value as? [String: Any] {
-            try container.encode(dictVal.mapValues { AnyCodable($0) })
-        } else {
-            throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Invalid type for AnyCodable"))
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .integer(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .boolean(let value):
+            try container.encode(value)
+        case .array(let values):
+            try container.encode(values)
+        case .object(let values):
+            try container.encode(values)
+        case .null:
+            try container.encodeNil()
         }
     }
+}
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
+extension JSONSchemaValue: ExpressibleByStringLiteral {
+    init(stringLiteral value: String) {
+        self = .string(value)
+    }
+}
 
-        if let intVal = try? container.decode(Int.self) {
-            value = intVal
-        } else if let stringVal = try? container.decode(String.self) {
-            value = stringVal
-        } else if let boolVal = try? container.decode(Bool.self) {
-            value = boolVal
-        } else if let arrayVal = try? container.decode([AnyCodable].self) {
-            value = arrayVal.map { $0.value }
-        } else if let dictVal = try? container.decode([String: AnyCodable].self) {
-            value = dictVal.mapValues { $0.value }
-        } else {
-            throw DecodingError.typeMismatch(AnyCodable.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Could not decode AnyCodable"))
-        }
+extension JSONSchemaValue: ExpressibleByIntegerLiteral {
+    init(integerLiteral value: Int) {
+        self = .integer(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByFloatLiteral {
+    init(floatLiteral value: Double) {
+        self = .number(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByBooleanLiteral {
+    init(booleanLiteral value: Bool) {
+        self = .boolean(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByArrayLiteral {
+    init(arrayLiteral elements: JSONSchemaValue...) {
+        self = .array(elements)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByDictionaryLiteral {
+    init(dictionaryLiteral elements: (String, JSONSchemaValue)...) {
+        self = .object(Dictionary(uniqueKeysWithValues: elements))
     }
 }
 
@@ -645,7 +693,7 @@ struct AnyCodable: Codable {
 
 extension ResponseFormat {
     static var completeResponseSchema: ResponseFormat {
-        let schema: [String: Any] = [
+        let schema: [String: JSONSchemaValue] = [
             "type": "object",
             "properties": [
                 "summary": [
@@ -710,12 +758,12 @@ extension ResponseFormat {
 
 // MARK: - Models List Response (for /models endpoint)
 
-struct CompatibleModelsResponse: Codable {
+struct CompatibleModelsResponse: Codable, Sendable {
     let data: [CompatibleModelInfo]
     let object: String?
 }
 
-struct CompatibleModelInfo: Codable {
+struct CompatibleModelInfo: Codable, Sendable {
     let id: String
     let object: String?
     let created: Int?
@@ -727,11 +775,11 @@ struct CompatibleModelInfo: Codable {
     }
 }
 
-struct CompatibleAPIErrorResponse: Codable {
+struct CompatibleAPIErrorResponse: Codable, Sendable {
     let error: CompatibleAPIError
 }
 
-struct CompatibleAPIError: Codable {
+struct CompatibleAPIError: Codable, Sendable {
     let message: String
     let type: String?
     let code: String?

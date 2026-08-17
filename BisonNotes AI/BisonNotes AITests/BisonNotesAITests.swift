@@ -8,6 +8,7 @@
 import XCTest
 @testable import BisonNotes_AI
 
+@MainActor
 private final class CountingSummarizationEngine: SummarizationEngine {
     let name = "Counting Test Engine"
     let description = "A test engine that records complete-processing calls."
@@ -53,6 +54,7 @@ private final class CountingSummarizationEngine: SummarizationEngine {
     }
 }
 
+@MainActor
 final class BisonNotesAITests: XCTestCase {
     func testProcessingStatusSemanticFlags() {
         XCTAssertTrue(ProcessingStatus.queued.isActive)

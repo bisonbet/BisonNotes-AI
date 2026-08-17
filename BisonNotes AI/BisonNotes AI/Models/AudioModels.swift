@@ -8,7 +8,7 @@
 import Foundation
 import AVFoundation
 
-public enum AudioQuality: String, CaseIterable, Codable {
+public enum AudioQuality: String, CaseIterable, Codable, Sendable {
     case whisperOptimized = "Whisper Optimized"
 
     var settings: [String: Any] {
@@ -36,7 +36,7 @@ public enum AudioQuality: String, CaseIterable, Codable {
     }
 }
 
-public enum WhisperProtocol: String, CaseIterable, Codable {
+public enum WhisperProtocol: String, CaseIterable, Codable, Sendable {
     case rest = "REST API"
     case wyoming = "Wyoming"
 
@@ -59,7 +59,7 @@ public enum WhisperProtocol: String, CaseIterable, Codable {
     }
 }
 
-public enum ProcessingStatus: String, Codable, CaseIterable {
+public enum ProcessingStatus: String, Codable, CaseIterable, Sendable {
     case notStarted = "Not Started"
     case queued = "Queued"
     case processing = "Processing"
@@ -89,7 +89,7 @@ public enum ProcessingStatus: String, Codable, CaseIterable {
     }
 }
 
-public enum TranscriptionEngine: String, CaseIterable, Codable {
+public enum TranscriptionEngine: String, CaseIterable, Codable, Sendable {
     case notConfigured = "Not Configured"
     case fluidAudio = "On Device"
     case whisper = "Whisper (Local Server)"
@@ -152,7 +152,7 @@ public enum TranscriptionEngine: String, CaseIterable, Codable {
 
 // MARK: - Engine Validation Result
 
-public enum EngineValidationResult {
+public enum EngineValidationResult: Sendable {
     case available
     case unavailable(String)
     case requiresConfiguration(String)

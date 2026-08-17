@@ -7,32 +7,45 @@
 
 import Foundation
 import os.log
-import SwiftUI
 
 // MARK: - Google AI Studio Service
 
-class GoogleAIStudioService: ObservableObject {
+actor GoogleAIStudioService {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
 
-    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
-    @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
-    @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 8192
-    @AppStorage("enableGoogleAIStudio") private var enableGoogleAIStudio: Bool = false
-
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta"
-    private var apiKey: String {
-        KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
+
+    private struct Configuration: Sendable {
+        let selectedModel: String
+        let temperature: Double
+        let maxTokens: Int
+        let enabled: Bool
+        let apiKey: String
     }
 
-    private var thinkingOptions: SummaryThinkingRequestOptions {
+    private func configuration() -> Configuration {
+        Configuration(
+            selectedModel: UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview",
+            temperature: UserDefaults.standard.object(forKey: "googleAIStudioTemperature") == nil
+                ? 0.1
+                : UserDefaults.standard.double(forKey: "googleAIStudioTemperature"),
+            maxTokens: UserDefaults.standard.integer(forKey: "googleAIStudioMaxTokens") > 0
+                ? UserDefaults.standard.integer(forKey: "googleAIStudioMaxTokens")
+                : 8192,
+            enabled: UserDefaults.standard.bool(forKey: "enableGoogleAIStudio"),
+            apiKey: KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
+        )
+    }
+
+    private func thinkingOptions(for modelName: String) -> SummaryThinkingRequestOptions {
         SummaryThinkingModelCatalog.requestOptions(
-            modelName: selectedModel,
+            modelName: modelName,
             engine: .googleAIStudio
         )
     }
 
-    private var geminiThinkingConfig: ThinkingConfig? {
-        let options = thinkingOptions
+    private func geminiThinkingConfig(for modelName: String) -> ThinkingConfig? {
+        let options = thinkingOptions(for: modelName)
         guard options.thinkingLevel != nil || options.thinkingBudget != nil else {
             return nil
         }
@@ -44,16 +57,16 @@ class GoogleAIStudioService: ObservableObject {
 
     // MARK: - API Response Models
 
-    struct GeminiRequest: Codable {
+    struct GeminiRequest: Codable, Sendable {
         let contents: [Content]
         let generationConfig: GenerationConfig
     }
 
-    struct Content: Codable {
+    struct Content: Codable, Sendable {
         let parts: [Part]
     }
 
-    struct Part: Codable {
+    struct Part: Codable, Sendable {
         let text: String
         let thought: Bool?
 
@@ -63,7 +76,7 @@ class GoogleAIStudioService: ObservableObject {
         }
     }
 
-    struct GenerationConfig: Codable {
+    struct GenerationConfig: Codable, Sendable {
         let responseMimeType: String
         let responseSchema: Schema
         let temperature: Double?
@@ -71,19 +84,19 @@ class GoogleAIStudioService: ObservableObject {
         let thinkingConfig: ThinkingConfig?
     }
 
-    struct ThinkingConfig: Codable {
+    struct ThinkingConfig: Codable, Sendable {
         let thinkingLevel: String?
         let thinkingBudget: Int?
     }
 
-    struct Schema: Codable {
+    struct Schema: Codable, Sendable {
         let type: String
         let properties: [String: SchemaProperty]
         let required: [String]
         let propertyOrdering: [String]
     }
 
-    struct SchemaProperty: Codable {
+    struct SchemaProperty: Codable, Sendable {
         let type: String
         let description: String?
         let maxItems: Int?
@@ -95,15 +108,15 @@ class GoogleAIStudioService: ObservableObject {
         }
     }
 
-    struct GeminiResponse: Codable {
+    struct GeminiResponse: Codable, Sendable {
         let candidates: [Candidate]
     }
 
-    struct Candidate: Codable {
+    struct Candidate: Codable, Sendable {
         let content: Content
     }
 
-    struct SummaryResponse: Codable {
+    struct SummaryResponse: Codable, Sendable {
         let summary: String
         let tasks: [String]
         let reminders: [String]
@@ -124,18 +137,19 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Configuration
 
     func updateConfiguration() {
+        let configuration = configuration()
         logger.info("GoogleAIStudioService: Updating configuration")
-        logger.info("API Key: \(self.apiKey.isEmpty ? "Not set" : "Set")")
-        logger.info("Model: \(self.selectedModel)")
-        logger.info("Temperature: \(self.temperature)")
-        logger.info("Max Tokens: \(self.maxTokens)")
-        logger.info("Enabled: \(self.enableGoogleAIStudio)")
+        logger.info("API Key: \(configuration.apiKey.isEmpty ? "Not set" : "Set")")
+        logger.info("Model: \(configuration.selectedModel)")
+        logger.info("Temperature: \(configuration.temperature)")
+        logger.info("Max Tokens: \(configuration.maxTokens)")
+        logger.info("Enabled: \(configuration.enabled)")
     }
 
     // MARK: - Connection Testing
 
     func testConnection() async -> Bool {
-        guard !apiKey.isEmpty else {
+        guard !configuration().apiKey.isEmpty else {
             logger.error("GoogleAIStudioService: API key not set")
             return false
         }
@@ -155,20 +169,21 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Content Generation
 
     func generateContent(prompt: String, useStructuredOutput: Bool = true) async throws -> String {
-        guard !apiKey.isEmpty else {
+        let configuration = configuration()
+        guard !configuration.apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio")
         }
 
-        let url = URL(string: "\(baseURL)/models/\(selectedModel):generateContent")!
+        let url = URL(string: "\(baseURL)/models/\(configuration.selectedModel):generateContent")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue(configuration.apiKey, forHTTPHeaderField: "x-goog-api-key")
 
         if useStructuredOutput {
-            request.httpBody = try createStructuredRequest(prompt: prompt)
+            request.httpBody = try createStructuredRequest(prompt: prompt, configuration: configuration)
         } else {
-            request.httpBody = try createSimpleRequest(prompt: prompt)
+            request.httpBody = try createSimpleRequest(prompt: prompt, configuration: configuration)
         }
 
         // Create a URLSession with timeout configuration
@@ -208,7 +223,7 @@ class GoogleAIStudioService: ObservableObject {
 
     // MARK: - Request Creation
 
-    private func createStructuredRequest(prompt: String) throws -> Data {
+    private func createStructuredRequest(prompt: String, configuration: Configuration) throws -> Data {
         // Create schema manually as JSON to avoid recursive struct issues
         let schemaDict: [String: Any] = [
             "type": "object",
@@ -254,10 +269,10 @@ class GoogleAIStudioService: ObservableObject {
         var generationConfig: [String: Any] = [
             "responseMimeType": "application/json",
             "responseSchema": schemaDict,
-            "temperature": temperature,
-            "maxOutputTokens": maxTokens
+            "temperature": configuration.temperature,
+            "maxOutputTokens": configuration.maxTokens
         ]
-        if let thinkingConfig = geminiThinkingConfig {
+        if let thinkingConfig = geminiThinkingConfig(for: configuration.selectedModel) {
             var thinkingConfigDict: [String: Any] = [:]
             if let thinkingLevel = thinkingConfig.thinkingLevel {
                 thinkingConfigDict["thinkingLevel"] = thinkingLevel
@@ -284,7 +299,7 @@ class GoogleAIStudioService: ObservableObject {
         return try JSONSerialization.data(withJSONObject: requestDict)
     }
 
-    private func createSimpleRequest(prompt: String) throws -> Data {
+    private func createSimpleRequest(prompt: String, configuration: Configuration) throws -> Data {
         let request = GeminiRequest(
             contents: [Content(parts: [Part(text: prompt)])],
             generationConfig: GenerationConfig(
@@ -295,9 +310,9 @@ class GoogleAIStudioService: ObservableObject {
                     required: [],
                     propertyOrdering: []
                 ),
-                temperature: temperature,
-                maxOutputTokens: maxTokens,
-                thinkingConfig: geminiThinkingConfig
+                temperature: configuration.temperature,
+                maxOutputTokens: configuration.maxTokens,
+                thinkingConfig: geminiThinkingConfig(for: configuration.selectedModel)
             )
         )
 

@@ -1,6 +1,10 @@
 import Foundation
 import CoreData
 
+/// Provides transcript reads through the same main-actor Core Data context as
+/// the authoritative data managers. The managed objects never leave this
+/// actor-owned boundary; callers receive a value snapshot instead.
+@MainActor
 class TranscriptManager: ObservableObject {
     // Singleton instance
     static let shared = TranscriptManager()

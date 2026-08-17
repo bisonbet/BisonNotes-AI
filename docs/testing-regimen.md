@@ -14,6 +14,23 @@ xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonN
 
 Expected result: app unit tests, security tests, seeded UI smoke tests, launch tests, and accessibility audit tests pass without live network, CloudKit mutation, microphone input, or model downloads. Local Speaker Labels tests use injected in-memory fakes and temporary cache roots; ordinary pre-merge validation never downloads FluidAudio models or fixtures.
 
+### Swift 6 Verification Gate
+
+The project requires Swift 6 language mode for every first-party Debug and Release
+configuration. Verify the project-file count before migration-related delivery:
+
+```bash
+rg -n 'SWIFT_VERSION = 5\.0;' "BisonNotes AI/BisonNotes AI.xcodeproj/project.pbxproj"
+rg -c 'SWIFT_VERSION = 6\.0;' "BisonNotes AI/BisonNotes AI.xcodeproj/project.pbxproj"
+```
+
+The first command must return no configurations and the second must report 24. Run
+the focused migration suites, the native macOS Debug build, and the Watch scheme
+against isolated DerivedData/package paths as recorded in
+`docs/swift-6-migration-evidence.md`. Swift 6 compilation/test evidence does not
+replace signed archive, hardware, provider-service, CloudKit, or accessibility-release
+validation.
+
 ### Local Speaker Labels Focused Gate
 
 The focused iOS unit suites are:

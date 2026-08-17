@@ -9,6 +9,7 @@ import SwiftUI
 
 // MARK: - On-Device LLM Settings View
 
+@MainActor
 struct OnDeviceLLMSettingsView: View {
 
     // MARK: - State
@@ -474,14 +475,12 @@ struct OnDeviceLLMSettingsView: View {
         isTestingConnection = true
         connectionTestResult = nil
 
-        Task {
+        Task { @MainActor in
             let engine = OnDeviceLLMEngine()
             let result = await engine.testConnection()
 
-            await MainActor.run {
-                connectionTestResult = result
-                isTestingConnection = false
-            }
+            connectionTestResult = result
+            isTestingConnection = false
         }
     }
 

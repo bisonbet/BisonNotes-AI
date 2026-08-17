@@ -3,7 +3,7 @@ import SwiftUI
 
 // MARK: - File Relationships Model
 
-struct FileRelationships: Codable, Identifiable {
+struct FileRelationships: Codable, Identifiable, Sendable {
     let id: UUID
     let recordingURL: URL?
     let recordingName: String
@@ -160,7 +160,8 @@ enum FileAvailabilityStatus: String, CaseIterable {
 
 // MARK: - Enhanced File Manager
 
-class EnhancedFileManager: ObservableObject {
+@MainActor
+final class EnhancedFileManager: ObservableObject {
     static let shared = EnhancedFileManager()
 
     @Published var fileRelationships: [URL: FileRelationships] = [:]
@@ -366,7 +367,7 @@ class EnhancedFileManager: ObservableObject {
 
             // Add URLs from coordinator (but only if they actually exist)
             if let coordinator = appCoordinator {
-                let recordings = await coordinator.getAllRecordingsWithData()
+                let recordings = coordinator.getAllRecordingsWithData()
                 for recordingData in recordings {
                     if let urlString = recordingData.recording.recordingURL,
                        let url = URL(string: urlString) {
@@ -399,7 +400,7 @@ class EnhancedFileManager: ObservableObject {
 
         // Get the recording ID from the coordinator
         guard let appCoordinator = appCoordinator,
-              let recordingEntry = await appCoordinator.getRecording(url: normalizedURL),
+              let recordingEntry = appCoordinator.getRecording(url: normalizedURL),
               let recordingId = recordingEntry.id else {
             throw FileManagementError.relationshipNotFound
         }
@@ -444,16 +445,16 @@ class EnhancedFileManager: ObservableObject {
             // Preserve summary: remove audio + transcript, keep the recording entry to anchor the summary in UI
 
             // Delete transcript if present
-            if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
-                await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
-                guard await appCoordinator.coreDataManager.getTranscript(for: recordingId) == nil else {
+            if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
+                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                guard appCoordinator.coreDataManager.getTranscript(for: recordingId) == nil else {
                     throw FileManagementError.deletionFailed("Transcript persistence still contains the deleted entry")
                 }
                 AppLog.shared.fileManagement("Deleted transcript for recording")
             }
 
             // Keep summary linked to the recording; ensure IDs/relationships are consistent
-            if let summary = await appCoordinator.coreDataManager.getSummary(for: recordingId) {
+            if let summary = appCoordinator.coreDataManager.getSummary(for: recordingId) {
                 summary.recording = recordingEntry
                 summary.recordingId = recordingId
                 summary.transcript = nil
@@ -466,7 +467,7 @@ class EnhancedFileManager: ObservableObject {
 
             // Persist changes
             do {
-                try await appCoordinator.coreDataManager.saveContext()
+                try appCoordinator.coreDataManager.saveContext()
                 AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript)")
             } catch {
                 AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
@@ -485,8 +486,8 @@ class EnhancedFileManager: ObservableObject {
             await updateFileRelationships(for: normalizedURL, relationships: updatedRelationships)
         } else {
             // Delete everything (recording, transcript, and summary)
-            await appCoordinator.deleteRecording(id: recordingId)
-            guard await appCoordinator.getRecording(id: recordingId) == nil else {
+            appCoordinator.deleteRecording(id: recordingId)
+            guard appCoordinator.getRecording(id: recordingId) == nil else {
                 throw FileManagementError.deletionFailed("Recording persistence still contains the deleted entry")
             }
             AppLog.shared.fileManagement("Deleted recording, transcript, and summary")

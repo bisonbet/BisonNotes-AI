@@ -541,6 +541,7 @@ class WhisperService: ObservableObject {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
+        let requestForTimeout = request
 
         AppLog.shared.transcription("Request body size: \(body.count) bytes", level: .debug)
 
@@ -556,7 +557,7 @@ class WhisperService: ObservableObject {
             seconds: 1800,
             timeoutError: WhisperError.serverError("Transcription request timed out after 30 minutes")
         ) { [self] in
-            let result = try await session.data(for: request)
+            let result = try await session.data(for: requestForTimeout)
             let requestDuration = Date().timeIntervalSince(requestStartTime)
 
             if requestDuration < 10 && duration > 300 {
@@ -791,13 +792,14 @@ class WhisperService: ObservableObject {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
+        let requestForTimeout = request
 
         // Send request with timeout
         let (data, response) = try await withTimeout(
             seconds: 60,
             timeoutError: WhisperError.serverError("Language detection timed out after 60 seconds")
         ) { [self] in
-            try await session.data(for: request)
+            try await session.data(for: requestForTimeout)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {

@@ -330,7 +330,9 @@ struct JobCard: View {
                             .foregroundColor(.secondary)
                             .onAppear {
                                 timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                                    currentTime = Date()
+                                    Task { @MainActor in
+                                        currentTime = Date()
+                                    }
                                 }
                             }
                             .onDisappear {
@@ -517,7 +519,9 @@ struct JobDetailView: View {
                                 }
                                 .onAppear {
                                     timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-                                        currentTime = Date()
+                                        Task { @MainActor in
+                                            currentTime = Date()
+                                        }
                                     }
                                 }
                                 .onDisappear {

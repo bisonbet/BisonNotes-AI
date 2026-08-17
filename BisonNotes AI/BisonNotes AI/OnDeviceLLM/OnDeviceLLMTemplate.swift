@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Template Structure
 
 /// A structure that defines how to format prompts for different LLM architectures
-public struct LLMTemplate {
+public struct LLMTemplate: Sendable {
     /// Represents prefix and suffix text to wrap around different message types
     public typealias Attachment = (prefix: String, suffix: String)
 

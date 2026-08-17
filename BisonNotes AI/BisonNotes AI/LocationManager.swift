@@ -9,6 +9,7 @@ import Foundation
 import CoreLocation
 import SwiftUI
 
+@MainActor
 class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
 
@@ -23,59 +24,41 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters // Less demanding than Best
         locationManager.distanceFilter = 10 // Update location when user moves 10 meters
 
-        // Initialize with notDetermined and let the delegate callback update it
-        // This avoids accessing authorizationStatus on the main thread during init
+        // Initialize with notDetermined and let the delegate callback update it.
         locationStatus = .notDetermined
 
-        // Defer authorization status check to avoid potential crashes during init
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-            // Check authorization status on a background queue
-            DispatchQueue.global(qos: .utility).async {
-                let status = self.locationManager.authorizationStatus
-                DispatchQueue.main.async {
-                    self.locationStatus = status
-                }
-            }
+        // Defer the initial status read until after CLLocationManager has been
+        // configured, while keeping all access on its required actor.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard let self else { return }
+            self.locationStatus = self.locationManager.authorizationStatus
         }
     }
 
     func requestLocationPermission() {
-        // Check current authorization status on background queue to avoid UI blocking
-        DispatchQueue.global(qos: .utility).async {
-            let currentStatus = self.locationManager.authorizationStatus
-
-            DispatchQueue.main.async {
-                switch currentStatus {
-                case .notDetermined:
-                    // Only request if we haven't already requested
-                    if self.locationStatus == .notDetermined {
-                        // Request authorization on main queue (required by CLLocationManager)
-                        self.locationManager.requestWhenInUseAuthorization()
-                    }
-                case .denied, .restricted:
-                    self.locationError = "Location access denied. Please enable in Settings."
-                case .authorizedWhenInUse, .authorizedAlways:
-                    // Already authorized, start location updates
-                    self.startLocationUpdates()
-                @unknown default:
-                    self.locationError = "Unknown authorization status"
-                }
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            if locationStatus == .notDetermined {
+                locationManager.requestWhenInUseAuthorization()
             }
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+        case .authorizedWhenInUse, .authorizedAlways:
+            startLocationUpdates()
+        @unknown default:
+            locationError = "Unknown authorization status"
         }
     }
 
     func startLocationUpdates() {
         // Check location services availability on background queue
-        DispatchQueue.global(qos: .utility).async {
-            let servicesEnabled = CLLocationManager.locationServicesEnabled()
-
-            DispatchQueue.main.async {
-                guard servicesEnabled else {
-                    self.locationError = "Location services are disabled on this device"
-                    return
-                }
-
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard CLLocationManager.locationServicesEnabled() else {
+                self.locationError = "Location services are disabled on this device"
+                return
+            }
                 switch self.locationStatus {
                 case .authorizedWhenInUse, .authorizedAlways:
                     // Only request a one-time location update to avoid continuous battery drain
@@ -90,17 +73,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     self.locationError = "Location permission not determined"
                 @unknown default:
                     self.locationError = "Unknown location authorization status"
-                }
             }
         }
     }
 
     func stopLocationUpdates() {
-        // Ensure location manager methods are called on main queue
-        DispatchQueue.main.async {
-            self.locationManager.stopUpdatingLocation()
-            self.isLocationEnabled = false
-        }
+        locationManager.stopUpdatingLocation()
+        isLocationEnabled = false
     }
 
     func getCurrentLocation() -> CLLocation? {
@@ -109,14 +88,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     func requestOneTimeLocation() {
         // Check location services availability on background queue
-        DispatchQueue.global(qos: .utility).async {
-            let servicesEnabled = CLLocationManager.locationServicesEnabled()
-
-            DispatchQueue.main.async {
-                guard servicesEnabled else {
-                    self.locationError = "Location services are disabled on this device"
-                    return
-                }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard CLLocationManager.locationServicesEnabled() else {
+                self.locationError = "Location services are disabled on this device"
+                return
+            }
 
                 switch self.locationStatus {
                 case .authorizedWhenInUse, .authorizedAlways:
@@ -130,7 +107,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     self.locationError = "Location permission not determined"
                 @unknown default:
                     self.locationError = "Unknown location authorization status"
-                }
             }
         }
     }
@@ -144,21 +120,16 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationCompletionHandlers.append(completion)
 
         // Check location services availability on background queue to avoid UI blocking
-        DispatchQueue.global(qos: .utility).async {
-            let servicesEnabled = CLLocationManager.locationServicesEnabled()
-
-            DispatchQueue.main.async {
-                guard servicesEnabled else {
-                    self.locationError = "Location services are disabled on this device"
-                    // Call all completion handlers with nil
-                    self.locationCompletionHandlers.forEach { $0(nil) }
-                    self.locationCompletionHandlers.removeAll()
-                    return
-                }
-
-                // Now proceed with authorization check
-                self.proceedWithLocationRequest()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard CLLocationManager.locationServicesEnabled() else {
+                self.locationError = "Location services are disabled on this device"
+                self.locationCompletionHandlers.forEach { $0(nil) }
+                self.locationCompletionHandlers.removeAll()
+                return
             }
+
+            self.proceedWithLocationRequest()
         }
     }
 
@@ -194,11 +165,12 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     // MARK: - Geocoding Cache and Rate Limiting
 
-    private static var geocodingCache: [String: String] = [:]
-    private static var lastGeocodingRequest: Date = Date.distantPast
+    @MainActor private static var geocodingCache: [String: String] = [:]
+    @MainActor private static var lastGeocodingRequest: Date = Date.distantPast
     private static let geocodingDelay: TimeInterval = 1.2 // 1.2 seconds between requests to stay under 50/minute
-    private static var pendingGeocodingRequests: [String: [(String?) -> Void]] = [:]
+    @MainActor private static var pendingGeocodingRequests: [String: [(String?) -> Void]] = [:]
 
+    @MainActor
     func reverseGeocodeLocation(_ location: CLLocation, completion: @escaping (String?) -> Void) {
         // Create a cache key based on location (rounded to ~100m precision to allow cache hits)
         let lat = round(location.coordinate.latitude * 1000) / 1000
@@ -282,108 +254,125 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
     // MARK: - Cache Management
 
-    static func clearGeocodingCache() {
+    @MainActor static func clearGeocodingCache() {
         geocodingCache.removeAll()
         pendingGeocodingRequests.removeAll()
         AppLog.shared.recording("LocationManager: Geocoding cache and pending requests cleared")
     }
 
-    static func getGeocodingCacheSize() -> Int {
+    @MainActor static func getGeocodingCacheSize() -> Int {
         return geocodingCache.count
     }
 
-    static func getGeocodingCacheStats() -> (cached: Int, pending: Int) {
+    @MainActor static func getGeocodingCacheStats() -> (cached: Int, pending: Int) {
         return (geocodingCache.count, pendingGeocodingRequests.count)
     }
 
     // Method to check if we're currently rate limited
-    static func isRateLimited() -> Bool {
+    @MainActor static func isRateLimited() -> Bool {
         let timeSinceLastRequest = Date().timeIntervalSince(lastGeocodingRequest)
         return timeSinceLastRequest < geocodingDelay
     }
 
     // Method to get time until next request is allowed
-    static func timeUntilNextRequest() -> TimeInterval {
+    @MainActor static func timeUntilNextRequest() -> TimeInterval {
         let timeSinceLastRequest = Date().timeIntervalSince(lastGeocodingRequest)
         return max(0, geocodingDelay - timeSinceLastRequest)
     }
 
     // MARK: - CLLocationManagerDelegate
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        currentLocation = location
-        locationError = nil
+        let snapshot = CLLocation(
+            coordinate: location.coordinate,
+            altitude: location.altitude,
+            horizontalAccuracy: location.horizontalAccuracy,
+            verticalAccuracy: location.verticalAccuracy,
+            course: location.course,
+            speed: location.speed,
+            timestamp: location.timestamp
+        )
 
-        // Call any pending completion handlers
-        if !locationCompletionHandlers.isEmpty {
-            locationCompletionHandlers.forEach { $0(location) }
-            locationCompletionHandlers.removeAll()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            currentLocation = snapshot
+            locationError = nil
+
+            // Call any pending completion handlers
+            if !locationCompletionHandlers.isEmpty {
+                locationCompletionHandlers.forEach { $0(snapshot) }
+                locationCompletionHandlers.removeAll()
+            }
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        let clError = error as? CLError
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        let errorCode = (error as? CLError)?.code
+        let errorDescription = error.localizedDescription
 
-        switch clError?.code {
-        case .locationUnknown:
-            locationError = "Unable to determine location. Try moving to an area with better GPS signal."
-        case .denied:
-            locationError = "Location access denied. Please enable in Settings."
-        case .network:
-            locationError = "Network error while getting location. Check your connection."
-        case .headingFailure:
-            locationError = "Compass error. Try calibrating your device."
-        case .regionMonitoringDenied, .regionMonitoringFailure:
-            locationError = "Region monitoring not available."
-        case .regionMonitoringSetupDelayed:
-            locationError = "Location setup delayed. Please wait."
-        default:
-            locationError = "Location error: \(error.localizedDescription)"
-        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            switch errorCode {
+            case .locationUnknown:
+                locationError = "Unable to determine location. Try moving to an area with better GPS signal."
+            case .denied:
+                locationError = "Location access denied. Please enable in Settings."
+            case .network:
+                locationError = "Network error while getting location. Check your connection."
+            case .headingFailure:
+                locationError = "Compass error. Try calibrating your device."
+            case .regionMonitoringDenied, .regionMonitoringFailure:
+                locationError = "Region monitoring not available."
+            case .regionMonitoringSetupDelayed:
+                locationError = "Location setup delayed. Please wait."
+            default:
+                locationError = "Location error: \(errorDescription)"
+            }
 
-        isLocationEnabled = false
+            isLocationEnabled = false
 
-        // Call any pending completion handlers with nil (indicating failure)
-        if !locationCompletionHandlers.isEmpty {
-            locationCompletionHandlers.forEach { $0(nil) }
-            locationCompletionHandlers.removeAll()
+            // Call any pending completion handlers with nil (indicating failure)
+            if !locationCompletionHandlers.isEmpty {
+                locationCompletionHandlers.forEach { $0(nil) }
+                locationCompletionHandlers.removeAll()
+            }
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        // Ensure UI updates happen on main queue
-        DispatchQueue.main.async {
-            self.locationStatus = status
+    nonisolated func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            locationStatus = status
 
             switch status {
             case .authorizedWhenInUse, .authorizedAlways:
-                self.startLocationUpdates()
+                startLocationUpdates()
 
                 // If we have pending completion handlers, trigger a location request
-                if !self.locationCompletionHandlers.isEmpty {
-                    self.locationManager.requestLocation()
+                if !locationCompletionHandlers.isEmpty {
+                    locationManager.requestLocation()
                 }
             case .denied, .restricted:
-                self.locationError = "Location access denied. Please enable in Settings."
-                self.isLocationEnabled = false
+                locationError = "Location access denied. Please enable in Settings."
+                isLocationEnabled = false
 
                 // Call any pending completion handlers with nil
-                if !self.locationCompletionHandlers.isEmpty {
-                    self.locationCompletionHandlers.forEach { $0(nil) }
-                    self.locationCompletionHandlers.removeAll()
+                if !locationCompletionHandlers.isEmpty {
+                    locationCompletionHandlers.forEach { $0(nil) }
+                    locationCompletionHandlers.removeAll()
                 }
             case .notDetermined:
-                self.locationError = nil
-                self.isLocationEnabled = false
+                locationError = nil
+                isLocationEnabled = false
             @unknown default:
-                self.locationError = "Unknown authorization status"
-                self.isLocationEnabled = false
+                locationError = "Unknown authorization status"
+                isLocationEnabled = false
 
                 // Call any pending completion handlers with nil
-                if !self.locationCompletionHandlers.isEmpty {
-                    self.locationCompletionHandlers.forEach { $0(nil) }
-                    self.locationCompletionHandlers.removeAll()
+                if !locationCompletionHandlers.isEmpty {
+                    locationCompletionHandlers.forEach { $0(nil) }
+                    locationCompletionHandlers.removeAll()
                 }
             }
         }

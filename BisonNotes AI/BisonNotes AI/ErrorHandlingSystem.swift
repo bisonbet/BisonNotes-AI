@@ -11,7 +11,8 @@ import os.log
 
 // MARK: - Error Handler
 
-class ErrorHandler: ObservableObject {
+@MainActor
+final class ErrorHandler: ObservableObject {
 
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
@@ -33,10 +34,8 @@ class ErrorHandler: ObservableObject {
 
         // Show to user if requested
         if showToUser {
-            DispatchQueue.main.async {
-                self.currentError = appError
-                self.showingErrorAlert = true
-            }
+            currentError = appError
+            showingErrorAlert = true
         }
     }
 
@@ -439,16 +438,16 @@ enum AppError: LocalizedError, Identifiable {
         } else if let storageError = error as? StorageError {
             return .storage(storageError)
         } else {
-            return .system(.unknown(underlying: error, context: context))
+            return .system(.unknown(underlying: error.localizedDescription, context: context))
         }
     }
 }
 
-enum ValidationError: LocalizedError {
+enum ValidationError: LocalizedError, Sendable {
     case emptyInput
     case invalidFormat
     case missingRequiredField(field: String)
-    case valueOutOfRange(value: Any, range: String)
+    case valueOutOfRange(value: String, range: String)
 
     var errorDescription: String? {
         switch self {
@@ -477,7 +476,7 @@ enum ValidationError: LocalizedError {
     }
 }
 
-enum NetworkError: LocalizedError {
+enum NetworkError: LocalizedError, Sendable {
     case noConnection
     case timeout
     case serverError(code: Int)
@@ -510,7 +509,7 @@ enum NetworkError: LocalizedError {
     }
 }
 
-enum StorageError: LocalizedError {
+enum StorageError: LocalizedError, Sendable {
     case insufficientSpace
     case permissionDenied
     case corruptedData
@@ -543,12 +542,12 @@ enum StorageError: LocalizedError {
     }
 }
 
-enum SystemError: LocalizedError {
+enum SystemError: LocalizedError, Sendable {
     case memoryPressure
     case memoryError
     case networkError
     case storageError
-    case unknown(underlying: Error, context: String)
+    case unknown(underlying: String, context: String)
     case configurationError(message: String)
 
     var errorDescription: String? {
@@ -561,8 +560,8 @@ enum SystemError: LocalizedError {
             return "Network connectivity error"
         case .storageError:
             return "Storage access error"
-        case .unknown(let error, let context):
-            return "Unexpected error in \(context): \(error.localizedDescription)"
+        case .unknown(let errorDescription, let context):
+            return "Unexpected error in \(context): \(errorDescription)"
         case .configurationError(let message):
             return "Configuration error: \(message)"
         }
@@ -586,7 +585,7 @@ enum SystemError: LocalizedError {
     }
 }
 
-enum ErrorSeverity: Int, CaseIterable {
+enum ErrorSeverity: Int, CaseIterable, Sendable {
     case low = 1
     case medium = 2
     case high = 3
@@ -613,7 +612,7 @@ enum ErrorSeverity: Int, CaseIterable {
 
 // MARK: - Validation Types
 
-struct ValidationResult {
+struct ValidationResult: Sendable {
     let isValid: Bool
     let issues: [ValidationIssue]
     let warnings: [ValidationWarning]
@@ -633,7 +632,7 @@ struct ValidationResult {
     }
 }
 
-enum ValidationIssue: LocalizedError {
+enum ValidationIssue: LocalizedError, Sendable {
     case emptyTranscript
     case transcriptTooShort(wordCount: Int)
     case transcriptTooLong(wordCount: Int, maxWords: Int)
@@ -650,7 +649,7 @@ enum ValidationIssue: LocalizedError {
     }
 }
 
-enum ValidationWarning {
+enum ValidationWarning: Sendable {
     case shortTranscript(wordCount: Int)
     case longTranscript(wordCount: Int)
     case repetitiveContent
@@ -672,7 +671,7 @@ enum ValidationWarning {
 
 // MARK: - Quality Assessment Types
 
-struct SummaryQualityReport {
+struct SummaryQualityReport: Sendable {
     let qualityLevel: SummaryQualityLevel
     let score: Double
     let issues: [SummaryQualityIssue]
@@ -688,7 +687,7 @@ struct SummaryQualityReport {
     }
 }
 
-enum SummaryQualityLevel: CaseIterable {
+enum SummaryQualityLevel: CaseIterable, Sendable {
     case excellent
     case good
     case fair
@@ -716,7 +715,7 @@ enum SummaryQualityLevel: CaseIterable {
     }
 }
 
-enum SummaryQualityIssue {
+enum SummaryQualityIssue: Sendable {
     case emptySummary
     case summaryTooShort(length: Int)
     case lowConfidence(confidence: Double)
@@ -739,7 +738,7 @@ enum SummaryQualityIssue {
     }
 }
 
-enum SummaryImprovement {
+enum SummaryImprovement: Sendable {
     case improveConfidence
     case noActionItemsFound
     case slowProcessing(time: TimeInterval)
@@ -758,7 +757,7 @@ enum SummaryImprovement {
 
 // MARK: - Recovery Actions
 
-enum RecoveryAction: CaseIterable {
+enum RecoveryAction: CaseIterable, Sendable {
     case retryOperation
     case retryWithLongerContent
     case retryWithShorterContent

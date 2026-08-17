@@ -3079,7 +3079,7 @@ struct LocationPickerView: View {
         }
     }
 
-    private func makeSearchResult(from mapItem: MKMapItem, fallbackName: String) -> LocationSearchResult? {
+    private nonisolated func makeSearchResult(from mapItem: MKMapItem, fallbackName: String) -> LocationSearchResult? {
         let coordinate = mapItem.placemark.coordinate
         guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
 
@@ -3095,7 +3095,7 @@ struct LocationPickerView: View {
         )
     }
 
-    private func buildAddressComponents(from placemark: MKPlacemark) -> String {
+    private nonisolated func buildAddressComponents(from placemark: MKPlacemark) -> String {
         if let postalAddress = placemark.postalAddress {
             let formatter = CNPostalAddressFormatter()
             let formatted = formatter.string(from: postalAddress).replacingOccurrences(of: "\n", with: ", ")
@@ -3130,7 +3130,7 @@ struct LocationPickerView: View {
         return components.joined(separator: ", ")
     }
 
-    private func deduplicate(_ results: [LocationSearchResult]) -> [LocationSearchResult] {
+    private nonisolated func deduplicate(_ results: [LocationSearchResult]) -> [LocationSearchResult] {
         var seen: Set<String> = []
         var unique: [LocationSearchResult] = []
 
@@ -3228,6 +3228,7 @@ struct LocationResultRow: View {
 // MARK: - Static Location Map View
 
 #if os(iOS)
+@MainActor
 private final class MapSnapshotCache {
     static let shared = MapSnapshotCache()
     private let cache = NSCache<NSString, UIImage>()

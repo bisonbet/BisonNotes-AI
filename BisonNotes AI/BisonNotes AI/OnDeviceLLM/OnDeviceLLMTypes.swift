@@ -16,7 +16,7 @@ public typealias LLMModel = OpaquePointer
 
 // MARK: - Chat Structure (for internal use)
 
-public struct LLMChat: Identifiable, Equatable {
+public struct LLMChat: Identifiable, Equatable, Sendable {
     public var id: UUID?
     public var role: LLMRole
     public var content: String
@@ -30,7 +30,7 @@ public struct LLMChat: Identifiable, Equatable {
 
 // MARK: - Role Enum
 
-public enum LLMRole {
+public enum LLMRole: Sendable {
     case user
     case bot
 }
@@ -43,7 +43,7 @@ public enum LLMRole {
 
 // MARK: - Inference Metrics
 
-public struct InferenceMetrics {
+public struct InferenceMetrics: Sendable {
     var inferenceTokenCount: Int32 = 0
     var inputTokenCount: Int32 = 0
     var totalTokens: Int32 = 0
@@ -87,7 +87,7 @@ public struct InferenceMetrics {
 
 // MARK: - Errors
 
-public enum OnDeviceLLMError: Error, LocalizedError {
+public enum OnDeviceLLMError: Error, LocalizedError, Sendable {
     case modelNotLoaded
     case modelNotDownloaded
     case downloadFailed(String)

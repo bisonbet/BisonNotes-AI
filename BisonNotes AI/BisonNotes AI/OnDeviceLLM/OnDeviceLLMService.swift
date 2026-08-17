@@ -11,7 +11,7 @@ import Foundation
 // MARK: - Service Configuration
 
 /// Configuration for the on-device LLM service
-public struct OnDeviceLLMConfig {
+public struct OnDeviceLLMConfig: Sendable {
     public let modelInfo: OnDeviceLLMModelInfo
     public let temperature: Float
     public let maxTokens: Int
@@ -47,6 +47,7 @@ public struct OnDeviceLLMConfig {
 // MARK: - On-Device LLM Service
 
 /// Service class for performing on-device LLM inference
+@InferenceActor
 public class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Properties
@@ -63,7 +64,7 @@ public class OnDeviceLLMService: ObservableObject {
 
     // MARK: - Initialization
 
-    public init(config: OnDeviceLLMConfig = .current) {
+    nonisolated public init(config: OnDeviceLLMConfig = .current) {
         self.config = config
     }
 

@@ -68,9 +68,9 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
     }
 
     deinit {
-        if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
-        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
-        if let terminateObserver { NotificationCenter.default.removeObserver(terminateObserver) }
+        // Notification callbacks capture the engine weakly. Swift 6
+        // deinitializers are nonisolated, so actor-owned observer tokens are
+        // intentionally left for NotificationCenter to release.
     }
 
     // MARK: - Background Safety
@@ -90,8 +90,10 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            AppLog.shared.summarization("[OnDeviceLLMEngine] App entered background - pausing GPU inference")
-            self?.service?.setAppBackgrounded(true)
+            Task { @MainActor [weak self] in
+                AppLog.shared.summarization("[OnDeviceLLMEngine] App entered background - pausing GPU inference")
+                await self?.service?.setAppBackgrounded(true)
+            }
         }
 
         foregroundObserver = NotificationCenter.default.addObserver(
@@ -99,8 +101,10 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
-            self?.service?.setAppBackgrounded(false)
+            Task { @MainActor [weak self] in
+                AppLog.shared.summarization("[OnDeviceLLMEngine] App entering foreground - resuming GPU inference")
+                await self?.service?.setAppBackgrounded(false)
+            }
         }
         #endif
 
@@ -114,9 +118,11 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            AppLog.shared.summarization("[OnDeviceLLMEngine] App will terminate - releasing llama.cpp Metal resources")
-            self?.service?.unloadModel()
-            self?.service = nil
+            Task { @MainActor [weak self] in
+                AppLog.shared.summarization("[OnDeviceLLMEngine] App will terminate - releasing llama.cpp Metal resources")
+                await self?.service?.unloadModel()
+                self?.service = nil
+            }
         }
     }
 
@@ -247,8 +253,8 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         // Try to use accurate tokenization if model is loaded, otherwise use estimation
         let tokenCount: Int
         do {
-            try service.ensureModelLoaded()
-            tokenCount = try service.getAccurateTokenCount(text)
+            try await service.ensureModelLoaded()
+            tokenCount = try await service.getAccurateTokenCount(text)
             AppLog.shared.summarization("[OnDeviceLLMEngine] Using accurate tokenization: \(tokenCount) tokens", level: .debug)
         } catch {
             // Fall back to estimation if model not loaded yet
@@ -267,12 +273,12 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 let result = try await service.processComplete(text: text)
 
                 // Check if inference was interrupted by app entering background
-                if service.wasInterruptedByBackground {
+                if await service.wasInterruptedByBackground {
                     AppLog.shared.summarization("[OnDeviceLLMEngine] Inference interrupted by app backgrounding (GPU not available)", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
 
-                if let metrics = service.lastMetrics {
+                if let metrics = await service.lastMetrics {
                     AppLog.shared.summarization("[OnDeviceLLMEngine] Inference completed at \(String(format: "%.1f", metrics.inferenceTokensPerSecond)) tokens/sec")
                 }
 
@@ -294,33 +300,25 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let startTime = Date()
 
         // Ensure model is loaded to use accurate tokenization
-        try service.ensureModelLoaded()
+        try await service.ensureModelLoaded()
 
-        // Get accurate tokenizer function from service
-        // Use 100 tokens overlap (approximately 75-100 words) to preserve context at boundaries
+        // Tokenization is owned by the inference actor. Chunking itself uses
+        // the Sendable estimator; each produced chunk is validated with the
+        // model tokenizer below before inference.
         let overlapTokens = 100
-        let tokenizer: ((String) -> Int)? = { text in
-            do {
-                return try service.getAccurateTokenCount(text)
-            } catch {
-                // Fall back to estimation if tokenizer unavailable
-                AppLog.shared.summarization("[OnDeviceLLMEngine] Could not use accurate tokenizer, falling back to estimation: \(error)", level: .error)
-                return TokenManager.getTokenCount(text)
-            }
-        }
 
         let chunks = TokenManager.chunkTextWithOverlap(
             text,
             maxTokens: maxTokens,
             overlapTokens: overlapTokens,
-            tokenizer: tokenizer
+            tokenizer: nil
         )
         AppLog.shared.summarization("[OnDeviceLLMEngine] Split into \(chunks.count) chunks with \(overlapTokens) token overlap")
 
         // Validate chunk sizes using accurate tokenization
         for (index, chunk) in chunks.enumerated() {
             do {
-                let chunkTokenCount = try service.getAccurateTokenCount(chunk)
+                let chunkTokenCount = try await service.getAccurateTokenCount(chunk)
                 if chunkTokenCount > maxTokens {
                     AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) token count (\(chunkTokenCount)) exceeds limit (\(maxTokens)). May be truncated by OnDeviceLLM.", level: .error)
                 } else {
@@ -364,7 +362,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
                 let chunkResult = try await service.processComplete(text: chunk)
 
                 // Check if chunk processing was interrupted by backgrounding
-                if service.wasInterruptedByBackground {
+                if await service.wasInterruptedByBackground {
                     AppLog.shared.summarization("[OnDeviceLLMEngine] Chunk \(index + 1) interrupted by app backgrounding", level: .error)
                     throw OnDeviceLLMError.inferenceFailed("On-device AI needs the app to stay open. Please return to the app and try again.")
                 }
@@ -513,13 +511,7 @@ class OnDeviceLLMEngine: SummarizationEngine, ConnectionTestable {
         let metaPromptEnd = "\n\nFINAL CONSOLIDATED OUTLINE:\n"
 
         // Use accurate tokenization for size checking
-        let getTokenCount: (String) -> Int = { text in
-            do {
-                return try service.getAccurateTokenCount(text)
-            } catch {
-                return TokenManager.getTokenCount(text)
-            }
-        }
+        let getTokenCount: (String) -> Int = TokenManager.getTokenCount
 
         let fullMetaPrompt = metaPromptBase + combinedSummariesText + metaPromptEnd
         let metaPromptTokenCount = getTokenCount(fullMetaPrompt)

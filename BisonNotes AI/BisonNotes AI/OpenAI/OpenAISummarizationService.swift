@@ -9,11 +9,11 @@ import Foundation
 
 // MARK: - Compatible API Service
 
-class OpenAICompatibleService: ObservableObject {
+actor OpenAICompatibleService {
 
     // MARK: - Properties
 
-    @Published var config: OpenAICompatibleConfig
+    private let config: OpenAICompatibleConfig
     private let session: URLSession
 
     // Cache the message format to avoid repeated UserDefaults reads and ensure consistency

@@ -132,6 +132,7 @@ final class AISettingsViewModel: ObservableObject {
     }
 }
 
+@MainActor
 struct AISettingsView: View {
     @StateObject private var viewModel: AISettingsViewModel
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -185,10 +186,8 @@ struct AISettingsView: View {
     }
 
     private func refreshEngineStatuses() {
-        Task {
-            await MainActor.run {
-                isRefreshingStatus = true
-            }
+        Task { @MainActor in
+            isRefreshingStatus = true
 
             var statuses: [String: EngineAvailabilityStatus] = [:]
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
@@ -211,10 +210,8 @@ struct AISettingsView: View {
                 statuses[engineType.rawValue] = status
             }
 
-            await MainActor.run {
-                engineStatuses = statuses
-                isRefreshingStatus = false
-            }
+            engineStatuses = statuses
+            isRefreshingStatus = false
         }
     }
 
@@ -328,17 +325,17 @@ struct AISettingsView: View {
         }
         .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .navigationDestination(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .navigationDestination(isPresented: $showingMistralAISettings) {
             MistralAISettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .navigationDestination(isPresented: $showingOnDeviceLLMSettings) {
@@ -350,17 +347,17 @@ struct AISettingsView: View {
         #else
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingMistralAISettings) {
             MistralAISettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingOnDeviceLLMSettings) {

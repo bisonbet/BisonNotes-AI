@@ -67,7 +67,6 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     deinit {
         // Clean up resources
-        recordingTimer?.invalidate()
         audioRecorder?.stop()
     }
     
@@ -98,16 +97,15 @@ class WatchAudioManager: NSObject, ObservableObject {
         }
 
         // Request permission and setup recording
-        AVAudioApplication.requestRecordPermission { [weak self] granted in
+        let manager = self
+        AVAudioApplication.requestRecordPermission { granted in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                
                 if granted {
-                    self.setupAndStartRecording()
+                    manager.setupAndStartRecording()
                 } else {
                     let error = WatchAudioError.permissionDenied("Microphone permission denied")
-                    self.onError?(error)
-                    self.errorMessage = error.localizedDescription
+                    manager.onError?(error)
+                    manager.errorMessage = error.localizedDescription
                 }
             }
         }

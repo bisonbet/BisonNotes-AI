@@ -7,6 +7,7 @@ import Foundation
 import XCTest
 @testable import BisonNotes_AI
 
+@MainActor
 final class OllamaPlatformTests: XCTestCase {
     func testOllamaIsExposedOnlyOnNativeMac() {
 #if os(macOS)

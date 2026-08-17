@@ -9,7 +9,7 @@
 ![watchOS](https://img.shields.io/badge/watchOS-11.5+-black?style=for-the-badge&logo=apple)
 ![macOS](https://img.shields.io/badge/macOS-15.0+-lightgrey?style=for-the-badge&logo=apple)
 
-![Swift](https://img.shields.io/badge/Swift-5.0-orange?style=for-the-badge&logo=swift)
+![Swift](https://img.shields.io/badge/Swift-6.0-orange?style=for-the-badge&logo=swift)
 ![SwiftUI](https://img.shields.io/badge/SwiftUI-blue?style=for-the-badge&logo=swift)
 ![Xcode](https://img.shields.io/badge/Xcode-16+-147EFB?style=for-the-badge&logo=xcode)
 ![Release](https://img.shields.io/github/v/release/bisonbet/BisonNotes-AI?style=for-the-badge&color=success)

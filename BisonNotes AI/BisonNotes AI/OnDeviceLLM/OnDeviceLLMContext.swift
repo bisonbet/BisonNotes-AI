@@ -12,7 +12,7 @@ import llama
 // MARK: - Decode Error
 
 /// Error type for llama decode failures
-public enum LLMDecodeError: Error, LocalizedError {
+public enum LLMDecodeError: Error, LocalizedError, Sendable {
     case decodeFailed(code: Int32)
     case contextNotReady
 

@@ -25,9 +25,6 @@ class LiveTranscriptionService: ObservableObject {
     private var outputURL: URL?
     private var tempCafURL: URL?
 
-    /// Set to false when stopping; the tap closure checks this before writing.
-    private nonisolated(unsafe) var tapIsActive = false
-
     // MARK: - Start
 
     /// Starts live transcription, recording audio to a temporary .caf file.
@@ -71,20 +68,23 @@ class LiveTranscriptionService: ObservableObject {
         recognitionRequest = request
 
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, _ in
-            guard let self, let result else { return }
-            Task { @MainActor in
-                self.liveTranscript = result.bestTranscription.formattedString
+            guard let result else { return }
+            let transcript = result.bestTranscription.formattedString
+            Task { @MainActor [weak self] in
+                self?.liveTranscript = transcript
             }
         }
 
         // Install a single tap that writes to file AND feeds the recognizer.
         // `file` is a strong capture so the AVAudioFile stays alive for the
         // duration of the tap even if self.audioFile is set to nil.
-        let file = audioFile
-        tapIsActive = true
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self, self.tapIsActive else { return }
-            try? file?.write(from: buffer)
+        guard let file = audioFile else {
+            throw LiveTranscriptionError.audioEngineSetupFailed
+        }
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
+            // The callback owns immutable references to the file and request.
+            // Stop removes this tap before releasing the service's references.
+            try? file.write(from: buffer)
             request.append(buffer)
         }
 
@@ -102,7 +102,9 @@ class LiveTranscriptionService: ObservableObject {
         guard isActive else { return (nil, "") }
 
         isActive = false
-        tapIsActive = false  // Signal the tap closure to stop writing
+        // Remove the callback before stopping the engine and releasing the
+        // actor-owned references. The tap's immutable captures keep its file
+        // and request alive until any in-flight callback has returned.
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil

@@ -245,6 +245,25 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
     }
 
+    /// WatchConnectivity delivers property-list dictionaries as `[String: Any]`.
+    /// Serialize that framework-owned value before crossing into a MainActor
+    /// task, then reconstruct it only inside the actor-owned processing path.
+    private nonisolated static func propertyListData(for payload: [String: Any]) -> Data? {
+        try? PropertyListSerialization.data(
+            fromPropertyList: payload,
+            format: .binary,
+            options: 0
+        )
+    }
+
+    private static func propertyListPayload(from data: Data) -> [String: Any]? {
+        try? PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        ) as? [String: Any]
+    }
+
     private func handleSyncFailure(_ recordingId: UUID, reason: String) {
         AppLog.shared.watchConnectivity("Sync failed for: \(recordingId), reason: \(reason)", level: .error)
 
@@ -423,43 +442,80 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        let isReachable = session.isReachable
         DispatchQueue.main.async {
-            AppLog.shared.watchConnectivity("Watch reachability changed: \(session.isReachable)", level: .debug)
+            AppLog.shared.watchConnectivity("Watch reachability changed: \(isReachable)", level: .debug)
             self.updateConnectionState()
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        guard let messageData = Self.propertyListData(for: message) else {
+            AppLog.shared.watchConnectivity("Received watch message was not a valid property list", level: .error)
+            return
+        }
+
         DispatchQueue.main.async {
+            guard let message = Self.propertyListPayload(from: messageData) else {
+                AppLog.shared.watchConnectivity("Failed to decode received watch message", level: .error)
+                return
+            }
             self.processWatchMessage(message)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
-        DispatchQueue.main.async {
-            self.processWatchMessage(message)
+        let messageData = Self.propertyListData(for: message)
 
-            // Send reply with current phone status
-            let reply: [String: Any] = [
-                "status": "received",
-                "phoneAppActive": true,
-                "timestamp": Date().timeIntervalSince1970
-            ]
-            replyHandler(reply)
+        // The reply handler is owned by WatchConnectivity and must be called
+        // synchronously from this delegate callback rather than captured by a
+        // concurrent closure.
+        let reply: [String: Any] = [
+            "status": "received",
+            "phoneAppActive": true,
+            "timestamp": Date().timeIntervalSince1970
+        ]
+        replyHandler(reply)
+
+        guard let messageData else {
+            AppLog.shared.watchConnectivity("Received watch message was not a valid property list", level: .error)
+            return
+        }
+
+        DispatchQueue.main.async {
+            guard let message = Self.propertyListPayload(from: messageData) else {
+                AppLog.shared.watchConnectivity("Failed to decode received watch message", level: .error)
+                return
+            }
+            self.processWatchMessage(message)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        guard let contextData = Self.propertyListData(for: applicationContext) else {
+            AppLog.shared.watchConnectivity("Received application context was not a valid property list", level: .error)
+            return
+        }
+
         DispatchQueue.main.async {
             AppLog.shared.watchConnectivity("Received application context from watch", level: .debug)
-            self.processWatchMessage(applicationContext)
+            if let applicationContext = Self.propertyListPayload(from: contextData) {
+                self.processWatchMessage(applicationContext)
+            }
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        guard let userInfoData = Self.propertyListData(for: userInfo) else {
+            AppLog.shared.watchConnectivity("Received user info was not a valid property list", level: .error)
+            return
+        }
+
         DispatchQueue.main.async {
             AppLog.shared.watchConnectivity("Received user info from watch", level: .debug)
-            self.processWatchMessage(userInfo)
+            if let userInfo = Self.propertyListPayload(from: userInfoData) {
+                self.processWatchMessage(userInfo)
+            }
         }
     }
 
@@ -484,6 +540,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
+        guard let metadataData = Self.propertyListData(for: metadata) else {
+            AppLog.shared.watchConnectivity("Received watch file metadata was not a valid property list", level: .error)
+            return
+        }
+
         // The system deletes file.fileURL as soon as this delegate method returns,
         // so the file must be moved to a staging location synchronously, before
         // any async processing.
@@ -500,6 +561,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
 
         DispatchQueue.main.async {
+            guard let metadata = Self.propertyListPayload(from: metadataData) else {
+                AppLog.shared.watchConnectivity("Failed to decode received watch file metadata", level: .error)
+                try? FileManager.default.removeItem(at: stagedURL)
+                return
+            }
             self.handleWatchRecordingReceived(fileURL: stagedURL, metadata: metadata)
             try? FileManager.default.removeItem(at: stagedURL)
         }

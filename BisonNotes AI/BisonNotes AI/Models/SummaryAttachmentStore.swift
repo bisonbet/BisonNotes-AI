@@ -8,6 +8,10 @@ struct SummarySupplementalData: Codable, Sendable {
     static let empty = SummarySupplementalData(userNotes: nil, attachments: [])
 }
 
+/// Serializes the synchronous attachment/file operations on the main actor so
+/// the shared encoder, decoder, and file-system mutations cannot race. The
+/// public API remains synchronous to preserve existing UI call sites.
+@MainActor
 final class SummaryAttachmentStore {
     static let shared = SummaryAttachmentStore()
 

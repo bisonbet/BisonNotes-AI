@@ -169,6 +169,7 @@ class TokenManager {
     }
 
     /// Combine multiple summaries into a cohesive meta-summary using Ollama
+    @MainActor
     static func combineSummaries(
         _ summaries: [String],
         contentType: ContentType,
@@ -187,6 +188,7 @@ class TokenManager {
     }
 
     /// Recursively generate a meta-summary that fits within the model's context window
+    @MainActor
     private static func generateMetaSummary(from text: String, service: OllamaService) async throws -> String {
         let maxTokens = service.maxContextTokens
 

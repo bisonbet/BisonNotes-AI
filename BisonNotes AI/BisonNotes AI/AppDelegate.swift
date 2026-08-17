@@ -21,7 +21,7 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
     // Reference to AudioRecorderViewModel for handling resume actions
     // This will be set by the main app
-    static weak var recorderViewModel: AudioRecorderViewModel?
+    @MainActor static weak var recorderViewModel: AudioRecorderViewModel?
 
     func completeLaunchSetup() {
         // Set notification delegate
@@ -100,14 +100,19 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
         let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let actionIdentifier = response.actionIdentifier
+        let recordingURLString = response.notification.request.content.userInfo["recordingURL"] as? String
 
         AppLog.shared.general("Received notification action: category=\(categoryIdentifier), action=\(actionIdentifier)")
+
+        // The delegate callback owns the framework response and completion
+        // handler. Extract only immutable values before handing work to the
+        // MainActor; the completion callback itself must not cross actors.
+        completionHandler()
 
         if categoryIdentifier == "RESUME_RECORDING" {
             Task { @MainActor in
                 guard let recorderVM = AppDelegateCore.recorderViewModel else {
                     AppLog.shared.general("AudioRecorderViewModel not available for notification action", level: .error)
-                    completionHandler()
                     return
                 }
 
@@ -115,8 +120,8 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
                     AppLog.shared.general("User chose to resume recording")
 
                     // Extract recording URL from notification user info
-                    if let urlString = response.notification.request.content.userInfo["recordingURL"] as? String,
-                       let url = URL(string: urlString) {
+                    if let recordingURLString,
+                       let url = URL(string: recordingURLString) {
                         // Resume recording
                         recorderVM.recordingState = .recording
                         await recorderVM.resumeRecordingAfterInterruption(url: url)
@@ -131,10 +136,7 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
                     recorderVM.handleInterruptedRecording(reason: "User chose to stop after long call")
                 }
 
-                completionHandler()
             }
-        } else {
-            completionHandler()
         }
     }
 
