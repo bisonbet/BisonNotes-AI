@@ -39,6 +39,7 @@ class OpenAICompatibleService: ObservableObject {
     // MARK: - Public Methods
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
+        let comedyMode = ComedyMode.current
         let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: text)
 
@@ -51,7 +52,7 @@ class OpenAICompatibleService: ObservableObject {
         let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: effectiveTemperature(config.temperature),
+            temperature: effectiveTemperature(config.temperature, comedyMode: comedyMode),
             maxCompletionTokens: config.maxTokens,
             reasoningEffort: reasoningEffort(),
             enableThinking: thinkingOptions.enableThinking,
@@ -144,12 +145,19 @@ class OpenAICompatibleService: ObservableObject {
         // First classify the content
         let contentType = try await classifyContent(text)
         let comedyMode = ComedyMode.current
+        let detailLevel = SummaryDetailLevel.current
 
         // Create a comprehensive prompt for all tasks
         let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: text)
 
-        AppLog.shared.networking("Compatible API complete prompt comedy mode: \(comedyMode.rawValue)", level: .debug)
+        let completionTemperature = effectiveTemperature(config.temperature, comedyMode: comedyMode)
+        let temperatureDescription = completionTemperature.map { String(format: "%.1f", $0) } ?? "reasoning-default"
+        AppLog.shared.networking(
+            "Compatible API complete prompt settings: detail=\(detailLevel.displayName), "
+                + "comedy=\(comedyMode.rawValue), temperature=\(temperatureDescription)",
+            level: .debug
+        )
 
         // Use the cached message format. Compatible endpoints vary widely in
         // their support for response_format, so flexible parsing is safer.
@@ -161,7 +169,7 @@ class OpenAICompatibleService: ObservableObject {
         let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: effectiveTemperature(config.temperature),
+            temperature: completionTemperature,
             maxCompletionTokens: config.maxTokens,
             responseFormat: nil,
             reasoningEffort: reasoningEffort(),
@@ -301,9 +309,20 @@ class OpenAICompatibleService: ObservableObject {
         Self.isReasoningModel(config.effectiveModelId)
     }
 
-    /// Returns a temperature value appropriate for the current model.
-    private func effectiveTemperature(_ temperature: Double) -> Double? {
-        return isReasoningModel() ? nil : temperature
+    /// Returns a temperature value appropriate for the current model. Comedy
+    /// needs enough variation to produce a narrative voice; roast-level snark
+    /// needs a higher floor than playful humor. Preserve a user's higher setting
+    /// but lift very low settings that would otherwise produce bland prose.
+    private func effectiveTemperature(_ temperature: Double, comedyMode: ComedyMode = .off) -> Double? {
+        guard !isReasoningModel() else { return nil }
+        switch comedyMode {
+        case .off:
+            return temperature
+        case .snarky:
+            return max(temperature, 0.8)
+        case .funny:
+            return max(temperature, 0.6)
+        }
     }
 
     /// Returns reasoning effort for reasoning models, nil for others.

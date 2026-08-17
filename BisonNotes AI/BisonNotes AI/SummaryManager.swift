@@ -1063,6 +1063,10 @@ class SummaryManager: ObservableObject {
         // Sync engine from settings before logging to avoid "No current engine set" warning
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
+        AppLog.shared.summarization(
+            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), comedy=\(ComedyMode.current.rawValue)",
+            level: .debug
+        )
 
         let startTime = Date()
 

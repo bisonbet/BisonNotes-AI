@@ -134,8 +134,10 @@ final class BisonNotesAITests: XCTestCase {
         let defaults = UserDefaults.standard
         let enabledKey = ComedyMode.SettingsKeys.enabled
         let styleKey = ComedyMode.SettingsKeys.style
+        let detailKey = SummaryDetailLevel.storageKey
         let originalEnabled = defaults.object(forKey: enabledKey)
         let originalStyle = defaults.object(forKey: styleKey)
+        let originalDetail = defaults.object(forKey: detailKey)
 
         defer {
             if let originalEnabled {
@@ -149,7 +151,15 @@ final class BisonNotesAITests: XCTestCase {
             } else {
                 defaults.removeObject(forKey: styleKey)
             }
+
+            if let originalDetail {
+                defaults.set(originalDetail, forKey: detailKey)
+            } else {
+                defaults.removeObject(forKey: detailKey)
+            }
         }
+
+        defaults.set(SummaryDetailLevel.detailed.rawValue, forKey: detailKey)
 
         for mode in [ComedyMode.snarky, .funny] {
             defaults.set(true, forKey: enabledKey)
@@ -165,6 +175,25 @@ final class BisonNotesAITests: XCTestCase {
             XCTAssertTrue(summaryPrompt.contains("Comedy is required in the summary"))
             XCTAssertTrue(summaryPrompt.contains("Do not return a neutral, clinical, or purely professional summary"))
 
+            if mode == .snarky {
+                XCTAssertTrue(summaryPrompt.contains("Roast-Level Snark Mode"))
+                XCTAssertTrue(summaryPrompt.contains("high-energy observational roast"))
+            }
+
+            let summaryUserPrompt = ChatCompletionPromptGenerator.createUserPrompt(
+                for: .summary,
+                text: "A transcript about a scheduling problem."
+            )
+            XCTAssertTrue(summaryUserPrompt.contains("FINAL SUMMARY STYLE REQUIREMENT"))
+            XCTAssertTrue(summaryUserPrompt.contains("not neutral, clinical,"))
+            XCTAssertTrue(summaryUserPrompt.contains("or purely professional"))
+            XCTAssertTrue(summaryUserPrompt.contains("Summary Detail: Detailed"))
+
+            if mode == .snarky {
+                XCTAssertTrue(summaryUserPrompt.contains("ROAST-LEVEL SNARK"))
+                XCTAssertTrue(summaryUserPrompt.contains("One mild joke is insufficient"))
+            }
+
             let completePrompt = ChatCompletionPromptGenerator.createSystemPrompt(
                 for: .complete,
                 contentType: .general
@@ -175,6 +204,24 @@ final class BisonNotesAITests: XCTestCase {
             XCTAssertTrue(completePrompt.contains("at least one clearly witty aside"))
             XCTAssertTrue(completePrompt.contains("Treat `tasks`, `reminders`, `titles`"))
             XCTAssertTrue(completePrompt.contains("exact requested output format"))
+
+            if mode == .snarky {
+                XCTAssertTrue(completePrompt.contains("roast-level, high-energy snark"))
+                XCTAssertTrue(completePrompt.contains("recurring sarcastic beats"))
+            }
+
+            let completeUserPrompt = ChatCompletionPromptGenerator.createUserPrompt(
+                for: .complete,
+                text: "A transcript about a scheduling problem."
+            )
+            XCTAssertTrue(completeUserPrompt.contains("FINAL SUMMARY STYLE REQUIREMENT"))
+            XCTAssertTrue(completeUserPrompt.contains("summary` value MUST be"))
+            XCTAssertTrue(completeUserPrompt.contains("Summary Detail: Detailed"))
+
+            if mode == .snarky {
+                XCTAssertTrue(completeUserPrompt.contains("ROAST-LEVEL SNARK"))
+                XCTAssertTrue(completeUserPrompt.contains("recurring punchlines"))
+            }
 
             let tasksPrompt = ChatCompletionPromptGenerator.createSystemPrompt(
                 for: .tasks,

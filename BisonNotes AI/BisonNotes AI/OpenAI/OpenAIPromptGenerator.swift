@@ -36,18 +36,26 @@ enum ComedyMode: String {
         case .snarky:
             return """
 
-            **Snarky Comedy Mode — REQUIRED summary voice only:**
+            **Roast-Level Snark Mode — REQUIRED summary voice only:**
+            - The summary must sound like a sharp, high-energy observational roast:
+              exasperated, sarcastic, punchy, and unmistakably comedic—not merely dry or mildly witty.
+            - Do not settle for one polite aside. Build recurring comedic beats by calling out
+              contradictions, absurd logistics, bureaucratic nonsense, awkward timing, and obvious
+              human nonsense when they are actually present in the transcript.
+            - Use punchy sentences, rhetorical disbelief, escalation, vivid comparisons, and
+              sarcastic asides. Every paragraph should contain a strong comedic beat; use several
+              when the summary is longer.
             - Comedy is required in the summary. Do not return a neutral, clinical, or purely professional summary.
-            - Use a clearly recognizable dry/snarky voice with at least one light witty aside
-              or wry observation in every summary; use several in longer summaries.
+            - A bland, therapeutic, or corporate-sounding summary fails this mode.
             - Put the humor in the prose, not only in a heading or formatting.
               Ground it in details already present in the transcript.
             - Keep every fact, name, number, date, quote, medical detail, and decision accurate and complete.
             - Jokes must not become new claims.
-              Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive, task, or reminder.
-            - For sensitive material, aim humor at relatable situations or the process—not at a person,
-              health concern, trauma, grief, disability, or abuse.
-            - Keep it PG and family-friendly with no profanity, crude humor, or sexual jokes.
+              Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive,
+              task, or reminder.
+            - Roast the situation, process, bureaucracy, technology, or universal absurdity—not a
+              person, health concern, trauma, grief, disability, abuse, or other vulnerability.
+            - Keep the edge sharp but the target fair: no cruelty, harassment, profanity, or sexual jokes.
             """
         case .funny:
             return """
@@ -73,19 +81,31 @@ enum ComedyMode: String {
     /// tasks, reminders, titles, or the required response format.
     var structuredPromptModifier: String? {
         let style: String
+        let narrativeGuidance: String
         switch self {
         case .off:
             return nil
         case .snarky:
-            style = "dry, lightly snarky wit"
+            style = "roast-level, high-energy snark"
+            narrativeGuidance = """
+            - Use a sharp, exasperated observational-roast voice with punchy sentences,
+              rhetorical disbelief, escalation, and recurring sarcastic beats.
+            - One mild joke is not enough: every paragraph should contain a strong comedic
+              observation when the source gives you something to work with.
+            - Roast absurd situations and processes, never people or sensitive vulnerabilities.
+            """
         case .funny:
             style = "playful, goofy humor"
+            narrativeGuidance = """
+            - Use a lively, playful, goofy voice with concrete metaphors and light absurdity.
+            """
         }
 
         return """
 
         **COMEDY REQUIRED — \(style), summary field only:**
         - Make the `summary` recognizably comedic; do not return a neutral summary.
+        \(narrativeGuidance)
         - Include at least one clearly witty aside, wry observation, playful metaphor, or light
           absurd comparison in every `summary`; use several in longer summaries.
         - Put the comedy in the summary prose, not only in a heading or formatting.
@@ -103,6 +123,42 @@ enum ComedyMode: String {
         - Preserve the exact requested output format, section/field names, and field types.
           Do not add commentary outside the requested response.
         """
+    }
+
+    /// Repeats the narrative-style requirement in the user message. Some
+    /// compatible models prioritize the final user turn over a long system
+    /// prompt, especially when they are also asked for strict JSON.
+    var userPromptModifier: String? {
+        switch self {
+        case .off:
+            return nil
+        case .snarky:
+            return """
+
+            **FINAL SUMMARY STYLE REQUIREMENT — ROAST-LEVEL SNARK:**
+            The `summary` value MUST be a sharp, high-energy observational roast:
+            exasperated, sarcastic, punchy, and unmistakably comedic—not neutral, clinical,
+            or purely professional, and not merely dry or mildly witty.
+            One mild joke is insufficient. Use recurring punchlines, rhetorical disbelief,
+            escalation, vivid comparisons, and sarcastic asides throughout the prose.
+            Every paragraph should contain a strong comedic beat when the transcript supports one.
+            Roast the situation, process, bureaucracy, technology, or universal absurdity—not a person,
+            health concern, trauma, grief, disability, abuse, or other vulnerability.
+            A neutral, clinical, therapeutic, or corporate summary means this instruction was not followed.
+            """
+        case .funny:
+            return """
+
+            **FINAL SUMMARY STYLE REQUIREMENT — FUNNY:**
+            The `summary` value MUST be recognizably playful and goofy,
+            not neutral, clinical, or purely professional.
+            Put at least one playful metaphor or light absurd comparison in the
+            summary prose itself, not just in headings or formatting.
+            Keep the humor grounded in the transcript. For sensitive subjects,
+            aim it only at relatable logistics or process—not at a person, health
+            concern, trauma, grief, disability, or abuse.
+            """
+        }
     }
 }
 
@@ -305,11 +361,13 @@ class ChatCompletionPromptGenerator {
         let detailInstructions = SummaryDetailLevel.current.promptInstructions(
             forSourceWordCount: wordCount(of: text)
         )
+        let comedyInstructions = ComedyMode.current.userPromptModifier ?? ""
 
         return """
         Please provide a summary of the following content using proper Markdown formatting.
 
         \(detailInstructions)
+        \(comedyInstructions)
 
         \(text)
         """
@@ -393,6 +451,7 @@ class ChatCompletionPromptGenerator {
         let detailInstructions = SummaryDetailLevel.current.promptInstructions(
             forSourceWordCount: wordCount(of: text)
         )
+        let comedyInstructions = ComedyMode.current.userPromptModifier ?? ""
 
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
@@ -438,6 +497,7 @@ class ChatCompletionPromptGenerator {
         - This is machine-parsed output: do not return a Markdown fence, explanation, or partially formed JSON.
 
         \(detailInstructions)
+        \(comedyInstructions)
 
         Content to analyze:
         \(text)
