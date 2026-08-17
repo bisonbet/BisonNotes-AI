@@ -1021,7 +1021,10 @@ if transcriptText.isEmpty {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            recognitionTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }
@@ -1409,7 +1412,10 @@ for (index, chunk) in chunks.enumerated() {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            recognitionTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }
@@ -1486,7 +1492,10 @@ for (index, chunk) in chunks.enumerated() {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            exportTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }

@@ -318,6 +318,10 @@ private actor MLXSwiftService {
 
     private var modelContainer: ModelContainer?
     private var loadedModelId: String?
+    /// Held outside actor isolation so the nonisolated deinit can unregister
+    /// the memory-warning observer; NotificationCenter keeps block observers
+    /// alive until `removeObserver`, regardless of the weak capture below.
+    private let memoryObservers = LifecycleObserverTokens()
     private var hasMemoryObserver = false
     private var receivedMemoryWarning = false
 
@@ -331,14 +335,14 @@ private actor MLXSwiftService {
     private func ensureMemoryObserver() {
         guard !hasMemoryObserver else { return }
 
-        _ = NotificationCenter.default.addObserver(
+        memoryObservers.add(NotificationCenter.default.addObserver(
             forName: PlatformLifecycle.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
             Task { await self.handleMemoryWarning() }
-        }
+        })
         hasMemoryObserver = true
     }
 

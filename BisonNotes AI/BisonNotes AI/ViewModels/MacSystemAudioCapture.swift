@@ -132,7 +132,9 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func setPaused(_ paused: Bool) {
-		sampleQueue.sync {
+		// Async: this is called from the main thread during a pause/resume tap,
+		// and `sampleQueue` is the realtime sample-handler queue.
+		sampleQueue.async { [self] in
 			guard self.isPaused != paused else { return }
 			self.isPaused = paused
 			if paused {
@@ -143,7 +145,9 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
 	@MainActor
 	func stop() async throws -> URL? {
-		if let stream {
+		// `start()` publishes these onto the sample queue, so every read and
+		// write of them belongs there too — including this teardown.
+		if let stream = sampleQueue.sync(execute: { self.stream }) {
 			do {
 				try await stream.stopCapture()
 			} catch {
@@ -154,9 +158,11 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		await finishWriterOnSampleQueue()
 		let snapshot = snapshotOnSampleQueue()
 
-		stream = nil
-		assetWriter = nil
-		audioInput = nil
+		sampleQueue.sync {
+			self.stream = nil
+			self.assetWriter = nil
+			self.audioInput = nil
+		}
 
 		if let stopErrorDescription = snapshot.stopErrorDescription {
 			throw NSError(

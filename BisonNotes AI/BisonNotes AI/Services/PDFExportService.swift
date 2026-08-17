@@ -28,6 +28,7 @@ class PDFExportService {
 
     private struct MapSnapshotPayload: Sendable {
         let imageData: Data
+        let scale: Double
         let pointX: Double
         let pointY: Double
     }
@@ -715,19 +716,34 @@ class PDFExportService {
                         latitude: latitude,
                         longitude: longitude
                     ))
+                    // PNG carries pixels but not the snapshot's scale. Send the
+                    // scale across with it so the image can be rebuilt in the
+                    // same point space that `point` was measured in.
                     continuation.resume(returning: MapSnapshotPayload(
                         imageData: imageData,
+                        scale: Double(snapshot.image.scale),
                         pointX: Double(point.x),
                         pointY: Double(point.y)
                     ))
                 }
             }
 
-            guard let snapshotImage = UIImage(data: snapshot.imageData) else {
+            // `UIImage(data:)` always yields scale 1.0, which would make `size`
+            // report pixels and push the pin to roughly 1/scale of its correct
+            // position. Rebuild at the original scale so the point space matches.
+            guard let decodedImage = UIImage(data: snapshot.imageData),
+                  let cgImage = decodedImage.cgImage else {
                 return nil
             }
+            let snapshotImage = UIImage(
+                cgImage: cgImage,
+                scale: CGFloat(snapshot.scale),
+                orientation: decodedImage.imageOrientation
+            )
 
-            let renderer = UIGraphicsImageRenderer(size: snapshotImage.size)
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = CGFloat(snapshot.scale)
+            let renderer = UIGraphicsImageRenderer(size: snapshotImage.size, format: format)
             let pinImage = UIImage(systemName: "mappin.circle.fill")?
                 .withTintColor(.systemRed, renderingMode: .alwaysOriginal)
 

@@ -62,7 +62,9 @@ class WyomingTCPClient: ObservableObject {
     private let serverHost: String
     private let serverPort: Int
     private var messageHandlers: [WyomingMessageType: (WyomingMessage) -> Void] = [:]
-    private var connectionContinuation: CheckedContinuation<Void, Error>?
+    /// Kept outside actor isolation so the nonisolated deinit can fail a
+    /// still-pending connect instead of leaving its task suspended forever.
+    private let connectionContinuation = WyomingConnectionContinuation()
     private var connectionCancellationRequested = false
 
     // MARK: - Initialization
@@ -74,6 +76,9 @@ class WyomingTCPClient: ObservableObject {
 
     deinit {
         AppLog.shared.transcription("WyomingTCPClient deinit", level: .debug)
+
+        // A connect suspended at deallocation would otherwise never resume.
+        connectionContinuation.finish(.failure(WyomingError.connectionFailed))
 
         // Cancel connection synchronously without Task
         let actor = connectionActor
@@ -111,7 +116,7 @@ class WyomingTCPClient: ObservableObject {
                     return
                 }
 
-                self.connectionContinuation = continuation
+                self.connectionContinuation.store(continuation)
 
                 connection.stateUpdateHandler = { [weak self] state in
                     Task { @MainActor in
@@ -135,10 +140,7 @@ class WyomingTCPClient: ObservableObject {
 
     private func cancelPendingConnection() {
         connectionCancellationRequested = true
-        if let continuation = connectionContinuation {
-            connectionContinuation = nil
-            continuation.resume(throwing: CancellationError())
-        }
+        connectionContinuation.finish(.failure(CancellationError()))
 
         let actor = connectionActor
         Task {
@@ -147,9 +149,7 @@ class WyomingTCPClient: ObservableObject {
     }
 
     private func finishConnection(_ result: Result<Void, Error>) {
-        guard let continuation = connectionContinuation else { return }
-        connectionContinuation = nil
-        continuation.resume(with: result)
+        connectionContinuation.finish(result)
     }
 
     private func handleConnectionStateUpdate(_ state: NWConnection.State) async {

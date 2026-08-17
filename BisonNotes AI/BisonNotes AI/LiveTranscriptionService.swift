@@ -11,6 +11,27 @@ import Foundation
 import AVFoundation
 import Speech
 
+/// Lets the audio tap — which runs on the render thread, outside the service's
+/// actor — check whether it should still be writing. Reads and writes are both
+/// single-word and guarded by the lock, so the unchecked conformance covers only
+/// that one field.
+private final class TapActivationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+
+    var isActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return active
+    }
+
+    func deactivate() {
+        lock.lock()
+        active = false
+        lock.unlock()
+    }
+}
+
 @MainActor
 class LiveTranscriptionService: ObservableObject {
 
@@ -24,6 +45,7 @@ class LiveTranscriptionService: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var outputURL: URL?
     private var tempCafURL: URL?
+    private var tapActivation: TapActivationFlag?
 
     // MARK: - Start
 
@@ -81,9 +103,20 @@ class LiveTranscriptionService: ObservableObject {
         guard let file = audioFile else {
             throw LiveTranscriptionError.audioEngineSetupFailed
         }
+
+        // `removeTap` does not guarantee that a callback already dispatched on
+        // the render thread has returned, so `stop()` clears this flag first.
+        // Without it an in-flight buffer can reach `request.append` after
+        // `endAudio()`, which raises. The flag is a class so the nonisolated
+        // tap closure can read it without capturing actor-isolated state.
+        let tapFlag = TapActivationFlag()
+        tapActivation = tapFlag
+
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
             // The callback owns immutable references to the file and request.
-            // Stop removes this tap before releasing the service's references.
+            // Stop clears the flag and removes this tap before releasing the
+            // service's references.
+            guard tapFlag.isActive else { return }
             try? file.write(from: buffer)
             request.append(buffer)
         }
@@ -102,9 +135,12 @@ class LiveTranscriptionService: ObservableObject {
         guard isActive else { return (nil, "") }
 
         isActive = false
-        // Remove the callback before stopping the engine and releasing the
-        // actor-owned references. The tap's immutable captures keep its file
-        // and request alive until any in-flight callback has returned.
+        // Signal the tap to stop writing before removing it, so a callback
+        // already in flight cannot append to the request after endAudio().
+        // The tap's immutable captures keep its file and request alive until
+        // any in-flight callback has returned.
+        tapActivation?.deactivate()
+        tapActivation = nil
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil

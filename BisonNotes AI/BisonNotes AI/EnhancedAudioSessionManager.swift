@@ -29,8 +29,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Private Properties
     private lazy var session = AVAudioSession.sharedInstance()
-    private var interruptionObserver: NSObjectProtocol?
-    private var routeChangeObserver: NSObjectProtocol?
+    /// Held outside actor isolation so the nonisolated Swift 6 deinit can still
+    /// unregister them. The weak captures in the observer blocks prevent a
+    /// retain cycle but do not remove the registrations themselves.
+    private let sessionObservers = LifecycleObserverTokens()
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -75,9 +77,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     }
 
 	deinit {
-		// NotificationCenter block observers capture the manager weakly, so they
-		// cannot keep this instance alive after deinitialization. The live owner
-		// can remove the tokens through its MainActor lifecycle methods.
+		sessionObservers.removeAll()
 	}
 
     // MARK: - Public Methods
@@ -343,7 +343,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
         // flooding the log with "cannot add handler" messages.
         // Audio interruption observer
-        interruptionObserver = NotificationCenter.default.addObserver(
+        sessionObservers.add(NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification,
             object: session,
             queue: .main
@@ -356,10 +356,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                       let interruptionType = AVAudioSession.InterruptionType(rawValue: interruptionTypeValue) else { return }
                 self.handleAudioInterruption(type: interruptionType)
             }
-        }
+        })
 
         // Route change observer
-        routeChangeObserver = NotificationCenter.default.addObserver(
+        sessionObservers.add(NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification,
             object: session,
             queue: .main
@@ -376,7 +376,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     await self.autoSelectBestInput()
                 }
             }
-        }
+        })
     }
 
     // MARK: - Notification Handlers

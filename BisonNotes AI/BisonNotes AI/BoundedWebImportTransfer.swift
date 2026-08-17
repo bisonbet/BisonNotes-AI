@@ -45,7 +45,16 @@ final class BoundedWebImportTransfer: NSObject, URLSessionDataDelegate, @uncheck
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 lock.lock()
-                guard !isComplete, !hasStarted else {
+                // `isComplete` here means the cancellation handler already ran
+                // (the task was cancelled before start), which is a cancellation
+                // — not a second caller. Reporting `importInProgress` for it
+                // shows the user "Another import is already in progress".
+                guard !isComplete else {
+                    lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                guard !hasStarted else {
                     lock.unlock()
                     continuation.resume(throwing: WebImportError.importInProgress)
                     return

@@ -20,7 +20,9 @@ class WyomingWebSocketClient: ObservableObject {
     private var urlSession: URLSession?
     private let serverURL: URL
     private var messageHandlers: [WyomingMessageType: (WyomingMessage) -> Void] = [:]
-    private var connectionContinuation: CheckedContinuation<Void, Error>?
+    /// Kept outside actor isolation so the nonisolated deinit can fail a
+    /// still-pending connect instead of leaving its task suspended forever.
+    private let connectionContinuation = WyomingConnectionContinuation()
     private var connectionCancellationRequested = false
 
     // MARK: - Initialization
@@ -34,6 +36,9 @@ class WyomingWebSocketClient: ObservableObject {
         // Cancel WebSocket task synchronously
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+
+        // A connect suspended at deallocation would otherwise never resume.
+        connectionContinuation.finish(.failure(WyomingError.connectionFailed))
     }
 
     // MARK: - Connection Management
@@ -60,7 +65,7 @@ class WyomingWebSocketClient: ObservableObject {
                     return
                 }
 
-                connectionContinuation = continuation
+                connectionContinuation.store(continuation)
 
                 guard let session = urlSession else {
                     AppLog.shared.transcription("No URL session available", level: .error)
@@ -127,9 +132,7 @@ class WyomingWebSocketClient: ObservableObject {
     }
 
     private func finishConnection(_ result: Result<Void, Error>) {
-        guard let continuation = connectionContinuation else { return }
-        connectionContinuation = nil
-        continuation.resume(with: result)
+        connectionContinuation.finish(result)
     }
 
     func disconnect() {

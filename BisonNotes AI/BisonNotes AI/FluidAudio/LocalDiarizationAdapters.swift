@@ -112,7 +112,15 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) {
             switch method {
             case .offlineVBx:
-                return OfflineVBxRunner(modelDirectory: directory)
+                // Load the models here, under the gate, with offline mode forced.
+                // `OfflineDiarizerManager.prepareModels` purges its cache and
+                // re-downloads on any load failure, so it must never run outside
+                // this gate — models are downloaded explicitly, never implicitly
+                // when a transcription starts. `OfflineDiarizerModels` is Sendable,
+                // so it crosses back out safely; the non-Sendable manager is then
+                // built from it inside the runner actor.
+                let models = try await Self.loadOfflineVBxModelsFromCache(from: directory)
+                return OfflineVBxRunner(models: models)
             case .experimentalLSEEND:
                 let modelURL = Self.lseendModelURL(at: directory)
                 let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
@@ -172,6 +180,18 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             progressHandler: { _ in }
         )
         try Task.checkCancellation()
+    }
+
+    private nonisolated static func loadOfflineVBxModelsFromCache(
+        from directory: URL
+    ) async throws -> OfflineDiarizerModels {
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuOnly
+        return try await OfflineDiarizerModels.load(
+            from: directory,
+            configuration: configuration,
+            progressHandler: nil
+        )
     }
 
     private static func localProgress(
@@ -251,10 +271,14 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
 }
 
 private actor OfflineVBxRunner: LocalDiarizationRunner {
-    private var modelDirectory: URL?
+    /// The models are loaded once, under the model-hub gate, before this runner
+    /// is constructed. `OfflineDiarizerManager` itself is not Sendable, so it is
+    /// built here — inside the actor — from those already-loaded models rather
+    /// than being passed across an isolation boundary.
+    private var models: OfflineDiarizerModels?
 
-    init(modelDirectory: URL) {
-        self.modelDirectory = modelDirectory
+    init(models: OfflineDiarizerModels) {
+        self.models = models
     }
 
     func process(
@@ -263,10 +287,10 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws -> LocalDiarizationResult {
         try Task.checkCancellation()
-        guard let modelDirectory else { throw LocalDiarizationError.runnerUnavailable }
+        guard let models else { throw LocalDiarizationError.runnerUnavailable }
         let result = try await Self.process(
+            models: models,
             audioURL: audioURL,
-            modelDirectory: modelDirectory,
             progressHandler: progressHandler
         )
         try Task.checkCancellation()
@@ -283,21 +307,21 @@ private actor OfflineVBxRunner: LocalDiarizationRunner {
     }
 
     func cleanup() async {
-        modelDirectory = nil
+        models = nil
     }
 
+    /// `OfflineDiarizerManager` is not Sendable, so it is created and consumed
+    /// entirely inside this nonisolated call rather than stored on the actor.
+    /// Construction is cheap — `initialize(models:)` just retains the already
+    /// loaded models — so the expensive, network-capable load still happens
+    /// exactly once, inside `FluidAudioModelHubGate` at `makeRunner` time.
     private nonisolated static func process(
+        models: OfflineDiarizerModels,
         audioURL: URL,
-        modelDirectory: URL,
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws -> DiarizationResult {
-        let configuration = MLModelConfiguration()
-        configuration.computeUnits = .cpuOnly
         let manager = OfflineDiarizerManager(config: OfflineDiarizerConfig())
-        try await manager.prepareModels(
-            directory: modelDirectory,
-            configuration: configuration
-        )
+        manager.initialize(models: models)
         return try await manager.process(audioURL) { processed, total in
             let fraction = total > 0 ? Double(processed) / Double(total) : nil
             progressHandler(

@@ -51,29 +51,43 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
+    /// `CLLocationManager.locationServicesEnabled()` can block its caller, so
+    /// Apple documents it as unsafe to call from the main thread. Read it on a
+    /// background executor and resume the main-actor flow with the result.
+    private nonisolated static func locationServicesEnabled() async -> Bool {
+        await Task.detached(priority: .utility) {
+            CLLocationManager.locationServicesEnabled()
+        }.value
+    }
+
     func startLocationUpdates() {
-        // Check location services availability on background queue
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard CLLocationManager.locationServicesEnabled() else {
-                self.locationError = "Location services are disabled on this device"
+            guard await Self.locationServicesEnabled() else {
+                self?.locationError = "Location services are disabled on this device"
                 return
             }
-                switch self.locationStatus {
-                case .authorizedWhenInUse, .authorizedAlways:
-                    // Only request a one-time location update to avoid continuous battery drain
-                    // Do NOT use startUpdatingLocation() as it runs continuously
-                    self.locationManager.requestLocation()
-                    self.isLocationEnabled = true
-                    self.locationError = nil
-                case .denied, .restricted:
-                    self.locationError = "Location access denied. Please enable in Settings."
-                case .notDetermined:
-                    // Don't request permission here - let the authorization callback handle it
-                    self.locationError = "Location permission not determined"
-                @unknown default:
-                    self.locationError = "Unknown location authorization status"
-            }
+            self?.performStartLocationUpdates()
+        }
+    }
+
+    private func performStartLocationUpdates() {
+        let status = locationManager.authorizationStatus
+        locationStatus = status
+
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            // Only request a one-time location update to avoid continuous battery drain
+            // Do NOT use startUpdatingLocation() as it runs continuously
+            locationManager.requestLocation()
+            isLocationEnabled = true
+            locationError = nil
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+        case .notDetermined:
+            // Don't request permission here - let the authorization callback handle it
+            locationError = "Location permission not determined"
+        @unknown default:
+            locationError = "Unknown location authorization status"
         }
     }
 
@@ -87,27 +101,31 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     func requestOneTimeLocation() {
-        // Check location services availability on background queue
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            guard CLLocationManager.locationServicesEnabled() else {
-                self.locationError = "Location services are disabled on this device"
+            guard await Self.locationServicesEnabled() else {
+                self?.locationError = "Location services are disabled on this device"
                 return
             }
+            self?.performRequestOneTimeLocation()
+        }
+    }
 
-                switch self.locationStatus {
-                case .authorizedWhenInUse, .authorizedAlways:
-                    // Location manager methods must be called on main queue
-                    self.locationManager.requestLocation()
-                    self.locationError = nil
-                case .denied, .restricted:
-                    self.locationError = "Location access denied. Please enable in Settings."
-                case .notDetermined:
-                    // Don't request permission here - let the authorization callback handle it
-                    self.locationError = "Location permission not determined"
-                @unknown default:
-                    self.locationError = "Unknown location authorization status"
-            }
+    private func performRequestOneTimeLocation() {
+        let status = locationManager.authorizationStatus
+        locationStatus = status
+
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            // Location manager methods must be called on main queue
+            locationManager.requestLocation()
+            locationError = nil
+        case .denied, .restricted:
+            locationError = "Location access denied. Please enable in Settings."
+        case .notDetermined:
+            // Don't request permission here - let the authorization callback handle it
+            locationError = "Location permission not determined"
+        @unknown default:
+            locationError = "Unknown location authorization status"
         }
     }
 
@@ -119,22 +137,23 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         // Add completion handler to the list
         locationCompletionHandlers.append(completion)
 
-        // Check location services availability on background queue to avoid UI blocking
         Task { @MainActor [weak self] in
             guard let self else { return }
-            guard CLLocationManager.locationServicesEnabled() else {
+            guard await Self.locationServicesEnabled() else {
                 self.locationError = "Location services are disabled on this device"
                 self.locationCompletionHandlers.forEach { $0(nil) }
                 self.locationCompletionHandlers.removeAll()
                 return
             }
-
             self.proceedWithLocationRequest()
         }
     }
 
     private func proceedWithLocationRequest() {
-        switch locationStatus {
+        let status = locationManager.authorizationStatus
+        locationStatus = status
+
+        switch status {
         case .authorizedWhenInUse, .authorizedAlways:
             // If we already have a recent location (less than 30 seconds old), use it
             if let currentLoc = currentLocation,
@@ -340,7 +359,9 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
-    nonisolated func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        let status = manager.authorizationStatus
+
         Task { @MainActor [weak self] in
             guard let self else { return }
             locationStatus = status
