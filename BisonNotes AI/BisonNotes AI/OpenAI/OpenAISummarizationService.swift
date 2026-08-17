@@ -143,10 +143,13 @@ class OpenAICompatibleService: ObservableObject {
     func processComplete(text: String) async throws -> SummarizationResult {
         // First classify the content
         let contentType = try await classifyContent(text)
+        let comedyMode = ComedyMode.current
 
         // Create a comprehensive prompt for all tasks
         let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
         let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: text)
+
+        AppLog.shared.networking("Compatible API complete prompt comedy mode: \(comedyMode.rawValue)", level: .debug)
 
         // Use the cached message format. Compatible endpoints vary widely in
         // their support for response_format, so flexible parsing is safer.
@@ -175,8 +178,8 @@ class OpenAICompatibleService: ObservableObject {
             throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
         }
 
-        // Parse the JSON response with flexible format handling
-        // Supports: standard format, wrapped format, markdown code blocks, plain text fallback
+        // Parse the JSON response with flexible envelope handling while keeping
+        // the complete metadata contract strict.
         let cleanedContent = SummaryThinkingResponseCleaner.stripDelimitedThinking(
             from: choice.message.content
         )

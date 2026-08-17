@@ -36,25 +36,33 @@ enum ComedyMode: String {
         case .snarky:
             return """
 
-            **Snarky Comedy Mode — summary narrative only:**
-            - Use a dry, playful, clearly comedic voice with occasional gentle sarcasm and witty asides.
+            **Snarky Comedy Mode — REQUIRED summary voice only:**
+            - Comedy is required in the summary. Do not return a neutral, clinical, or purely professional summary.
+            - Use a clearly recognizable dry/snarky voice with at least one light witty aside
+              or wry observation in every summary; use several in longer summaries.
+            - Put the humor in the prose, not only in a heading or formatting.
+              Ground it in details already present in the transcript.
             - Keep every fact, name, number, date, quote, medical detail, and decision accurate and complete.
             - Jokes must not become new claims.
               Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive, task, or reminder.
-            - Do not mock health concerns, trauma, grief, disability, abuse, or private individuals.
-              Use gentle humor when the subject is sensitive.
+            - For sensitive material, aim humor at relatable situations or the process—not at a person,
+              health concern, trauma, grief, disability, or abuse.
             - Keep it PG and family-friendly with no profanity, crude humor, or sexual jokes.
             """
         case .funny:
             return """
 
-            **Funny Comedy Mode — summary narrative only:**
-            - Use a lively, goofy voice with a few playful metaphors and light absurdity.
+            **Funny Comedy Mode — REQUIRED summary voice only:**
+            - Comedy is required in the summary. Do not return a neutral, clinical, or purely professional summary.
+            - Use a clearly recognizable lively, goofy voice with at least one playful metaphor
+              or light absurd comparison in every summary; use several in longer summaries.
+            - Put the humor in the prose, not only in a heading or formatting.
+              Ground it in details already present in the transcript.
             - Keep every fact, name, number, date, quote, medical detail, and decision accurate and complete.
             - Playful language must not become new claims.
               Never invent, speculate, sexualize, or exaggerate a person, diagnosis, event, motive, task, or reminder.
-            - Do not make health concerns, trauma, grief, disability, abuse, or private individuals the punchline.
-              Use gentle humor when the subject is sensitive.
+            - For sensitive material, aim humor at relatable situations or the process—not at a person,
+              health concern, trauma, grief, disability, or abuse.
             - Keep it PG and family-friendly with no profanity, crude humor, or sexual jokes.
             """
         }
@@ -76,14 +84,20 @@ enum ComedyMode: String {
 
         return """
 
-        **COMEDY SCOPE — \(style), summary field only:**
-        - Apply comedy only inside the narrative `summary` value or Summary section.
+        **COMEDY REQUIRED — \(style), summary field only:**
+        - Make the `summary` recognizably comedic; do not return a neutral summary.
+        - Include at least one clearly witty aside, wry observation, playful metaphor, or light
+          absurd comparison in every `summary`; use several in longer summaries.
+        - Put the comedy in the summary prose, not only in a heading or formatting.
+        - This overrides the generic professional-language instruction for the summary narrative only.
         - Treat `tasks`, `reminders`, `titles`, and `contentType` as factual metadata.
           Keep them literal, concise, professional, and grounded only in the transcript.
         - Never invent or embellish a task or reminder. If the transcript does not explicitly
           contain one, return an empty array or leave the section empty.
         - Titles must describe the actual discussion in Title Case, use 4-6 words when possible,
           and contain no Markdown or ending punctuation.
+        - For sensitive material, aim humor at relatable situations or the process—not at a person,
+          health concern, trauma, grief, disability, or abuse.
         - Do not let comedy change names, numbers, dates, medical details, quoted language,
           decisions, urgency, or task/reminder meaning.
         - Preserve the exact requested output format, section/field names, and field types.
@@ -115,7 +129,7 @@ class ChatCompletionPromptGenerator {
         **Key Guidelines:**
         - Focus on extracting meaningful, actionable information
         - Maintain accuracy and relevance to the source material
-        - Use clear, professional language
+        - Use clear language and follow any later mode-specific narrative style; keep facts and metadata professional
         - Structure responses logically and coherently
         - Prioritize the most important information first
         """
@@ -419,9 +433,9 @@ class ChatCompletionPromptGenerator {
         - If no personal tasks are found, use an empty array: "tasks": []
         - If no personal reminders are found, use an empty array: "reminders": []
         - Generate exactly 4 high-quality titles using Title Case, never ending with punctuation
-        - Ensure all strings are properly quoted and escaped (especially for Markdown characters)
-        - Do not include trailing commas
-        - Escape special characters in JSON strings (quotes, backslashes, newlines)
+        - Return valid JSON with quoted/escaped strings, valid `\\n` paragraph breaks, and no trailing commas
+        - Never put a backslash before an ordinary letter
+        - This is machine-parsed output: do not return a Markdown fence, explanation, or partially formed JSON.
 
         \(detailInstructions)
 

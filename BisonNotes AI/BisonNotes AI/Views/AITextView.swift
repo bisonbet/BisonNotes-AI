@@ -83,9 +83,10 @@ struct AITextView: View {
         // Step 1: Sanitize encoding issues (Unicode replacement chars, smart quotes, etc.)
         cleaned = cleaned.sanitizedForDisplay()
 
-        // Step 2: Normalize line endings and escape sequences
-        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
-        cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
+        // Step 2: Normalize line endings and model-generated escape sequences.
+        // This also cleans summaries saved by older builds that displayed
+        // literal `\n`, `\"`, or invalid markers such as `\A`.
+        cleaned = ChatCompletionResponseParser.normalizeModelText(cleaned)
 
         // Step 3: Remove JSON wrappers
         cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)

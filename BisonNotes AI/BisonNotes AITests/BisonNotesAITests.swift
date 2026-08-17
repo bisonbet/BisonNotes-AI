@@ -161,14 +161,18 @@ final class BisonNotesAITests: XCTestCase {
                 for: .summary,
                 contentType: .general
             )
-            XCTAssertTrue(summaryPrompt.contains("summary narrative only"))
+            XCTAssertTrue(summaryPrompt.contains("summary voice only"))
+            XCTAssertTrue(summaryPrompt.contains("Comedy is required in the summary"))
+            XCTAssertTrue(summaryPrompt.contains("Do not return a neutral, clinical, or purely professional summary"))
 
             let completePrompt = ChatCompletionPromptGenerator.createSystemPrompt(
                 for: .complete,
                 contentType: .general
             )
-            XCTAssertTrue(completePrompt.contains("COMEDY SCOPE"))
+            XCTAssertTrue(completePrompt.contains("COMEDY REQUIRED"))
             XCTAssertTrue(completePrompt.contains("summary field only"))
+            XCTAssertTrue(completePrompt.contains("recognizably comedic"))
+            XCTAssertTrue(completePrompt.contains("at least one clearly witty aside"))
             XCTAssertTrue(completePrompt.contains("Treat `tasks`, `reminders`, `titles`"))
             XCTAssertTrue(completePrompt.contains("exact requested output format"))
 
@@ -189,6 +193,74 @@ final class BisonNotesAITests: XCTestCase {
 
         XCTAssertThrowsError(
             try ChatCompletionResponseParser.parseCompleteResponseFromJSON(unstructuredResponse)
+        )
+    }
+
+    func testCompleteParserRepairsInvalidEscapeWithoutFabricatingMetadata() throws {
+        let malformedEscapeResponse = #"""
+        {
+          "summary": "## Insights\n\nA significant\A portion used \"protective\" language.",
+          "tasks": [
+            {
+              "text": "Call genetics specialist",
+              "priority": "medium",
+              "category": "health",
+              "timeReference": null,
+              "confidence": 0.9
+            }
+          ],
+          "reminders": [
+            {
+              "text": "Meeting with genetics specialist",
+              "urgency": "later",
+              "timeReference": null,
+              "confidence": 0.9
+            }
+          ],
+          "titles": [
+            {
+              "text": "Mental Health Medication Updates",
+              "category": "personal",
+              "confidence": 0.9
+            }
+          ]
+        }
+        """#
+
+        let parsed = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(
+            malformedEscapeResponse
+        )
+
+        XCTAssertTrue(parsed.summary.contains("A significantA portion"))
+        XCTAssertTrue(parsed.summary.contains("\"protective\""))
+        XCTAssertTrue(parsed.summary.contains("\n\n"))
+        XCTAssertFalse(parsed.summary.contains("\\A"))
+        XCTAssertEqual(parsed.tasks.map(\.text), ["Call genetics specialist"])
+        XCTAssertEqual(parsed.reminders.map(\.text), ["Meeting with genetics specialist"])
+        XCTAssertEqual(parsed.titles.map(\.text), ["Mental Health Medication Updates"])
+    }
+
+    func testCompleteParserRejectsMalformedStructuredResponseInsteadOfExtractingMetadata() {
+        let malformedStructureResponse = #"""
+        {
+          "summary": "## Summary\n\nA summary with the right top-level keys.",
+          "tasks": ["This is not a task object"],
+          "reminders": [],
+          "titles": []
+        }
+        """#
+
+        XCTAssertThrowsError(
+            try ChatCompletionResponseParser.parseCompleteResponseFromJSON(malformedStructureResponse)
+        )
+    }
+
+    func testModelTextNormalizationRemovesNestedEscapesAndInvalidMarkers() {
+        let encodedText = #"A\nB\"C\A"#
+
+        XCTAssertEqual(
+            ChatCompletionResponseParser.normalizeModelText(encodedText),
+            "A\nB\"CA"
         )
     }
 
