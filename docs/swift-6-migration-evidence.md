@@ -357,12 +357,15 @@ watchOS `UIViewController`/`UIResponder` APIs. This is a scheme/target-graph iss
 not a Swift 6 concurrency diagnostic; the supported Watch App scheme and direct Watch
 Widget product build pass.
 
-All successful current builds have zero first-party Swift compiler errors. Non-blocking warnings
-remain and are classified separately: MLX C++17-extension notices, two deprecated
-`OnDeviceLLM` `init(cString:)` calls, native Mac `MacSystemAudioCapture` queue-capture
-warnings, AppIntents metadata notices, and the existing duplicate `-lc++` linker
-message. The broad iOS test graph also emits actor-isolation warnings from legacy/UI
-test call sites; the focused Swift 6 migration action passes 10/10.
+All successful current builds have zero first-party Swift compiler errors. The warning-cleanup
+follow-up then reran the focused iOS action and native macOS build using
+`/private/tmp/bisonnotes-swift6-warningfix-ios.log` and
+`/private/tmp/bisonnotes-swift6-warningfix-macos2.log`; neither log contains the deprecated
+`OnDeviceLLM` `init(cString:)` diagnostics or the native Mac `MacSystemAudioCapture`
+queue-capture diagnostics. Remaining non-blocking warnings are classified separately: MLX
+C++17-extension notices, AppIntents metadata notices, the existing duplicate `-lc++` linker
+message, and actor-isolation warnings from the broad legacy/UI test graph. The focused Swift 6
+migration action still passes 10/10.
 
 ## Package handoffs
 

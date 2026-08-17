@@ -575,11 +575,14 @@ open class OnDeviceLLM: ObservableObject {
                 stopMatchLetters.append(letter)
             } else {
                 if !stopMatchLetters.isEmpty {
-                    let prefix = String(cString: stopMatchLetters + [0])
+                    let prefix = String(
+                        decoding: stopMatchLetters.map { UInt8(bitPattern: $0) },
+                        as: UTF8.self
+                    )
                     output.yield(prefix)
                     stopMatchLetters.removeAll()
                 }
-                output.yield(String(cString: [letter, 0]))
+                output.yield(String(decoding: [UInt8(bitPattern: letter)], as: UTF8.self))
             }
         }
         return true

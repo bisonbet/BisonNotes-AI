@@ -132,8 +132,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func setPaused(_ paused: Bool) {
-		sampleQueue.async { [weak self] in
-			guard let self else { return }
+		sampleQueue.sync {
 			guard self.isPaused != paused else { return }
 			self.isPaused = paused
 			if paused {
@@ -153,7 +152,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 
 		await finishWriterOnSampleQueue()
-		let snapshot = await snapshotOnSampleQueue()
+		let snapshot = snapshotOnSampleQueue()
 
 		stream = nil
 		assetWriter = nil
@@ -331,8 +330,8 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
 	func stream(_ stream: SCStream, didStopWithError error: Error) {
 		let errorDescription = error.localizedDescription
-		sampleQueue.async { [weak self] in
-			self?.stopErrorDescription = errorDescription
+		sampleQueue.sync {
+			self.stopErrorDescription = errorDescription
 		}
 		AppLog.shared.recording("Mac system audio stream stopped with error: \(errorDescription)", level: .error)
 	}
@@ -371,11 +370,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private func finishWriterOnSampleQueue() async {
 		let sampleQueue = sampleQueue
 		await withCheckedContinuation { continuation in
-			sampleQueue.async { [weak self] in
-				guard let self else {
-					continuation.resume()
-					return
-				}
+			sampleQueue.sync {
 				self.audioInput?.markAsFinished()
 				guard let writer = self.assetWriter else {
 					continuation.resume()
@@ -389,24 +384,14 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	@MainActor
-	private func snapshotOnSampleQueue() async -> StopSnapshot {
+	private func snapshotOnSampleQueue() -> StopSnapshot {
 		let sampleQueue = sampleQueue
-		return await withCheckedContinuation { continuation in
-			sampleQueue.async { [weak self] in
-				guard let self else {
-					continuation.resume(returning: StopSnapshot(
-						didReceiveAudio: false,
-						audibleAudioDuration: 0,
-						stopErrorDescription: nil
-					))
-					return
-				}
-				continuation.resume(returning: StopSnapshot(
-					didReceiveAudio: self.didReceiveAudio,
-					audibleAudioDuration: self.audibleAudioDuration,
-					stopErrorDescription: self.stopErrorDescription
-				))
-			}
+		return sampleQueue.sync {
+			StopSnapshot(
+				didReceiveAudio: self.didReceiveAudio,
+				audibleAudioDuration: self.audibleAudioDuration,
+				stopErrorDescription: self.stopErrorDescription
+			)
 		}
 	}
 }
