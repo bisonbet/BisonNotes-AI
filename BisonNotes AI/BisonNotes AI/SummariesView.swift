@@ -43,6 +43,7 @@ struct SummariesView: View {
     @State private var expandedSummaryDateSections: Set<DateSection> = [.today]
     @State private var isSummaryCandidatesExpanded = false
     @State private var isSummaryArchiveExpanded = false
+    @State private var hasStartedInitialiCloudPromptCheck = false
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -944,8 +945,6 @@ struct SummariesView: View {
             }
         }
 
-        // Check if we should show the first-time iCloud prompt
-        checkForFirstTimeiCloudPrompt()
     }
 
     private func generateSummary(for recording: RecordingEntry) {
@@ -1061,6 +1060,9 @@ struct SummariesView: View {
     }
 
     private func checkForFirstTimeiCloudPrompt() {
+        guard !hasStartedInitialiCloudPromptCheck else { return }
+        hasStartedInitialiCloudPromptCheck = true
+
         // Check if this is a fresh install (first launch after installation)
         let isFreshInstall = !UserDefaults.standard.bool(forKey: "hasCompletedInitialLaunch")
 

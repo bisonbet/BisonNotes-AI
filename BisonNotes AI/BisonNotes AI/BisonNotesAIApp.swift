@@ -690,9 +690,11 @@ struct BisonNotesAIApp: App {
 
     /// Logs device capabilities on app startup
     private func logDeviceCapabilities() {
-        AppLog.shared.general(String(repeating: "=", count: 50))
-        AppLog.shared.general(DeviceCapabilities.getCapabilityReport())
-        AppLog.shared.general(String(repeating: "=", count: 50))
+        let report = DeviceCapabilities.getCapabilityReport()
+            .split(whereSeparator: \.isNewline)
+            .dropFirst(2)
+            .joined(separator: ", ")
+        AppLog.shared.general("Device capabilities: \(report)")
     }
 
     private func queueParakeetStartupRepairIfNeeded() {
@@ -1328,11 +1330,8 @@ struct BisonNotesAIApp: App {
     #endif
 
     private func setupWatchConnectivity() {
-        AppLog.shared.general("setupWatchConnectivity() called in BisonNotesAIApp")
-
         // Initialize watch connectivity for background sync
         let watchManager = WatchConnectivityManager.shared
-        AppLog.shared.general("Got WatchConnectivityManager.shared instance", level: .debug)
 
         // The sync handler will be set up by AudioRecorderViewModel when it's ready
         // We just need to ensure the WatchConnectivityManager singleton is initialized
@@ -1340,7 +1339,6 @@ struct BisonNotesAIApp: App {
         // Note: onWatchSyncRecordingReceived is set up by AudioRecorderViewModel
         // Don't override it here - let the proper Core Data integration handle it
 
-        AppLog.shared.general("Setting up onWatchRecordingSyncCompleted callback", level: .debug)
         watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
             AppLog.shared.general("onWatchRecordingSyncCompleted called, success: \(success)", level: .debug)
 
@@ -1359,9 +1357,6 @@ struct BisonNotesAIApp: App {
             }
         }
 
-        AppLog.shared.general("onWatchRecordingSyncCompleted callback configured", level: .debug)
-
-        AppLog.shared.general("iPhone watch connectivity initialized for background sync")
     }
 
     private func setupAppShortcuts() {

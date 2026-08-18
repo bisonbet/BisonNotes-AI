@@ -198,7 +198,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
 
         // Check cache first
         if let cachedAddress = Self.geocodingCache[cacheKey] {
-            AppLog.shared.recording("LocationManager: Using cached address", level: .debug)
             completion(cachedAddress)
             return
         }

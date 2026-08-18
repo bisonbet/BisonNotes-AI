@@ -574,10 +574,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         speechRecognizer?.delegate = self
 
-        if let recognizer = speechRecognizer {
-            AppLog.shared.transcription("Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            // Note: Speech authorization will be requested when user actually tries to use native speech recognition transcription
-        } else {
+        if speechRecognizer == nil {
             AppLog.shared.transcription("Failed to create speech recognizer with any locale", level: .error)
         }
     }

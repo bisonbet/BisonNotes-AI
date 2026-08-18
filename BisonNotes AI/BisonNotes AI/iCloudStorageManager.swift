@@ -1006,32 +1006,24 @@ class iCloudStorageManager: ObservableObject {
         guard let database = database else { return [] }
 
         AppLog.shared.iCloudSync("Fetching all summaries using record discovery (schema-safe)", level: .debug)
-        AppLog.shared.iCloudSync("Database: \(database.databaseScope == .public ? "Public" : "Private")", level: .debug)
-        AppLog.shared.iCloudSync("Record type: \(CloudKitSummaryRecord.recordType)", level: .debug)
 
         var allSummaries: [EnhancedSummaryData] = []
 
         // Approach 1: UUID scanning + change tracking (most comprehensive)
         if let appCoordinator = appCoordinator {
             do {
-                AppLog.shared.iCloudSync("Attempting UUID scanning + change tracking approach", level: .debug)
                 let summaries = try await fetchSummariesByUUIDScanning(appCoordinator: appCoordinator)
                 allSummaries.append(contentsOf: summaries)
-                AppLog.shared.iCloudSync("UUID scanning + change tracking found \(summaries.count) summaries", level: .debug)
             } catch {
                 AppLog.shared.iCloudSync("UUID scanning + change tracking failed: \(error.localizedDescription)", level: .error)
             }
-        } else {
-            AppLog.shared.iCloudSync("No appCoordinator provided, trying direct zone changes approach", level: .debug)
         }
 
         // Approach 2: Brute force record scanning (works when change tracking fails)
         if allSummaries.isEmpty {
             do {
-                AppLog.shared.iCloudSync("Attempting brute force record scanning", level: .debug)
                 let scannedSummaries = try await bruteForceRecordDiscovery()
                 allSummaries.append(contentsOf: scannedSummaries)
-                AppLog.shared.iCloudSync("Brute force scanning found \(scannedSummaries.count) summaries", level: .debug)
             } catch {
                 AppLog.shared.iCloudSync("Brute force scanning failed: \(error.localizedDescription)", level: .error)
             }
@@ -1040,10 +1032,8 @@ class iCloudStorageManager: ObservableObject {
         // Approach 2b: Direct zone changes (works without appCoordinator)
         if allSummaries.isEmpty {
             do {
-                AppLog.shared.iCloudSync("Attempting direct zone changes approach", level: .debug)
                 let zoneSummaries = try await fetchRecordsUsingZoneChanges()
                 allSummaries.append(contentsOf: zoneSummaries)
-                AppLog.shared.iCloudSync("Direct zone changes found \(zoneSummaries.count) summaries", level: .debug)
             } catch {
                 AppLog.shared.iCloudSync("Direct zone changes failed: \(error.localizedDescription)", level: .error)
             }
@@ -1052,7 +1042,6 @@ class iCloudStorageManager: ObservableObject {
         // Approach 3: Database changes + zone scanning (fallback)
         if allSummaries.isEmpty {
             do {
-                AppLog.shared.iCloudSync("Attempting database changes + zone scanning", level: .debug)
                 let changesOperation = CKFetchDatabaseChangesOperation(previousServerChangeToken: nil)
                 changesOperation.database = database
 
@@ -1083,8 +1072,6 @@ class iCloudStorageManager: ObservableObject {
                     }
                 }
 
-                AppLog.shared.iCloudSync("Database changes + zone scanning found \(allSummaries.count) summaries", level: .debug)
-
             } catch {
                 AppLog.shared.iCloudSync("Database changes + zone scanning failed: \(error.localizedDescription)", level: .error)
             }
@@ -1096,7 +1083,12 @@ class iCloudStorageManager: ObservableObject {
             .values
             .map { $0 }
 
-        AppLog.shared.iCloudSync("Total unique summaries found: \(uniqueSummaries.count) (removed \(allSummaries.count - uniqueSummaries.count) duplicates)", level: .debug)
+        let duplicateCount = allSummaries.count - uniqueSummaries.count
+        let duplicateSuffix = duplicateCount > 0 ? "; removed \(duplicateCount) duplicates" : ""
+        AppLog.shared.iCloudSync(
+            "Cloud summary discovery complete: \(uniqueSummaries.count) summaries found\(duplicateSuffix)",
+            level: .debug
+        )
 
         return Array(uniqueSummaries)
     }
@@ -1106,54 +1098,49 @@ class iCloudStorageManager: ObservableObject {
     private func fetchSummariesByUUIDScanning(appCoordinator: AppDataCoordinator) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
 
-        AppLog.shared.iCloudSync("Scanning for summaries using UUID pattern matching", level: .debug)
-
         // Get all summaries from Core Data to get their IDs
         let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
-        AppLog.shared.iCloudSync("Found \(localSummaries.count) local summaries to check", level: .debug)
 
         var foundSummaries: [EnhancedSummaryData] = []
         var checkedUUIDs: Set<String> = Set()
 
         // Phase 1: Try to fetch each local summary's CloudKit record
-        for (index, localSummary) in localSummaries.enumerated() {
+        for localSummary in localSummaries {
             guard let summaryId = localSummary.id else {
-                AppLog.shared.iCloudSync("Local summary \(index + 1) has no ID, skipping", level: .debug)
+                AppLog.shared.iCloudSync("Local summary has no ID, skipping", level: .error)
                 continue
             }
 
             let uuidString = summaryId.uuidString
-            AppLog.shared.iCloudSync("Checking local summary \(index + 1)/\(localSummaries.count)", level: .debug)
             checkedUUIDs.insert(uuidString)
 
             do {
                 let recordID = CKRecord.ID(recordName: uuidString)
-                AppLog.shared.iCloudSync("Attempting to fetch CloudKit record", level: .debug)
-
                 let record = try await database.record(for: recordID)
-                AppLog.shared.iCloudSync("Successfully fetched CloudKit record", level: .debug)
 
                 // Verify this is actually a summary record before processing
                 guard record.recordType == CloudKitSummaryRecord.recordType else {
-                    AppLog.shared.iCloudSync("Found non-summary record type: \(record.recordType)", level: .debug)
                     continue
                 }
 
                 // Convert to EnhancedSummaryData
                 let summary = try createEnhancedSummaryData(from: record)
                 foundSummaries.append(summary)
-                AppLog.shared.iCloudSync("Successfully converted CloudKit record for local summary", level: .debug)
 
             } catch {
-                // This summary doesn't exist in CloudKit, which is fine
-                AppLog.shared.iCloudSync("No CloudKit record found for local summary: \(error.localizedDescription)", level: .debug)
+                // Missing records are expected for local-only summaries. Other
+                // lookup failures are actionable and should remain visible.
+                if (error as? CKError)?.code != .unknownItem {
+                    AppLog.shared.iCloudSync(
+                        "CloudKit summary lookup failed: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
         }
 
         // Phase 2: Try to find cloud-only summaries using change tracking
         // This will help us discover CloudKit records that don't have local counterparts
-        AppLog.shared.iCloudSync("Phase 2: Looking for cloud-only summaries using change tracking", level: .debug)
-
         do {
             let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
                 recordZoneIDs: [CKRecordZone.default().zoneID],
@@ -1169,7 +1156,6 @@ class iCloudStorageManager: ObservableObject {
                     if record.recordType == CloudKitSummaryRecord.recordType &&
                        !checkedUUIDs.contains(record.recordID.recordName) {
                         cloudOnlyRecords.append(record)
-                        AppLog.shared.iCloudSync("Found potential cloud-only record", level: .debug)
                     }
                 case .failure(let error):
                     AppLog.shared.iCloudSync("Failed to fetch cloud-only record: \(error.localizedDescription)", level: .error)
@@ -1188,19 +1174,15 @@ class iCloudStorageManager: ObservableObject {
                 do {
                     let summary = try createEnhancedSummaryData(from: record)
                     foundSummaries.append(summary)
-                    AppLog.shared.iCloudSync("Successfully converted cloud-only record", level: .debug)
                 } catch {
                     AppLog.shared.iCloudSync("Failed to convert cloud-only record: \(error.localizedDescription)", level: .error)
                 }
             }
 
-            AppLog.shared.iCloudSync("Change tracking found \(cloudOnlyRecords.count) cloud-only records", level: .debug)
-
         } catch {
             AppLog.shared.iCloudSync("Change tracking failed: \(error.localizedDescription)", level: .error)
         }
 
-        AppLog.shared.iCloudSync("UUID scanning + change tracking found \(foundSummaries.count) total summaries", level: .debug)
         return foundSummaries
     }
 
@@ -1212,21 +1194,18 @@ class iCloudStorageManager: ObservableObject {
     private func bruteForceRecordDiscovery() async throws -> [EnhancedSummaryData] {
         guard database != nil else { return [] }
 
-        AppLog.shared.iCloudSync("Starting brute force record discovery", level: .debug)
         var foundSummaries: [EnhancedSummaryData] = []
 
         // Removed approach with hardcoded record IDs - not scalable or maintainable
 
         // Approach 2: Try with CKFetchRecordZoneChangesOperation but with specific configuration
         do {
-            AppLog.shared.iCloudSync("Trying configured zone changes", level: .debug)
             let summaries = try await fetchRecordsWithSpecificConfiguration()
             foundSummaries.append(contentsOf: summaries)
         } catch {
             AppLog.shared.iCloudSync("Configured zone changes failed: \(error.localizedDescription)", level: .error)
         }
 
-        AppLog.shared.iCloudSync("Brute force discovery found \(foundSummaries.count) summaries", level: .debug)
         return foundSummaries
     }
 
@@ -1235,8 +1214,6 @@ class iCloudStorageManager: ObservableObject {
     /// Fetches records with specific zone configuration
     private func fetchRecordsWithSpecificConfiguration() async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
-
-        AppLog.shared.iCloudSync("Using specific configuration for zone changes", level: .debug)
 
         // Try with a specific configuration that might work better
         let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
@@ -1258,7 +1235,6 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    AppLog.shared.iCloudSync("Configured fetch found record", level: .debug)
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record with configuration: \(error.localizedDescription)", level: .error)
@@ -1290,8 +1266,6 @@ class iCloudStorageManager: ObservableObject {
     private func fetchRecordsUsingZoneChanges() async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
 
-        AppLog.shared.iCloudSync("Using direct zone changes to find all records", level: .debug)
-
         let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
             recordZoneIDs: [CKRecordZone.default().zoneID],
             configurationsByRecordZoneID: nil
@@ -1304,7 +1278,6 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    AppLog.shared.iCloudSync("Found record via direct zone changes", level: .debug)
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record: \(error.localizedDescription)", level: .error)
@@ -1329,15 +1302,12 @@ class iCloudStorageManager: ObservableObject {
             }
         }
 
-        AppLog.shared.iCloudSync("Direct zone changes found \(summaries.count) summaries", level: .debug)
         return summaries
     }
 
     /// Fetches records from a specific zone using zone changes operation
     private func fetchRecordsFromZoneUsingChanges(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
-
-        AppLog.shared.iCloudSync("Fetching records from zone using changes operation", level: .debug)
 
         let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
             recordZoneIDs: [zoneID],
@@ -1351,7 +1321,6 @@ class iCloudStorageManager: ObservableObject {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
                     foundRecords.append(record)
-                    AppLog.shared.iCloudSync("Found record in zone", level: .debug)
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record in zone: \(error.localizedDescription)", level: .error)
@@ -1376,7 +1345,6 @@ class iCloudStorageManager: ObservableObject {
             }
         }
 
-        AppLog.shared.iCloudSync("Zone changes found \(summaries.count) summaries in zone", level: .debug)
         return summaries
     }
 
@@ -1384,8 +1352,6 @@ class iCloudStorageManager: ObservableObject {
     /// This bypasses the need for queryable fields
     private func fetchRecordsFromZoneByScanning(_ zoneID: CKRecordZone.ID) async throws -> [EnhancedSummaryData] {
         guard let database = database else { return [] }
-
-        AppLog.shared.iCloudSync("Scanning zone for existing records", level: .debug)
 
         var foundRecords: [CKRecord] = []
 
@@ -1433,8 +1399,6 @@ class iCloudStorageManager: ObservableObject {
                 AppLog.shared.iCloudSync("Extended zone query failed: \(error.localizedDescription)", level: .error)
             }
         }
-
-        AppLog.shared.iCloudSync("Found \(foundRecords.count) records in zone", level: .debug)
 
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []

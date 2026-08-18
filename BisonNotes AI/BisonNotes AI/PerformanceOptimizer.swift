@@ -634,7 +634,6 @@ class PerformanceOptimizer: ObservableObject {
     func clearCaches() {
         summaryCache.removeAllObjects()
         processingCache.removeAllObjects()
-        logger.info("Cleared all caches to free memory")
     }
 
     // MARK: - Progress Tracking

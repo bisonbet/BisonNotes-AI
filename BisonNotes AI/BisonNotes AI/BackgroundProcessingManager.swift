@@ -498,7 +498,6 @@ class BackgroundProcessingManager: ObservableObject {
         if AppLog.shared.previousSessionCrashed {
             failUnfinishedJobsAfterCrash()
         }
-        setupNotifications()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
         startStaleJobMonitoring()
@@ -2596,12 +2595,6 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     // MARK: - Notifications
-
-    private func setupNotifications() {
-        // Set up notification center but don't request permission yet
-        // Permission will be requested when we actually implement user notifications
-        AppLog.shared.backgroundProcessing("Notification center configured (permission request deferred)")
-    }
 
     func sendNotification(title: String, body: String, identifier: String? = nil, userInfo: [String: Any] = [:]) async {
         // Check if we have notification permission first

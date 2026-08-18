@@ -242,9 +242,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			}
 		}
 
-		// Don't configure audio session immediately - wait until user starts recording
-		// This prevents interference with other audio apps on app launch
-		AppLog.shared.recording("AudioRecorderViewModel initialized without configuring audio session")
+		// Don't configure audio session immediately - wait until user starts recording.
+		// This prevents interference with other audio apps on app launch.
 	}
 
 	static let macSystemAudioCaptureEnabledKey = "MacSystemAudioCaptureEnabled"

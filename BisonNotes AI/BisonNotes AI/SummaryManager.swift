@@ -424,9 +424,6 @@ class SummaryManager: ObservableObject {
             // Don't set any engine as current during initialization - wait for UserDefaults restoration
         }
 
-        // Log only essential initialization summary
-        AppLog.shared.summarization("Engine initialization complete - \(successfullyInitialized)/\(allEngineTypes.count) engines initialized")
-
         // Only log detailed engine lists if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
             AppLog.shared.summarization("Available engines: \(getAvailableEnginesOnly())", level: .debug)
@@ -441,7 +438,6 @@ class SummaryManager: ObservableObject {
            savedEngine.isAvailable {
             // User has a saved preference and the engine is available
             currentEngine = savedEngine
-            AppLog.shared.summarization("Restored previously selected engine: \(savedEngine.name)")
         } else if let savedEngineName = savedEngineName,
                   let savedEngine = availableEngines[savedEngineName],
                   !savedEngine.isAvailable {
@@ -482,7 +478,10 @@ class SummaryManager: ObservableObject {
             }
         }
 
-        AppLog.shared.summarization("Current active engine: \(getCurrentEngineName())")
+        AppLog.shared.summarization(
+            "AI engines ready: \(successfullyInitialized)/\(allEngineTypes.count) initialized; " +
+            "active engine: \(getCurrentEngineName())"
+        )
     }
 
     func setEngine(_ engineName: String) {

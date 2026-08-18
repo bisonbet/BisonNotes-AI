@@ -323,7 +323,6 @@ struct ContentView: View {
 
         // Phase 6: Set AppDelegate reference to AudioRecorderViewModel for notification handling
         AppDelegate.recorderViewModel = recorderVM
-        AppLog.shared.log("AppDelegate.recorderViewModel reference set", category: .general)
 
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -339,18 +338,13 @@ struct ContentView: View {
                     } else {
                         // Core Data has existing recordings
 
-                        // Always run URL migration to ensure relative paths
-                        AppLog.shared.log("Running URL migration to ensure relative paths...", level: .debug, category: .general)
                         appCoordinator.syncRecordingURLs()
-                        AppLog.shared.log("URL migration completed", category: .general)
 
                         // Clean up any orphaned records and missing files
-                        AppLog.shared.log("Cleaning up orphaned records...", level: .debug, category: .general)
                         let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
                         let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
 
                         // Also clean up recordings that reference missing files
-                        AppLog.shared.log("Cleaning up recordings with missing files...", level: .debug, category: .general)
                         let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
 
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount

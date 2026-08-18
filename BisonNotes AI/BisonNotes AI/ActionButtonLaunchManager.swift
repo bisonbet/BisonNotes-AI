@@ -16,8 +16,10 @@ enum ActionButtonLaunchManager {
     private static let shouldStartRecordingKey = "actionButtonShouldStartRecording"
 
     static func requestRecordingStart() {
+#if !os(macOS)
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else { return }
         requestRecordingStart(defaults: defaults, postNotification: postDarwinNotification)
+#endif
     }
 
     static func requestRecordingStart(
@@ -34,10 +36,14 @@ enum ActionButtonLaunchManager {
     }
 
     static func consumeRecordingRequest() -> Bool {
+#if os(macOS)
+        return false
+#else
         guard let defaults = UserDefaults(suiteName: appGroupIdentifier) else {
             return false
         }
         return consumeRecordingRequest(defaults: defaults)
+#endif
     }
 
     static func consumeRecordingRequest(defaults: UserDefaults) -> Bool {
@@ -54,6 +60,9 @@ enum ActionButtonLaunchManager {
     /// Covers the AppIntent ordering where the system activates the app before
     /// the widget process has persisted its recording request.
     static func startObservingRecordingRequests() {
+#if os(macOS)
+        return
+#else
         let name = darwinNotificationName as CFString
         CFNotificationCenterAddObserver(
             CFNotificationCenterGetDarwinNotifyCenter(),
@@ -70,6 +79,7 @@ enum ActionButtonLaunchManager {
             nil,
             .deliverImmediately
         )
+#endif
     }
 
     private static func postDarwinNotification() {

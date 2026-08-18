@@ -383,8 +383,8 @@ class MessageFormatDetector {
             }
         }
 
-        // Default to string format (most common)
-        AppLog.shared.networking("Unknown provider, defaulting to string format", level: .debug)
+        // Default to string format (most common). An unknown provider is an
+        // expected configuration state, not a diagnostic event.
         return .string
     }
 

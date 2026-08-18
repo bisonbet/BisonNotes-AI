@@ -50,8 +50,6 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
         // Mark launch for crash detection
         AppLog.shared.markLaunch()
-
-        NSLog("✅ AppDelegate initialized - notification delegate set")
     }
 
     // MARK: - MetricKit
@@ -97,7 +95,6 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
         Task {
             do {
                 try await UNUserNotificationCenter.current().setBadgeCount(0)
-                NSLog("✅ Cleared app icon badge on app \(reason)")
             } catch {
                 NSLog("⚠️ setBadgeCount failed on \(reason): \(error)")
             }
