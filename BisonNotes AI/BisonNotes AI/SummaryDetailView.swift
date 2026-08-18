@@ -704,7 +704,7 @@ struct SummaryDetailView: View {
                 metadataRow(title: "Generation Time", value: formatDate(summaryData.generatedAt), icon: "clock.arrow.circlepath")
                 metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
                 metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
-                metadataRow(title: "Compression Ratio", value: summaryData.formattedCompressionRatio, icon: "chart.bar.fill")
+                metadataRow(title: "Summary Length", value: summaryData.formattedSummaryLength, icon: "chart.bar.fill")
                 metadataRow(title: "Audio Length", value: recording.durationString, icon: "waveform")
                 metadataRow(title: "Processing Time", value: formattedProcessingTime(summaryData.processingTime), icon: "timer")
             }

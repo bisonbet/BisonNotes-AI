@@ -445,8 +445,9 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         }()
     }
 
-    var formattedCompressionRatio: String {
-        return String(format: "%.1f%%", compressionRatio * 100)
+    /// Presents the summary's size relative to its source transcript in user-facing language.
+    var formattedSummaryLength: String {
+        return String(format: "%.1f%% of transcript", compressionRatio * 100)
     }
 
     var formattedProcessingTime: String {

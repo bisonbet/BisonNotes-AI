@@ -254,7 +254,7 @@ private extension MacSummaryExportRenderer {
         let lines = [
             "Word Count: \(summary.wordCount) words",
             "Original Length: \(summary.originalLength) characters",
-            "Compression Ratio: \(summary.formattedCompressionRatio)",
+            "Summary Length: \(summary.formattedSummaryLength)",
             "Processing Time: \(summary.formattedProcessingTime)"
         ]
         append(
