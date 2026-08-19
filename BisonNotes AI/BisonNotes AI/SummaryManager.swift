@@ -344,16 +344,33 @@ class SummaryManager: ObservableObject {
             return
         }
 
+        if let appCoordinator {
+            Task { @MainActor in
+                do {
+                    try await appCoordinator.deleteSummary(id: summary.id)
+                } catch {
+                    AppLog.shared.summarization("Failed to delete summary: \(error)", level: .error)
+                }
+            }
+            return
+        }
+
+        // Keep the fallback manager safe for callers created before the app coordinator.
+        iCloudManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summary.id,
+            recordingId: summary.recordingId
+        )
         do {
             try authoritativeCoreDataManager.deleteSummary(id: summary.id)
             Task {
                 do {
-                    try await self.iCloudManager.deleteSummaryFromiCloud(summary.id)
+                    try await self.iCloudManager.removeSummaryContentFromiCloud(summaryId: summary.id)
                 } catch {
                     AppLog.shared.summarization("Failed to delete summary from iCloud: \(error)", level: .error)
                 }
             }
         } catch {
+            iCloudManager.clearPendingSummaryRemoval(summaryId: summary.id)
             AppLog.shared.summarization("Failed to delete summary from Core Data: \(error)", level: .error)
         }
     }
@@ -373,11 +390,25 @@ class SummaryManager: ObservableObject {
     func clearAllSummaries() {
         AppLog.shared.summarization("Clearing all summaries...")
         let summaries = getAuthoritativeSummaryData()
-        for summary in summaries {
-            do {
-                try authoritativeCoreDataManager.deleteSummary(id: summary.id)
-            } catch {
-                AppLog.shared.summarization("Failed to clear summary \(summary.id): \(error)", level: .error)
+        if let appCoordinator {
+            Task { @MainActor in
+                for summary in summaries {
+                    do {
+                        try await appCoordinator.deleteSummary(id: summary.id)
+                    } catch {
+                        AppLog.shared.summarization("Failed to clear summary \(summary.id): \(error)", level: .error)
+                    }
+                }
+            }
+        } else {
+            for summary in summaries {
+                iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: summary.id, recordingId: summary.recordingId)
+                do {
+                    try authoritativeCoreDataManager.deleteSummary(id: summary.id)
+                } catch {
+                    iCloudManager.clearPendingSummaryRemoval(summaryId: summary.id)
+                    AppLog.shared.summarization("Failed to clear summary \(summary.id): \(error)", level: .error)
+                }
             }
         }
         AppLog.shared.summarization("Cleared \(summaries.count) summaries")

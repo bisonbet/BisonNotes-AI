@@ -446,7 +446,10 @@ final class EnhancedFileManager: ObservableObject {
 
             // Delete transcript if present
             if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
-                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                guard let transcriptId = transcript.id else {
+                    throw FileManagementError.deletionFailed("Transcript persistence is missing its identifier")
+                }
+                try await appCoordinator.deleteTranscript(id: transcriptId)
                 guard appCoordinator.coreDataManager.getTranscript(for: recordingId) == nil else {
                     throw FileManagementError.deletionFailed("Transcript persistence still contains the deleted entry")
                 }

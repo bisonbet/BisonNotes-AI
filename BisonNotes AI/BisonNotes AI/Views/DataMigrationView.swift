@@ -1031,7 +1031,9 @@ struct DataMigrationView: View {
                 AppLog.shared.dataMigration("Found orphaned transcript for recording ID: \(recordingId?.uuidString ?? "nil")", level: .debug)
 
                 // Delete the orphaned transcript
-                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                if let transcriptId = transcript.id {
+                    try? await appCoordinator.deleteTranscript(id: transcriptId)
+                }
                 orphanedTranscripts += 1
 
                 // Calculate freed space
@@ -1063,7 +1065,9 @@ struct DataMigrationView: View {
                 AppLog.shared.dataMigration("Found transcript for non-existent recording file: \(recordingURL.lastPathComponent)", level: .debug)
 
                 // Delete the orphaned transcript
-                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+                if let transcriptId = transcript.id {
+                    try? await appCoordinator.deleteTranscript(id: transcriptId)
+                }
                 orphanedTranscripts += 1
 
                 // Calculate freed space
@@ -1098,7 +1102,7 @@ struct DataMigrationView: View {
 
                     // Delete the orphaned recording
                     if let recordingId = recording.id {
-                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                        appCoordinator.deleteRecording(id: recordingId)
                         orphanedRecordings += 1
                         AppLog.shared.dataMigration("Deleted orphaned recording")
                     }

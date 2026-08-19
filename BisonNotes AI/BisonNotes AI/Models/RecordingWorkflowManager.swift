@@ -313,6 +313,14 @@ class RecordingWorkflowManager: ObservableObject {
                 var deletedCount = 0
                 for oldSummary in existingSummaries {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
+                    if let oldSummaryId = oldSummary.id {
+                        // Replacing a summary is still a deletion from the sync graph. Keep a
+                        // durable tombstone so another device cannot restore the superseded row.
+                        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
+                            summaryId: oldSummaryId,
+                            recordingId: recordingId
+                        )
+                    }
                     // Clean up any remaining supplemental folders that were not migrated
                     if let oldUUID = oldSummary.id, oldUUID != existingSummaries.first?.id {
                         try? SummaryAttachmentStore.shared.deleteAll(for: oldUUID)

@@ -94,7 +94,7 @@ enum DuplicateEntryType {
 class DataMigrationManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    private var iCloudStorageManager: iCloudStorageManager?
+    private var configurediCloudStorageManager: iCloudStorageManager?
 
     @Published var migrationProgress: Double = 0.0
     @Published var migrationStatus: String = ""
@@ -105,13 +105,42 @@ class DataMigrationManager: ObservableObject {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
-        self.iCloudStorageManager = iCloudStorageManager
+        self.configurediCloudStorageManager = iCloudStorageManager
     }
 
     func setCloudSyncManagers(legacy: iCloudStorageManager? = nil) {
         if let legacy = legacy {
-            self.iCloudStorageManager = legacy
+            self.configurediCloudStorageManager = legacy
         }
+    }
+
+    private var cloudDeletionManager: iCloudStorageManager {
+        configurediCloudStorageManager ?? iCloudStorageManager.shared
+    }
+
+    private func enqueueTranscriptDeletion(_ transcript: TranscriptEntry) {
+        guard let transcriptId = transcript.id else { return }
+        cloudDeletionManager.enqueueTranscriptRemovalFromiCloud(
+            transcriptId: transcriptId,
+            recordingId: transcript.recordingId ?? transcript.recording?.id
+        )
+    }
+
+    private func enqueueSummaryDeletion(_ summary: SummaryEntry) {
+        guard let summaryId = summary.id else { return }
+        cloudDeletionManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            recordingId: summary.recordingId ?? summary.recording?.id
+        )
+    }
+
+    private func enqueueRecordingDeletion(_ recording: RecordingEntry, includingChildren: Bool = true) {
+        guard let recordingId = recording.id else { return }
+        cloudDeletionManager.enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: includingChildren ? [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 } : [],
+            summaryIds: includingChildren ? [recording.summaryId ?? recording.summary?.id].compactMap { $0 } : []
+        )
     }
 
     func performDataMigration() async {
@@ -412,7 +441,7 @@ class DataMigrationManager: ObservableObject {
 
         AppLog.shared.dataMigration("Starting iCloud data recovery")
 
-        if let legacyManager = iCloudStorageManager {
+        if let legacyManager = configurediCloudStorageManager {
             AppLog.shared.dataMigration("Using legacy iCloudStorageManager for recovery")
             do {
                 if !legacyManager.isEnabled {
@@ -494,6 +523,16 @@ class DataMigrationManager: ObservableObject {
     // MARK: - Utility Methods
 
     func clearAllCoreData() async {
+        let recordings = (try? context.fetch(RecordingEntry.fetchRequest())) ?? []
+        let transcripts = (try? context.fetch(TranscriptEntry.fetchRequest())) ?? []
+        let summaries = (try? context.fetch(SummaryEntry.fetchRequest())) ?? []
+
+        // Batch deletes bypass Core Data relationship callbacks. Queue every durable
+        // tombstone first so a later iCloud reconcile cannot restore the cleared store.
+        recordings.forEach { enqueueRecordingDeletion($0) }
+        transcripts.forEach { enqueueTranscriptDeletion($0) }
+        summaries.forEach { enqueueSummaryDeletion($0) }
+
         let entities = ["RecordingEntry", "TranscriptEntry", "SummaryEntry"]
 
         for entityName in entities {
@@ -1032,11 +1071,14 @@ class DataMigrationManager: ObservableObject {
         for missingFile in missing {
             // Remove the recording entry and its associated transcript/summary
             if let transcript = missingFile.recording.transcript {
+                enqueueTranscriptDeletion(transcript)
                 context.delete(transcript)
             }
             if let summary = missingFile.recording.summary {
+                enqueueSummaryDeletion(summary)
                 context.delete(summary)
             }
+            enqueueRecordingDeletion(missingFile.recording)
             context.delete(missingFile.recording)
             cleaned += 1
         }
@@ -1328,6 +1370,7 @@ class DataMigrationManager: ObservableObject {
                 // Delete the others
                 for duplicate in group where duplicate != keeper {
                     AppLog.shared.dataMigration("Removing duplicate recording ID: \(duplicate.id?.uuidString ?? "nil")", level: .debug)
+                    enqueueRecordingDeletion(duplicate)
                     context.delete(duplicate)
                     resolvedCount += 1
                 }
@@ -1464,6 +1507,7 @@ class DataMigrationManager: ObservableObject {
                 }
 
                 // Delete the generic recording
+                enqueueRecordingDeletion(generic, includingChildren: false)
                 context.delete(generic)
                 resolvedCount += 1
 
@@ -1502,6 +1546,7 @@ class DataMigrationManager: ObservableObject {
             for transcript in transcripts {
                 if transcript.recording == nil {
                     AppLog.shared.dataMigration("Removing orphaned transcript ID: \(transcript.id?.uuidString ?? "nil")", level: .debug)
+                    enqueueTranscriptDeletion(transcript)
                     context.delete(transcript)
                     cleanedCount += 1
                 }
@@ -1521,6 +1566,7 @@ class DataMigrationManager: ObservableObject {
                 let isFullyOrphaned = (summary.recording == nil && summary.recordingId == nil)
                 if isFullyOrphaned {
                     AppLog.shared.dataMigration("Removing orphaned summary ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
+                    enqueueSummaryDeletion(summary)
                     context.delete(summary)
                     cleanedCount += 1
                 } else if summary.recording == nil && hasAnchorRecordingId {
@@ -2027,6 +2073,7 @@ class DataMigrationManager: ObservableObject {
                         AppLog.shared.dataMigration("Cleaning up orphaned transcript for URL-less recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         recording.transcript = nil
                         recording.transcriptId = nil
+                        enqueueTranscriptDeletion(transcript)
                         context.delete(transcript)
                         cleanedCount += 1
                     }
@@ -2076,6 +2123,7 @@ class DataMigrationManager: ObservableObject {
                         AppLog.shared.dataMigration("Deleting transcript for recording with no audio file, ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                         recording.transcript = nil
                         recording.transcriptId = nil
+                        enqueueTranscriptDeletion(transcript)
                         context.delete(transcript)
                     }
 

@@ -1317,12 +1317,16 @@ struct RecordingsListView: View {
                     self.deletionData.fileRelationships = relationships
                     self.showingEnhancedDeleteDialog = true
                 } else {
-                    // Fallback to simple deletion if we still can't get relationships
-                    do {
-                        try FileManager.default.removeItem(at: recording.url)
-                        loadRecordings() // Reload the list
-                    } catch {
-                        AppLog.shared.recording("Failed to delete recording: \(error)", level: .error)
+                    // A missing relationship cache must not bypass Core Data and
+                    // iCloud deletion. Resolve the recording directly and use the
+                    // coordinator so its transcript, summary, and tombstone are
+                    // handled together.
+                    if let recordingEntry = appCoordinator.getRecording(url: recording.url),
+                       let recordingId = recordingEntry.id {
+                        appCoordinator.deleteRecording(id: recordingId)
+                        loadRecordings()
+                    } else {
+                        AppLog.shared.recording("Failed to resolve recording for deletion: \(recording.url.lastPathComponent)", level: .error)
                     }
                 }
             }

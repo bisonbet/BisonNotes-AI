@@ -1305,7 +1305,7 @@ struct SummaryDetailView: View {
                     let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
                     if hadNoURL && hadNoTranscript {
                         // Safe to delete the anchor recording entry
-                        appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+                        appCoordinator.deleteRecording(id: recordingId)
                         AppLog.shared.summarization("Deleted empty anchor recording entry after summary deletion", level: .debug)
                     } else {
                         // Save the updated recording if we keep it

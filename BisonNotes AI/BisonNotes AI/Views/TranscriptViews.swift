@@ -22,6 +22,14 @@ private struct TranscriptWithDate {
     let source: TranscriptListSource
 }
 
+private struct TranscriptDeletionRequest {
+    let recordingId: UUID
+    let transcriptId: UUID
+    let recordingName: String
+    let imported: Bool
+    let hasSummary: Bool
+}
+
 struct TranscriptsView: View {
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -49,6 +57,8 @@ struct TranscriptsView: View {
     @State private var expandedTranscriptDateSections: Set<DateSection> = [.today]
     @State private var isPendingTranscriptsExpanded = false
     @State private var isTranscriptArchiveExpanded = false
+    @State private var transcriptDeletionRequests: [TranscriptDeletionRequest] = []
+    @State private var showingTranscriptDeletionConfirmation = false
     /// Shared service that owns the serial audio-cleanup queue and transcription start.
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     /// Recordings whose summary generation we kicked off and are still awaiting completion.
@@ -99,6 +109,32 @@ struct TranscriptsView: View {
             }
         } message: {
             Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        }
+        .confirmationDialog(
+            "Delete Transcript?",
+            isPresented: $showingTranscriptDeletionConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Transcript", role: .destructive) {
+                let requests = transcriptDeletionRequests
+                transcriptDeletionRequests = []
+                performTranscriptDeletions(requests)
+            }
+            Button("Cancel", role: .cancel) {
+                transcriptDeletionRequests = []
+            }
+        } message: {
+            if transcriptDeletionRequests.count > 1 {
+                Text("Remove \(transcriptDeletionRequests.count) transcripts and their links from this device and iCloud.")
+            } else if let request = transcriptDeletionRequests.first {
+                if request.imported && !request.hasSummary {
+                    Text("Remove the imported transcript for \(request.recordingName), its temporary audio placeholder, and its recording entry from this device and iCloud.")
+                } else {
+                    Text("Remove the transcript for \(request.recordingName). The recording and summary will be kept on this device and in iCloud.")
+                }
+            } else {
+                Text("Only the transcript and its links will be removed from this device and iCloud.")
+            }
         }
         .alert("Transcription Complete", isPresented: $showingTranscriptionCompletionAlert) {
             Button("OK") {
@@ -352,8 +388,7 @@ struct TranscriptsView: View {
 
                     ForEach(recentImportedTranscripts, id: \.recording.id) { recordingData in
                         importedTranscriptRowView(recordingData) {
-                            deleteImportedTranscript(recordingData)
-                            loadRecordings()
+                            requestTranscriptDeletion(for: recordingData.recording, imported: true)
                         }
                     }
 
@@ -629,10 +664,7 @@ struct TranscriptsView: View {
                             }
                             .onDelete { indexSet in
                                 let itemsToDelete = indexSet.map { sectionData.items[$0] }
-                                for item in itemsToDelete {
-                                    deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
-                                }
-                                loadRecordings()
+                                requestTranscriptDeletions(for: itemsToDelete.map { (recording: $0.recording, imported: true) })
                             }
                         }
                     }
@@ -700,10 +732,7 @@ struct TranscriptsView: View {
             }
             .onDelete { indexSet in
                 let itemsToDelete = indexSet.map { importedItems[$0] }
-                for item in itemsToDelete {
-                    deleteImportedTranscript((recording: item.recording, transcript: item.transcript))
-                }
-                loadRecordings()
+                requestTranscriptDeletions(for: itemsToDelete.map { (recording: $0.recording, imported: true) })
             }
         }
     }
@@ -778,6 +807,20 @@ struct TranscriptsView: View {
                     transcriptButtonView(recordingData)
                     summaryButtonView(recordingData)
                 }
+            }
+
+            if recordingData.transcript != nil {
+                Button(role: .destructive) {
+                    requestTranscriptDeletion(for: recordingData.recording, imported: false)
+                } label: {
+                    Label("Delete Transcript", systemImage: "trash")
+                        .font(.body.weight(.semibold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color(red: 0.65, green: 0.0, blue: 0.0))
+                .accessibilityLabel("Delete transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")")
+                .accessibilityHint("Deletes only the transcript and keeps the recording and summary.")
             }
         }
         .padding(16)
@@ -1258,31 +1301,52 @@ struct TranscriptsView: View {
 		loadLocationAddressesBatch(for: recordings.map { $0.recording })
     }
 
-    private func deleteImportedTranscripts(
-        at offsets: IndexSet,
-        in list: [(recording: RecordingEntry, transcript: TranscriptData?)]
-    ) {
-        let itemsToDelete = offsets.map { list[$0] }
-        for importedTranscript in itemsToDelete {
-            deleteImportedTranscript(importedTranscript)
-        }
-
-        // Reload the list
-        loadRecordings()
+    private func requestTranscriptDeletion(for recording: RecordingEntry, imported: Bool) {
+        requestTranscriptDeletions(for: [(recording: recording, imported: imported)])
     }
 
-    private func deleteImportedTranscript(
-        _ importedTranscript: (recording: RecordingEntry, transcript: TranscriptData?)
-    ) {
-        guard let recordingId = importedTranscript.recording.id else {
-            AppLog.shared.transcription("Cannot delete imported transcript: missing recording ID", level: .error)
+    private func requestTranscriptDeletions(for items: [(recording: RecordingEntry, imported: Bool)]) {
+        let requests = items.compactMap { item -> TranscriptDeletionRequest? in
+            guard let recordingId = item.recording.id,
+                  let transcriptId = appCoordinator.coreDataManager.getTranscript(for: recordingId)?.id else {
+                AppLog.shared.transcription("Cannot delete transcript: missing recording or transcript ID", level: .error)
+                return nil
+            }
+
+            return TranscriptDeletionRequest(
+                recordingId: recordingId,
+                transcriptId: transcriptId,
+                recordingName: item.recording.recordingName ?? (item.imported ? "Untitled Import" : "Unknown Recording"),
+                imported: item.imported,
+                hasSummary: hasSummary(for: item.recording, recordingId: recordingId)
+            )
+        }
+        guard !requests.isEmpty else { return }
+        transcriptDeletionRequests = requests
+        showingTranscriptDeletionConfirmation = true
+    }
+
+    private func performTranscriptDeletions(_ requests: [TranscriptDeletionRequest]) {
+        Task { @MainActor in
+            for request in requests {
+                await deleteTranscript(request)
+            }
+            loadRecordings()
+        }
+    }
+
+    private func deleteTranscript(_ request: TranscriptDeletionRequest) async {
+        guard let recording = appCoordinator.getRecording(id: request.recordingId) else {
+            AppLog.shared.transcription("Cannot delete transcript: recording no longer exists", level: .error)
             return
         }
 
-        // Delete the associated dummy audio file if it exists
-        if let recordingURL = appCoordinator.getAbsoluteURL(for: importedTranscript.recording) {
+        let hasSummary = hasSummary(for: recording, recordingId: request.recordingId)
+        let shouldDeleteImportedRecording = request.imported && !hasSummary
+
+        if request.imported,
+           let recordingURL = appCoordinator.getAbsoluteURL(for: recording) {
             try? FileManager.default.removeItem(at: recordingURL)
-            // Delete associated sidecar files if present
             for ext in ["location", "recordingmeta"] {
                 let sidecarURL = recordingURL.deletingPathExtension().appendingPathExtension(ext)
                 try? FileManager.default.removeItem(at: sidecarURL)
@@ -1290,27 +1354,30 @@ struct TranscriptsView: View {
             AppLog.shared.transcription("Deleted temporary audio placeholder", level: .debug)
         }
 
-        // Check if there's an associated summary to preserve
-        let hasSummary = appCoordinator.coreDataManager.getSummary(for: recordingId) != nil
-
-        if hasSummary {
-            // Preserve the summary - only delete the transcript and clear the audio URL
-            if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
-                appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+        do {
+            if shouldDeleteImportedRecording {
+                appCoordinator.deleteRecording(id: request.recordingId)
+                AppLog.shared.transcription("Deleted imported transcript and its recording entry")
+            } else {
+                try await appCoordinator.deleteTranscript(id: request.transcriptId)
+                if request.imported {
+                    recording.recordingURL = nil
+                    recording.lastModified = Date()
+                    try? appCoordinator.coreDataManager.saveContext()
+                    AppLog.shared.transcription("Deleted imported transcript, preserved summary")
+                } else {
+                    AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
+                }
             }
-
-            // Clear the recording URL to mark as "summary only" mode
-            importedTranscript.recording.recordingURL = nil
-            importedTranscript.recording.lastModified = Date()
-
-            // Save the context
-            try? appCoordinator.coreDataManager.saveContext()
-            AppLog.shared.transcription("Deleted imported transcript, preserved summary")
-        } else {
-            // No summary to preserve - delete everything
-            appCoordinator.coreDataManager.deleteRecording(id: recordingId)
-            AppLog.shared.transcription("Deleted imported transcript")
+        } catch {
+            AppLog.shared.transcription("Failed to delete transcript: \(error)", level: .error)
         }
+    }
+
+    private func hasSummary(for recording: RecordingEntry, recordingId: UUID) -> Bool {
+        appCoordinator.coreDataManager.getSummary(for: recordingId) != nil ||
+            recording.summary != nil ||
+            recording.summaryId != nil
     }
 
     func loadLocationDataForRecording(url: URL) -> LocationData? {

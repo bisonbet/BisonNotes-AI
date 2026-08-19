@@ -219,17 +219,55 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
+    /// Deletes only a transcript. The recording, audio, and any summary remain, while
+    /// the transcript's cloud tombstone is retained until iCloud accepts it.
+    func deleteTranscript(id: UUID) async throws {
+        let transcript = coreDataManager.getTranscript(id: id)
+        let recordingId = transcript?.recordingId ?? transcript?.recording?.id
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        iCloudManager.enqueueTranscriptRemovalFromiCloud(
+            transcriptId: id,
+            recordingId: recordingId
+        )
+
+        do {
+            try coreDataManager.deleteTranscript(id: id)
+        } catch {
+            iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
+            throw error
+        }
+
+        do {
+            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+        } catch {
+            AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
+        }
+        objectWillChange.send()
+    }
+
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
+        let summary = coreDataManager.getSummary(id: id)
+        let recordingId = summary?.recordingId
+            ?? summary?.recording?.id
+            ?? coreDataManager.getAllRecordings().first(where: { $0.summaryId == id })?.id
 
         // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
         try? SummaryAttachmentStore.shared.deleteAll(for: id)
 
-        // Delete locally first so a crash/kill before this point never leaves a durable
-        // iCloud-removal marker for a summary that's still present on disk.
-        try coreDataManager.deleteSummary(id: id)
+        // Persist the deletion intent before the local delete. This closes the crash window
+        // where a device could remove its local summary and never tell the other devices.
+        iCloudManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: id,
+            recordingId: recordingId
+        )
 
-        iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: id)
+        do {
+            try coreDataManager.deleteSummary(id: id)
+        } catch {
+            iCloudManager.clearPendingSummaryRemoval(summaryId: id)
+            throw error
+        }
 
         do {
             try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)

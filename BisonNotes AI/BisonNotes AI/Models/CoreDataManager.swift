@@ -51,6 +51,12 @@ class CoreDataManager: ObservableObject {
     }
     #endif
 
+    /// The context that backs this manager. Restore and deletion coordination must use
+    /// the coordinator's context rather than the process-wide shared persistence store.
+    var managedObjectContext: NSManagedObjectContext {
+        context
+    }
+
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
@@ -349,6 +355,18 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    func getTranscript(id: UUID) -> TranscriptEntry? {
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+
+        do {
+            return try context.fetch(fetchRequest).first
+        } catch {
+            AppLog.shared.coreData("Error fetching transcript \(id): \(error)", level: .error)
+            return nil
+        }
+    }
+
     func getTranscriptData(for recordingId: UUID) -> TranscriptData? {
         guard let transcriptEntry = getTranscript(for: recordingId),
               let recordingEntry = getRecording(id: recordingId) else {
@@ -370,21 +388,74 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    func deleteTranscript(id: UUID?) {
-        guard let id = id else { return }
+    private func enqueueTranscriptCloudDeletion(_ transcript: TranscriptEntry) {
+        guard let transcriptId = transcript.id else { return }
+        SummaryManager.shared.getiCloudManager().enqueueTranscriptRemovalFromiCloud(
+            transcriptId: transcriptId,
+            recordingId: transcript.recordingId ?? transcript.recording?.id
+        )
+    }
 
-        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+    private func enqueueSummaryCloudDeletion(_ summary: SummaryEntry) {
+        guard let summaryId = summary.id else { return }
+        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            recordingId: summary.recordingId ?? summary.recording?.id
+        )
+    }
+
+    private func enqueueRecordingCloudDeletion(_ recording: RecordingEntry) {
+        guard let recordingId = recording.id else { return }
+        SummaryManager.shared.getiCloudManager().enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 },
+            summaryIds: [recording.summaryId ?? recording.summary?.id].compactMap { $0 }
+        )
+    }
+
+    func deleteTranscript(id: UUID?) throws {
+        guard let id else { return }
 
         do {
+            let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+            fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
             let transcripts = try context.fetch(fetchRequest)
-            for transcript in transcripts {
+            guard !transcripts.isEmpty else {
+                AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
+                return
+            }
+
+            let recordingIds = Set(transcripts.compactMap { $0.recordingId ?? $0.recording?.id })
+            let recordings = getAllRecordings().filter { recording in
+                recording.transcriptId == id ||
+                    recording.id.map { recordingIds.contains($0) } == true ||
+                    transcripts.contains { $0.recording === recording }
+            }
+            for recording in recordings {
+                recording.transcript = nil
+                recording.transcriptId = nil
+                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+                recording.lastModified = Date()
+            }
+
+            let summaryEntries = getAllSummaries().filter { summary in
+                summary.transcriptId == id || summary.transcript?.id == id
+            }
+            for summary in summaryEntries {
+                summary.transcript = nil
+                summary.transcriptId = nil
+            }
+
+            transcripts.forEach { transcript in
+                enqueueTranscriptCloudDeletion(transcript)
                 context.delete(transcript)
             }
-            try? saveContext()
+            try saveContext()
             AppLog.shared.coreData("Deleted transcript with ID: \(id)")
         } catch {
+            context.rollback()
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
+            throw error
         }
     }
 
@@ -475,6 +546,10 @@ class CoreDataManager: ObservableObject {
                     if index > 0 {
                         let summaryLength = summary.summary?.count ?? 0
                         AppLog.shared.coreData("Deleting duplicate summary ID: \(summary.id?.uuidString ?? "nil") (length: \(summaryLength) chars)", level: .debug)
+                        if let summaryId = summary.id {
+                            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                        }
+                        enqueueSummaryCloudDeletion(summary)
                         context.delete(summary)
                         summariesDeleted += 1
                     } else {
@@ -496,6 +571,7 @@ class CoreDataManager: ObservableObject {
                     if index > 0 {
                         let segmentsLength = transcript.segments?.count ?? 0
                         AppLog.shared.coreData("Deleting duplicate transcript ID: \(transcript.id?.uuidString ?? "nil") (segments: \(segmentsLength) chars)", level: .debug)
+                        enqueueTranscriptCloudDeletion(transcript)
                         context.delete(transcript)
                         transcriptsDeleted += 1
                     } else {
@@ -513,6 +589,10 @@ class CoreDataManager: ObservableObject {
             for summary in allSummaries {
                 if let summaryRecordingId = summary.recordingId, !recordingIds.contains(summaryRecordingId) {
                     AppLog.shared.coreData("Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")", level: .debug)
+                    if let summaryId = summary.id {
+                        try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                    }
+                    enqueueSummaryCloudDeletion(summary)
                     context.delete(summary)
                     summariesDeleted += 1
                 }
@@ -526,6 +606,7 @@ class CoreDataManager: ObservableObject {
             for transcript in allTranscripts {
                 if let transcriptRecordingId = transcript.recordingId, !recordingIds.contains(transcriptRecordingId) {
                     AppLog.shared.coreData("Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")", level: .debug)
+                    enqueueTranscriptCloudDeletion(transcript)
                     context.delete(transcript)
                     transcriptsDeleted += 1
                 }
@@ -650,7 +731,13 @@ class CoreDataManager: ObservableObject {
         // Keep one authoritative summary per recording after the save succeeds.
         let duplicateSummaries = summariesForRecording.filter { $0.objectID != summaryEntry.objectID }
         if !duplicateSummaries.isEmpty {
-            duplicateSummaries.forEach(context.delete)
+            duplicateSummaries.forEach { summary in
+                if let summaryId = summary.id {
+                    try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                }
+                enqueueSummaryCloudDeletion(summary)
+                context.delete(summary)
+            }
             do {
                 try context.save()
             } catch {
@@ -780,6 +867,10 @@ class CoreDataManager: ObservableObject {
                 // Keep the most recent (index 0), delete the rest immediately
                 for summary in summaries.dropFirst() {
                     AppLog.shared.coreData("Auto-deleting duplicate summary ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0)", level: .debug)
+                    if let summaryId = summary.id {
+                        try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                    }
+                    enqueueSummaryCloudDeletion(summary)
                     context.delete(summary)
                 }
                 try? context.save()
@@ -857,8 +948,22 @@ class CoreDataManager: ObservableObject {
                 return
             }
 
+            let recordingIds = Set(summaries.compactMap { $0.recordingId ?? $0.recording?.id })
+            let recordings = getAllRecordings().filter { recording in
+                recording.summaryId == id ||
+                    recording.id.map { recordingIds.contains($0) } == true ||
+                    summaries.contains { $0.recording === recording }
+            }
+            for recording in recordings {
+                recording.summary = nil
+                recording.summaryId = nil
+                recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+                recording.lastModified = Date()
+            }
+
             for summary in summaries {
                 AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
+                enqueueSummaryCloudDeletion(summary)
                 context.delete(summary)
             }
 
@@ -906,7 +1011,21 @@ class CoreDataManager: ObservableObject {
 
             AppLog.shared.coreData("Deleting \(summaries.count) summary/summaries for recording: \(recordingId)", level: .debug)
             for summary in summaries {
+                if let summaryId = summary.id,
+                   let recording = getRecording(id: recordingId),
+                   recording.summaryId == summaryId {
+                    recording.summary = nil
+                    recording.summaryId = nil
+                    recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+                    recording.lastModified = Date()
+                }
+            }
+            for summary in summaries {
                 AppLog.shared.coreData("Deleting summary ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
+                if let summaryId = summary.id {
+                    try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                }
+                enqueueSummaryCloudDeletion(summary)
                 context.delete(summary)
             }
 
@@ -960,6 +1079,7 @@ class CoreDataManager: ObservableObject {
         }
 
         // Core Data will handle cascade deletion of related transcript and summary
+        enqueueRecordingCloudDeletion(recording)
         context.delete(recording)
 
         do {
@@ -1197,6 +1317,7 @@ class CoreDataManager: ObservableObject {
             // Only clean up recordings that have absolutely no content
             if hasNoURL && hasNoTranscript && hasNoSummary {
                 AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
+                enqueueRecordingCloudDeletion(recording)
                 context.delete(recording)
                 cleanedCount += 1
             }
@@ -1229,6 +1350,7 @@ class CoreDataManager: ObservableObject {
 
             if hasNoURL && hasNoTranscript && hasNoSummary {
                 // Delete this orphaned record
+                enqueueRecordingCloudDeletion(recording)
                 context.delete(recording)
                 fixedCount += 1
             }
@@ -1275,6 +1397,7 @@ class CoreDataManager: ObservableObject {
 
                     if !hasTranscript && !hasSummary {
                         // No valuable content to preserve, delete the record
+                        enqueueRecordingCloudDeletion(recording)
                         context.delete(recording)
                         cleanedCount += 1
                     } else {
@@ -1292,6 +1415,7 @@ class CoreDataManager: ObservableObject {
                 let hasSummary = recording.summary != nil
 
                 if !hasTranscript && !hasSummary {
+                    enqueueRecordingCloudDeletion(recording)
                     context.delete(recording)
                     cleanedCount += 1
                 } else {

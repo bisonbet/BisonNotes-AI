@@ -90,6 +90,8 @@ final class ICloudBackupRegressionTests: XCTestCase {
         appCoordinator.deleteRecording(id: recordingId)
 
         XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(for: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(for: recordingId))
         XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 1)
     }
 
@@ -102,7 +104,58 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         XCTAssertNotNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
         XCTAssertNil(appCoordinator.getSummary(for: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId)?.summaryId)
+        XCTAssertEqual(
+            appCoordinator.coreDataManager.getRecording(id: recordingId)?.summaryStatus,
+            ProcessingStatus.notStarted.rawValue
+        )
         XCTAssertEqual(iCloudManager.pendingSummaryRemovalCountForTesting, 1)
+    }
+
+    func testDeletingTranscriptIndependentlyKeepsRecordingAndSummary() async throws {
+        let recordingId = try createCompleteRecording(named: "Delete Transcript Only")
+        let transcriptId = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId)?.id)
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+
+        try await appCoordinator.deleteTranscript(id: transcriptId)
+
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        XCTAssertNil(recording.transcript)
+        XCTAssertNil(recording.transcriptId)
+        XCTAssertEqual(recording.transcriptionStatus, ProcessingStatus.notStarted.rawValue)
+
+        let summary = try XCTUnwrap(appCoordinator.getSummary(for: recordingId))
+        XCTAssertNil(summary.transcript)
+        XCTAssertNil(summary.transcriptId)
+        XCTAssertEqual(iCloudManager.pendingTranscriptRemovalCountForTesting, 1)
+    }
+
+    func testDeletionMarkerNamesRemainDistinctForEachContentKind() throws {
+        let manager = iCloudStorageManager()
+        let recordingId = UUID()
+        let transcriptId = UUID()
+        let summaryId = UUID()
+        let parentRecordingId = UUID()
+
+        let recordingName = manager.deletionMarkerRecordNameForTesting(kind: .recording, id: recordingId)
+        let transcriptName = manager.deletionMarkerRecordNameForTesting(kind: .transcript, id: transcriptId)
+        let summaryName = manager.deletionMarkerRecordNameForTesting(kind: .summary, id: summaryId)
+
+        XCTAssertNotEqual(recordingName, transcriptName)
+        XCTAssertNotEqual(recordingName, summaryName)
+        XCTAssertEqual(manager.decodeDeletionTargetForTesting(recordName: recordingName)?.kind, .recording)
+        XCTAssertEqual(manager.decodeDeletionTargetForTesting(recordName: recordingName)?.id, recordingId)
+        XCTAssertEqual(manager.decodeDeletionTargetForTesting(recordName: transcriptName)?.kind, .transcript)
+        XCTAssertEqual(manager.decodeDeletionTargetForTesting(recordName: transcriptName)?.id, transcriptId)
+        XCTAssertEqual(
+            manager.decodeDeletionTargetForTesting(recordName: summaryName, recordingId: parentRecordingId)?.kind,
+            .summary
+        )
+        XCTAssertEqual(
+            manager.decodeDeletionTargetForTesting(recordName: summaryName, recordingId: parentRecordingId)?.recordingId,
+            parentRecordingId
+        )
     }
 
     func testLocalOnlyToggleQueuesAndClearsPendingCloudRemovalWhenSyncIsUnavailable() async throws {
