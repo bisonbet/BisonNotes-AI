@@ -255,6 +255,154 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.summary, cloudSummary.summary)
     }
 
+    // MARK: - Multi-Device Arbitration
+
+    func testStaleLocalVersionDoesNotOverwriteNewerCloudRecord() {
+        let older = Date(timeIntervalSince1970: 1_770_000_000)
+        let newer = older.addingTimeInterval(3_600)
+
+        XCTAssertFalse(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: older, cloudTimestamp: newer)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: newer, cloudTimestamp: older)
+        )
+    }
+
+    func testEqualTimestampsStillUploadSoOtherFieldChangesPropagate() {
+        let timestamp = Date(timeIntervalSince1970: 1_770_000_000)
+
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: timestamp, cloudTimestamp: timestamp)
+        )
+    }
+
+    func testUnknownTimestampsFallBackToTheLegacyOverwriteBehaviour() {
+        let timestamp = Date(timeIntervalSince1970: 1_770_000_000)
+
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: nil, cloudTimestamp: timestamp)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: timestamp, cloudTimestamp: nil)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: nil, localTimestamp: timestamp)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: timestamp, localTimestamp: nil)
+        )
+    }
+
+    func testStaleCloudRecordDoesNotOverwriteNewerLocalRow() {
+        let older = Date(timeIntervalSince1970: 1_770_000_000)
+        let newer = older.addingTimeInterval(3_600)
+
+        XCTAssertFalse(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: older, localTimestamp: newer)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: newer, localTimestamp: older)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: older, localTimestamp: older)
+        )
+    }
+
+    func testArbitrationConvergesRegardlessOfWhichDeviceSyncsLast() {
+        let deviceAEdit = Date(timeIntervalSince1970: 1_770_000_000)
+        let deviceBEdit = deviceAEdit.addingTimeInterval(600)
+
+        // Device B edited later and syncs first, so the cloud holds B's version.
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: deviceBEdit, cloudTimestamp: deviceAEdit)
+        )
+        // Device A syncs afterwards: it must neither publish nor keep its older edit.
+        XCTAssertFalse(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: deviceAEdit, cloudTimestamp: deviceBEdit)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldApplyCloudVersion(cloudTimestamp: deviceBEdit, localTimestamp: deviceAEdit)
+        )
+    }
+
+    // MARK: - Deletion Arbitration
+
+    func testDeletionMarkerKeepsTheEarliestClaimedDeletionTime() {
+        let deletedOnDeviceA = Date(timeIntervalSince1970: 1_770_000_000)
+        let flushedLater = deletedOnDeviceA.addingTimeInterval(86_400)
+
+        XCTAssertEqual(
+            iCloudStorageManager.resolvedDeletionTimestamp(existing: nil, requested: deletedOnDeviceA),
+            deletedOnDeviceA
+        )
+        XCTAssertEqual(
+            iCloudStorageManager.resolvedDeletionTimestamp(existing: flushedLater, requested: deletedOnDeviceA),
+            deletedOnDeviceA
+        )
+        XCTAssertEqual(
+            iCloudStorageManager.resolvedDeletionTimestamp(existing: deletedOnDeviceA, requested: flushedLater),
+            deletedOnDeviceA
+        )
+    }
+
+    func testItemEditedAfterARemoteDeleteIsKeptInsteadOfDeleted() {
+        let deletedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let editedAfterwards = deletedAt.addingTimeInterval(600)
+
+        XCTAssertTrue(
+            iCloudStorageManager.shouldReviveLocallyModifiedItem(
+                localTimestamp: editedAfterwards,
+                deletedAt: deletedAt
+            )
+        )
+    }
+
+    func testUntouchedItemAndCloseRacesStillHonourTheDelete() {
+        let deletedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let untouched = deletedAt.addingTimeInterval(-600)
+        let withinGracePeriod = deletedAt.addingTimeInterval(
+            iCloudStorageManager.deletionReviveGraceInterval / 2
+        )
+
+        XCTAssertFalse(
+            iCloudStorageManager.shouldReviveLocallyModifiedItem(localTimestamp: untouched, deletedAt: deletedAt)
+        )
+        XCTAssertFalse(
+            iCloudStorageManager.shouldReviveLocallyModifiedItem(
+                localTimestamp: withinGracePeriod,
+                deletedAt: deletedAt
+            )
+        )
+        XCTAssertFalse(
+            iCloudStorageManager.shouldReviveLocallyModifiedItem(localTimestamp: nil, deletedAt: deletedAt)
+        )
+    }
+
+    func testMarkerWithoutADeletionTimeNeverRevivesAnItem() {
+        XCTAssertFalse(
+            iCloudStorageManager.shouldReviveLocallyModifiedItem(
+                localTimestamp: Date(timeIntervalSince1970: 1_770_000_000),
+                deletedAt: .distantPast
+            )
+        )
+    }
+
+    func testQueuedDeletionRecordsWhenTheUserDeletedNotWhenItFlushes() throws {
+        let recordingId = try createCompleteRecording(named: "Queued Deletion Time")
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        let deletedAt = Date(timeIntervalSince1970: 1_770_000_000)
+
+        iCloudManager.enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: [],
+            summaryIds: [],
+            requestedAt: deletedAt
+        )
+
+        XCTAssertEqual(iCloudManager.pendingCloudDeletionRequestedAtForTesting(recordingId: recordingId), deletedAt)
+    }
+
     private func createCompleteRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
