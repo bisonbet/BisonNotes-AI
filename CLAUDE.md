@@ -98,14 +98,8 @@ New AI engines should follow the existing pattern:
 
 Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target supports only iPhone and iPad destinations; the `BisonNotes AI macOS` scheme is the sole Mac product.
 
-- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** BisonNotes remains Apple Silicon-only because MLX Swift requires Apple Silicon. The vendored llama xcframework still contains its upstream universal macOS slice, but the app does not ship an Intel product.
-- The native target consumes `Frameworks/llama.xcframework/macos-arm64_x86_64` directly. Do not recreate or restore the deleted `ios-arm64-maccatalyst` slice.
-
-#### Remove `link "c++"` from llama modulemaps
-
-Each slice's `Modules/module.modulemap` (e.g. `ios-arm64/llama.framework/Modules/module.modulemap`) ships with a `link "c++"` directive. Another SPM dependency (MLX-Swift) already links libc++, so leaving this in causes a `Ignoring duplicate libraries: '-lc++'` warning at link time. Delete the `link "c++"` line from every slice's modulemap. The framework binary itself records libc++ as a load dependency, so dyld still resolves it at runtime.
-
-If the xcframework is rebuilt or updated from upstream, reapply this removal across all slices.
+- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** BisonNotes remains Apple Silicon-only because MLX Swift requires Apple Silicon.
+- The native target uses the MLX Swift package for on-device language-model inference. Do not add a vendored llama.cpp framework back to the project.
 
 The historical Catalyst guards in the `bisonbet/textual` fork are no longer required by this app and can be dropped when that separate repository is next rebased.
 

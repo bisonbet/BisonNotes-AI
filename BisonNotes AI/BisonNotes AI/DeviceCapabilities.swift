@@ -24,13 +24,6 @@ struct DeviceCapabilities {
         return ProcessInfo.processInfo.physicalMemory
     }
 
-    /// Legacy On-Device AI (llama) requires at least 6GB of RAM. No experimental
-    /// override — devices under 6GB were unreliable in practice and are off the
-    /// legacy path entirely.
-    static var supportsOnDeviceLLM: Bool {
-        return totalRAMInGB >= 6.0
-    }
-
     /// MLX-based on-device AI supports devices down to 4GB by way of the small
     /// 1.7B model. 6GB+ devices get the 4B/8B options; 4-6GB devices are
     /// limited to the 1.7B model.
@@ -96,9 +89,9 @@ struct DeviceCapabilities {
         return deviceRAM >= minimumRAM
     }
 
-    /// Get the appropriate context size for on-device LLM based on device RAM
+    /// Get the appropriate context size for on-device AI based on device RAM
     /// - Returns: 8192 tokens for devices with <8GB RAM, 16384 tokens for devices with >=8GB RAM
-    static var onDeviceLLMContextSize: Int {
+    static var onDeviceAIContextSize: Int {
         let deviceRAM = totalRAMInGB
         return deviceRAM < 8.0 ? 8192 : 16384
     }
@@ -128,7 +121,7 @@ struct DeviceCapabilities {
         report += "==========================\n"
         report += "Model: \(modelName)\n"
         report += "RAM: \(ramDescription)\n"
-        report += "On-Device LLM Support: \(supportsOnDeviceLLM ? "✅" : "❌")\n"
+        report += "MLX On-Device AI Support: \(supportsMLX ? "✅" : "❌")\n"
         report += "Action Button Support: \(supportsActionButton ? "✅" : "❌")\n"
 
         #if os(macOS)

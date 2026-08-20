@@ -75,18 +75,6 @@ final class BisonNotesAITests: XCTestCase {
         XCTAssertEqual(maxSeconds, 10 * 60)
     }
 
-    func testMissingOnDeviceModelThrowsRecoverableError() {
-        let missingPath = FileManager.default.temporaryDirectory
-            .appendingPathComponent("missing-model-\(UUID().uuidString).gguf")
-
-        XCTAssertThrowsError(try OnDeviceLLM(from: missingPath.path)) { error in
-            guard let llmError = error as? OnDeviceLLMError,
-                  case .configurationError = llmError else {
-                return XCTFail("Expected a recoverable model configuration error, got \(error)")
-            }
-        }
-    }
-
     func testBackgroundSummarizationRouteRecognizesOllamaAliases() {
         XCTAssertEqual(BackgroundSummarizationRoute(engineName: "Ollama"), .ollama)
         XCTAssertEqual(BackgroundSummarizationRoute(engineName: "Local LLM (Ollama)"), .ollama)

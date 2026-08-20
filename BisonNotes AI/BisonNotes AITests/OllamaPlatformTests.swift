@@ -18,17 +18,13 @@ final class OllamaPlatformTests: XCTestCase {
 #endif
     }
 
-    func testLegacyOllamaMigrationPrefersOnDeviceEngines() {
+    func testLegacyOllamaMigrationPrefersMLXWhenSupported() {
         XCTAssertEqual(
-            AIEngineType.preferredOnDeviceMigrationEngine(supportsMLX: true, supportsOnDeviceLLM: true),
+            AIEngineType.preferredOnDeviceMigrationEngine(supportsMLX: true),
             .mlxSwift
         )
-        XCTAssertEqual(
-            AIEngineType.preferredOnDeviceMigrationEngine(supportsMLX: false, supportsOnDeviceLLM: true),
-            .onDeviceLLM
-        )
         XCTAssertNil(
-            AIEngineType.preferredOnDeviceMigrationEngine(supportsMLX: false, supportsOnDeviceLLM: false)
+            AIEngineType.preferredOnDeviceMigrationEngine(supportsMLX: false)
         )
     }
 

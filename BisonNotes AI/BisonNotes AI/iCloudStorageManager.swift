@@ -2706,16 +2706,7 @@ extension iCloudStorageManager {
         "whisperPort",
         "whisperProtocol",
         FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled,
-        FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod,
-        OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM,
-        OnDeviceLLMModelInfo.SettingsKeys.selectedModelId,
-        OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels,
-        OnDeviceLLMModelInfo.SettingsKeys.temperature,
-        OnDeviceLLMModelInfo.SettingsKeys.maxTokens,
-        OnDeviceLLMModelInfo.SettingsKeys.topK,
-        OnDeviceLLMModelInfo.SettingsKeys.topP,
-        OnDeviceLLMModelInfo.SettingsKeys.minP,
-        OnDeviceLLMModelInfo.SettingsKeys.repeatPenalty
+        FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
     ]
 
     private static let sensitiveSettingKeyFragments: [String] = [
@@ -6119,6 +6110,23 @@ extension iCloudStorageManager {
         encodedValue: Data,
         sourcePlatform: String?
     ) -> Bool {
+        // Do not restore settings or engine selections for the removed
+        // llama.cpp engine from an older iCloud backup.
+        if LegacyLlamaMigration.legacySettingsKeys.contains(key) {
+            return false
+        }
+
+        if key == "SelectedAIEngine",
+           let rawValue = try? PropertyListSerialization.propertyList(
+               from: encodedValue,
+               options: [],
+               format: nil
+           ),
+           let selectedEngine = rawValue as? String,
+           LegacyLlamaMigration.isLegacyEngineIdentifier(selectedEngine) {
+            return false
+        }
+
         guard Self.platformSpecificSettingsKeys.contains(key) else {
             return true
         }

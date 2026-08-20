@@ -62,4 +62,4 @@ See `README.md` (Build and Test section) and `CLAUDE.md` (Architecture Overview)
 - Watch app: `BisonNotes AI/BisonNotes AI Watch App/`
 - Unit tests: `BisonNotes AI/BisonNotes AITests/`
 - UI tests: `BisonNotes AI/BisonNotes AIUITests/`
-- Pre-compiled framework: `Frameworks/llama.xcframework/`
+- MLX Swift language-model package: linked through Xcode-managed Swift Package Manager dependencies

@@ -19,7 +19,10 @@ enum MLXSwiftSettingsKeys {
     static let topP = "mlxSwiftTopP"
     static let repetitionPenalty = "mlxSwiftRepeatPenalty"
 
+    static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
     static let defaultModelId = "prism-ml/Ternary-Bonsai-4B-mlx-2bit"
+    static let largeModelId = "prism-ml/Ternary-Bonsai-8B-mlx-2bit"
+    static let macModelId = "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
     static let defaultMaxTokens = 2700
     static let defaultTemperature: Double = 0.7
     static let defaultTopK = 40
@@ -734,7 +737,7 @@ private actor MLXSwiftService {
         if UserDefaults.standard.object(forKey: MLXSwiftSettingsKeys.contextTokens) != nil {
             return UserDefaults.standard.integer(forKey: MLXSwiftSettingsKeys.contextTokens)
         }
-        return DeviceCapabilities.onDeviceLLMContextSize
+        return DeviceCapabilities.onDeviceAIContextSize
     }
 
     private var configuredTemperature: Float {

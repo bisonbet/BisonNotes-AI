@@ -12,11 +12,25 @@ import Foundation
 @preconcurrency import AVFoundation
 import CoreMedia
 import ScreenCaptureKit
+import Synchronization
+
+private final class MacSystemAudioPauseRequest: Sendable {
+	private let state = Mutex(false)
+
+	func set(_ paused: Bool) {
+		state.withLock { $0 = paused }
+	}
+
+	func get() -> Bool {
+		state.withLock { $0 }
+	}
+}
 
 final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private let outputURL: URL
 	private let sampleQueue = DispatchQueue(label: "com.bisonnotesai.mac-system-audio")
 	private let discardedVideoQueue = DispatchQueue(label: "com.bisonnotesai.mac-system-video-discard")
+	private let pauseRequest = MacSystemAudioPauseRequest()
 
 	private var stream: SCStream?
 	private var assetWriter: AVAssetWriter?
@@ -109,6 +123,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 			self.audibleAudioDuration = 0
 			self.isPaused = false
 			self.stopErrorDescription = nil
+			pauseRequest.set(false)
 		}
 
 		try await stream.startCapture()
@@ -132,15 +147,10 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func setPaused(_ paused: Bool) {
-		// Async: this is called from the main thread during a pause/resume tap,
-		// and `sampleQueue` is the realtime sample-handler queue.
-		sampleQueue.async { [self] in
-			guard self.isPaused != paused else { return }
-			self.isPaused = paused
-			if paused {
-				self.pauseStartedAt = self.lastSourceTime
-			}
-		}
+		// This is called from the main thread during a pause/resume tap. Store
+		// only a Sendable request here; the sample queue applies the transition
+		// alongside the rest of its queue-confined capture state.
+		pauseRequest.set(paused)
 	}
 
 	@MainActor
@@ -200,6 +210,14 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		let sourceTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
 		guard sourceTime.isValid else { return }
 		lastSourceTime = sourceTime
+
+		let requestedPause = pauseRequest.get()
+		if requestedPause != isPaused {
+			isPaused = requestedPause
+			if requestedPause {
+				pauseStartedAt = sourceTime
+			}
+		}
 
 		if isPaused {
 			if pauseStartedAt == nil {

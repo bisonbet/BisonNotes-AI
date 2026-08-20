@@ -46,9 +46,9 @@ struct DeviceCompatibility {
     // MARK: - On-Device AI Support
 
     /// Check if device supports on-device AI (summarization)
-    /// Requires 6GB+ RAM (uses DeviceCapabilities for consistency)
+    /// Requires 4GB+ RAM for the MLX 1.7B model (uses DeviceCapabilities for consistency)
     static var isOnDeviceAISupported: Bool {
-        return DeviceCapabilities.supportsOnDeviceLLM
+        return DeviceCapabilities.supportsMLX
     }
 
     // MARK: - FluidAudio Support

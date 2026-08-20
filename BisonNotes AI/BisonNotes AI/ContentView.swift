@@ -21,7 +21,7 @@ struct ContentView: View {
     @State private var pendingActionButtonRecording = false
     @State private var showingAppleIntelligenceMigrationAlert = false
     @State private var showingOllamaMigrationAlert = false
-    @State private var showingOnDeviceLLMSettings = false
+    @State private var showingAISettings = false
     @State private var showingWhisperKitRemovedAlert = false
     @State private var showingWhisperKitSwitchedAlert = false
     @State private var showingParakeetMigrationAlert = false
@@ -162,11 +162,11 @@ struct ContentView: View {
             Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
         }
         .alert("Apple Intelligence Has Been Removed", isPresented: $showingAppleIntelligenceMigrationAlert) {
-            Button("Configure On-Device AI") {
-                showingOnDeviceLLMSettings = true
+            Button("Configure AI Settings") {
+                showingAISettings = true
             }
         } message: {
-            Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
+            Text("Apple Intelligence has been removed from the app. Your settings have been moved to the current AI engine. Review AI Settings to download an MLX model or choose another provider.")
         }
         .alert("Ollama Is Now Mac Only", isPresented: $showingOllamaMigrationAlert) {
             Button("OK") { }
@@ -177,9 +177,11 @@ struct ContentView: View {
                     + "Open Setup → AI Settings to download or configure its model."
             )
         }
-        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+        .sheet(isPresented: $showingAISettings) {
             NavigationStack {
-                OnDeviceLLMSettingsView()
+                AISettingsView()
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
             }
             .nativeMacModalSizing(width: 760, height: 700)
             .nativeMacModalDismissControl()

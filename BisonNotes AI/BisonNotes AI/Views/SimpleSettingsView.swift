@@ -9,14 +9,14 @@ import SwiftUI
 
 enum ProcessingOption: String, CaseIterable {
     case mistralAI = "Mistral AI"
-    case onDeviceLLM = "On-Device AI"
+    case onDeviceAI = "On-Device AI"
     case chooseLater = "Choose Later"
 
     var displayName: String {
         switch self {
         case .mistralAI:
             return "Mistral AI (Free)"
-        case .onDeviceLLM:
+        case .onDeviceAI:
             return "On-Device AI"
         case .chooseLater:
             return "Advanced & Other Options"
@@ -27,7 +27,7 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .mistralAI:
             return "Free cloud AI -- no credit card required"
-        case .onDeviceLLM:
+        case .onDeviceAI:
             return "Private, on-device AI processing"
         case .chooseLater:
             return "Configure additional providers later"
@@ -38,7 +38,7 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .mistralAI:
             return "cloud.fill"
-        case .onDeviceLLM:
+        case .onDeviceAI:
             return "lock.shield.fill"
         case .chooseLater:
             return "slider.horizontal.3"
@@ -49,7 +49,7 @@ enum ProcessingOption: String, CaseIterable {
         switch self {
         case .mistralAI:
             return .orange
-        case .onDeviceLLM:
+        case .onDeviceAI:
             return .green
         case .chooseLater:
             return .blue
@@ -73,7 +73,7 @@ struct SimpleSettingsView: View {
     @State private var saveSuccessful = false
     @State private var isFirstLaunch = false
     @State private var deviceSupported = false
-    @State private var showingOnDeviceLLMSettings = false
+    @State private var showingMLXSwiftSettings = false
     @State private var showingOnDeviceAIDownload = false
     @State private var showingMistralOnboarding = false
 
@@ -85,7 +85,7 @@ struct SimpleSettingsView: View {
                     processingOptionSection
                     if selectedOption == .mistralAI {
                         mistralAIInfoSection
-                    } else if selectedOption == .onDeviceLLM {
+                    } else if selectedOption == .onDeviceAI {
                         onDeviceAIInfoSection
                     } else if selectedOption == .chooseLater {
                         chooseLaterSection
@@ -112,7 +112,7 @@ struct SimpleSettingsView: View {
         }
         .onAppear {
             loadCurrentSettings()
-            // Check if device supports MLX on-device AI (requires 6GB+ RAM)
+            // Check if device supports MLX on-device AI (requires 4GB+ RAM)
             deviceSupported = DeviceCapabilities.supportsMLX
             // Check if this is first launch
             isFirstLaunch = !UserDefaults.standard.bool(forKey: "hasCompletedFirstSetup")
@@ -129,7 +129,7 @@ struct SimpleSettingsView: View {
             // Downloads keep running in the background; OnDeviceAIDownloadMonitor
             // surfaces the completion alert when both models finish.
             if oldValue == true && newValue == false,
-               isFirstLaunch, selectedOption == .onDeviceLLM {
+               isFirstLaunch, selectedOption == .onDeviceAI {
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 300_000_000)
                     NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
@@ -146,9 +146,9 @@ struct SimpleSettingsView: View {
                 .environmentObject(appCoordinator)
         }
         #endif
-        .sheet(isPresented: $showingOnDeviceLLMSettings) {
+        .sheet(isPresented: $showingMLXSwiftSettings) {
             NavigationStack {
-                OnDeviceLLMSettingsView()
+                MLXSwiftSettingsView()
             }
             .nativeMacModalSizing(width: 760, height: 700)
             .nativeMacModalDismissControl()
@@ -220,7 +220,7 @@ struct SimpleSettingsView: View {
     /// supported), and Advanced.
     private var availableProcessingOptions: [ProcessingOption] {
         ProcessingOption.allCases.filter { option in
-            option == .mistralAI || option == .chooseLater || (option == .onDeviceLLM && deviceSupported)
+            option == .mistralAI || option == .chooseLater || (option == .onDeviceAI && deviceSupported)
         }
     }
 
@@ -288,7 +288,7 @@ struct SimpleSettingsView: View {
                     systemImage: "info.circle.fill",
                     tint: .blue
                 ) {
-                    Text("On-Device AI requires 6GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
+                    Text("On-Device AI requires 4GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -484,15 +484,11 @@ struct SimpleSettingsView: View {
         }
         // MLX Swift is an on-device summary engine, so show the main on-device setup option.
         else if aiEngine == AIEngineType.mlxSwift.rawValue {
-            selectedOption = .onDeviceLLM
-        }
-        // Check if On-Device AI is selected for AI and on-device transcription (FluidAudio/Parakeet)
-        else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == AIEngineType.onDeviceLLM.rawValue {
-            selectedOption = .onDeviceLLM
+            selectedOption = .onDeviceAI
         }
         // Check if Apple Native (Foundation Models) is selected — also fully on-device
         else if transcriptionEngine == TranscriptionEngine.fluidAudio.rawValue && aiEngine == AIEngineType.appleNative.rawValue {
-            selectedOption = .onDeviceLLM
+            selectedOption = .onDeviceAI
         }
         // Any other permutation should show Advanced & Other Options
         else {
@@ -563,12 +559,11 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
 
-                    // Honor any local AI engine the user has already chosen (MLX,
-                    // legacy On-Device LLM, or Apple Intelligence) along with its
-                    // selected model. Only fall back to MLX + 4B if none is set.
+                    // Honor any local AI engine the user has already chosen
+                    // (MLX or Apple Native). Only fall back to MLX + 4B if none
+                    // is set.
                     let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
                     let localEngines: Set<String> = [
-                        AIEngineType.onDeviceLLM.rawValue,
                         AIEngineType.mlxSwift.rawValue,
                         AIEngineType.appleNative.rawValue
                     ]
@@ -576,8 +571,6 @@ struct SimpleSettingsView: View {
                     if let currentAI, localEngines.contains(currentAI) {
                         if currentAI == AIEngineType.mlxSwift.rawValue {
                             UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-                        } else if currentAI == AIEngineType.onDeviceLLM.rawValue {
-                            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
                         }
                     } else {
                         UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")
@@ -597,7 +590,7 @@ struct SimpleSettingsView: View {
                 UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
 
                 // If On-Device AI was selected, show download confirmation dialog
-                if selectedOption == .onDeviceLLM {
+                if selectedOption == .onDeviceAI {
                     try await Task.sleep(nanoseconds: 1_000_000_000) // Wait 1 second to show success message
 
                     // Check if models are already downloaded

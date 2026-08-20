@@ -297,13 +297,6 @@ private let directDependencies: [DependencyCard] = [
         url: URL(string: "https://github.com/ml-explore/mlx-swift")!
     ),
     DependencyCard(
-        name: "llama.cpp",
-        description: "C/C++ inference engine for on-device LLM processing with Metal-accelerated summarization.",
-        license: "MIT",
-        linkText: "ggerganov/llama.cpp",
-        url: URL(string: "https://github.com/ggerganov/llama.cpp")!
-    ),
-    DependencyCard(
         name: "Swift Transformers",
         description: "Hugging Face tokenizers and transformer utilities used by local model pipelines.",
         license: "Apache 2.0",

@@ -23,7 +23,7 @@ struct MLXModelOption: Identifiable {
     static let available: [MLXModelOption] = {
         var models = [
             MLXModelOption(
-                id: "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit",
+                id: MLXSwiftSettingsKeys.smallModelId,
                 displayName: "Ternary Bonsai 1.7B",
                 description: "Compact model for devices with limited memory.",
                 downloadSize: "~470 MB",
@@ -33,7 +33,7 @@ struct MLXModelOption: Identifiable {
                 requiredRAM: 4.0
             ),
             MLXModelOption(
-                id: "prism-ml/Ternary-Bonsai-4B-mlx-2bit",
+                id: MLXSwiftSettingsKeys.defaultModelId,
                 displayName: "Ternary Bonsai 4B",
                 description: "Fast, memory-efficient model for on-device summaries.",
                 downloadSize: "~1.1 GB",
@@ -43,7 +43,7 @@ struct MLXModelOption: Identifiable {
                 requiredRAM: 6.0
             ),
             MLXModelOption(
-                id: "prism-ml/Ternary-Bonsai-8B-mlx-2bit",
+                id: MLXSwiftSettingsKeys.largeModelId,
                 displayName: "Ternary Bonsai 8B",
                 description: "Slower but higher quality summaries.",
                 downloadSize: "~2.3 GB",
@@ -56,7 +56,7 @@ struct MLXModelOption: Identifiable {
 
         #if os(macOS)
         models.append(MLXModelOption(
-            id: "prism-ml/Ternary-Bonsai-27B-mlx-2bit",
+            id: MLXSwiftSettingsKeys.macModelId,
             displayName: "Ternary Bonsai 27B",
             description: "Laptop-class reasoning for high-memory Apple silicon Macs.",
             downloadSize: "~8.5 GB",
@@ -70,9 +70,9 @@ struct MLXModelOption: Identifiable {
         return models
     }()
 
-    /// Identifier for the 1.7B model — used by both the device-default selection
-    /// (4-6GB devices) and the experimental-models filter (6GB+ devices).
-    static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
+    /// Identifier for the 1.7B model used on 4-6GB devices and for legacy
+    /// models whose closest MLX replacement is the small tier.
+    static let smallModelId = MLXSwiftSettingsKeys.smallModelId
 }
 
 // MARK: - MLX Swift Settings View
@@ -90,7 +90,6 @@ struct MLXSwiftSettingsView: View {
     @AppStorage(MLXSwiftSettingsKeys.topK) private var topK = MLXSwiftSettingsKeys.defaultTopK
     @AppStorage(MLXSwiftSettingsKeys.topP) private var topP = MLXSwiftSettingsKeys.defaultTopP
     @AppStorage(MLXSwiftSettingsKeys.repetitionPenalty) private var repetitionPenalty = MLXSwiftSettingsKeys.defaultRepetitionPenalty
-    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var experimentalEnabled = false
 
     @StateObject private var downloadManager = MLXSwiftDownloadManager.shared
 
@@ -278,22 +277,12 @@ struct MLXSwiftSettingsView: View {
 
     // MARK: - Model Visibility
 
-    /// Models visible for the current device.
-    /// - Include any model whose `requiredRAM` fits the device, **except**
-    ///   the 1.7B model on 6GB+ devices, which is hidden unless experimental is on
-    ///   (those devices have better default options).
-    /// - Always include the currently-selected model so the user can see it
-    ///   even if the experimental flag is now off.
+    /// Models visible for the current device. Every MLX model that fits the
+    /// device is available; the old legacy experimental toggle no longer gates
+    /// MLX model selection.
     private var visibleModels: [MLXModelOption] {
         let deviceRAM = DeviceCapabilities.totalRAMInGB
-        return MLXModelOption.available.filter { model in
-            guard deviceRAM >= model.requiredRAM else { return false }
-            if model.id == modelId { return true }
-            if model.id == MLXModelOption.smallModelId && deviceRAM >= 6.0 {
-                return experimentalEnabled
-            }
-            return true
-        }
+        return MLXModelOption.available.filter { deviceRAM >= $0.requiredRAM }
     }
 
     // MARK: - Model Row
@@ -498,10 +487,10 @@ struct MLXSwiftSettingsView: View {
         HStack {
             Text("Context Size")
             Spacer()
-            Text("\(DeviceCapabilities.onDeviceLLMContextSize) tokens")
+            Text("\(DeviceCapabilities.onDeviceAIContextSize) tokens")
                 .foregroundColor(.secondary)
         }
-        Text("Automatically set based on device RAM: \(DeviceCapabilities.onDeviceLLMContextSize == 8192 ? "8k" : "16k") for devices with \(DeviceCapabilities.onDeviceLLMContextSize == 8192 ? "<8GB" : "\u{2265}8GB") RAM")
+        Text("Automatically set based on device RAM: \(DeviceCapabilities.onDeviceAIContextSize == 8192 ? "8k" : "16k") for devices with \(DeviceCapabilities.onDeviceAIContextSize == 8192 ? "<8GB" : "\u{2265}8GB") RAM")
             .font(.caption2)
             .foregroundColor(.secondary)
 

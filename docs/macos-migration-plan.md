@@ -32,7 +32,7 @@ This document is written for an AI agent (or human) to execute incrementally. Ev
 
 1. **Never break the iOS or Catalyst build.** Both must build green after every commit until Phase 4 cutover. Run the verification loop (below) before every commit.
 2. **One task per commit.** Small, revertable commits. Conventional prefixes: `refactor:` (Phase 0), `feat(macos):` (Phases 1–3), `chore:` (cleanup).
-3. **Do not touch `Frameworks/llama.xcframework/ios-arm64-maccatalyst/`** until Phase 4.
+3. **Historical Phase 4 note:** the Catalyst llama slice was removed during the native macOS cutover; the complete embedded llama.cpp framework is now removed by the dedicated removal branch.
 4. **`#if targetEnvironment(macCatalyst)` semantics:** on native macOS this is FALSE. Any behavior currently gated to Catalyst that native macOS also needs must be re-fenced as `#if targetEnvironment(macCatalyst) || os(macOS)`. Any iOS-only API usage must be fenced `#if os(iOS)` (which is TRUE on Catalyst — fence Catalyst-excluded iOS code as `#if os(iOS) && !targetEnvironment(macCatalyst)`).
 5. **Known Catalyst UI landmines** (do not regress; both remain relevant until cutover):
    - SwiftUI `ScrollView` is broken inside Mac Catalyst sheets — use `Form`/`List`.
@@ -108,11 +108,11 @@ Shrinks the eventual port and benefits iOS/Catalyst immediately. Each task is in
 ### 1.1 Create target
 - Duplicate the `BisonNotes AI` app target as **`BisonNotes AI macOS`** (native macOS SwiftUI app, NOT Catalyst). Same sources, same asset catalog, same Core Data model. Create a matching scheme `BisonNotes AI macOS`.
 - **Bundle ID: use the same bundle ID as the Catalyst app** (`PRODUCT_BUNDLE_IDENTIFIER` unchanged) so the native app inherits the container and replaces the Catalyst app on the App Store at cutover. The two targets cannot be installed simultaneously — that is expected; use the Catalyst target for Catalyst testing and the macOS target for native testing.
-- Carry over: `EXCLUDED_ARCHS = x86_64` (app is Apple Silicon-only: MLX + arm64-only llama), entitlements (App Groups, mic, speech, screen capture for ScreenCaptureKit), Info.plist usage strings.
+- Carry over: `EXCLUDED_ARCHS = x86_64` (app is Apple Silicon-only: MLX + arm64), entitlements (App Groups, mic, speech, screen capture for ScreenCaptureKit), Info.plist usage strings.
 - Exclude from the macOS target's compile sources / dependencies: Watch app embedding, `BisonNotes AI ControlsExtension`, `BisonNotes Share` (deferred), `WatchConnectivity/` sources.
 
 ### 1.2 Dependency sanity
-- llama.xcframework: native macOS resolves to the stock `macos-arm64_x86_64` slice. No action needed; do NOT touch the Catalyst slice.
+- The former embedded llama.cpp framework has been removed. MLX-Swift, FluidAudio, and textual remain the native dependency sanity checks.
 - MLX-Swift, FluidAudio, textual: expect to build natively. textual takes its upstream AppKit path on native macOS (the Catalyst guards are `!targetEnvironment(macCatalyst)` and don't affect native macOS).
 
 ### 1.3 Compile to first launch
@@ -155,7 +155,7 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 ### Phase 2 exit criteria (loop until all pass on macOS)
 - Record a mic-only note → transcript → summary end-to-end.
 - Record with system audio (ScreenCaptureKit) → verify mixed/parallel files as on Catalyst.
-- On-device transcription + LLM summary (llama and/or MLX path) complete.
+- On-device transcription + MLX summary complete.
 - Cloud engines (Gemini/Mistral) reachable (config permitting).
 - Quit app during background processing → relaunch → job recovers (matches memory: quit-crash was a Catalyst Phase-2 test item).
 - Zero remaining `TODO(macos-phase2)` markers.
@@ -188,7 +188,7 @@ Work through the categorized conditional inventory (appendix below) tagged MISC:
 - TestFlight for Mac side-by-side soak; run the Phase-2 checklist from memory (recording, external mic swap, AI inference, long-session scrolling, quit-while-processing).
 ### 4.3 Cutover & rewards — implemented
 1. Mac Catalyst was removed from the iOS and test targets' supported destinations.
-2. `Frameworks/llama.xcframework/ios-arm64-maccatalyst/` and its `Info.plist` entry were deleted.
+2. The Catalyst llama slice and its `Info.plist` entry were deleted during cutover; the complete `Frameworks/llama.xcframework` was removed by the later llama.cpp removal work.
 3. `Scripts/archive-catalyst.sh` was deleted.
 4. The `textual` fork cleanup remains a separate repository task for its next rebase; its historical Catalyst guards are harmless here.
 5. Dead `targetEnvironment(macCatalyst)` source branches were purged, and the Mac recorder/system-audio files were renamed for native macOS.

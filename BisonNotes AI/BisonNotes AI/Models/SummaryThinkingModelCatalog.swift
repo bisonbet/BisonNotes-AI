@@ -37,8 +37,6 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
             return mistralProfile(modelName: modelName, normalizedModel: model)
         case .localLLM:
             return ollamaProfile(modelName: modelName, normalizedModel: model)
-        case .onDeviceLLM:
-            return onDeviceProfile(modelName: modelName, normalizedModel: model)
         case .mlxSwift:
             return mlxProfile(modelName: modelName, normalizedModel: model)
         case .openAICompatible:
@@ -145,7 +143,7 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
                 chatTemplateKwargs: nil,
                 ollamaThinkLevel: "low"
             )
-        case .mlx, .onDeviceQwenTemplate:
+        case .mlx:
             // These runtimes receive the switch through their native template
             // context, not through a network request field.
             return .none
@@ -171,9 +169,6 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
         case .googleAIStudio:
             return UserDefaults.standard.string(forKey: "googleAIStudioModel")
                 ?? "gemini-3-flash-preview"
-        case .onDeviceLLM:
-            return UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-                ?? OnDeviceLLMModelInfo.defaultSummarizationModel.id
         case .mlxSwift:
             return UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
                 ?? MLXSwiftSettingsKeys.defaultModelId
@@ -294,19 +289,6 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
         }
         if model.contains("thinking") || model.contains("reasoning") {
             return SummaryThinkingProfile(modelName: modelName, support: .controllable(.ollama))
-        }
-        return SummaryThinkingProfile(modelName: modelName, support: .unsupported)
-    }
-
-    private static func onDeviceProfile(
-        modelName: String,
-        normalizedModel model: String
-    ) -> SummaryThinkingProfile {
-        if isQwenHybrid(model) {
-            return SummaryThinkingProfile(
-                modelName: modelName,
-                support: .controllable(.onDeviceQwenTemplate)
-            )
         }
         return SummaryThinkingProfile(modelName: modelName, support: .unsupported)
     }
