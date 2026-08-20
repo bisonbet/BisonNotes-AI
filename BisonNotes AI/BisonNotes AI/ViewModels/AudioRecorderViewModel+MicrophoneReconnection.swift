@@ -103,7 +103,7 @@ extension AudioRecorderViewModel {
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
-			discardFailedNativeMacContinuation()
+			discardFailedMacCaptureState()
 			pendingMacInputRecovery = nil
 			macAwaitingRecoveryBuffer = false
 			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
@@ -150,15 +150,6 @@ extension AudioRecorderViewModel {
 				isCritical: false
 			)
 		}
-	}
-
-	private func discardFailedNativeMacContinuation() {
-		let failedScratchURL = macScratchRecordingURL
-		stopMacEngineRecording()
-		if let failedScratchURL {
-			try? FileManager.default.removeItem(at: failedScratchURL)
-		}
-		macScratchRecordingURL = nil
 	}
 
 	func startNativeMacInputRecoveryMonitoring() {

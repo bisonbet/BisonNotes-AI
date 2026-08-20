@@ -134,9 +134,9 @@ extension AudioRecorderViewModel {
 		do {
 			try startMacEnginePipeline(at: url)
 		} catch {
-			// The pipeline assigns its engine/file before the final start call. If
-			// that call fails, release the partial state before the next retry.
-			stopMacEngineRecording()
+			// The pipeline assigns its engine/file/scratch URL before the final start
+			// call. If that call fails, release the partial state before the next retry.
+			discardFailedMacCaptureState()
 			throw error
 		}
 	}
@@ -260,6 +260,19 @@ extension AudioRecorderViewModel {
 		if closingFile {
 			macAudioFile = nil
 		}
+	}
+
+	/// Releases the state left behind by a failed pipeline start. The scratch file
+	/// only ever holds a CAF header at this point — no buffer reached the tap — so it
+	/// is deleted rather than kept: leaving the URL set would leak the temp file and
+	/// make the next start believe a capture is still in flight.
+	func discardFailedMacCaptureState() {
+		let failedScratchURL = macScratchRecordingURL
+		stopMacEngineRecording()
+		if let failedScratchURL {
+			try? FileManager.default.removeItem(at: failedScratchURL)
+		}
+		macScratchRecordingURL = nil
 	}
 
 	/// Closes the current PCM segment without discarding it. A replacement input
