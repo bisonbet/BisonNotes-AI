@@ -560,8 +560,8 @@ struct SimpleSettingsView: View {
                     UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
 
                     // Honor any local AI engine the user has already chosen
-                    // (MLX or Apple Native). Only fall back to MLX + 4B if none
-                    // is set.
+                    // (MLX or Apple Native). Only fall back to MLX if none is
+                    // set, using the model that fits this device's RAM.
                     let currentAI = UserDefaults.standard.string(forKey: "SelectedAIEngine")
                     let localEngines: Set<String> = [
                         AIEngineType.mlxSwift.rawValue,
@@ -575,7 +575,9 @@ struct SimpleSettingsView: View {
                     } else {
                         UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")
                         UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-                        UserDefaults.standard.set(MLXSwiftSettingsKeys.defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                        MLXSwiftSettingsKeys.normalizeStoredModelId(
+                            ramGB: DeviceCapabilities.totalRAMInGB
+                        )
                     }
                 }
 

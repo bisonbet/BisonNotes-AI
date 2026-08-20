@@ -69,10 +69,6 @@ struct MLXModelOption: Identifiable {
 
         return models
     }()
-
-    /// Identifier for the 1.7B model used on 4-6GB devices and for legacy
-    /// models whose closest MLX replacement is the small tier.
-    static let smallModelId = MLXSwiftSettingsKeys.smallModelId
 }
 
 // MARK: - MLX Swift Settings View

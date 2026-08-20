@@ -2706,7 +2706,19 @@ extension iCloudStorageManager {
         "whisperPort",
         "whisperProtocol",
         FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled,
-        FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod,
+        // On-device MLX configuration. Without the enable flag a restored
+        // "MLX Swift" selection would leave the engine switched off, and
+        // SummaryManager would silently fall back to some other engine while
+        // the UI still shows On Device AI. The model id is restored through a
+        // device-RAM clamp, see restoredValue(forKey:rawValue:).
+        MLXSwiftSettingsKeys.enabled,
+        MLXSwiftSettingsKeys.modelId,
+        MLXSwiftSettingsKeys.maxTokens,
+        MLXSwiftSettingsKeys.temperature,
+        MLXSwiftSettingsKeys.topK,
+        MLXSwiftSettingsKeys.topP,
+        MLXSwiftSettingsKeys.repetitionPenalty
     ]
 
     private static let sensitiveSettingKeyFragments: [String] = [
@@ -6099,10 +6111,35 @@ extension iCloudStorageManager {
                 continue
             }
 
-            defaults.set(rawValue, forKey: key)
+            guard let restoredValue = restoredValue(forKey: key, rawValue: rawValue) else {
+                continue
+            }
+
+            defaults.set(restoredValue, forKey: key)
         }
 
         defaults.synchronize()
+    }
+
+    /// Adjusts a backed-up value for the device it is being restored onto.
+    /// Returns nil to skip the key entirely.
+    private func restoredValue(forKey key: String, rawValue: Any) -> Any? {
+        guard key == MLXSwiftSettingsKeys.modelId else {
+            return rawValue
+        }
+
+        // A model id is only meaningful relative to device RAM and platform.
+        // Restoring an 8GB device's 8B selection onto a 4GB device — or a Mac
+        // backup's 27B onto an iPhone, where it is not even in the catalog —
+        // would strand the engine on a model it can never load.
+        guard let requestedModelId = rawValue as? String else {
+            return rawValue
+        }
+
+        return MLXSwiftSettingsKeys.supportedModelId(
+            requestedModelId,
+            forRAM: DeviceCapabilities.totalRAMInGB
+        )
     }
 
     private func shouldApplySettingsKey(

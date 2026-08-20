@@ -90,29 +90,25 @@ enum LegacyLlamaMigration {
     /// the device's supported RAM tier. Unknown or missing legacy IDs use the
     /// normal MLX default for the device.
     static func mlxModelID(forLegacyModelID legacyModelID: String?, ramGB: Double) -> String? {
-        guard ramGB >= 4.0 else { return nil }
+        guard ramGB >= MLXSwiftSettingsKeys.minimumSupportedRAMGB else { return nil }
 
-        let preferredTier = destinationTier(for: legacyModelID)
-        switch preferredTier {
+        // Pick the tier this legacy model maps to, then let the shared clamp
+        // drop it to something the device can actually run.
+        let preferredModelId: String
+        switch destinationTier(for: legacyModelID) {
         case .small:
-            return MLXSwiftSettingsKeys.smallModelId
+            preferredModelId = MLXSwiftSettingsKeys.smallModelId
         case .medium:
-            return ramGB >= 6.0
-                ? MLXSwiftSettingsKeys.defaultModelId
-                : MLXSwiftSettingsKeys.smallModelId
+            preferredModelId = MLXSwiftSettingsKeys.defaultModelId
         case .large:
-            if ramGB >= 8.0 {
-                return MLXSwiftSettingsKeys.largeModelId
-            }
-            if ramGB >= 6.0 {
-                return MLXSwiftSettingsKeys.defaultModelId
-            }
-            return MLXSwiftSettingsKeys.smallModelId
+            preferredModelId = MLXSwiftSettingsKeys.largeModelId
         }
+
+        return MLXSwiftSettingsKeys.supportedModelId(preferredModelId, forRAM: ramGB)
     }
 
     static func defaultMLXModelID(ramGB: Double) -> String? {
-        mlxModelID(forLegacyModelID: nil, ramGB: ramGB)
+        MLXSwiftSettingsKeys.recommendedModelId(forRAM: ramGB)
     }
 
     @discardableResult
@@ -130,13 +126,24 @@ enum LegacyLlamaMigration {
         return removedKeys
     }
 
+    /// Outcome of one cleanup attempt. `failed` is what lets the caller retry:
+    /// the legacy engine is gone, so a file left behind here would otherwise be
+    /// orphaned permanently with no code path left to reclaim it.
+    struct ModelCleanupResult {
+        let removed: [String]
+        let failed: [String]
+
+        /// True when no known legacy model file remains on disk.
+        var isComplete: Bool { failed.isEmpty }
+    }
+
     /// Removes known llama.cpp model files without creating the old directory.
     /// The directory itself is removed only when it is empty afterward.
     @discardableResult
     static func removeDownloadedModels(
         from directory: URL? = nil,
         fileManager: FileManager = .default
-    ) -> [String] {
+    ) -> ModelCleanupResult {
         let modelDirectory = directory ?? fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -144,10 +151,11 @@ enum LegacyLlamaMigration {
 
         guard let modelDirectory,
               fileManager.fileExists(atPath: modelDirectory.path) else {
-            return []
+            return ModelCleanupResult(removed: [], failed: [])
         }
 
         var removedFiles: [String] = []
+        var failedFiles: [String] = []
         for fileName in legacyModelFileNames {
             let fileURL = modelDirectory.appendingPathComponent(fileName)
             guard fileManager.fileExists(atPath: fileURL.path) else { continue }
@@ -155,6 +163,7 @@ enum LegacyLlamaMigration {
                 try fileManager.removeItem(at: fileURL)
                 removedFiles.append(fileName)
             } catch {
+                failedFiles.append(fileName)
                 AppLog.shared.summarization(
                     "[LegacyLlamaMigration] Could not remove \(fileName): \(error.localizedDescription)",
                     level: .error
@@ -170,7 +179,10 @@ enum LegacyLlamaMigration {
             try? fileManager.removeItem(at: modelDirectory)
         }
 
-        return removedFiles.sorted()
+        return ModelCleanupResult(
+            removed: removedFiles.sorted(),
+            failed: failedFiles.sorted()
+        )
     }
 
     private static func destinationTier(for legacyModelID: String?) -> DestinationTier {

@@ -119,6 +119,9 @@ final class AISettingsViewModel: ObservableObject {
             AppLog.shared.general("Auto-enabled Mistral AI engine")
         case .mlxSwift:
             UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            // Make sure the stored model fits this device before the engine
+            // first tries to load it.
+            MLXSwiftSettingsKeys.normalizeStoredModelId(ramGB: DeviceCapabilities.totalRAMInGB)
             AppLog.shared.general("Auto-enabled MLX Swift engine")
         case .appleNative:
             AppLog.shared.general("Selected Apple Native engine")

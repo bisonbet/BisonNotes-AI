@@ -28,6 +28,67 @@ enum MLXSwiftSettingsKeys {
     static let defaultTopK = 40
     static let defaultTopP: Double = 0.95
     static let defaultRepetitionPenalty: Double = 1.1
+
+    // MARK: Device Tiers
+
+    /// Smallest amount of RAM any MLX model runs on.
+    static let minimumSupportedRAMGB: Double = 4.0
+
+    /// Minimum device RAM in GB required by each model. Mirrors
+    /// `MLXModelOption.requiredRAM`, but lives here so migrations and iCloud
+    /// restore can pick a runnable model without depending on the settings view.
+    static let minimumRAMGB: [String: Double] = [
+        smallModelId: 4.0,
+        defaultModelId: 6.0,
+        largeModelId: 8.0,
+        macModelId: 16.0
+    ]
+
+    /// The model a device should start on when nothing has been chosen yet.
+    /// Returns nil below the 4GB floor, where MLX is unavailable entirely.
+    /// The 8B and 27B models stay opt-in rather than becoming a default.
+    static func recommendedModelId(forRAM ramGB: Double) -> String? {
+        guard ramGB >= minimumSupportedRAMGB else { return nil }
+        return ramGB < 6.0 ? smallModelId : defaultModelId
+    }
+
+    /// Clamps a model id to one this device can actually run. A selection
+    /// carried over from a larger device (or from the Mac-only 27B catalog)
+    /// would otherwise strand the engine on a model it can never load.
+    static func supportedModelId(_ modelId: String?, forRAM ramGB: Double) -> String? {
+        guard let modelId,
+              let requiredRAM = minimumRAMGB[modelId],
+              ramGB >= requiredRAM,
+              isSelectableOnCurrentPlatform(modelId) else {
+            return recommendedModelId(forRAM: ramGB)
+        }
+        return modelId
+    }
+
+    /// Writes a runnable model id into `defaults` when the stored one is
+    /// missing or too large for this device, leaving a valid choice untouched.
+    /// Call this wherever MLX is turned on, so the engine never starts out
+    /// pointing at a model the device cannot load.
+    @discardableResult
+    static func normalizeStoredModelId(
+        in defaults: UserDefaults = .standard,
+        ramGB: Double
+    ) -> String? {
+        let stored = defaults.string(forKey: modelId)
+        guard let supported = supportedModelId(stored, forRAM: ramGB) else { return nil }
+        if stored != supported {
+            defaults.set(supported, forKey: modelId)
+        }
+        return supported
+    }
+
+    private static func isSelectableOnCurrentPlatform(_ modelId: String) -> Bool {
+        #if os(macOS)
+        return true
+        #else
+        return modelId != macModelId
+        #endif
+    }
 }
 
 // MARK: - Download Manager

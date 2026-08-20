@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var showingLocationPermission = false
     @State private var pendingActionButtonRecording = false
     @State private var showingAppleIntelligenceMigrationAlert = false
+    @State private var showingLlamaCppRemovalAlert = false
     @State private var showingOllamaMigrationAlert = false
     @State private var showingAISettings = false
     @State private var showingWhisperKitRemovedAlert = false
@@ -167,6 +168,18 @@ struct ContentView: View {
             }
         } message: {
             Text("Apple Intelligence has been removed from the app. Your settings have been moved to the current AI engine. Review AI Settings to download an MLX model or choose another provider.")
+        }
+        .alert("On Device AI Has Been Upgraded", isPresented: $showingLlamaCppRemovalAlert) {
+            Button("Open AI Settings") {
+                showingAISettings = true
+            }
+            Button("Later", role: .cancel) { }
+        } message: {
+            Text(
+                "The older on-device engine has been removed and its downloaded models were "
+                    + "deleted to reclaim storage. Your settings were moved to the closest "
+                    + "On Device AI model, which needs to be downloaded before your next summary."
+            )
         }
         .alert("Ollama Is Now Mac Only", isPresented: $showingOllamaMigrationAlert) {
             Button("OK") { }
@@ -394,6 +407,14 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             showingAppleIntelligenceMigrationAlert = true
                             UserDefaults.standard.removeObject(forKey: "showAppleIntelligenceMigrationAlert")
+                        }
+                    }
+
+                    // Check if a legacy llama.cpp selection was moved to MLX.
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showLlamaCppRemovalAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingLlamaCppRemovalAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showLlamaCppRemovalAlert")
                         }
                     }
 

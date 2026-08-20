@@ -57,11 +57,8 @@ struct BisonNotesAIApp: App {
 
         // Migrate AI engine if not configured
         if currentAIEngine == "None" || currentAIEngine == "Not Configured" || currentAIEngine == nil {
-            if hasOnDeviceAISupport {
-                // 4-6GB devices get the small 1.7B model; 6GB+ get the 4B default.
-                let defaultModelId = deviceRAM < 6.0
-                    ? MLXModelOption.smallModelId
-                    : MLXSwiftSettingsKeys.defaultModelId
+            if hasOnDeviceAISupport,
+               let defaultModelId = MLXSwiftSettingsKeys.recommendedModelId(forRAM: deviceRAM) {
                 UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
                 UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
                 UserDefaults.standard.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
@@ -111,11 +108,12 @@ struct BisonNotesAIApp: App {
             replacement = onDeviceEngine
             switch onDeviceEngine {
             case .mlxSwift:
-                let defaultModelId = DeviceCapabilities.totalRAMInGB < 6.0
-                    ? MLXModelOption.smallModelId
-                    : MLXSwiftSettingsKeys.defaultModelId
                 defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
-                defaults.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                if let defaultModelId = MLXSwiftSettingsKeys.recommendedModelId(
+                    forRAM: DeviceCapabilities.totalRAMInGB
+                ) {
+                    defaults.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
+                }
             default:
                 break
             }
@@ -202,11 +200,10 @@ struct BisonNotesAIApp: App {
                 defaults.set(AIEngineType.openAICompatible.rawValue, forKey: key)
                 defaults.set(true, forKey: "enableOpenAICompatible")
                 NSLog("✅ Migrated removed OpenAI selection to Compatible API")
-            } else if hasOnDeviceAISupport {
-                let deviceRAM = DeviceCapabilities.totalRAMInGB
-                let defaultModelId = deviceRAM < 6.0
-                    ? MLXModelOption.smallModelId
-                    : MLXSwiftSettingsKeys.defaultModelId
+            } else if hasOnDeviceAISupport,
+                      let defaultModelId = MLXSwiftSettingsKeys.recommendedModelId(
+                          forRAM: DeviceCapabilities.totalRAMInGB
+                      ) {
                 defaults.set(AIEngineType.mlxSwift.rawValue, forKey: key)
                 defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
                 defaults.set(defaultModelId, forKey: MLXSwiftSettingsKeys.modelId)
@@ -259,6 +256,10 @@ struct BisonNotesAIApp: App {
         if hasOnDeviceAISupport {
             defaults.set(AIEngineType.mlxSwift.rawValue, forKey: key)
             defaults.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            MLXSwiftSettingsKeys.normalizeStoredModelId(
+                in: defaults,
+                ramGB: DeviceCapabilities.totalRAMInGB
+            )
             NSLog("✅ Migrated unavailable AI selection to On-Device AI")
         } else {
             setConfiguredFallbackAIEngine(forKey: key)
@@ -444,8 +445,8 @@ struct BisonNotesAIApp: App {
 
             // Migrate to MLX when the device supports it. Otherwise preserve
             // the existing app policy of selecting a configured alternative.
-            if let modelID = LegacyLlamaMigration.defaultMLXModelID(
-                ramGB: DeviceCapabilities.totalRAMInGB
+            if let modelID = MLXSwiftSettingsKeys.recommendedModelId(
+                forRAM: DeviceCapabilities.totalRAMInGB
             ) {
                 UserDefaults.standard.set(AIEngineType.mlxSwift.rawValue, forKey: aiEngineKey)
                 UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
@@ -498,16 +499,20 @@ struct BisonNotesAIApp: App {
     /// This also handles stale pre-v2.0 selections that should never be active
     /// on the current 6GB+ llama.cpp path but may still be present in storage.
     private func migrateLegacyLlamaCppToMLX() {
-        let migrationKey = "llamaCppRemovalMigration_v2.4"
         let defaults = UserDefaults.standard
 
+        // Disk cleanup carries its own key so a failed deletion can be retried.
+        // The legacy engine is gone, so a file left behind here has no other
+        // code path left to reclaim it and would be orphaned permanently.
+        migrateLegacyLlamaCppModelFiles(defaults: defaults)
+
+        let migrationKey = "llamaCppRemovalMigration_v2.4"
         guard !defaults.bool(forKey: migrationKey) else { return }
         defer { defaults.set(true, forKey: migrationKey) }
 
         let selectedEngine = defaults.string(forKey: "SelectedAIEngine")
         let selectedModel = defaults.string(forKey: LegacyLlamaMigration.legacySelectedModelKey)
         let wasUsingLegacyEngine = LegacyLlamaMigration.isLegacyEngineIdentifier(selectedEngine)
-        let removedFiles = LegacyLlamaMigration.removeDownloadedModels()
 
         if wasUsingLegacyEngine {
             if let modelID = LegacyLlamaMigration.mlxModelID(
@@ -520,15 +525,63 @@ struct BisonNotesAIApp: App {
                 NSLog("✅ Migrated legacy llama.cpp selection to MLX model \(modelID)")
             } else {
                 // This is only reachable for stale pre-v2.0 data on a device
-                // below MLX's 4GB floor. Preserve the existing migration policy.
-                defaults.set(AIEngineType.mistralAI.rawValue, forKey: "SelectedAIEngine")
-                NSLog("✅ Migrated stale sub-4GB llama.cpp selection to Mistral AI")
+                // below MLX's 4GB floor. Pick an engine that is actually
+                // configured rather than assuming Mistral has credentials.
+                setConfiguredFallbackAIEngine(forKey: "SelectedAIEngine")
             }
+
+            // The user's downloaded GGUF weights were just deleted and the
+            // replacement MLX model is almost certainly not downloaded yet, so
+            // tell them instead of letting the next summary silently pull
+            // hundreds of megabytes (or fail outright while offline).
+            defaults.set(true, forKey: "showLlamaCppRemovalAlert")
         }
 
         let removedSettings = LegacyLlamaMigration.clearLegacySettings(from: defaults)
-        if !removedFiles.isEmpty || !removedSettings.isEmpty {
-            NSLog("✅ Removed legacy llama.cpp data: \(removedFiles.count) model files, \(removedSettings.count) settings")
+        if !removedSettings.isEmpty {
+            NSLog("✅ Removed \(removedSettings.count) legacy llama.cpp settings")
+        }
+    }
+
+    /// Repairs MLX model selections that are too large for the device. Older
+    /// setup flows wrote the 6GB-only 4B model on any device that cleared the
+    /// 4GB MLX floor, which left 4-6GB devices pointing at a model they cannot
+    /// load and that the model picker hides.
+    private func migrateUnsupportedMLXModelSelection() {
+        let migrationKey = "mlxModelTierRepair_v2.4"
+        let defaults = UserDefaults.standard
+
+        guard !defaults.bool(forKey: migrationKey) else { return }
+        defer { defaults.set(true, forKey: migrationKey) }
+
+        guard let stored = defaults.string(forKey: MLXSwiftSettingsKeys.modelId) else { return }
+        guard let supported = MLXSwiftSettingsKeys.supportedModelId(
+            stored,
+            forRAM: DeviceCapabilities.totalRAMInGB
+        ), supported != stored else {
+            return
+        }
+
+        defaults.set(supported, forKey: MLXSwiftSettingsKeys.modelId)
+        NSLog("✅ Repaired unsupported MLX model selection '\(stored)' → '\(supported)'")
+    }
+
+    /// Deletes known legacy GGUF files, retrying on later launches until the
+    /// cleanup actually completes.
+    private func migrateLegacyLlamaCppModelFiles(defaults: UserDefaults) {
+        let cleanupKey = "llamaCppModelCleanup_v2.4"
+        guard !defaults.bool(forKey: cleanupKey) else { return }
+
+        let cleanup = LegacyLlamaMigration.removeDownloadedModels()
+
+        if !cleanup.removed.isEmpty {
+            NSLog("✅ Removed \(cleanup.removed.count) legacy llama.cpp model files")
+        }
+
+        if cleanup.isComplete {
+            defaults.set(true, forKey: cleanupKey)
+        } else {
+            NSLog("⚠️ \(cleanup.failed.count) legacy llama.cpp model files could not be removed; will retry on next launch")
         }
     }
 
@@ -593,6 +646,7 @@ struct BisonNotesAIApp: App {
         migrateRemovedProviderSelections()
         migrateWhisperKitToParakeet()
         migrateRemovedModels()
+        migrateUnsupportedMLXModelSelection()
         migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
         ActionButtonLaunchManager.startObservingRecordingRequests()
