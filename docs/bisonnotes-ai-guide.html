@@ -330,8 +330,7 @@
     <ul>
       <li><strong>Transcription:</strong> iOS 18.5+ or native macOS 15+, with a Parakeet model download. No additional Local Speaker Labels RAM/device guarantee is published without measured evidence.</li>
       <li><strong>AI Summary (MLX Swift):</strong> 4GB+ RAM. Uses Ternary Bonsai models scaled to your device.</li>
-      <li><strong>Legacy AI Summary (llama.cpp):</strong> 6GB+ RAM. Available as On Device AI (Legacy).</li>
-      <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Legacy llama.cpp models are about 1.3 GB to 4.5 GB; Parakeet transcription downloads separately.</li>
+      <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Parakeet transcription downloads separately.</li>
     </ul>
 
     <h4>MLX Models (by RAM)</h4>
@@ -342,18 +341,7 @@
       <li><strong>Native macOS, 16GB+:</strong> Ternary Bonsai 27B (~8.5 GB) — Laptop-class reasoning available only in the native Mac app</li>
     </ul>
 
-    <h4>Legacy llama.cpp Models (6GB+)</h4>
-    <ul>
-      <li><strong>8GB+:</strong> Gemma 3n E4B (4.5 GB) — Best overall quality</li>
-      <li><strong>6GB+:</strong> Gemma 3n E2B (3.0 GB) — Good quality, smaller size</li>
-      <li><strong>6GB+:</strong> Granite Micro (2.1 GB) — Very fast processing</li>
-      <li><strong>8GB+:</strong> Granite (4.3 GB) — Reliable and accurate</li>
-      <li><strong>6GB+:</strong> Ministral (2.1 GB) — Best for tasks/reminders</li>
-      <li><strong>6GB+:</strong> Qwen3.5 2B (1.3 GB) — Thinking mode, summary only</li>
-      <li><strong>8GB+:</strong> Qwen3.5 4B (2.7 GB) — Thinking mode, excellent detail</li>
-    </ul>
-
-    <div class="bn-info"><strong>v2.0 migration:</strong> Existing users on the removed LFM 2.5 model or legacy llama.cpp on sub-6GB devices are moved to MLX 1.7B when possible. Devices below 4GB fall back to Mistral AI.</div>
+    <div class="bn-info"><strong>Migration:</strong> Existing installations with a legacy llama.cpp selection are moved to the closest MLX model tier. Known legacy GGUF files and legacy settings are removed to reclaim storage. Stale selections on devices below 4GB use the Mistral AI fallback because MLX requires 4GB+ RAM.</div>
 
     <p><strong>Best for:</strong> Privacy-conscious users, offline use, and local summaries without sending transcript text to a cloud provider.</p>
   </div>
@@ -538,28 +526,6 @@
   </div>
 </details>
 
-<!-- On Device AI Legacy -->
-<details>
-  <summary>7. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-local">On-Device</span>
-    <span class="bn-badge bn-b-free">Free</span>
-    <p><strong>Type:</strong> On-device llama.cpp &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Only for initial GGUF model download</p>
-
-    <div class="bn-info"><strong>Legacy option:</strong> In v2.0, the main On Device AI option uses MLX Swift. The original llama.cpp engine remains available as On Device AI (Legacy) for 6GB+ devices that already prefer those GGUF models.</div>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li>Go to Setup &rarr; Additional Settings &rarr; AI Engines.</li>
-      <li>Choose <strong>On Device AI (Legacy)</strong> if it is available on your device.</li>
-      <li>Download one of the listed GGUF models.</li>
-      <li>Optional: turn on experimental summary models to show Qwen or Granite H models that match your RAM tier.</li>
-    </ol>
-
-    <p><strong>Best for:</strong> Users who already downloaded llama.cpp models or want a different local model lineup than the default MLX Swift path.</p>
-  </div>
-</details>
-
 <!-- ============================================================ -->
 <!-- TRANSCRIPTION CONFIGURATION                                   -->
 <!-- ============================================================ -->
@@ -739,7 +705,7 @@
     <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
-      <li>All AI engines, including On Device AI (MLX Swift), On Device AI (Legacy), cloud providers, Ollama on native macOS, and Apple Native</li>
+      <li>All current AI engines, including On Device AI (MLX Swift), cloud providers, Ollama on native macOS, and Apple Native</li>
       <li>All transcription engines</li>
       <li>Microphone selection</li>
       <li>Preferences, iCloud, background processing, diagnostics, and experimental model toggles</li>
@@ -1088,7 +1054,7 @@
     <h4>Local / Self-Hosted</h4>
     <ul>
       <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a></li>
-      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">llama.cpp</a></li>
+      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">External llama.cpp-compatible server</a></li>
       <li><a href="https://llama-cpp-python.readthedocs.io/en/latest/server/" target="_blank" rel="noopener">llama-cpp-python</a></li>
       <li><a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a></li>
       <li><a href="https://groq.com" target="_blank" rel="noopener">Groq</a></li>

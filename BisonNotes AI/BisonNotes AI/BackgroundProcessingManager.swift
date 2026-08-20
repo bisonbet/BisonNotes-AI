@@ -1706,8 +1706,8 @@ class BackgroundProcessingManager: ObservableObject {
         let lowerEngine = engine.lowercased()
         if lowerEngine.contains("google") || lowerEngine.contains("gemini") {
             engineType = "Google AI"
-        } else if lowerEngine.contains("device") {
-            engineType = "On-Device AI"
+        } else if lowerEngine.contains("mlx") || lowerEngine.contains("on-device") || lowerEngine.contains("on device") {
+            engineType = "MLX Swift"
         } else if lowerEngine.contains("ollama") {
             engineType = "Ollama"
         } else if lowerEngine.contains("apple") {
@@ -2123,7 +2123,7 @@ class BackgroundProcessingManager: ObservableObject {
         let lowerEngine = engine.lowercased()
 
         // On-device engines
-        if lowerEngine.contains("mlx") || lowerEngine.contains("on-device") || lowerEngine.contains("apple intelligence") ||
+        if lowerEngine.contains("mlx") || lowerEngine.contains("apple intelligence") ||
            lowerEngine.contains("apple native") || lowerEngine.contains("foundation") {
             return (true, nil)
         }

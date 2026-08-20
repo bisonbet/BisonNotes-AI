@@ -112,7 +112,7 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertEqual(gemini25.thinkingBudget, SummaryThinkingModelCatalog.geminiLightThinkingBudget)
     }
 
-    func testOllamaAndOnDeviceProfilesRemainBounded() {
+    func testOllamaAndMLXProfilesRemainBounded() {
         defaults.set(SummaryThinkingLevel.light.rawValue, forKey: SummaryThinkingLevel.storageKey)
 
         let gptOSS = SummaryThinkingModelCatalog.requestOptions(
@@ -127,11 +127,11 @@ final class SummaryThinkingTests: XCTestCase {
         )
         XCTAssertTrue(nonThinking.isEmpty)
 
-        let onDeviceProfile = SummaryThinkingModelCatalog.profile(
+        let mlxProfile = SummaryThinkingModelCatalog.profile(
             modelName: "qwen3.5-4b",
-            engine: .onDeviceLLM
+            engine: .mlxSwift
         )
-        XCTAssertEqual(onDeviceProfile.support, .controllable(.onDeviceQwenTemplate))
+        XCTAssertEqual(mlxProfile.support, .controllable(.mlx))
     }
 
     func testUnsetCompatibleRequestOmitsEveryThinkingField() throws {

@@ -36,14 +36,13 @@ struct SettingsView: View {
     @State private var macSystemAudioPermissionAlert: MacSystemAudioPermissionAlert?
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
-    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
+    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = AIEngineType.mlxSwift.rawValue
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
     @AppStorage("iCloudBackupIncludeAudioFiles") private var iCloudBackupIncludeAudioFiles: Bool = false
     @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
     @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = false
-    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
     @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
     @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
     @State private var isRunningCloudBackupAction = false
@@ -160,31 +159,6 @@ struct SettingsView: View {
         .onChange(of: selectedAIEngine) { _, newEngine in
             SummaryManager.shared.setEngine(newEngine)
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
-        }
-        .onChange(of: enableExperimentalModels) { _, newValue in
-            // This toggle only gates legacy On-Device AI (llama) experimental
-            // models and unlocks the legacy engine on <6GB devices. MLX is
-            // unrelated and must not be touched here.
-            OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-
-            guard !newValue else { return }
-
-            // If the currently selected legacy model is no longer in the
-            // available set (e.g. it was experimental-only), reset to the
-            // first available legacy model.
-            let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
-            if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }),
-               let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
-                UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-            }
-
-            // If the user is on the legacy engine but the device no longer
-            // has any legacy models available, fall through to Apple Native.
-            let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
-            if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
-                selectedAIEngine = AIEngineType.appleNative.rawValue
-                SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
-            }
         }
         #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
@@ -553,13 +527,6 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            Divider()
-
-            Toggle("Experimental features", isOn: $enableExperimentalModels)
-                .accessibilityValue(AccessibilitySupport.statusValue(isOn: enableExperimentalModels))
-            Text("Exposes experimental on-device models. Experimental models are less reliable and may produce empty summaries.")
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
     }
@@ -987,14 +954,6 @@ struct SettingsView: View {
                 "Add humor to the summary narrative while keeping tasks, reminders, titles, "
                     + "and facts grounded in the transcript."
             )
-        }
-    }
-
-    private var experimentalSection: some View {
-        Section {
-            Toggle("Experimental features", isOn: $enableExperimentalModels)
-        } footer: {
-            Text("Exposes experimental models in the On Device AI (Legacy) engine and the smaller Ternary Bonsai 1.7B model in the On Device AI engine. Experimental models are less reliable and may produce empty summaries.")
         }
     }
 

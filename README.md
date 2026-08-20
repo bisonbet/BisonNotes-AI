@@ -33,7 +33,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 - ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
 - 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
 - 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
-- 🤖 **Pluggable AI Engines** — On-device (MLX Swift, llama.cpp legacy), Apple Foundation Models, OpenAI, OpenAI-compatible, Mistral AI, Google AI Studio, AWS Bedrock/Transcribe, Whisper, Wyoming, and Ollama on native macOS
+- 🤖 **Pluggable AI Engines** — On-device MLX Swift, Apple Foundation Models, OpenAI-compatible, Mistral AI, Google AI Studio, Whisper, Wyoming, and Ollama on native macOS
 - 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
 - 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
 - ☁️ **Guarded iCloud Sync** — Per-recording **Keep on This Device** exclusions, durable deletion markers, and explicit review of older cloud-only items
@@ -43,7 +43,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 >
 > BisonNotes AI is a personal productivity app. It is **not** HIPAA-compliant and we do not provide Business Associate Agreements (BAAs). Do not use it to record or process protected health information, and review the in-app notice before enabling iCloud sync.
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1) Release Guide (WordPress)](docs/bisonnotes-ai-v2.3.html) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1) Release Guide (WordPress)](docs/bisonnotes-ai-v2.3.html) • [llama.cpp Removal Migration](docs/llama-cpp-removal-migration.md) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
 ## v2.3 (Build 1) Highlights
 - The Mac app is now a native macOS app while retaining the same bundle identity, app container, Core Data store, and iCloud container used by the previous Catalyst build. It adds native windows, a dedicated Settings window, standard File/Edit commands, keyboard shortcuts, persistent archive bookmarks, AppKit sharing, and native RTF/PDF export.
@@ -72,13 +72,12 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1
 ## v2.0 Foundation Highlights
 - Modernized SwiftUI interface across Recordings, Transcripts, Summaries, Setup, and Settings, with denser action placement and cleaner status surfaces.
 - Redesigned watchOS recorder around one large tap target: tap to record, tap to stop, and use mute to pause/resume the same file. Transfer status and low-battery warnings stay visible without crowding the primary action.
-- On Device AI is now backed by MLX Swift by default on supported devices. New/legacy users with 4 GB+ RAM migrate to MLX automatically; devices below that fall back to Mistral AI.
-- Legacy llama.cpp On-Device AI remains available for 6 GB+ devices, but the removed LFM 2.5 model is deleted during migration and no longer appears in model lists.
+- On Device AI is backed by MLX Swift on supported devices. Existing llama.cpp users are moved to the closest Ternary Bonsai model, and known legacy GGUF files are deleted during migration to reclaim storage.
 - Watch sync no longer uses live audio chunks or phone-side recording control. The watch records independently, sends the finished file via `WCSession.transferFile`, and receives queued completion/failure confirmations.
 
 ## Architecture
 - Data: Core Data model at `BisonNotes AI/BisonNotes_AI.xcdatamodeld` stores recordings, transcripts, summaries, and jobs. Sensitive API keys live in the iOS Keychain, never on disk in plaintext.
-- Engines: Pluggable services for On Device transcription, compatible APIs, Mistral AI, Google AI Studio, Whisper (REST), Wyoming streaming, Ollama (native macOS only), On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
+- Engines: Pluggable services for On Device transcription, compatible APIs, Mistral AI, Google AI Studio, Whisper (REST), Wyoming streaming, Ollama (native macOS only), On Device AI (MLX Swift), and Apple Native (Foundation Models). Each engine pairs a service with a settings view.
 - Background: `BackgroundProcessingManager` coordinates queued work with retries, timeouts, and recovery. Large files are chunked and processed streaming‑first.
 - Recording: A platform-aware audio pipeline — `AVAudioRecorder` on iOS/iPadOS and `AVAudioEngine`/`AVAudioFile` on native macOS (`AudioRecorderViewModel+MacEngine.swift`) — with shared Pause/Resume support, optional Mac meeting-audio capture through `MacSystemAudioCapture`, first-buffer and stall monitoring, independent track validation, recoverable PCM segments, and crash-safe interruption handling.
 - Watch Sync: `WatchConnectivityManager` (on iOS and watch targets) manages reachability, complete-file transfers, duplicate protection, queued acknowledgments, and import recovery. Watch complications and a Control Center recording widget are bundled as separate targets.
@@ -86,7 +85,7 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1
 
 ## Project Structure
 - `BisonNotes AI/`: shared iOS, iPadOS, and native macOS app source
-  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `Wyoming/`, `WatchConnectivity/`, `OnDeviceLLM/`, `FluidAudio/`, `Services/`
+  - Notable folders: `Models/`, `Views/`, `ViewModels/`, `Wyoming/`, `WatchConnectivity/`, `FluidAudio/`, `Services/`
   - Assets: `Assets.xcassets`; config: `Info.plist`, `.entitlements`
   - Uses Xcode's file-system synchronized groups, so dropping new Swift files into these folders automatically adds them to the project—no manual `.xcodeproj` edits are necessary.
 - `BisonNotes Share/`: iOS Share Extension target for importing audio from other apps
@@ -122,18 +121,11 @@ Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1
 The project uses Swift Package Manager for dependency management. Major dependencies include:
 
 ### **On-Device AI**
-- **MLX Swift / MLX Swift LM**: Backs the default On Device AI summarization path in v2.0.
+- **MLX Swift / MLX Swift LM**: Backs the On Device AI summarization path.
   - Models: Ternary Bonsai 1.7B (~470 MB, 4 GB+ RAM), 4B (~1.1 GB, 6 GB+ RAM, default), and 8B (~2.3 GB, 8 GB+ RAM)
   - Native macOS also offers Ternary Bonsai 27B (~8.5 GB, 16 GB+ RAM); it is not available in the iOS model catalog
   - Models download from Hugging Face on first use and run locally after download
   - 4-6 GB devices use the 1.7B model; 6 GB+ devices default to the 4B model; 8 GB+ devices can select the 8B model
-- **llama.cpp**: Embedded as a pre-compiled xcframework (`Frameworks/llama.xcframework`) for Metal-accelerated on-device LLM inference
-  - GitHub: https://github.com/ggerganov/llama.cpp
-  - Supports GGUF model format with Q4_K_M quantization (optimal for mobile)
-  - Available models: Gemma 3n E4B/E2B, Granite 4.0 H Tiny/Micro, Ministral 3B, Qwen3.5 2B/4B
-  - Legacy engine in v2.0; models require 6 GB+ RAM, with 8 GB+ for larger models
-  - The native Mac target consumes the upstream `macos-arm64_x86_64` slice directly; no locally patched Catalyst slice is required.
-
 ### **UI & Formatting**
 - **MarkdownUI**: Professional markdown rendering for AI-generated summaries, headers, lists, and formatted text
 
@@ -168,7 +160,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - **iPhone Action Button Support**: Quick-start recording from the Action Button on iPhone 15 Pro/Pro Max, iPhone 16 Pro/Pro Max, and future Pro models. Press the Action Button to launch the app and start recording instantly, even when your phone is locked.
 - **Watch App & Complications**: Single-button Apple Watch recorder with tap-to-record/tap-to-stop, mute as pause/resume on the same file, pulsing capture state, low-battery warning, automatic complete-file sync, and watch-face complications.
 - **Control Center Recording Widget**: Start/stop recordings from Control Center on iOS 18+ via the bundled Controls widget.
-- **Multiple AI Engines**: Support for Google AI Studio, Mistral AI, compatible endpoints, Ollama on native macOS, On Device AI (MLX Swift), On Device AI Legacy (llama.cpp), and Apple Native (Apple Intelligence).
+- **Multiple AI Engines**: Support for Google AI Studio, Mistral AI, compatible endpoints, Ollama on native macOS, On Device AI (MLX Swift), and Apple Native (Apple Intelligence).
 - **Apple Native AI Engine**: On-device summarization using Apple's Foundation Models framework (iOS 26+, iPhone 15 Pro+). No data leaves the device.
 - **On Device AI**: Default local summarization path using MLX Swift and Ternary Bonsai models. Supports 4 GB+ devices with model choices scaled by RAM.
 - **Mistral AI (Free & Paid Tiers)**: Guided in-app setup wizard for Mistral's free tier -- transcription and summarization with no credit card required. Paid tiers available for higher rate limits. Cloud transcription via Voxtral Mini with speaker diarization support.
@@ -195,7 +187,7 @@ All external dependencies are resolved automatically via Swift Package Manager w
 - Recording: `EnhancedAudioSessionManager`, `AudioFileChunkingService`, `AudioRecorderViewModel` (+ `+MacEngine`, `+MacCaptureHealth`, `+MacFinalization`, `+MicrophoneReconnection`, `+Interruptions`, `+Background`, `+CallIntelligence`, `+Warnings`), `MacRecordingReliability`, `MacSystemAudioCapture`, `MacInputDeviceMonitor`, `RecordingCombiner`, `TranscriptionStarter`
 - Transcription: `FluidAudioManager` (Parakeet), `MistralTranscribeService`, `WhisperService`, `WyomingWhisperClient`, `LiveTranscriptionService`
 - Web Import: `WebImportManager`, `WebImportDownloader`, `WebImportURLClassifier`, `YouTubeImportService`, `YouTubePlayerResponseParser`, `TranscriptCaptionTextCleaner`
-- Summarization: Compatible API service, `MistralAISummarizationService`, `GoogleAIStudioService`, `OnDeviceLLMService`, `MLXSwiftEngine`, `AppleNativeEngine`
+- Summarization: Compatible API service, `MistralAISummarizationService`, `GoogleAIStudioService`, `MLXSwiftEngine`, `AppleNativeEngine`
 - Security: `KeychainSecretStore`, `EndpointSecurityPolicy`, `AppFileProtection`
 - Export: `PDFExportService`, `SummaryExportFormatter`, `RecordingArchiveService`
 - UI: `SummariesView`, `SummaryDetailView`, `TranscriptionProgressView`, `AITextView` (with MarkdownUI), `CombineRecordingsView`
@@ -285,12 +277,11 @@ The app supports multiple AI engines for summarization and content analysis:
 | Engine | Description | Requirements |
 |--------|-------------|--------------|
 | **Apple Native** | Apple Intelligence (Foundation Models) — fully on-device | iOS 26+, iPhone 15 Pro+ |
-| **Compatible API** | Any compatible chat-completion API (Nebius, Groq, LiteLLM, llama.cpp, etc.) | API key, internet |
+| **Compatible API** | Any compatible chat-completion API (Nebius, Groq, LiteLLM, or an external llama.cpp-compatible server) | API key, internet |
 | **Mistral AI** | Mistral Large (25.12), Medium (25.08), Small 4 (26.03), Medium 3.5, Magistral Medium (25.09) | API key, internet |
 | **Google AI Studio** | Gemini 3 Flash Preview (default), Gemini 3.1 Flash Lite Preview | API key, internet |
 | **Ollama** | Local LLM server on native macOS (recommended: qwen3:30b, llama3.2, mistral-small3.2) | Ollama server running on the Mac |
 | **On Device AI** | Default on-device summarization with MLX Swift and Ternary Bonsai models | 4 GB+ RAM, model download |
-| **On Device AI (Legacy)** | Fully offline llama.cpp summaries with GGUF models | 6 GB+ RAM, model download |
 
 ### Mistral AI Models
 
@@ -313,7 +304,7 @@ Google AI Studio provides access to Gemini models:
 
 ### On-Device AI
 
-The on-device AI feature enables completely private, offline AI processing. v2.1 uses MLX Swift as the default local summarization engine and keeps the original llama.cpp engine as a legacy option for higher-memory devices.
+The on-device AI feature enables completely private, offline AI processing through MLX Swift. Existing installations that still have llama.cpp selections or downloaded GGUF models are migrated and cleaned up once at startup.
 
 #### MLX Swift (Default)
 
@@ -322,29 +313,8 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - **8GB+ RAM**: Ternary Bonsai 8B (~2.3 GB) - slower but higher-quality summaries
 - **Native macOS, 16GB+ RAM**: Ternary Bonsai 27B (~8.5 GB) - laptop-class reasoning; unavailable on iOS
 - **Context Window**: 16K tokens
-- **Migration**: Existing users on the removed LFM model or legacy llama on sub-6GB devices are moved to MLX 1.7B when possible. Devices below 4GB fall back to Mistral AI.
-
-#### On-Device AI Legacy (llama.cpp)
-
-- **Recommended Models** (by device RAM):
-  - **8GB+ RAM**: Gemma 3n E4B (4.5 GB) - Best overall quality
-  - **6GB+ RAM**: Gemma 3n E2B (3.0 GB) - Good quality, smaller size
-  - **6GB+ RAM**: Granite 4.0 Micro (2.1 GB) - Very fast processing
-
-- **Experimental Models** (enable in settings):
-  - **8GB+ RAM**: Granite 4.0 H Tiny (4.3 GB) - Reliable and accurate
-  - **6GB+ RAM**: Ministral 3B (2.1 GB) - Best for tasks and reminders
-  - **6GB+ RAM**: Qwen3.5 2B (1.3 GB) - Latest Qwen3.5 model, thinking mode (summary only)
-  - **8GB+ RAM**: Qwen3.5 4B (2.7 GB) - Excellent detail extraction, thinking mode
-
-- **Quantization**: Q4_K_M only (optimal balance of quality and memory usage)
-- **Storage**: Models stored in Application Support (1.3 GB - 4.5 GB each)
-- **Context Window**: 16K tokens (automatically adjusted based on device RAM)
-- **Requirements**:
-  - **Transcription**: iOS 18.5+ or native macOS 15+, with a Parakeet model download required. Local Speaker Labels are an optional completed-audio step; no new RAM/device guarantee is published here.
-  - **AI Summary**: MLX Swift requires 4GB+ RAM. Legacy llama.cpp models require 6GB+ RAM. Apple Native requires iOS 26+ and an Apple Intelligence-capable device.
-  - Device capability check prevents downloads on unsupported devices
-  - Models are filtered based on available RAM
+- **Migration**: Existing llama.cpp model selections map to the closest Ternary Bonsai size tier; the migration removes known legacy GGUF files and llama.cpp settings. Stale selections on devices below 4GB use the Mistral AI fallback because MLX requires 4GB+ RAM.
+- **Requirements**: MLX Swift requires 4GB+ RAM. Apple Native requires iOS 26+ and an Apple Intelligence-capable device.
 - **Downloads**: WiFi by default with optional cellular download support
 
 ## Configuration
@@ -354,7 +324,7 @@ The on-device AI feature enables completely private, offline AI processing. v2.1
 - Enable required capabilities in Xcode (Microphone, Background Modes, iCloud if used). Keep `Info.plist` and `.entitlements` aligned with features. `APS_ENVIRONMENT` is set per-configuration so Debug uses `development` and Release uses `production`.
 - Before distributing iCloud sync changes through TestFlight or the App Store, deploy CloudKit development schema changes for `iCloud.Bison-Networking.BisonNotes-AI` to production. Production builds cannot create new CloudKit record types at runtime.
 - For On Device transcription, Parakeet is the only on-device engine (WhisperKit was removed in v1.8). Download the model in Setup → Transcription Settings → On Device. Local Speaker Labels use a separate explicit speaker-model action; they do not silently download when transcription starts.
-- For on-device AI, device capability checks ensure your device meets requirements (4 GB+ RAM for MLX Swift, 6 GB+ RAM for legacy llama.cpp models, iOS 26+ and an Apple Intelligence-capable device for Apple Native) before allowing downloads.
+- For on-device AI, device capability checks ensure your device meets requirements (4 GB+ RAM for MLX Swift, iOS 26+ and an Apple Intelligence-capable device for Apple Native) before allowing downloads.
 
 ## iPhone Action Button Setup
 If you have an iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, or future iPhone Pro models with an Action Button, you can configure it to start recording instantly:
@@ -458,7 +428,6 @@ BisonNotes AI is built on the shoulders of several outstanding open-source proje
 | **Textual** | Markdown rendering library used to display AI-generated summaries, transcripts, and formatted content. | MIT | [gonzalezreal/Textual](https://github.com/gonzalezreal/Textual) |
 | **FluidAudio** | On-device speech framework powering Parakeet transcription. | Apache 2.0 | [FluidInference/FluidAudio](https://github.com/FluidInference/FluidAudio) |
 | **MLX Swift / MLX Swift LM** | Apple Silicon ML framework and language-model utilities used for on-device summarization with Ternary Bonsai models. | MIT | [ml-explore/mlx-swift](https://github.com/ml-explore/mlx-swift) / [ml-explore/mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) |
-| **llama.cpp** | C/C++ inference engine for on-device LLM processing. Embedded as a pre-compiled xcframework for Metal-accelerated local AI summarization. | MIT | [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) |
 | **Swift Transformers** | Hugging Face tokenizers and transformer utilities for local ML model pipelines. | Apache 2.0 | [huggingface/swift-transformers](https://github.com/huggingface/swift-transformers) |
 
 ### Transitive Dependencies

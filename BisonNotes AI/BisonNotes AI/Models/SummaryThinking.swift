@@ -55,7 +55,6 @@ enum SummaryThinkingTransport: Equatable, Sendable {
     case geminiThinkingBudget
     case ollama
     case mlx
-    case onDeviceQwenTemplate
 }
 
 enum SummaryThinkingSupport: Equatable, Sendable {

@@ -53,9 +53,9 @@ class OnDeviceAIDownloadMonitor: ObservableObject {
         guard !hasShownCompletion else { return }
 
         let parakeetReady = fluidAudioManager.isModelReady
-        let onDeviceLLMReady = mlxManager.isModelDownloaded
+        let mlxReady = mlxManager.isModelDownloaded
 
-        if parakeetReady && onDeviceLLMReady {
+        if parakeetReady && mlxReady {
             hasShownCompletion = true
             completionMessage = "Both models have been downloaded successfully! You can now use on-device AI for transcription and summaries."
             showingCompletionAlert = true

@@ -1254,8 +1254,6 @@ class AIEngineFactory {
             return LocalLLMEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
-        case .onDeviceLLM:
-            return OnDeviceLLMEngine()
         case .mlxSwift:
             return MLXSwiftEngine()
         case .appleNative:
@@ -1281,7 +1279,6 @@ enum AIEngineType: String, CaseIterable {
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
-    case onDeviceLLM = "On-Device AI"
     case mlxSwift = "MLX Swift"
     case appleNative = "Apple Native"
 
@@ -1290,7 +1287,6 @@ enum AIEngineType: String, CaseIterable {
     var displayName: String {
         switch self {
         case .mlxSwift: return "On Device AI"
-        case .onDeviceLLM: return "On Device AI (Legacy)"
         case .openAICompatible: return "Compatible API"
         default: return rawValue
         }
@@ -1321,23 +1317,15 @@ enum AIEngineType: String, CaseIterable {
             switch engineType {
             case .mlxSwift:
                 return DeviceCapabilities.supportsMLX
-            case .onDeviceLLM:
-                return DeviceCapabilities.supportsOnDeviceLLM
             default:
                 return true
             }
         }
     }
 
-    static func preferredOnDeviceMigrationEngine(
-        supportsMLX: Bool,
-        supportsOnDeviceLLM: Bool
-    ) -> AIEngineType? {
+    static func preferredOnDeviceMigrationEngine(supportsMLX: Bool) -> AIEngineType? {
         if supportsMLX {
             return .mlxSwift
-        }
-        if supportsOnDeviceLLM {
-            return .onDeviceLLM
         }
         return nil
     }
@@ -1352,8 +1340,6 @@ enum AIEngineType: String, CaseIterable {
             return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
-        case .onDeviceLLM:
-            return "Privacy-focused on-device AI processing using local AI models"
         case .mlxSwift:
             return "On-device AI processing using MLX Swift and Ternary Bonsai"
         case .appleNative:
@@ -1363,7 +1349,7 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAICompatible, .googleAIStudio, .mistralAI, .onDeviceLLM, .mlxSwift, .appleNative:
+        case .localLLM, .openAICompatible, .googleAIStudio, .mistralAI, .mlxSwift, .appleNative:
             return false
         }
     }
@@ -1378,10 +1364,8 @@ enum AIEngineType: String, CaseIterable {
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
-        case .onDeviceLLM:
-            return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         case .mlxSwift:
-            return ["Apple Silicon / 6GB+ RAM", "First-use Model Download (~1.1 GB)", "No Internet Required"]
+            return ["Apple Silicon / 4GB+ RAM", "First-use Model Download (~470 MB+)", "No Internet Required"]
         case .appleNative:
             return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }

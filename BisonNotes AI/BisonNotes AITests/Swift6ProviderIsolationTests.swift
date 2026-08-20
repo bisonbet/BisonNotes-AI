@@ -24,7 +24,7 @@ final class Swift6ProviderIsolationTests: XCTestCase {
         XCTAssertEqual(parsed.titles.count, 1)
     }
 
-    func testProviderAndOnDeviceValueTypesAreSendable() {
+    func testProviderValueTypesAreSendable() {
         let values: [any Sendable] = [
             OllamaConfig(
                 serverURL: "http://localhost",
@@ -35,11 +35,10 @@ final class Swift6ProviderIsolationTests: XCTestCase {
                 maxContextTokens: 4_096,
                 timeoutInterval: 30
             ),
-            LLMChat(role: .user, content: "test"),
-            InferenceMetrics(),
-            OnDeviceLLMConfig()
+            AIEngineType.mlxSwift.rawValue,
+            MLXSwiftSettingsKeys.defaultModelId
         ]
 
-        XCTAssertEqual(values.count, 4)
+        XCTAssertEqual(values.count, 3)
     }
 }
