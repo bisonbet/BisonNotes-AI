@@ -14,6 +14,39 @@ import Foundation
 @preconcurrency import AVFoundation
 import CoreGraphics
 
+/// Builds the AVAudioEngine tap outside `AudioRecorderViewModel`'s MainActor
+/// isolation. AVAudioEngine invokes this block on its real-time audio queue;
+/// constructing it inside the MainActor-isolated view model causes Swift 6 to
+/// emit a runtime executor precondition before the first statement executes.
+private enum MacInputTapBlockFactory {
+	static func make(
+		file: AVAudioFile,
+		captureHealth: RecordingCaptureHealth,
+		onFirstWrite: @escaping @MainActor @Sendable () -> Void
+	) -> AVAudioNodeTapBlock {
+		{ buffer, _ in
+			do {
+				try file.write(from: buffer)
+				let isFirstWrite = captureHealth.recordSuccessfulWrite(
+					frameCount: Int64(buffer.frameLength)
+				)
+				if isFirstWrite {
+					Task { @MainActor in
+						onFirstWrite()
+					}
+				}
+			} catch {
+				if captureHealth.recordWriteFailure(error.localizedDescription) {
+					AppLog.shared.recording(
+						"Mac microphone file write failed: \(error.localizedDescription)",
+						level: .error
+					)
+				}
+			}
+		}
+	}
+}
+
 private enum MacMeetingAudioCaptureError: LocalizedError {
 	case permissionUnavailable
 
@@ -98,7 +131,14 @@ extension AudioRecorderViewModel {
 
 		// Native macOS uses Core Audio directly. AVAudioSession is an iOS API
 		// and the Mac-only fallback must never run here.
-		try startMacEnginePipeline(at: url)
+		do {
+			try startMacEnginePipeline(at: url)
+		} catch {
+			// The pipeline assigns its engine/file/scratch URL before the final start
+			// call. If that call fails, release the partial state before the next retry.
+			discardFailedMacCaptureState()
+			throw error
+		}
 	}
 
 	private func startMacEnginePipeline(
@@ -111,13 +151,18 @@ extension AudioRecorderViewModel {
 		try enhancedAudioSessionManager.configureInputDevice(for: engine)
 		#endif
 		let inputNode = engine.inputNode
+		// Apple documents the input-scope format as the hardware-availability
+		// check. The output format can remain populated while a USB input route
+		// is present but not actually delivering microphone buffers.
+		let hardwareInputFormat = inputNode.inputFormat(forBus: 0)
 		let inputFormat = inputNode.outputFormat(forBus: 0)
 
-		guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+		guard hardwareInputFormat.sampleRate > 0, hardwareInputFormat.channelCount > 0,
+		      inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -1,
-				userInfo: [NSLocalizedDescriptionKey: "Microphone not available — check macOS Sound input settings."]
+				userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
 			)
 		}
 
@@ -143,10 +188,19 @@ extension AudioRecorderViewModel {
 
 		engine.prepare()
 		try engine.start()
+		guard engine.isRunning else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -9,
+				userInfo: [NSLocalizedDescriptionKey: "The microphone engine did not remain running."]
+			)
+		}
 		startMacCaptureHealthMonitoring()
 		AppLog.shared.recording(
 			"Mac microphone engine started; awaiting first buffer " +
-			"(sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
+			"(hardwareSampleRate=\(hardwareInputFormat.sampleRate), " +
+			"hardwareChannels=\(hardwareInputFormat.channelCount), " +
+			"sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
 			"interleaved=\(inputFormat.isInterleaved))"
 		)
 	}
@@ -184,11 +238,14 @@ extension AudioRecorderViewModel {
 	func stopMacEngineRecording(closingFile: Bool = true) {
 		stopMacCaptureHealthMonitoring()
 		let health = macCaptureHealth.snapshot()
-		AppLog.shared.recording(
-			"Mac microphone engine stopping " +
-			"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
-			level: health.totalFramesWritten > 0 ? .info : .error
-		)
+		let hasCaptureState = macAudioEngine != nil || macAudioFile != nil || macScratchRecordingURL != nil
+		if hasCaptureState {
+			AppLog.shared.recording(
+				"Mac microphone engine stopping " +
+				"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
+				level: health.totalFramesWritten > 0 ? .info : .error
+			)
+		}
 		if let engine = macAudioEngine {
 			engine.inputNode.removeTap(onBus: 0)
 			if engine.isRunning {
@@ -203,6 +260,19 @@ extension AudioRecorderViewModel {
 		if closingFile {
 			macAudioFile = nil
 		}
+	}
+
+	/// Releases the state left behind by a failed pipeline start. The scratch file
+	/// only ever holds a CAF header at this point — no buffer reached the tap — so it
+	/// is deleted rather than kept: leaving the URL set would leak the temp file and
+	/// make the next start believe a capture is still in flight.
+	func discardFailedMacCaptureState() {
+		let failedScratchURL = macScratchRecordingURL
+		stopMacEngineRecording()
+		if let failedScratchURL {
+			try? FileManager.default.removeItem(at: failedScratchURL)
+		}
+		macScratchRecordingURL = nil
 	}
 
 	/// Closes the current PCM segment without discarding it. A replacement input
@@ -266,6 +336,14 @@ extension AudioRecorderViewModel {
 		      let format = macEngineFormat,
 		      let file = macAudioFile else { return }
 		let captureHealth = macCaptureHealth
+		let handleFirstSuccessfulWrite: @MainActor @Sendable () -> Void = { [weak self] in
+			self?.handleMacFirstSuccessfulWrite()
+		}
+		let tapBlock = MacInputTapBlockFactory.make(
+			file: file,
+			captureHealth: captureHealth,
+			onFirstWrite: handleFirstSuccessfulWrite
+		)
 
 		// The scratch file uses the input node's native PCM format, so the tap
 		// can write each buffer directly without invoking a compressed encoder
@@ -273,27 +351,9 @@ extension AudioRecorderViewModel {
 		engine.inputNode.installTap(
 			onBus: 0,
 			bufferSize: 4096,
-			format: format
-		) { [weak self] buffer, _ in
-			do {
-				try file.write(from: buffer)
-				let isFirstWrite = captureHealth.recordSuccessfulWrite(
-					frameCount: Int64(buffer.frameLength)
-				)
-				if isFirstWrite {
-					Task { @MainActor [weak self] in
-						self?.handleMacFirstSuccessfulWrite()
-					}
-				}
-			} catch {
-				if captureHealth.recordWriteFailure(error.localizedDescription) {
-					AppLog.shared.recording(
-						"Mac microphone file write failed: \(error.localizedDescription)",
-						level: .error
-					)
-				}
-			}
-		}
+			format: format,
+			block: tapBlock
+		)
 	}
 
 	private static func macScratchURL(for finalURL: URL, segmentIndex: Int? = nil) -> URL {

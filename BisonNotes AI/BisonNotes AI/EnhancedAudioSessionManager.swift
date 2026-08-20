@@ -556,6 +556,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         AppLog.shared.audioSession("Preferred Mac input cleared; using the system default microphone")
     }
 
+    /// True when a recording would be explicitly bound to a user-selected
+    /// input rather than the current macOS default. Startup recovery can use
+    /// this to try the default route after a selected USB device produces no
+    /// input buffers, without forgetting the persisted user preference.
+    func hasPreferredInput() -> Bool {
+        preferredInputDeviceID != nil
+    }
+
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
         let defaultDeviceID = Self.defaultInputDeviceID()
         let discoverySession = AVCaptureDevice.DiscoverySession(
@@ -623,7 +631,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Watches both the system default input and the complete Core Audio device
     /// list. The latter is required for a selected non-default USB/Bluetooth mic.
-    func startInputDeviceMonitoring(onChange: @escaping () -> Void) {
+    func startInputDeviceMonitoring(onChange: @escaping @MainActor @Sendable () -> Void) {
         stopInputDeviceMonitoring()
         let monitor = MacInputDeviceMonitor(onChange: onChange)
         monitor.start()

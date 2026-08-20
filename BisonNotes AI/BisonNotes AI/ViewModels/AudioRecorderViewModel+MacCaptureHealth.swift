@@ -108,7 +108,33 @@ extension AudioRecorderViewModel {
 
         macAutomaticRecoveryAttempts += 1
         let attempt = macAutomaticRecoveryAttempts
-        errorMessage = "\(inputName) stopped providing audio. Reconnecting (attempt \(attempt) of " +
+        let neverProducedAudio = isStartingRecording && assessment == .noInitialAudio
+        var didFallBackToDefaultInput = false
+        if neverProducedAudio,
+           attempt == 1,
+           enhancedAudioSessionManager.hasPreferredInput() {
+            // Keep the persisted preference so the user's selected device is
+            // restored for a later recording, but avoid retrying a present-but-
+            // silent USB route indefinitely during this startup.
+            try? await enhancedAudioSessionManager.clearPreferredInput()
+            didFallBackToDefaultInput = true
+            AppLog.shared.audioSession(
+                "Preferred Mac input produced no initial audio; retrying startup with the system default",
+                level: .error
+            )
+        }
+        // A device that never delivered a buffer never "stopped" providing audio,
+        // and the fallback silently changes which microphone is used — say so.
+        let cause = neverProducedAudio
+            ? "\(inputName) did not provide any audio."
+            : "\(inputName) stopped providing audio."
+        let action: String
+        if didFallBackToDefaultInput {
+            action = "Switching to the system default microphone"
+        } else {
+            action = neverProducedAudio ? "Retrying" : "Reconnecting"
+        }
+        errorMessage = "\(cause) \(action) (attempt \(attempt) of " +
             "\(Self.maximumAutomaticCaptureRecoveryAttempts))…"
         macSystemAudioCapture?.setPaused(true)
         stopRecordingTimer()
