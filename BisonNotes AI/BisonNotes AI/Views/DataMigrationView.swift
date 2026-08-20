@@ -34,7 +34,25 @@ struct DataMigrationView: View {
     // Safety confirmations for data-changing operations
     @State private var confirmRecoverCloud = false
     @State private var confirmFullSyncToCloud = false
-    @State private var confirmCloudKitReset = false
+
+    // Nuclear iCloud erase
+    @AppStorage("iCloudBackupIncludeAudioFiles") private var iCloudBackupIncludeAudioFiles: Bool = false
+    @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
+    @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = false
+    @State private var confirmCloudErase = false
+    @State private var cloudEraseConfirmationText = ""
+    @State private var isCloudMaintenanceRunning = false
+    @State private var showingCloudMaintenanceResult = false
+    @State private var cloudMaintenanceResult: CloudMaintenanceResult?
+
+    private struct CloudMaintenanceResult {
+        let title: String
+        let message: String
+        let offersFreshUpload: Bool
+    }
+
+    /// Typed exactly by the user before the erase is allowed to run.
+    private static let cloudEraseConfirmationPhrase = "ERASE"
 
     // Orphaned audio file cleanup
     @State private var orphanedAudioFiles: [URL] = []
@@ -146,20 +164,59 @@ struct DataMigrationView: View {
             } message: {
                 Text("This will upload ALL local summaries to iCloud. This is useful for:\n\n• Initial setup on a new device\n• After restoring from backup\n• Manual full synchronization\n\nThis may take several minutes depending on the number of summaries.")
             }
-            .alert("⚠️ RESET CLOUDKIT & FRESH SYNC", isPresented: $confirmCloudKitReset) {
-                Button("Cancel", role: .cancel) { }
-                Button("Reset & Sync", role: .destructive) {
-                    Task {
-                        do {
-                            let result = try await legacyiCloudManager.performFullCloudKitResetAndSync(appCoordinator: appCoordinator)
-                            AppLog.shared.dataMigration("CloudKit reset complete: deleted \(result.deleted), uploaded \(result.uploaded)")
-                        } catch {
-                            AppLog.shared.dataMigration("Failed to reset CloudKit: \(error)", level: .error)
-                        }
-                    }
+            .alert("Erase All iCloud Data", isPresented: $confirmCloudErase) {
+                TextField("Type \(Self.cloudEraseConfirmationPhrase) to confirm", text: $cloudEraseConfirmationText)
+                    .autocorrectionDisabled()
+                Button("Cancel", role: .cancel) {
+                    cloudEraseConfirmationText = ""
                 }
+                Button("Erase iCloud Data", role: .destructive) {
+                    guard isCloudEraseConfirmed else {
+                        // Belt and braces: the button is disabled until the phrase matches,
+                        // but never let a mistyped confirmation fall through to an erase.
+                        cloudEraseConfirmationText = ""
+                        cloudMaintenanceResult = CloudMaintenanceResult(
+                            title: "Nothing Erased",
+                            message: "The confirmation did not match. Type \(Self.cloudEraseConfirmationPhrase) exactly to erase your iCloud data.",
+                            offersFreshUpload: false
+                        )
+                        showingCloudMaintenanceResult = true
+                        return
+                    }
+                    cloudEraseConfirmationText = ""
+                    Task { await eraseAlliCloudData() }
+                }
+                .disabled(!isCloudEraseConfirmed)
             } message: {
-                Text("🚨 DESTRUCTIVE ACTION 🚨\n\nThis will:\n\n1️⃣ DELETE ALL summaries from iCloud\n2️⃣ Upload fresh copies of all your current summaries\n\nThis is the nuclear option for fixing CloudKit sync issues. Use this when:\n\n• CloudKit has orphaned or duplicate data\n• Sync is completely broken\n• You want a clean slate\n\n⚠️ This cannot be undone and may take several minutes.")
+                Text("""
+                This permanently deletes everything BisonNotes AI stores in your iCloud account:
+
+                • Backed-up recordings, transcripts, and summaries
+                • Any audio files uploaded to iCloud
+                • Backed-up app settings and the sync bookkeeping records
+
+                Nothing on this device is deleted. Your recordings, transcripts, and summaries stay exactly as they are, and you can upload a fresh copy to iCloud as soon as the erase finishes.
+
+                Other devices keep their own local data, but they will find nothing in iCloud until a fresh copy is uploaded.
+
+                This cannot be undone and may take several minutes. Type \(Self.cloudEraseConfirmationPhrase) below to confirm.
+                """)
+            }
+            .alert(
+                cloudMaintenanceResult?.title ?? "",
+                isPresented: $showingCloudMaintenanceResult,
+                presenting: cloudMaintenanceResult
+            ) { result in
+                if result.offersFreshUpload {
+                    Button("Upload Fresh Copy") {
+                        Task { await uploadFreshCopyToiCloud() }
+                    }
+                    Button("Not Now", role: .cancel) { }
+                } else {
+                    Button("OK", role: .cancel) { }
+                }
+            } message: { result in
+                Text(result.message)
             }
         }
     }
@@ -264,7 +321,7 @@ struct DataMigrationView: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                .disabled(isCloudActionDisabled)
 
                 // Full sync to cloud (manual upload all)
                 Button(action: {
@@ -285,28 +342,43 @@ struct DataMigrationView: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                .disabled(isCloudActionDisabled)
 
-                // Full CloudKit reset and fresh sync
-                Button(action: {
-                    confirmCloudKitReset = true
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.clockwise.icloud")
-                        Text("Reset CloudKit & Fresh Sync")
+                // Nuclear option: wipe everything this app stores in iCloud
+                VStack(alignment: .leading, spacing: 6) {
+                    Button(action: {
+                        cloudEraseConfirmationText = ""
+                        confirmCloudErase = true
+                    }) {
+                        HStack {
+                            if isCloudMaintenanceRunning {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "icloud.slash")
+                            }
+                            Text(isCloudMaintenanceRunning ? "Working in iCloud…" : "Erase All iCloud Data")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.red)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.red.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.red, lineWidth: 1)
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .font(.headline)
-                    .foregroundColor(.orange)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.orange.opacity(0.1))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.orange, lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .disabled(isCloudEraseDisabled)
+
+                    Text(legacyiCloudManager.isEnabled
+                         ? "Deletes everything this app stores in iCloud. Local recordings, transcripts, and summaries are not touched, so you can upload a fresh copy afterwards."
+                         : "Turn on iCloud Sync in Settings to manage iCloud data.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
             }
 
             Group {
@@ -655,6 +727,111 @@ struct DataMigrationView: View {
                 Text("Verifying sync status...")
             }
         }
+    }
+
+    // MARK: - iCloud Maintenance
+
+    private var isCloudActionDisabled: Bool {
+        isCloudMaintenanceRunning || (migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+    }
+
+    private var isCloudEraseDisabled: Bool {
+        isCloudActionDisabled || !legacyiCloudManager.isEnabled
+    }
+
+    private var isCloudEraseConfirmed: Bool {
+        cloudEraseConfirmationText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased() == Self.cloudEraseConfirmationPhrase
+    }
+
+    private func eraseAlliCloudData() async {
+        isCloudMaintenanceRunning = true
+        defer { isCloudMaintenanceRunning = false }
+
+        do {
+            let result = try await legacyiCloudManager.eraseAlliCloudData()
+            AppLog.shared.dataMigration(
+                "iCloud erase finished: \(result.recordsDeleted) records, \(result.zonesDeleted) zones, \(result.failures.count) failures"
+            )
+
+            let recordText = "\(result.recordsDeleted) record\(result.recordsDeleted == 1 ? "" : "s")"
+            let zoneText = result.zonesDeleted > 0 ? " and \(result.zonesDeleted) record zone\(result.zonesDeleted == 1 ? "" : "s")" : ""
+
+            if result.failures.isEmpty {
+                cloudMaintenanceResult = CloudMaintenanceResult(
+                    title: "iCloud Data Erased",
+                    message: """
+                    Deleted \(recordText)\(zoneText) from iCloud.
+
+                    Nothing on this device changed — your recordings, transcripts, and summaries are all still here.
+
+                    Upload a fresh copy now to rebuild iCloud from this device, or do it later from Settings.
+                    """,
+                    offersFreshUpload: true
+                )
+            } else {
+                cloudMaintenanceResult = CloudMaintenanceResult(
+                    title: "Erase Incomplete",
+                    message: """
+                    Deleted \(recordText)\(zoneText), but \(result.failures.count) item\(result.failures.count == 1 ? "" : "s") could not be removed:
+
+                    \(result.failures.prefix(3).joined(separator: "\n"))
+
+                    Nothing on this device changed. Run the erase again to retry the remaining items.
+                    """,
+                    offersFreshUpload: false
+                )
+            }
+        } catch {
+            AppLog.shared.dataMigration("Failed to erase iCloud data: \(error)", level: .error)
+            cloudMaintenanceResult = CloudMaintenanceResult(
+                title: "Erase Failed",
+                message: "Could not erase iCloud data: \(error.localizedDescription)\n\nNothing on this device changed.",
+                offersFreshUpload: false
+            )
+        }
+
+        showingCloudMaintenanceResult = true
+    }
+
+    private func uploadFreshCopyToiCloud() async {
+        isCloudMaintenanceRunning = true
+        defer { isCloudMaintenanceRunning = false }
+
+        let options = CloudBackupOptions(
+            includeAudioFiles: iCloudBackupIncludeAudioFiles,
+            includeSettings: iCloudBackupIncludeSettings,
+            includeSensitiveSettings: iCloudBackupIncludeSettings && iCloudBackupIncludeSensitiveSettings
+        )
+
+        do {
+            let result = try await legacyiCloudManager.backupAllDataToiCloud(
+                appCoordinator: appCoordinator,
+                options: options
+            )
+            AppLog.shared.dataMigration(
+                "Fresh iCloud upload complete: \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries"
+            )
+            cloudMaintenanceResult = CloudMaintenanceResult(
+                title: "Fresh Copy Uploaded",
+                message: """
+                Uploaded \(result.recordingsBackedUp) recordings, \(result.transcriptsBackedUp) transcripts, \(result.summariesBackedUp) summaries, and \(result.audioFilesBackedUp) audio files to iCloud.
+
+                Audio files and settings follow the backup options in Settings.
+                """,
+                offersFreshUpload: false
+            )
+        } catch {
+            AppLog.shared.dataMigration("Failed to upload fresh copy to iCloud: \(error)", level: .error)
+            cloudMaintenanceResult = CloudMaintenanceResult(
+                title: "Upload Failed",
+                message: "Could not upload a fresh copy: \(error.localizedDescription)\n\nYour local data is unchanged. You can retry from Settings › iCloud.",
+                offersFreshUpload: false
+            )
+        }
+
+        showingCloudMaintenanceResult = true
     }
 
     private func presentBackgroundProcessing() {

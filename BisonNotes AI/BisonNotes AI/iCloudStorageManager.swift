@@ -2231,182 +2231,236 @@ class iCloudStorageManager: ObservableObject {
         return diagnosis
     }
 
-    /// Performs a complete CloudKit reset and fresh sync
-    /// 1. Deletes ALL summary records from CloudKit
-    /// 2. Uploads all current Core Data summaries fresh
-    func performFullCloudKitResetAndSync(appCoordinator: AppDataCoordinator) async throws -> (deleted: Int, uploaded: Int) {
-        guard isEnabled, database != nil else {
-            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "iCloud sync not enabled or CloudKit not initialized"])
+    /// Every record type this app has ever written to its private database.
+    /// Used only as a backstop sweep for the change-feed enumeration in
+    /// `eraseAlliCloudData()`.
+    private static let allKnownCloudRecordTypes: [CKRecord.RecordType] = [
+        CloudKitSummaryRecord.recordType,
+        backupRecordingRecordType,
+        backupTranscriptRecordType,
+        backupSummaryRecordType,
+        backupSettingsRecordType,
+        backupContentIndexRecordType,
+        backupDeletionRecordType
+    ]
+
+    /// Erases everything this app stores in the user's private iCloud database.
+    ///
+    /// This is the nuclear maintenance option. It deletes every record the app
+    /// owns — legacy summary sync records, backup records for recordings,
+    /// transcripts and summaries (including their uploaded audio assets), the
+    /// backed-up settings and content index records, and the deletion tombstones
+    /// that would otherwise suppress a later re-upload. Custom record zones are
+    /// dropped whole; the default zone cannot be deleted, so its records are
+    /// enumerated and removed in batches.
+    ///
+    /// Nothing local is touched: Core Data and on-disk audio are left exactly as
+    /// they are, so the user can follow this with a fresh backup that repopulates
+    /// iCloud from this device.
+    func eraseAlliCloudData() async throws -> CloudEraseResult {
+        guard isEnabled else {
+            throw NSError(
+                domain: "iCloudStorageManager",
+                code: 4012,
+                userInfo: [NSLocalizedDescriptionKey: "Enable iCloud Sync before erasing iCloud data."]
+            )
         }
 
+        let container = Self.sharedCloudKitContainer()
+        let database = container.privateCloudDatabase
+        try await validateiCloudAccountAvailability(using: container)
+
+        // Hold off automatic sync and auto-backup for the whole wipe, otherwise a
+        // background upload can repopulate the container while it is being erased.
+        isManualCloudTransferInProgress = true
+        defer { isManualCloudTransferInProgress = false }
+
         await updateSyncStatus(.syncing)
+        AppLog.shared.iCloudSync("Starting full iCloud erase of this app's private database")
 
-        AppLog.shared.iCloudSync("Starting FULL CloudKit reset and fresh sync")
-        AppLog.shared.iCloudSync("This will DELETE ALL summaries from CloudKit and upload fresh copies")
-
-        var deletedCount = 0
-        var uploadedCount = 0
+        var result = CloudEraseResult()
 
         do {
-            // Step 1: Find and delete ALL CloudKit summary records
-            AppLog.shared.iCloudSync("Step 1: Deleting ALL CloudKit summary records")
-            deletedCount = try await deleteAllCloudKitSummaries()
+            // Custom zones can be dropped wholesale, which removes their records too.
+            let customZoneIDs = try await database.allRecordZones()
+                .map { $0.zoneID }
+                .filter { $0 != CKRecordZone.default().zoneID }
 
-            // Step 2: Upload all current Core Data summaries
-            AppLog.shared.iCloudSync("Step 2: Uploading all Core Data summaries")
-            let localSummaries = appCoordinator.getAllSummaries()
-
-            for localSummary in localSummaries {
-                // Convert Core Data summary to EnhancedSummaryData for upload
-                if let enhancedSummary = try? convertCoreDataToEnhancedSummary(localSummary, appCoordinator: appCoordinator) {
-                    do {
-                        try await performIndividualSync(enhancedSummary)
-                        uploadedCount += 1
-                        AppLog.shared.iCloudSync("Uploaded summary", level: .debug)
-                    } catch {
-                        AppLog.shared.iCloudSync("Failed to upload summary: \(error.localizedDescription)", level: .error)
+            if !customZoneIDs.isEmpty {
+                let (_, zoneResults) = try await database.modifyRecordZones(
+                    saving: [],
+                    deleting: customZoneIDs
+                )
+                for (zoneID, zoneResult) in zoneResults {
+                    switch zoneResult {
+                    case .success:
+                        result.zonesDeleted += 1
+                    case .failure(let error):
+                        result.failures.append("Zone \(zoneID.zoneName): \(error.localizedDescription)")
                     }
                 }
             }
 
-            await updateSyncStatus(.completed)
-            AppLog.shared.iCloudSync("CloudKit reset and sync complete: deleted \(deletedCount), uploaded \(uploadedCount)")
-            return (deleted: deletedCount, uploaded: uploadedCount)
+            // The default zone itself cannot be deleted, so remove its records.
+            var recordIDs = try await defaultZoneRecordIDs(database: database)
+            recordIDs.append(contentsOf: await queriedRecordIDsForKnownTypes(database: database))
 
+            let deletion = try await deleteCloudRecordsInBatches(recordIDs, database: database)
+            result.recordsDeleted = deletion.deleted
+            result.failures.append(contentsOf: deletion.failures)
+
+            // Forget the local markers describing what is (or was) in iCloud so the next
+            // backup uploads a complete fresh copy instead of a delta. Pending deletion
+            // queues are dropped too: the records they targeted no longer exist.
+            resetLocalCloudSyncBookkeeping()
+
+            if result.failures.isEmpty {
+                await updateSyncStatus(.completed)
+                AppLog.shared.iCloudSync("iCloud erase complete: \(result.recordsDeleted) records, \(result.zonesDeleted) custom zones")
+            } else {
+                await updateSyncStatus(.failed("Erase finished with \(result.failures.count) failures"))
+                AppLog.shared.iCloudSync("iCloud erase finished with \(result.failures.count) failures", level: .error)
+            }
+
+            return result
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
-            AppLog.shared.iCloudSync("CloudKit reset and sync failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.iCloudSync("iCloud erase failed: \(error.localizedDescription)", level: .error)
             throw error
         }
     }
 
-    /// Deletes ALL summary records from CloudKit using zone changes
-    private func deleteAllCloudKitSummaries() async throws -> Int {
-        guard let database = database else { return 0 }
+    /// Collects the IDs of every record in the private default zone. `desiredKeys`
+    /// is empty so CloudKit returns identifiers only and never downloads the audio
+    /// assets attached to backup records.
+    private func defaultZoneRecordIDs(database: CKDatabase) async throws -> [CKRecord.ID] {
+        let zoneID = CKRecordZone.default().zoneID
+        let configuration = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
+        configuration.previousServerChangeToken = nil
+        configuration.desiredKeys = []
 
-        AppLog.shared.iCloudSync("Finding all CloudKit summary records for deletion")
-
-        var deletedCount = 0
-
-        // Use zone changes to find ALL records
-        let zoneChangesOperation = CKFetchRecordZoneChangesOperation(
-            recordZoneIDs: [CKRecordZone.default().zoneID],
-            configurationsByRecordZoneID: nil
+        let operation = CKFetchRecordZoneChangesOperation(
+            recordZoneIDs: [zoneID],
+            configurationsByRecordZoneID: [zoneID: configuration]
         )
+        operation.fetchAllChanges = true
 
-        var recordsToDelete: [CKRecord.ID] = []
-
-        zoneChangesOperation.recordWasChangedBlock = { _, result in
-            switch result {
-            case .success(let record):
-                if record.recordType == CloudKitSummaryRecord.recordType {
-                    recordsToDelete.append(record.recordID)
-                    AppLog.shared.iCloudSync("Found CloudKit summary record to delete", level: .debug)
-                }
-            case .failure(let error):
-                AppLog.shared.iCloudSync("Failed to fetch record for deletion: \(error.localizedDescription)", level: .error)
-            }
+        var recordIDs: [CKRecord.ID] = []
+        operation.recordWasChangedBlock = { recordID, _ in
+            // Keep the ID even when the record body failed to decode; it still needs deleting.
+            recordIDs.append(recordID)
         }
 
-        _ = try await withCheckedThrowingContinuation { continuation in
-            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
-                continuation.resume(with: result)
-            }
-            database.add(zoneChangesOperation)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            operation.fetchRecordZoneChangesResultBlock = { continuation.resume(with: $0) }
+            database.add(operation)
         }
 
-        // Delete all found records
-        AppLog.shared.iCloudSync("Deleting \(recordsToDelete.count) CloudKit summary records")
-
-        for recordID in recordsToDelete {
-            do {
-                try await database.deleteRecord(withID: recordID)
-                deletedCount += 1
-                AppLog.shared.iCloudSync("Deleted CloudKit record", level: .debug)
-            } catch {
-                if let ckError = error as? CKError, ckError.code == .unknownItem {
-                    AppLog.shared.iCloudSync("Record already deleted", level: .debug)
-                    deletedCount += 1 // Count as deleted since it's gone
-                } else {
-                    AppLog.shared.iCloudSync("Failed to delete record: \(error.localizedDescription)", level: .error)
-                }
-            }
-        }
-
-        AppLog.shared.iCloudSync("Deleted \(deletedCount) CloudKit summary records")
-        return deletedCount
+        AppLog.shared.iCloudSync("Found \(recordIDs.count) records in the default zone to erase", level: .debug)
+        return recordIDs
     }
 
-    /// Converts Core Data SummaryEntry to EnhancedSummaryData for upload
-    private func convertCoreDataToEnhancedSummary(_ summaryEntry: SummaryEntry, appCoordinator: AppDataCoordinator) throws -> EnhancedSummaryData {
-        guard let summaryId = summaryEntry.id,
-              let summary = summaryEntry.summary,
-              let aiMethod = summaryEntry.aiMethod else {
-            throw NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing required summary fields"])
+    /// Backstop for the change feed: queries each record type the app knows about.
+    /// A type that was never created has no schema to query, which is not a failure
+    /// for an erase, so query errors are logged and skipped.
+    private func queriedRecordIDsForKnownTypes(database: CKDatabase) async -> [CKRecord.ID] {
+        var recordIDs: [CKRecord.ID] = []
+
+        for recordType in Self.allKnownCloudRecordTypes {
+            let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+            do {
+                var response = try await database.records(matching: query, desiredKeys: [])
+                while true {
+                    recordIDs.append(contentsOf: response.matchResults.map { $0.0 })
+                    guard let cursor = response.queryCursor else { break }
+                    response = try await database.records(continuingMatchFrom: cursor, desiredKeys: [])
+                }
+            } catch {
+                AppLog.shared.iCloudSync("Erase sweep skipped \(recordType): \(error.localizedDescription)", level: .debug)
+            }
         }
 
-        // Get associated recording info
-        let recording = summaryEntry.recording
-        let recordingId = summaryEntry.recordingId
-        let transcriptId = summaryEntry.transcriptId
+        return recordIDs
+    }
 
-        // Parse structured data
-        let tasks: [TaskItem] = {
-            if let tasksString = summaryEntry.tasks,
-               let tasksData = tasksString.data(using: .utf8) {
-                return (try? JSONDecoder().decode([TaskItem].self, from: tasksData)) ?? []
+    private func deleteCloudRecordsInBatches(
+        _ recordIDs: [CKRecord.ID],
+        database: CKDatabase,
+        batchSize: Int = 200
+    ) async throws -> (deleted: Int, failures: [String]) {
+        var seenRecordNames = Set<String>()
+        let uniqueRecordIDs = recordIDs.filter { seenRecordNames.insert($0.recordName).inserted }
+
+        var deleted = 0
+        var failures: [String] = []
+
+        for start in stride(from: 0, to: uniqueRecordIDs.count, by: batchSize) {
+            let batch = Array(uniqueRecordIDs[start..<min(start + batchSize, uniqueRecordIDs.count)])
+            let outcome = try await deleteCloudRecordBatch(batch, database: database)
+            deleted += outcome.deleted
+            failures.append(contentsOf: outcome.failures)
+        }
+
+        return (deleted, failures)
+    }
+
+    private func deleteCloudRecordBatch(
+        _ recordIDs: [CKRecord.ID],
+        database: CKDatabase
+    ) async throws -> (deleted: Int, failures: [String]) {
+        guard !recordIDs.isEmpty else { return (0, []) }
+
+        do {
+            let (_, deleteResults) = try await database.modifyRecords(
+                saving: [],
+                deleting: recordIDs,
+                savePolicy: .changedKeys,
+                atomically: false
+            )
+
+            var deleted = 0
+            var failures: [String] = []
+
+            for (recordID, deleteResult) in deleteResults {
+                switch deleteResult {
+                case .success:
+                    deleted += 1
+                case .failure(let error as CKError) where error.code == .unknownItem:
+                    // Already gone, which is the outcome we wanted.
+                    deleted += 1
+                case .failure(let error):
+                    failures.append("\(recordID.recordName): \(error.localizedDescription)")
+                }
             }
-            return []
-        }()
 
-        let reminders: [ReminderItem] = {
-            if let remindersString = summaryEntry.reminders,
-               let remindersData = remindersString.data(using: .utf8) {
-                return (try? JSONDecoder().decode([ReminderItem].self, from: remindersData)) ?? []
-            }
-            return []
-        }()
+            return (deleted, failures)
+        } catch let error as CKError where error.code == .limitExceeded && recordIDs.count > 1 {
+            // The server rejected the batch as too large; halve it and retry.
+            let midpoint = recordIDs.count / 2
+            let first = try await deleteCloudRecordBatch(Array(recordIDs[..<midpoint]), database: database)
+            let second = try await deleteCloudRecordBatch(Array(recordIDs[midpoint...]), database: database)
+            return (first.deleted + second.deleted, first.failures + second.failures)
+        }
+    }
 
-        let titles: [TitleItem] = {
-            if let titlesString = summaryEntry.titles,
-               let titlesData = titlesString.data(using: .utf8) {
-                return (try? JSONDecoder().decode([TitleItem].self, from: titlesData)) ?? []
-            }
-            return []
-        }()
+    /// Clears the local state that describes what already exists in iCloud. Local
+    /// recordings, transcripts and summaries are untouched — only sync bookkeeping.
+    private func resetLocalCloudSyncBookkeeping() {
+        clearSyncState()
+        lastSyncDate = nil
+        lastAutoBackupDate = nil
+        pendingCloudReviewItems = []
 
-        // Build recording info
-        let recordingName = recording?.recordingName ?? "Unknown Recording"
-        let recordingDate = recording?.recordingDate ?? Date()
-        let recordingURL = recording?.recordingURL.flatMap { URL(string: $0) } ?? URL(string: "file:///unknown")!
-
-        let contentType = ContentType(rawValue: summaryEntry.contentType ?? "general") ?? .general
-
-        let decodedMetadata = SummaryMetadataCodec.decode(aiMethod)
-        let engine = decodedMetadata.engine ?? SummaryMetadataCodec.inferredEngine(from: decodedMetadata.model)
-
-        return EnhancedSummaryData(
-            id: summaryId,
-            recordingId: recordingId ?? summaryId, // Use recordingId if available, otherwise use summary ID
-            transcriptId: transcriptId,
-            recordingURL: recordingURL,
-            recordingName: recordingName,
-            recordingDate: recordingDate,
-            summary: summary,
-            tasks: tasks,
-            reminders: reminders,
-            titles: titles,
-            contentType: contentType,
-            aiEngine: engine,
-            aiModel: decodedMetadata.model,
-            originalLength: Int(summaryEntry.originalLength),
-            processingTime: summaryEntry.processingTime,
-            generatedAt: summaryEntry.generatedAt ?? Date(),
-            version: Int(summaryEntry.version),
-            wordCount: Int(summaryEntry.wordCount),
-            compressionRatio: summaryEntry.compressionRatio,
-            confidence: summaryEntry.confidence
-        )
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "lastSyncDate")
+        defaults.removeObject(forKey: Self.backupStateSignatureKey)
+        defaults.removeObject(forKey: Self.activeManifestMigrationCompletedKey)
+        defaults.removeObject(forKey: Self.quarantinedBackupRecordNamesKey)
+        defaults.removeObject(forKey: Self.quarantinedLegacySummaryRecordNamesKey)
+        defaults.removeObject(forKey: Self.pendingDeletionMarkersKey)
+        defaults.removeObject(forKey: Self.pendingLocalOnlyRemovalsKey)
+        defaults.removeObject(forKey: Self.pendingSummaryRemovalsKey)
+        defaults.removeObject(forKey: Self.pendingTranscriptRemovalsKey)
     }
 
     // MARK: - Private Methods
@@ -2418,6 +2472,14 @@ struct CloudBackupOptions {
     var includeAudioFiles: Bool
     var includeSettings: Bool
     var includeSensitiveSettings: Bool
+}
+
+/// Outcome of a full erase of the app's private CloudKit database.
+struct CloudEraseResult {
+    var recordsDeleted: Int = 0
+    var zonesDeleted: Int = 0
+    /// Human-readable description of anything the server refused to delete.
+    var failures: [String] = []
 }
 
 struct CloudBackupResult {
