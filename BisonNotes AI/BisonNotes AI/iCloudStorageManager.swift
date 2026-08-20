@@ -2512,6 +2512,8 @@ struct CloudReconcileResult {
     var deletedCloudRecords: Int = 0
     /// Items kept because they changed here after another device deleted them.
     var revivedLocalItems: Int = 0
+    /// Duplicate local rows removed because a newer row for the same recording won.
+    var prunedDuplicateItems: Int = 0
 }
 
 /// Outcome of replaying every iCloud deletion marker against this device.
@@ -2600,6 +2602,10 @@ struct CloudBackupSourceSelection {
     let transcripts: [TranscriptEntry]
     let summaries: [SummaryEntry]
     let excludedRecordingIds: Set<UUID>
+    /// Older duplicate rows for a recording that already has a newer transcript or
+    /// summary. Never uploaded, so the cloud copy stops churning.
+    var supersededTranscripts: [TranscriptEntry] = []
+    var supersededSummaries: [SummaryEntry] = []
 }
 
 // MARK: - Robust iCloud Backup Extension
@@ -4358,16 +4364,33 @@ extension iCloudStorageManager {
             restoreSettings: options.includeSettings
         )
 
+        // The restore leg has just pointed every recording at the winning transcript and
+        // summary, so any duplicate left behind is now safe to drop.
+        let pruned = pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
+        result.prunedDuplicateItems = pruned.transcripts + pruned.summaries
+
         let restoredCount = result.restoreResult.recordingsRestored +
             result.restoreResult.transcriptsRestored +
             result.restoreResult.summariesRestored
-        let message =
+        var message =
             "iCloud sync finished (\(reason)): " +
             "\(result.backupResult.recordingsBackedUp) local recordings checked, " +
             "\(restoredCount) cloud items restored, " +
             "\(result.restoreResult.itemsHeldForReview) older iCloud items held for review, " +
             "\(result.deletedLocalRecordings) deleted items applied, " +
             "\(result.deletedCloudRecords) cloud records cleaned."
+        if result.restoreResult.localItemsKeptAsNewer > 0 {
+            message += " \(result.restoreResult.localItemsKeptAsNewer) newer local item" +
+                "\(result.restoreResult.localItemsKeptAsNewer == 1 ? "" : "s") kept over older iCloud copies."
+        }
+        if result.revivedLocalItems > 0 {
+            message += " \(result.revivedLocalItems) item" +
+                "\(result.revivedLocalItems == 1 ? "" : "s") changed after being deleted elsewhere and were kept."
+        }
+        if result.prunedDuplicateItems > 0 {
+            message += " \(result.prunedDuplicateItems) duplicate item" +
+                "\(result.prunedDuplicateItems == 1 ? "" : "s") removed."
+        }
         await MainActor.run {
             self.lastMaintenanceMessage = message
             self.lastSyncDate = Date()
@@ -6123,6 +6146,55 @@ extension iCloudStorageManager {
         updateStringField(Self.fieldAudioSignature, value: signature, on: record, changed: &changed)
         return true
     }
+    /// Local counterpart of `resolveLatestRecordsPerRecording`: picks the one row per
+    /// recording that every device will agree on, and reports the rows it supersedes.
+    ///
+    /// The two rules must stay in step — newest timestamp wins, ties broken on the
+    /// identifier — because the cloud copy is deduplicated by one and the local rows
+    /// by the other. If they disagree, devices trade uploads and deletions forever.
+    /// Rows with no recording are never grouped, so they are always kept.
+    static func latestPerRecording<Item>(
+        _ items: [Item],
+        recordingId: (Item) -> UUID?,
+        timestamp: (Item) -> Date?,
+        identifier: (Item) -> UUID?
+    ) -> (kept: [Item], superseded: [Item]) {
+        var winnersByRecordingId: [UUID: Item] = [:]
+        var kept: [Item] = []
+        var superseded: [Item] = []
+
+        func isNewer(_ candidate: Item, than current: Item) -> Bool {
+            let candidateTimestamp = timestamp(candidate) ?? .distantPast
+            let currentTimestamp = timestamp(current) ?? .distantPast
+            if candidateTimestamp != currentTimestamp {
+                return candidateTimestamp > currentTimestamp
+            }
+            // Same tie-breaker as the cloud rule, whose record names are the identifier
+            // behind a shared prefix.
+            return (identifier(candidate)?.uuidString ?? "") > (identifier(current)?.uuidString ?? "")
+        }
+
+        for item in items {
+            guard let groupId = recordingId(item) else {
+                kept.append(item)
+                continue
+            }
+
+            if let currentWinner = winnersByRecordingId[groupId] {
+                if isNewer(item, than: currentWinner) {
+                    superseded.append(currentWinner)
+                    winnersByRecordingId[groupId] = item
+                } else {
+                    superseded.append(item)
+                }
+            } else {
+                winnersByRecordingId[groupId] = item
+            }
+        }
+
+        return (kept + Array(winnersByRecordingId.values), superseded)
+    }
+
     private func resolveLatestRecordsPerRecording(
         _ records: [CKRecord],
         recordingIdField: String,
@@ -6277,21 +6349,57 @@ extension iCloudStorageManager {
             guard let recordingId = recording.id else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let transcripts = coreDataManager.getAllTranscripts().filter { transcript in
+        let syncableTranscripts = coreDataManager.getAllTranscripts().filter { transcript in
             guard let recordingId = transcript.recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let summaries = coreDataManager.getAllSummaries().filter { summary in
+        let syncableSummaries = coreDataManager.getAllSummaries().filter { summary in
             let recordingId = summary.recordingId ?? summary.recording?.id
             guard let recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
 
+        // Only the current row per recording is worth uploading. Sending older
+        // duplicates too meant the cloud-side dedupe deleted them again on every
+        // pass, so each sync re-uploaded and re-deleted the same records.
+        let transcripts = latestPerRecording(
+            syncableTranscripts,
+            recordingId: { $0.recordingId ?? $0.recording?.id },
+            timestamp: { $0.lastModified ?? $0.createdAt },
+            identifier: { $0.id }
+        )
+        let summaries = latestPerRecording(
+            syncableSummaries,
+            recordingId: { $0.recordingId ?? $0.recording?.id },
+            timestamp: { $0.generatedAt ?? $0.recording?.recordingDate },
+            identifier: { $0.id }
+        )
+
         return CloudBackupSourceSelection(
             recordings: recordings,
-            transcripts: transcripts,
-            summaries: summaries,
-            excludedRecordingIds: excludedRecordingIds
+            transcripts: transcripts.kept,
+            summaries: summaries.kept,
+            excludedRecordingIds: excludedRecordingIds,
+            supersededTranscripts: transcripts.superseded,
+            supersededSummaries: summaries.superseded
+        )
+    }
+
+    /// Drops local transcript/summary rows that a newer row for the same recording has
+    /// superseded, so two devices that each created their own copy converge instead of
+    /// trading uploads. Only rows the recording no longer points at are removed, and no
+    /// iCloud deletion markers are written — see `deleteSupersededDuplicates`.
+    func pruneSupersededLocalDuplicates(
+        appCoordinator: AppDataCoordinator
+    ) -> (transcripts: Int, summaries: Int) {
+        let selection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+        guard !selection.supersededTranscripts.isEmpty || !selection.supersededSummaries.isEmpty else {
+            return (0, 0)
+        }
+
+        return appCoordinator.coreDataManager.deleteSupersededDuplicates(
+            transcriptIds: selection.supersededTranscripts.compactMap(\.id),
+            summaryIds: selection.supersededSummaries.compactMap(\.id)
         )
     }
 

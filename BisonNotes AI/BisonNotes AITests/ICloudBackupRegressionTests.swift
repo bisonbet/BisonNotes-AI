@@ -403,6 +403,162 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingCloudDeletionRequestedAtForTesting(recordingId: recordingId), deletedAt)
     }
 
+    // MARK: - Duplicate Convergence
+
+    private struct DuplicateFixture {
+        let recordingId: UUID?
+        let timestamp: Date?
+        let id: UUID?
+    }
+
+    private func latestFixture(_ items: [DuplicateFixture]) -> (kept: [DuplicateFixture], superseded: [DuplicateFixture]) {
+        iCloudStorageManager.latestPerRecording(
+            items,
+            recordingId: { $0.recordingId },
+            timestamp: { $0.timestamp },
+            identifier: { $0.id }
+        )
+    }
+
+    func testLatestPerRecordingKeepsTheNewestRowAndReportsTheRest() {
+        let recordingId = UUID()
+        let older = DuplicateFixture(
+            recordingId: recordingId,
+            timestamp: Date(timeIntervalSince1970: 1_770_000_000),
+            id: UUID()
+        )
+        let newer = DuplicateFixture(
+            recordingId: recordingId,
+            timestamp: Date(timeIntervalSince1970: 1_770_003_600),
+            id: UUID()
+        )
+
+        let result = latestFixture([older, newer])
+
+        XCTAssertEqual(result.kept.compactMap(\.id), [newer.id])
+        XCTAssertEqual(result.superseded.compactMap(\.id), [older.id])
+    }
+
+    func testLatestPerRecordingBreaksTimestampTiesDeterministically() {
+        let recordingId = UUID()
+        let timestamp = Date(timeIntervalSince1970: 1_770_000_000)
+        let lowIdentifier = DuplicateFixture(
+            recordingId: recordingId,
+            timestamp: timestamp,
+            id: UUID(uuidString: "00000000-0000-0000-0000-00000000000A")
+        )
+        let highIdentifier = DuplicateFixture(
+            recordingId: recordingId,
+            timestamp: timestamp,
+            id: UUID(uuidString: "FF000000-0000-0000-0000-000000000000")
+        )
+
+        // Same winner no matter which order the rows arrive in, so two devices agree.
+        XCTAssertEqual(latestFixture([lowIdentifier, highIdentifier]).kept.compactMap(\.id), [highIdentifier.id])
+        XCTAssertEqual(latestFixture([highIdentifier, lowIdentifier]).kept.compactMap(\.id), [highIdentifier.id])
+    }
+
+    func testLatestPerRecordingKeepsRowsThatBelongToNoRecording() {
+        let orphan = DuplicateFixture(recordingId: nil, timestamp: nil, id: UUID())
+
+        let result = latestFixture([orphan])
+
+        XCTAssertEqual(result.kept.compactMap(\.id), [orphan.id])
+        XCTAssertTrue(result.superseded.isEmpty)
+    }
+
+    func testBackupSelectionUploadsOnlyTheCurrentRowPerRecording() throws {
+        let recordingId = try createCompleteRecording(named: "Duplicate Upload")
+        let currentTranscriptId = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId)?.id)
+        let currentSummaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
+        let staleTranscriptId = try insertDuplicateTranscript(
+            for: recordingId,
+            createdAt: Date(timeIntervalSince1970: 1_600_000_000)
+        )
+        let staleSummaryId = try insertDuplicateSummary(
+            for: recordingId,
+            generatedAt: Date(timeIntervalSince1970: 1_600_000_000)
+        )
+
+        let selection = iCloudStorageManager.backupSourceSelection(from: appCoordinator.coreDataManager)
+
+        XCTAssertEqual(selection.transcripts.compactMap(\.id), [currentTranscriptId])
+        XCTAssertEqual(selection.summaries.compactMap(\.id), [currentSummaryId])
+        XCTAssertEqual(selection.supersededTranscripts.compactMap(\.id), [staleTranscriptId])
+        XCTAssertEqual(selection.supersededSummaries.compactMap(\.id), [staleSummaryId])
+    }
+
+    func testPruningRemovesSupersededRowsWithoutWritingCloudTombstones() throws {
+        let recordingId = try createCompleteRecording(named: "Duplicate Prune")
+        let currentTranscriptId = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId)?.id)
+        let staleTranscriptId = try insertDuplicateTranscript(
+            for: recordingId,
+            createdAt: Date(timeIntervalSince1970: 1_600_000_000)
+        )
+        let staleSummaryId = try insertDuplicateSummary(
+            for: recordingId,
+            generatedAt: Date(timeIntervalSince1970: 1_600_000_000)
+        )
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+
+        let pruned = iCloudManager.pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
+
+        XCTAssertEqual(pruned.transcripts, 1)
+        XCTAssertEqual(pruned.summaries, 1)
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: staleTranscriptId))
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: staleSummaryId))
+        XCTAssertNotNil(appCoordinator.coreDataManager.getTranscript(id: currentTranscriptId))
+        // A convergent rule needs no tombstones: every device reaches the same winner.
+        XCTAssertEqual(iCloudManager.pendingTranscriptRemovalCountForTesting, 0)
+        XCTAssertEqual(iCloudManager.pendingSummaryRemovalCountForTesting, 0)
+    }
+
+    func testPruningNeverRemovesTheRowARecordingStillPointsAt() throws {
+        let recordingId = try createCompleteRecording(named: "Referenced Duplicate")
+        let referencedTranscriptId = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId)?.id)
+        // Newer duplicate the recording has not been repointed at yet.
+        let newerTranscriptId = try insertDuplicateTranscript(
+            for: recordingId,
+            createdAt: Date(timeIntervalSince1970: 4_000_000_000)
+        )
+
+        let pruned = SummaryManager.shared.getiCloudManager()
+            .pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
+
+        XCTAssertEqual(pruned.transcripts, 0)
+        XCTAssertNotNil(appCoordinator.coreDataManager.getTranscript(id: referencedTranscriptId))
+        XCTAssertNotNil(appCoordinator.coreDataManager.getTranscript(id: newerTranscriptId))
+    }
+
+    @discardableResult
+    private func insertDuplicateTranscript(for recordingId: UUID, createdAt: Date) throws -> UUID {
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let duplicate = TranscriptEntry(context: context)
+        let duplicateId = UUID()
+        duplicate.id = duplicateId
+        duplicate.recordingId = recordingId
+        duplicate.createdAt = createdAt
+        duplicate.lastModified = createdAt
+        duplicate.engine = "Fixture"
+        duplicate.segments = "[]"
+        try context.save()
+        return duplicateId
+    }
+
+    @discardableResult
+    private func insertDuplicateSummary(for recordingId: UUID, generatedAt: Date) throws -> UUID {
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let duplicate = SummaryEntry(context: context)
+        let duplicateId = UUID()
+        duplicate.id = duplicateId
+        duplicate.recordingId = recordingId
+        duplicate.summary = "A superseded duplicate summary row left behind by an earlier run."
+        duplicate.aiMethod = "fixture"
+        duplicate.generatedAt = generatedAt
+        try context.save()
+        return duplicateId
+    }
+
     private func createCompleteRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)

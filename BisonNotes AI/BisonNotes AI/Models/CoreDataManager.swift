@@ -521,6 +521,73 @@ class CoreDataManager: ObservableObject {
 
     /// Cleans up duplicate summaries and transcripts, keeping only the most recent for each recording.
     /// Returns a tuple with (summariesDeleted, transcriptsDeleted)
+    /// Deletes duplicate transcript/summary rows that a newer row for the same
+    /// recording has superseded.
+    ///
+    /// Unlike `cleanupDuplicates`, this writes no iCloud deletion markers. The winner
+    /// is chosen by a rule every device applies to the same data and therefore reaches
+    /// the same answer, so a permanent tombstone would add nothing and would outlive
+    /// the duplicate it describes. Rows a recording still points at are never removed
+    /// here — only unreferenced leftovers.
+    func deleteSupersededDuplicates(
+        transcriptIds: [UUID],
+        summaryIds: [UUID]
+    ) -> (transcripts: Int, summaries: Int) {
+        guard !transcriptIds.isEmpty || !summaryIds.isEmpty else { return (0, 0) }
+
+        var transcriptsDeleted = 0
+        var summariesDeleted = 0
+
+        for transcriptId in transcriptIds {
+            guard let transcript = getTranscript(id: transcriptId) else { continue }
+            guard isUnreferencedDuplicate(transcript) else { continue }
+            context.delete(transcript)
+            transcriptsDeleted += 1
+        }
+
+        for summaryId in summaryIds {
+            guard let summary = getSummary(id: summaryId) else { continue }
+            guard isUnreferencedDuplicate(summary) else { continue }
+            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+            context.delete(summary)
+            summariesDeleted += 1
+        }
+
+        guard transcriptsDeleted > 0 || summariesDeleted > 0 else { return (0, 0) }
+
+        do {
+            try saveContext()
+            AppLog.shared.coreData(
+                "Removed \(transcriptsDeleted) superseded transcript row(s) and \(summariesDeleted) superseded summary row(s)"
+            )
+        } catch {
+            AppLog.shared.coreData("Failed to remove superseded duplicates: \(error)", level: .error)
+            context.rollback()
+            return (0, 0)
+        }
+
+        return (transcriptsDeleted, summariesDeleted)
+    }
+
+    private func isUnreferencedDuplicate(_ transcript: TranscriptEntry) -> Bool {
+        guard let transcriptId = transcript.id else { return false }
+        guard let recording = transcript.recording
+            ?? transcript.recordingId.flatMap({ getRecording(id: $0) }) else {
+            // An orphaned row has no recording to supersede it; leave it to cleanupDuplicates.
+            return false
+        }
+        return recording.transcriptId != transcriptId && recording.transcript?.id != transcriptId
+    }
+
+    private func isUnreferencedDuplicate(_ summary: SummaryEntry) -> Bool {
+        guard let summaryId = summary.id else { return false }
+        guard let recording = summary.recording
+            ?? (summary.recordingId ?? summary.recording?.id).flatMap({ getRecording(id: $0) }) else {
+            return false
+        }
+        return recording.summaryId != summaryId && recording.summary?.id != summaryId
+    }
+
     func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
         var summariesDeleted = 0
         var transcriptsDeleted = 0

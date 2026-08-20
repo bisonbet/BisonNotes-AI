@@ -87,6 +87,17 @@ The app uses a sophisticated background processing system:
 ### Core Data Usage
 Always use `CoreDataManager` for data operations. Never access Core Data directly in views.
 
+### iCloud Sync Arbitration
+
+`iCloudStorageManager` reconciles in a fixed order: flush queued deletions → apply deletion markers → back up (local → cloud) → restore (cloud → local) → prune superseded duplicates. Four rules decide who wins. All four are pure static functions on `iCloudStorageManager` and are covered by `ICloudBackupRegressionTests` — change them there, not inline in the sync legs.
+
+- **Newest edit wins, in both directions.** The backup leg uploads only when the local content timestamp is at least the cloud record's; the restore leg overwrites a local row only when the cloud timestamp is at least the local one. Compare **content** timestamps only (`lastModified` / `createdAt` / `recordingDate`, `generatedAt`) — never `syncUpdatedAt`, which is rewritten on every save and would make the cloud copy look permanently newer, freezing all uploads. Comparison is `>=` so equal timestamps still propagate other field changes, and when either side has no timestamp both rules fall back to overwriting: an unknown age must never strand an item.
+- **A deletion marker records when the user deleted, not when the marker uploaded.** Queued deletions replay their original `requestedAt`, and the earliest claim wins when a marker already exists, so a marker that reaches CloudKit days later cannot erase newer work elsewhere.
+- **An edit that lands more than `deletionReviveGraceInterval` after a delete beats that delete.** The tombstone is withdrawn and the item uploads again on the same pass. The grace window absorbs cross-device clock skew; a marker with no usable `deletedAt` never revives anything.
+- **Only one transcript and one summary per recording sync.** `backupSourceSelection` uploads just the newest row per recording, and reconcile prunes local rows that a newer row supersedes — but never a row the recording still points at, and never with a tombstone, because every device derives the same winner from the same data. `latestPerRecording` (local) and `resolveLatestRecordsPerRecording` (cloud) must stay in step; if they disagree, devices trade uploads and deletions forever.
+
+Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Database Tools deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
+
 ### AI Engine Integration
 New AI engines should follow the existing pattern:
 1. Create service class (e.g., `NewAIService.swift`)
@@ -127,6 +138,7 @@ For AI-generated content display:
 - `ContentView.swift`: Main tab interface
 - `Models/CoreDataManager.swift`: Core Data access layer
 - `Models/AppDataCoordinator.swift`: Unified data coordination
+- `iCloudStorageManager.swift`: CloudKit backup, restore, reconcile, and multi-device arbitration
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
