@@ -895,6 +895,8 @@ struct BisonNotesAIApp: App {
         }
         .defaultSize(width: 760, height: 700)
 
+        // Restoration stays disabled so the window never reopens on its own at launch:
+        // its `.task` starts a CloudKit scan, which must remain user-initiated.
         Window("iCloud Items Review", id: NativeWindowID.cloudReview) {
             CloudReviewItemsView()
                 .environmentObject(appCoordinator)
@@ -902,6 +904,7 @@ struct BisonNotesAIApp: App {
         }
         .defaultSize(width: 780, height: 700)
         .windowResizability(.contentMinSize)
+        .restorationBehavior(.disabled)
 
         WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
             if let recordingID {

@@ -811,6 +811,15 @@ struct TranscriptsView: View {
                     }
                     summaryButtonView(recordingData)
                 }
+
+                // Fully stacked last resort: ViewThatFits renders its final candidate even
+                // when that candidate does not fit, so this one must always fit. At the
+                // largest Dynamic Type sizes the transcript button alone can fill the row.
+                VStack(alignment: .leading, spacing: 8) {
+                    transcriptButtonView(recordingData)
+                    transcriptDeleteButtonView(recordingData)
+                    summaryButtonView(recordingData)
+                }
             }
         }
         .padding(16)
@@ -835,6 +844,7 @@ struct TranscriptsView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
+            .contentShape(Rectangle())
             .accessibilityLabel(
                 "Delete transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")"
             )
