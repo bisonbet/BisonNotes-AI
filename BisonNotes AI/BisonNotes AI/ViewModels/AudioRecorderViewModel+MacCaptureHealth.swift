@@ -108,6 +108,19 @@ extension AudioRecorderViewModel {
 
         macAutomaticRecoveryAttempts += 1
         let attempt = macAutomaticRecoveryAttempts
+        if isStartingRecording,
+           assessment == .noInitialAudio,
+           attempt == 1,
+           enhancedAudioSessionManager.hasPreferredInput() {
+            // Keep the persisted preference so the user's selected device is
+            // restored for a later recording, but avoid retrying a present-but-
+            // silent USB route indefinitely during this startup.
+            try? await enhancedAudioSessionManager.clearPreferredInput()
+            AppLog.shared.audioSession(
+                "Preferred Mac input produced no initial audio; retrying startup with the system default",
+                level: .error
+            )
+        }
         errorMessage = "\(inputName) stopped providing audio. Reconnecting (attempt \(attempt) of " +
             "\(Self.maximumAutomaticCaptureRecoveryAttempts))…"
         macSystemAudioCapture?.setPaused(true)
