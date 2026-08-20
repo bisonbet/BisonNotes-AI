@@ -895,6 +895,14 @@ struct BisonNotesAIApp: App {
         }
         .defaultSize(width: 760, height: 700)
 
+        Window("iCloud Items Review", id: NativeWindowID.cloudReview) {
+            CloudReviewItemsView()
+                .environmentObject(appCoordinator)
+                .frame(minWidth: 680, minHeight: 520)
+        }
+        .defaultSize(width: 780, height: 700)
+        .windowResizability(.contentMinSize)
+
         WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
             if let recordingID {
                 NativeSummaryWindowView(recordingID: recordingID)
