@@ -801,32 +801,55 @@ struct TranscriptsView: View {
                 HStack(spacing: 10) {
                     transcriptButtonView(recordingData)
                     summaryButtonView(recordingData)
+                    transcriptDeleteButtonView(recordingData)
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    transcriptButtonView(recordingData)
+                    HStack(spacing: 10) {
+                        transcriptButtonView(recordingData)
+                        transcriptDeleteButtonView(recordingData)
+                    }
                     summaryButtonView(recordingData)
                 }
-            }
 
-            if recordingData.transcript != nil {
-                Button(role: .destructive) {
-                    requestTranscriptDeletion(for: recordingData.recording, imported: false)
-                } label: {
-                    Label("Delete Transcript", systemImage: "trash")
-                        .font(.body.weight(.semibold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // Fully stacked last resort: ViewThatFits renders its final candidate even
+                // when that candidate does not fit, so this one must always fit. At the
+                // largest Dynamic Type sizes the transcript button alone can fill the row.
+                VStack(alignment: .leading, spacing: 8) {
+                    transcriptButtonView(recordingData)
+                    transcriptDeleteButtonView(recordingData)
+                    summaryButtonView(recordingData)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color(red: 0.65, green: 0.0, blue: 0.0))
-                .accessibilityLabel("Delete transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")")
-                .accessibilityHint("Deletes only the transcript and keeps the recording and summary.")
             }
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptRowPrefix + recordingId)
+    }
+
+    @ViewBuilder
+    private func transcriptDeleteButtonView(
+        _ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)
+    ) -> some View {
+        if recordingData.transcript != nil {
+            Button(role: .destructive) {
+                requestTranscriptDeletion(for: recordingData.recording, imported: false)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.headline)
+                    .foregroundColor(.red)
+                    .frame(width: 44, height: 44)
+                    .background(Color.red.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+            .accessibilityLabel(
+                "Delete transcript for \(recordingData.recording.recordingName ?? "Unknown Recording")"
+            )
+            .accessibilityHint("Deletes only the transcript and keeps the recording and summary.")
+        }
     }
 
     private func importedTranscriptRowView(

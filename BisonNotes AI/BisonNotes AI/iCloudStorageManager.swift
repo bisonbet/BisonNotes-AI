@@ -4413,6 +4413,15 @@ extension iCloudStorageManager {
         }
     }
 
+    /// Publishes UI-only maintenance feedback after the current main-actor turn.
+    /// Queue persistence must remain synchronous so deletion intent survives a crash,
+    /// but publishing here during a SwiftUI update triggers undefined behavior.
+    private func publishMaintenanceMessage(_ message: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.lastMaintenanceMessage = message
+        }
+    }
+
     func enqueueRecordingDeletionForiCloud(
         recordingId: UUID,
         transcriptIds: [UUID],
@@ -4445,7 +4454,7 @@ extension iCloudStorageManager {
             pendingLocalOnlyCloudRemovals = queue
         }
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        lastMaintenanceMessage = "Existing iCloud copies for local-only recordings will be removed when iCloud sync is available."
+        publishMaintenanceMessage("Existing iCloud copies for local-only recordings will be removed when iCloud sync is available.")
     }
 
     func enqueueSummaryRemovalFromiCloud(summaryId: UUID, recordingId: UUID? = nil) {
@@ -4464,7 +4473,7 @@ extension iCloudStorageManager {
         pendingSummaryCloudRemovals = queue
         pendingSyncQueue.removeAll { $0.id == summaryId }
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        lastMaintenanceMessage = "Deleted summaries will be removed from iCloud sync records when iCloud sync is available."
+        publishMaintenanceMessage("Deleted summaries will be removed from iCloud sync records when iCloud sync is available.")
     }
 
     func enqueueTranscriptRemovalFromiCloud(transcriptId: UUID, recordingId: UUID? = nil) {
@@ -4482,7 +4491,7 @@ extension iCloudStorageManager {
         }
         pendingTranscriptCloudRemovals = queue
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        lastMaintenanceMessage = "Deleted transcripts will be removed from iCloud sync records when iCloud sync is available."
+        publishMaintenanceMessage("Deleted transcripts will be removed from iCloud sync records when iCloud sync is available.")
     }
 
     func clearPendingLocalOnlyCloudRemoval(recordingId: UUID) {

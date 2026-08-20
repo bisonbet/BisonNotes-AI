@@ -13,6 +13,7 @@ enum NativeWindowID {
     static let location = "location-detail"
     static let backgroundProcessing = "background-processing"
     static let processingJob = "processing-job-detail"
+    static let cloudReview = "cloud-review"
 }
 
 /// Settings destinations own their navigation stack on iOS. On native macOS,

@@ -145,12 +145,12 @@ struct SettingsView: View {
                 )
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingCloudReview) {
-            CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
+            CloudReviewItemsView()
                 .environmentObject(appCoordinator)
-                .nativeMacModalSizing(width: 780, height: 700)
-                .nativeMacModalDismissControl()
         }
+        #endif
         .onAppear {
             refreshEngineStatuses()
             Task {
@@ -464,7 +464,7 @@ struct SettingsView: View {
                 }
 
                 Button {
-                    showingCloudReview = true
+                    presentCloudReview()
                 } label: {
                     Label("Review iCloud Items", systemImage: "tray.full")
                         .frame(maxWidth: .infinity)
@@ -838,7 +838,7 @@ struct SettingsView: View {
                 .disabled(isRunningCloudBackupAction)
 
                 Button {
-                    showingCloudReview = true
+                    presentCloudReview()
                 } label: {
                     Label("Review iCloud Items", systemImage: "tray.full")
                 }
@@ -1095,6 +1095,14 @@ struct SettingsView: View {
         openWindow(id: NativeWindowID.backgroundProcessing)
         #else
         showingBackgroundProcessing = true
+        #endif
+    }
+
+    private func presentCloudReview() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.cloudReview)
+        #else
+        showingCloudReview = true
         #endif
     }
 
@@ -1484,12 +1492,12 @@ private enum MacSystemAudioPermissionAlert: Identifiable {
     }
 }
 
-private struct CloudReviewItemsView: View {
+struct CloudReviewItemsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appCoordinator: AppDataCoordinator
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
 
-    let includeAudioFiles: Bool
+    @AppStorage("iCloudBackupIncludeAudioFiles") private var includeAudioFiles = false
 
     @State private var actionMessage = ""
     @State private var actionIsError = false
@@ -1562,17 +1570,45 @@ private struct CloudReviewItemsView: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+                            .confirmationDialog(
+                                "Delete this item from iCloud?",
+                                isPresented: Binding(
+                                    get: { itemPendingDelete?.id == item.id },
+                                    set: { isPresented in
+                                        if !isPresented, itemPendingDelete?.id == item.id {
+                                            itemPendingDelete = nil
+                                        }
+                                    }
+                                ),
+                                titleVisibility: .visible
+                            ) {
+                                Button("Delete from iCloud", role: .destructive) {
+                                    Task { await delete(item) }
+                                }
+                                Button("Cancel", role: .cancel) {
+                                    itemPendingDelete = nil
+                                }
+                            } message: {
+                                Text(
+                                    "This removes app-created iCloud sync records for the selected item. " +
+                                    "It does not delete anything already stored locally on this device."
+                                )
+                            }
                         }
                     }
                     .padding(.vertical, 6)
                 }
             }
             .navigationTitle("iCloud Items Review")
+            #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
+                #if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { dismiss() }
                 }
+                #endif
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         Task { await refresh() }
@@ -1581,25 +1617,6 @@ private struct CloudReviewItemsView: View {
                     }
                     .disabled(iCloudManager.isScanningCloudReviewItems || workingItemId != nil)
                 }
-            }
-            .confirmationDialog(
-                "Delete this item from iCloud?",
-                isPresented: Binding(
-                    get: { itemPendingDelete != nil },
-                    set: { if !$0 { itemPendingDelete = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Delete from iCloud", role: .destructive) {
-                    if let item = itemPendingDelete {
-                        Task { await delete(item) }
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    itemPendingDelete = nil
-                }
-            } message: {
-                Text("This removes app-created iCloud sync records for the selected item. It does not delete anything already stored locally on this device.")
             }
             .task {
                 await refresh()
