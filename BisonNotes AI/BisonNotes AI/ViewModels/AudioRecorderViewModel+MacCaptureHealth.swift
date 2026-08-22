@@ -60,7 +60,7 @@ extension AudioRecorderViewModel {
             "(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))"
         )
         if isStartingRecording {
-            macSystemAudioCapture?.setPaused(false)
+            releaseMacSystemAudioStartupGate(reason: .microphoneFirstWrite)
             markRecordingStarted()
             return
         }
@@ -69,10 +69,12 @@ extension AudioRecorderViewModel {
         if let pendingRecovery = pendingMacInputRecovery {
             pendingMacInputRecovery = nil
             macAwaitingRecoveryBuffer = false
+            macSystemAudioContinuesWithoutMicrophone = false
             Task { @MainActor [weak self] in
                 await self?.finishNativeMacInputRecovery(
                     keepPaused: pendingRecovery.keepPaused,
-                    notify: pendingRecovery.notify
+                    notify: pendingRecovery.notify,
+                    systemAudioContinued: pendingRecovery.systemAudioContinued
                 )
             }
             return
@@ -80,11 +82,21 @@ extension AudioRecorderViewModel {
         #endif
 
         if macAwaitingRecoveryBuffer {
+            let systemAudioContinued = macSystemAudioContinuesWithoutMicrophone
             macAwaitingRecoveryBuffer = false
+            macSystemAudioContinuesWithoutMicrophone = false
             macSystemAudioCapture?.setPaused(false)
             recordingState = .recording
-            startRecordingTimer()
+            if !systemAudioContinued {
+                startRecordingTimer()
+            }
             errorMessage = "Recording continued after reconnecting the microphone."
+            return
+        }
+
+        if macSystemAudioContinuesWithoutMicrophone {
+            macSystemAudioContinuesWithoutMicrophone = false
+            errorMessage = "Microphone connected. Recording microphone and meeting audio."
         }
     }
 
@@ -108,7 +120,7 @@ extension AudioRecorderViewModel {
 
         macAutomaticRecoveryAttempts += 1
         let attempt = macAutomaticRecoveryAttempts
-        let neverProducedAudio = isStartingRecording && assessment == .noInitialAudio
+        let neverProducedAudio = health.totalFramesWritten == 0
         var didFallBackToDefaultInput = false
         if neverProducedAudio,
            attempt == 1,
@@ -136,8 +148,10 @@ extension AudioRecorderViewModel {
         }
         errorMessage = "\(cause) \(action) (attempt \(attempt) of " +
             "\(Self.maximumAutomaticCaptureRecoveryAttempts))…"
-        macSystemAudioCapture?.setPaused(true)
-        stopRecordingTimer()
+        if !macSystemAudioContinuesWithoutMicrophone {
+            macSystemAudioCapture?.setPaused(true)
+            stopRecordingTimer()
+        }
 
         if isStartingRecording {
             await restartMacCaptureDuringStartup()
@@ -153,8 +167,11 @@ extension AudioRecorderViewModel {
                 reason: "The selected microphone did not provide any audio after automatic recovery."
             )
         } else {
-            errorMessage = "Recording stopped because \(inputName) stopped providing audio. " +
-                "Any audio captured before the failure will still be saved."
+            let microphoneFailure = macCaptureHealth.snapshot().totalFramesWritten == 0
+                ? "did not provide any audio"
+                : "stopped providing audio"
+            errorMessage = "Recording stopped because \(inputName) \(microphoneFailure). " +
+                "Any microphone or meeting audio captured will still be saved."
             stopRecording()
         }
     }

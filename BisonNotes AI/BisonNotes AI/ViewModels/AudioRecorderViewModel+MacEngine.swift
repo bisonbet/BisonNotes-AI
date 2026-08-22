@@ -63,6 +63,7 @@ extension AudioRecorderViewModel {
 	// Keep the worst-case summed level below full scale while favoring nearby speech.
 	private static let microphoneMeetingMixGain: Float = 0.5
 	private static let systemMeetingMixGain: Float = 0.4
+	private static let systemAudioStartupGateTimeout: TimeInterval = 1.5
 
 	@MainActor
 	func setupMacRecording(at url: URL) async {
@@ -72,6 +73,7 @@ extension AudioRecorderViewModel {
 		macAutomaticRecoveryAttempts = 0
 		macAwaitingRecoveryBuffer = false
 		macCaptureHealth.resetSession()
+		cancelMacSystemAudioStartupGate()
 		macSystemAudioCapture = nil
 		macSystemAudioURL = nil
 
@@ -80,9 +82,10 @@ extension AudioRecorderViewModel {
 				let systemAudioURL = Self.macSystemAudioURL(for: url)
 				let capture = MacSystemAudioCapture(outputURL: systemAudioURL)
 				do {
-					try await capture.start()
+					try await capture.start(initiallyPaused: true)
 					macSystemAudioCapture = capture
 					macSystemAudioURL = systemAudioURL
+					beginMacSystemAudioStartupGate()
 				} catch {
 					systemAudioError = error
 					macSystemAudioCapture = nil
@@ -109,6 +112,7 @@ extension AudioRecorderViewModel {
 				errorMessage = "Meeting audio could not be captured: \(systemAudioError.localizedDescription). Recording microphone audio only."
 			}
 		} catch {
+			cancelMacSystemAudioStartupGate()
 			if let capture = macSystemAudioCapture {
 				if let abandonedSystemAudioURL = try? await capture.stop() {
 					try? FileManager.default.removeItem(at: abandonedSystemAudioURL)
@@ -311,6 +315,7 @@ extension AudioRecorderViewModel {
 	#endif
 
 	func stopMacSystemAudioCapture() async -> URL? {
+		cancelMacSystemAudioStartupGate()
 		guard let capture = macSystemAudioCapture else {
 			return macSystemAudioURL
 		}
@@ -329,6 +334,62 @@ extension AudioRecorderViewModel {
 			macSystemAudioURL = partialURL
 			return partialURL
 		}
+	}
+
+	func beginMacSystemAudioStartupGate() {
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		let sessionID = macSystemAudioStartupGate.begin()
+		AppLog.shared.recording(
+			"Mac system audio startup gate armed for up to " +
+				String(format: "%.1f", Self.systemAudioStartupGateTimeout) + " seconds"
+		)
+		macSystemAudioStartupGateTimeoutTask = Task { @MainActor [weak self] in
+			do {
+				try await Task.sleep(for: .seconds(Self.systemAudioStartupGateTimeout))
+			} catch {
+				return
+			}
+			self?.releaseMacSystemAudioStartupGate(
+				sessionID: sessionID,
+				reason: .safetyTimeout
+			)
+		}
+	}
+
+	@discardableResult
+	func releaseMacSystemAudioStartupGate(
+		sessionID: UUID? = nil,
+		reason: MacSystemAudioStartupGate.ReleaseReason
+	) -> Bool {
+		guard let sessionID = sessionID ?? macSystemAudioStartupGate.activeSessionID,
+		      let release = macSystemAudioStartupGate.release(
+				sessionID: sessionID,
+				reason: reason
+		      ) else { return false }
+
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		macSystemAudioStartupGateTimeoutTask = nil
+		macSystemAudioCapture?.setPaused(false)
+		AppLog.shared.recording(
+			"Mac system audio startup gate released by \(release.reason.rawValue) " +
+				"after \(String(format: "%.3f", release.elapsed)) seconds"
+		)
+
+		if reason == .safetyTimeout {
+			macSystemAudioContinuesWithoutMicrophone = true
+			if isStartingRecording {
+				markRecordingStarted()
+				errorMessage = "Meeting audio recording started while the microphone reconnects."
+			}
+		}
+		return true
+	}
+
+	func cancelMacSystemAudioStartupGate() {
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		macSystemAudioStartupGateTimeoutTask = nil
+		macSystemAudioStartupGate.cancel()
+		macSystemAudioContinuesWithoutMicrophone = false
 	}
 
 	private func installMacInputTap() {
