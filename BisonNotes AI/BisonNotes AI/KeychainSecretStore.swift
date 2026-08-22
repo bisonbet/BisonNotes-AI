@@ -219,22 +219,35 @@ final class KeychainSecretStore: Sendable {
     }
 }
 
-private final class SecureStorageValue: ObservableObject {
+protocol SecureStorageSecretStore {
+    func string(forKey key: String) -> String?
+    func setString(_ value: String, forKey key: String) -> Result<Void, KeychainSecretStoreError>
+    func revision(forKey key: String) -> Int
+}
+
+extension KeychainSecretStore: SecureStorageSecretStore {}
+
+@MainActor
+final class SecureStorageValue: ObservableObject {
     private let key: String
     private let defaultValue: String
+    private let store: any SecureStorageSecretStore
     @Published private(set) var value: String
     private var observedRevision: Int
 
-    init(key: String, defaultValue: String) {
+    init(
+        key: String,
+        defaultValue: String,
+        store: any SecureStorageSecretStore = KeychainSecretStore.shared
+    ) {
         self.key = key
         self.defaultValue = defaultValue
-        let store = KeychainSecretStore.shared
+        self.store = store
         self.value = store.string(forKey: key) ?? defaultValue
         self.observedRevision = store.revision(forKey: key)
     }
 
     func refreshIfNeeded() {
-        let store = KeychainSecretStore.shared
         let currentRevision = store.revision(forKey: key)
         guard currentRevision != observedRevision else { return }
 
@@ -246,17 +259,22 @@ private final class SecureStorageValue: ObservableObject {
     }
 
     func setValue(_ newValue: String) {
-        value = newValue
-        let store = KeychainSecretStore.shared
         let result = store.setString(newValue, forKey: key)
-        if case .success = result {
-            observedRevision = store.revision(forKey: key)
-        }
+        reconcileWithStoredValue()
         if case .failure(let error) = result {
             AppLog.shared.general(
                 "Secure setting persistence failed: \(error.localizedDescription)",
                 level: .error
             )
+        }
+    }
+
+    private func reconcileWithStoredValue() {
+        let currentRevision = store.revision(forKey: key)
+        let storedValue = store.string(forKey: key) ?? defaultValue
+        observedRevision = currentRevision
+        if storedValue != value {
+            value = storedValue
         }
     }
 }
