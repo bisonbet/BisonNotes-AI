@@ -131,3 +131,62 @@ struct MacSystemAudioTimeline {
 		)
 	}
 }
+
+enum MacAudioMixTiming {
+	static func microphoneStartTime(for offset: TimeInterval) -> CMTime {
+		CMTime(
+			seconds: max(0, offset.isFinite ? offset : 0),
+			preferredTimescale: 48_000
+		)
+	}
+
+	static func exportDuration(
+		microphoneEndTime: CMTime,
+		systemDuration: CMTime
+	) -> CMTime {
+		guard systemDuration.isValid else { return microphoneEndTime }
+		guard microphoneEndTime.isValid else { return systemDuration }
+		return CMTimeCompare(systemDuration, microphoneEndTime) >= 0
+			? systemDuration
+			: microphoneEndTime
+	}
+}
+
+struct MacSystemAudioWrittenTimeline {
+	private var lastWrittenEndTime = CMTime.zero
+
+	var duration: TimeInterval {
+		guard lastWrittenEndTime.isValid,
+		      lastWrittenEndTime.seconds.isFinite else { return 0 }
+		return max(0, lastWrittenEndTime.seconds)
+	}
+
+	mutating func recordSample(at presentationTime: CMTime, duration: CMTime) {
+		let writtenEndTime = duration.isValid
+			? CMTimeAdd(presentationTime, duration)
+			: presentationTime
+		if writtenEndTime.isValid,
+		   CMTimeCompare(writtenEndTime, lastWrittenEndTime) > 0 {
+			lastWrittenEndTime = writtenEndTime
+		}
+	}
+}
+
+enum MacSystemAudioSampleTiming {
+	static func totalDuration(of sampleBuffer: CMSampleBuffer) -> CMTime {
+		let duration = CMSampleBufferGetDuration(sampleBuffer)
+		if duration.isValid, duration.seconds > 0 {
+			return duration
+		}
+		guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+		      let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription) else {
+			return .invalid
+		}
+		let sampleRate = streamDescription.pointee.mSampleRate
+		guard sampleRate > 0 else { return .invalid }
+		return CMTime(
+			seconds: Double(CMSampleBufferGetNumSamples(sampleBuffer)) / sampleRate,
+			preferredTimescale: 48_000
+		)
+	}
+}

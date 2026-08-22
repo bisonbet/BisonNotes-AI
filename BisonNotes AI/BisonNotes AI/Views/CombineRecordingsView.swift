@@ -106,6 +106,7 @@ struct CombineRecordingsView: View {
 #if os(macOS)
         .nativeMacPresentationContext(.modalSheet)
         .onExitCommand {
+            guard CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: isCombining) else { return }
             dismiss()
         }
 #endif

@@ -55,6 +55,7 @@ extension AudioRecorderViewModel {
     func handleMacFirstSuccessfulWrite() {
         let health = macCaptureHealth.snapshot()
         let inputName = enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
+        recordDelayedMacMicrophoneStartOffsetIfNeeded()
         AppLog.shared.recording(
             "Mac microphone first buffer committed from \(inputName) " +
             "(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))"
@@ -98,6 +99,18 @@ extension AudioRecorderViewModel {
             macSystemAudioContinuesWithoutMicrophone = false
             errorMessage = "Microphone connected. Recording microphone and meeting audio."
         }
+    }
+
+    private func recordDelayedMacMicrophoneStartOffsetIfNeeded() {
+        guard macSystemAudioContinuesWithoutMicrophone,
+              let systemAudioCapture = macSystemAudioCapture else { return }
+        let offset = systemAudioCapture.capturedDuration()
+        guard offset.isFinite, offset > 0 else { return }
+        macMicrophoneStartOffset = offset
+        AppLog.shared.recording(
+            "Mac microphone joined system audio after " +
+                String(format: "%.3f", offset) + " seconds"
+        )
     }
 
     @MainActor
@@ -226,6 +239,7 @@ extension AudioRecorderViewModel {
         macScratchRecordingURL = nil
         macScratchSegmentURLs = []
         macSystemAudioURL = nil
+        macMicrophoneStartOffset = 0
         macAwaitingRecoveryBuffer = false
         resetRecordingLocation()
         recordingStartedAt = nil

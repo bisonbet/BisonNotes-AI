@@ -74,6 +74,7 @@ extension AudioRecorderViewModel {
 		macAwaitingRecoveryBuffer = false
 		macCaptureHealth.resetSession()
 		cancelMacSystemAudioStartupGate()
+		macMicrophoneStartOffset = 0
 		macSystemAudioCapture = nil
 		macSystemAudioURL = nil
 
@@ -566,7 +567,8 @@ extension AudioRecorderViewModel {
 	}
 
 	private func makeRecoveredMicrophoneComposition(
-		from scratchURLs: [URL]
+		from scratchURLs: [URL],
+		insertingAt startTime: CMTime = .zero
 	) async throws -> (AVMutableComposition, CMTime) {
 		let composition = AVMutableComposition()
 		guard let compositionTrack = composition.addMutableTrack(
@@ -580,7 +582,7 @@ extension AudioRecorderViewModel {
 			)
 		}
 
-		var insertionTime = CMTime.zero
+		var insertionTime = startTime
 		for scratchURL in scratchURLs {
 			let asset = AVURLAsset(url: scratchURL)
 			guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first else { continue }
@@ -635,16 +637,26 @@ extension AudioRecorderViewModel {
 	) async throws {
 		let fileManager = FileManager.default
 		let systemAsset = AVURLAsset(url: systemAudioURL)
-		let (composition, microphoneDuration) = try await makeRecoveredMicrophoneComposition(
-			from: microphoneScratchURLs
+		let microphoneStartTime = MacAudioMixTiming.microphoneStartTime(
+			for: macMicrophoneStartOffset
 		)
-		guard microphoneDuration.isValid, microphoneDuration.seconds > 0 else {
+		let (composition, microphoneEndTime) = try await makeRecoveredMicrophoneComposition(
+			from: microphoneScratchURLs,
+			insertingAt: microphoneStartTime
+		)
+		guard microphoneEndTime.isValid,
+		      CMTimeCompare(microphoneEndTime, microphoneStartTime) > 0 else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -12,
 				userInfo: [NSLocalizedDescriptionKey: "Microphone recording has no audio duration."]
 			)
 		}
+		let systemDuration = try await systemAsset.load(.duration)
+		let exportDuration = MacAudioMixTiming.exportDuration(
+			microphoneEndTime: microphoneEndTime,
+			systemDuration: systemDuration
+		)
 
 		var mixParameters: [AVAudioMixInputParameters] = composition.tracks(withMediaType: .audio).map { track in
 			let parameter = AVMutableAudioMixInputParameters(track: track)
@@ -656,7 +668,7 @@ extension AudioRecorderViewModel {
 			to: composition,
 			mixParameters: &mixParameters,
 			volume: Self.systemMeetingMixGain,
-			maxDuration: microphoneDuration
+			maxDuration: exportDuration
 		)
 
 		guard !composition.tracks(withMediaType: .audio).isEmpty else {
@@ -678,7 +690,7 @@ extension AudioRecorderViewModel {
 			)
 		}
 		exportSession.audioMix = audioMix
-		exportSession.timeRange = CMTimeRange(start: .zero, duration: microphoneDuration)
+		exportSession.timeRange = CMTimeRange(start: .zero, duration: exportDuration)
 
 		let tempURL = fileManager.temporaryDirectory
 			.appendingPathComponent("mac_meeting_mix_\(UUID().uuidString).m4a")

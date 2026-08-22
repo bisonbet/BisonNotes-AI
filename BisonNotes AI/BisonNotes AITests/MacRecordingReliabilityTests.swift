@@ -103,6 +103,41 @@ final class MacRecordingReliabilityTests: XCTestCase {
 		XCTAssertEqual(timeline.accumulatedPausedDuration.seconds, 2, accuracy: 0.000_001)
 	}
 
+	func testDelayedMicrophoneStartsAtItsSystemAudioOffset() {
+		let startTime = MacAudioMixTiming.microphoneStartTime(for: 3.25)
+
+		XCTAssertEqual(startTime.seconds, 3.25, accuracy: 0.000_001)
+	}
+
+	func testMeetingMixPreservesTheLaterTrackEnd() {
+		let systemDuration = CMTime(seconds: 12, preferredTimescale: 48_000)
+		let microphoneEndTime = CMTime(seconds: 10, preferredTimescale: 48_000)
+
+		XCTAssertEqual(
+			MacAudioMixTiming.exportDuration(
+				microphoneEndTime: microphoneEndTime,
+				systemDuration: systemDuration
+			).seconds,
+			12,
+			accuracy: 0.000_001
+		)
+	}
+
+	func testWrittenSystemTimelineReportsTheLastSampleEnd() {
+		var timeline = MacSystemAudioWrittenTimeline()
+		timeline.recordSample(
+			at: CMTime(seconds: 2, preferredTimescale: 48_000),
+			duration: CMTime(seconds: 0.02, preferredTimescale: 48_000)
+		)
+
+		XCTAssertEqual(timeline.duration, 2.02, accuracy: 0.000_001)
+	}
+
+	func testActiveCombineCannotBeDismissed() {
+		XCTAssertFalse(CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: true))
+		XCTAssertTrue(CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: false))
+	}
+
     func testCaptureHealthRequiresARealFirstWrite() {
         let health = RecordingCaptureHealth()
         let start = Date(timeIntervalSince1970: 1_000)

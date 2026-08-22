@@ -105,6 +105,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var macSystemAudioStartupGate = MacSystemAudioStartupGate()
 	var macSystemAudioStartupGateTimeoutTask: Task<Void, Never>?
 	var macSystemAudioContinuesWithoutMicrophone = false
+	var macMicrophoneStartOffset: TimeInterval = 0
 	var isFinalizingMacRecording = false
 	let macCaptureHealth = RecordingCaptureHealth()
 	var macCaptureHealthTimer: Timer?

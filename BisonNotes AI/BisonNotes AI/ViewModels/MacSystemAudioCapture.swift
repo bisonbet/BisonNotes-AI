@@ -36,6 +36,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private var assetWriter: AVAssetWriter?
 	private var audioInput: AVAssetWriterInput?
 	private var lastSourceTime: CMTime?
+	private var writtenTimeline = MacSystemAudioWrittenTimeline()
 	private var timeline = MacSystemAudioTimeline()
 	private var didReceiveAudio = false
 	private var audibleAudioDuration: Double = 0
@@ -111,6 +112,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 			self.audioInput = input
 			self.stream = stream
 			self.lastSourceTime = nil
+			self.writtenTimeline = MacSystemAudioWrittenTimeline()
 			self.timeline.reset(initiallyPaused: initiallyPaused)
 			self.didReceiveAudio = false
 			self.audibleAudioDuration = 0
@@ -143,6 +145,11 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		// only a Sendable request here; the sample queue applies the transition
 		// alongside the rest of its queue-confined capture state.
 		pauseRequest.set(paused)
+	}
+
+	@MainActor
+	func capturedDuration() -> TimeInterval {
+		sampleQueue.sync { writtenTimeline.duration }
 	}
 
 	@MainActor
@@ -217,6 +224,10 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
 		if input.append(retimedBuffer) {
 			didReceiveAudio = true
+			writtenTimeline.recordSample(
+				at: adjustment.presentationTime,
+				duration: MacSystemAudioSampleTiming.totalDuration(of: sampleBuffer)
+			)
 			if Self.containsAudibleSignal(sampleBuffer) {
 				let duration = CMSampleBufferGetDuration(sampleBuffer).seconds
 				if duration.isFinite, duration > 0 {

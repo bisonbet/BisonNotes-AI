@@ -188,6 +188,7 @@ extension AudioRecorderViewModel {
         macScratchRecordingURL = nil
         macScratchSegmentURLs = []
         macSystemAudioURL = nil
+        macMicrophoneStartOffset = 0
     }
 
     func allMacScratchURLs() -> [URL] {
