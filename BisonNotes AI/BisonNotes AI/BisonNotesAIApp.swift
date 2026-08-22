@@ -29,6 +29,7 @@ struct BisonNotesAIApp: App {
     @StateObject private var transcriptImportManager = TranscriptImportManager()
     @State private var hasQueuedParakeetStartupRepair = false
     @FocusedValue(\.summaryExportAction) private var summaryExportAction
+    @FocusedValue(\.transcriptSaveAction) private var transcriptSaveAction
 
     // Phase 6: Register AppDelegate for notification handling
     #if canImport(UIKit)
@@ -851,6 +852,16 @@ struct BisonNotesAIApp: App {
                 .disabled(summaryExportAction == nil)
             }
 
+            #if os(macOS)
+            CommandGroup(replacing: .saveItem) {
+                Button("Save") {
+                    transcriptSaveAction?.perform()
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(transcriptSaveAction == nil)
+            }
+            #endif
+
             CommandGroup(after: .sidebar) {
                 Divider()
 
@@ -942,6 +953,7 @@ struct BisonNotesAIApp: App {
 
         Window("Recordings", id: NativeWindowID.recordings) {
             RecordingsListView()
+                .nativeMacPresentationContext(.modelessWindow)
                 .environment(\.isEmbeddedInSplitView, false)
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
@@ -954,6 +966,7 @@ struct BisonNotesAIApp: App {
         WindowGroup("Location", id: NativeWindowID.location, for: LocationData.self) { $locationData in
             if let locationData {
                 LocationDetailView(locationData: locationData)
+                    .nativeMacPresentationContext(.modelessWindow)
                     .frame(minWidth: 560, minHeight: 480)
             }
         }
@@ -962,6 +975,7 @@ struct BisonNotesAIApp: App {
 
         Window("Background Processing", id: NativeWindowID.backgroundProcessing) {
             BackgroundProcessingView()
+                .nativeMacPresentationContext(.modelessWindow)
                 .frame(minWidth: 620, minHeight: 500)
         }
         .defaultSize(width: 760, height: 680)

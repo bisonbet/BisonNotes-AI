@@ -71,6 +71,31 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertNil(store.string(forKey: KeychainSecretStore.googleAIStudioAPIKey))
     }
 
+    func testReadsDoNotAdvanceSecretRevision() {
+        let key = KeychainSecretStore.googleAIStudioAPIKey
+        let initialRevision = store.revision(forKey: key)
+
+        _ = store.string(forKey: key)
+        _ = store.string(forKey: key)
+
+        XCTAssertEqual(store.revision(forKey: key), initialRevision)
+    }
+
+    func testSuccessfulMutationsAdvanceSecretRevision() {
+        let key = KeychainSecretStore.googleAIStudioAPIKey
+        let initialRevision = store.revision(forKey: key)
+
+        assertSuccess(store.setString("temporary-secret", forKey: key))
+        let storedRevision = store.revision(forKey: key)
+        XCTAssertGreaterThan(storedRevision, initialRevision)
+
+        _ = store.string(forKey: key)
+        XCTAssertEqual(store.revision(forKey: key), storedRevision)
+
+        assertSuccess(store.delete(forKey: key))
+        XCTAssertGreaterThan(store.revision(forKey: key), storedRevision)
+    }
+
     func testRemovesLegacyAWSSecretsFromUserDefaultsAndKeychain() {
         defaults.set(Data("legacy-credentials".utf8), forKey: KeychainSecretStore.legacyAWSCredentials)
         defaults.set("legacy-session-token", forKey: KeychainSecretStore.legacyAWSBedrockSessionToken)

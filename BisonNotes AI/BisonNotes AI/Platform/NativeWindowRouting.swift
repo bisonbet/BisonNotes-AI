@@ -4,6 +4,9 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 enum NativeWindowID {
     static let summary = "summary-detail"
@@ -14,6 +17,27 @@ enum NativeWindowID {
     static let backgroundProcessing = "background-processing"
     static let processingJob = "processing-job-detail"
     static let cloudReview = "cloud-review"
+}
+
+/// Describes whether a view is responsible for its own standard window close
+/// or needs explicit modal actions. Keeping this in the environment lets
+/// dual-use views retain mobile sheet controls without adding them to native
+/// Mac windows.
+enum NativeMacPresentationContext {
+    case embedded
+    case modelessWindow
+    case modalSheet
+}
+
+private struct NativeMacPresentationContextKey: EnvironmentKey {
+    static let defaultValue = NativeMacPresentationContext.embedded
+}
+
+extension EnvironmentValues {
+    var nativeMacPresentationContext: NativeMacPresentationContext {
+        get { self[NativeMacPresentationContextKey.self] }
+        set { self[NativeMacPresentationContextKey.self] = newValue }
+    }
 }
 
 /// Settings destinations own their navigation stack on iOS. On native macOS,
@@ -36,6 +60,21 @@ struct PlatformSettingsNavigationStack<Content: View>: View {
 }
 
 extension View {
+    func nativeMacPresentationContext(_ context: NativeMacPresentationContext) -> some View {
+        environment(\.nativeMacPresentationContext, context)
+    }
+
+    /// Supplies a meaningful title to a native Mac window while leaving the
+    /// mobile navigation title behavior owned by the calling view.
+    @ViewBuilder
+    func nativeMacWindowTitle(_ title: String) -> some View {
+        #if os(macOS)
+        navigationTitle(title)
+        #else
+        self
+        #endif
+    }
+
     /// Gives true modal tasks a bounded Mac viewport. The modal's own List,
     /// Form, ScrollView, Map, or PDF view remains responsible for scrolling.
     @ViewBuilder
@@ -75,18 +114,6 @@ extension View {
         #endif
     }
 
-    /// Navigation-style sheets can lose SwiftUI navigation toolbar items when
-    /// nested inside another native macOS sheet. Give those destinations a
-    /// content-level Done button and bind Escape to the same dismissal action.
-    @ViewBuilder
-    func nativeMacModalDismissControl(_ title: String = "Done") -> some View {
-        #if os(macOS)
-        modifier(NativeMacModalDismissModifier(title: title))
-        #else
-        self
-        #endif
-    }
-
     /// Full-screen covers are appropriate on iPhone but produce trapped,
     /// non-window-like experiences on macOS. Keep them as bounded sheets there.
     @ViewBuilder
@@ -98,7 +125,7 @@ extension View {
         sheet(isPresented: isPresented) {
             content()
                 .nativeMacModalSizing(width: 760, height: 700)
-                .nativeMacModalDismissControl("Cancel")
+                .nativeMacPresentationContext(.modalSheet)
         }
         #else
         fullScreenCover(isPresented: isPresented, content: content)
@@ -107,29 +134,6 @@ extension View {
 }
 
 #if os(macOS)
-private struct NativeMacModalDismissModifier: ViewModifier {
-    @Environment(\.dismiss) private var dismiss
-
-    let title: String
-
-    func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .topLeading) {
-                Button(title) {
-                    dismiss()
-                }
-                .buttonStyle(.bordered)
-                .keyboardShortcut(.cancelAction)
-                .padding(.top, 18)
-                .padding(.leading, 20)
-                .accessibilityIdentifier("nativeMacModalDismissButton")
-            }
-            .onExitCommand {
-                dismiss()
-            }
-    }
-}
-
 struct NativeTranscriptWindowView: View {
     let recordingID: UUID
 
@@ -154,6 +158,7 @@ struct NativeTranscriptWindowView: View {
         }
         .environmentObject(appCoordinator)
         .environmentObject(recorderVM)
+        .nativeMacPresentationContext(.modelessWindow)
         .frame(minWidth: 680, minHeight: 520)
     }
 }
@@ -174,6 +179,7 @@ struct NativeRecordingWindowView: View {
                 missingContent("Recording Not Available", systemImage: "waveform")
             }
         }
+        .nativeMacPresentationContext(.modelessWindow)
         .frame(minWidth: 620, minHeight: 520)
     }
 
@@ -213,6 +219,7 @@ struct NativeProcessingJobWindowView: View {
                 missingContent("Job Not Available", systemImage: "gearshape.2")
             }
         }
+        .nativeMacPresentationContext(.modelessWindow)
         .frame(minWidth: 560, minHeight: 440)
     }
 }

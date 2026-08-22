@@ -11,7 +11,17 @@ struct BackgroundProcessingView: View {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var selectedJob: ProcessingJob?
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
+    @State private var showingCleanupConfirmation = false
+    @State private var showingCancelAllConfirmation = false
+    @State private var showingClearAllConfirmation = false
+
+    private var isNativeMacModelessWindow: Bool {
+        if case .modelessWindow = presentationContext {
+            return true
+        }
+        return false
+    }
 
     var body: some View {
         let _ = AppLog.shared.backgroundProcessing("BackgroundProcessingView body: activeJobs.count = \(processingManager.activeJobs.count)", level: .debug)
@@ -31,40 +41,18 @@ struct BackgroundProcessingView: View {
             }
             .navigationTitle("Background Processing")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button("Cleanup Completed Jobs") {
-                            Task {
-                                await processingManager.cleanupCompletedJobs()
-                            }
-                        }
-
-                        Button("Cancel All Jobs") {
-                            Task {
-                                await processingManager.cancelAllJobs()
-                            }
-                        }
-
-                        Divider()
-
-                        Button("Clear All Jobs", role: .destructive) {
-                            Task {
-                                await processingManager.clearAllJobs()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                }
-            }
             .sheet(item: $selectedJob) { job in
                 JobDetailView(job: job)
                     .nativeMacModalSizing(width: 620, height: 540)
+                    .nativeMacPresentationContext(.modalSheet)
             }
+            .modifier(BackgroundProcessingWindowChrome(
+                isNativeMacModelessWindow: isNativeMacModelessWindow,
+                processingManager: processingManager,
+                showingCleanupConfirmation: $showingCleanupConfirmation,
+                showingCancelAllConfirmation: $showingCancelAllConfirmation,
+                showingClearAllConfirmation: $showingClearAllConfirmation
+            ))
         }
     }
 
@@ -232,6 +220,117 @@ struct BackgroundProcessingView: View {
     }
 }
 
+private struct BackgroundProcessingWindowChrome: ViewModifier {
+    let isNativeMacModelessWindow: Bool
+    let processingManager: BackgroundProcessingManager
+    @Binding var showingCleanupConfirmation: Bool
+    @Binding var showingCancelAllConfirmation: Bool
+    @Binding var showingClearAllConfirmation: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    func body(content: Content) -> some View {
+        content
+            .toolbar {
+                #if os(macOS)
+                if !isNativeMacModelessWindow {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                    }
+                }
+                ToolbarItem(placement: .secondaryAction) {
+                    maintenanceMenu
+                }
+                #else
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    maintenanceMenu
+                }
+                #endif
+            }
+            .confirmationDialog(
+                "Clean Up Completed Jobs?",
+                isPresented: $showingCleanupConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Clean Up Jobs", role: .destructive) {
+                    cleanupCompletedJobs()
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Completed, failed, cancelled, and interrupted jobs will be removed from the activity history.")
+            }
+            .confirmationDialog(
+                "Cancel All Jobs?",
+                isPresented: $showingCancelAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Cancel All Jobs", role: .destructive) {
+                    cancelAllJobs()
+                }
+                Button("Keep Jobs", role: .cancel) { }
+            } message: {
+                Text("Active and queued jobs will stop. Their history will remain available.")
+            }
+            .confirmationDialog(
+                "Clear All Jobs?",
+                isPresented: $showingClearAllConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Clear All Jobs", role: .destructive) {
+                    clearAllJobs()
+                }
+                Button("Keep Jobs", role: .cancel) { }
+            } message: {
+                Text(
+                    "All background-processing jobs, including active entries, "
+                        + "will be removed from the activity history."
+                )
+            }
+    }
+
+    private var maintenanceMenu: some View {
+        Menu {
+            Button("Cleanup Completed Jobs", role: .destructive) {
+                showingCleanupConfirmation = true
+            }
+
+            Button("Cancel All Jobs", role: .destructive) {
+                showingCancelAllConfirmation = true
+            }
+
+            Divider()
+
+            Button("Clear All Jobs", role: .destructive) {
+                showingClearAllConfirmation = true
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Background Processing Actions")
+        .help("Background Processing Actions")
+    }
+
+    private func cleanupCompletedJobs() {
+        Task {
+            await processingManager.cleanupCompletedJobs()
+        }
+    }
+
+    private func cancelAllJobs() {
+        Task {
+            await processingManager.cancelAllJobs()
+        }
+    }
+
+    private func clearAllJobs() {
+        Task {
+            await processingManager.clearAllJobs()
+        }
+    }
+}
+
 // MARK: - Supporting Views
 
 struct StatCard: View {
@@ -271,6 +370,7 @@ struct JobCard: View {
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var currentTime = Date()
     @State private var timer: Timer?
+    @State private var showingCancelConfirmation = false
 
     private var isCancellable: Bool {
         job.status == .processing || job.status == .queued
@@ -303,15 +403,16 @@ struct JobCard: View {
                         StatusBadge(status: convertJobStatus(job.status))
 
                         if isCancellable {
-                            Button {
-                                Task {
-                                    await processingManager.cancelJob(id: job.id)
-                                }
+                            Button(role: .destructive) {
+                                showingCancelConfirmation = true
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.red)
                                     .font(.title3)
                             }
+                            .accessibilityLabel("Cancel Job for \(job.recordingName)")
+                            .accessibilityHint("Stops this queued or active job after confirmation.")
+                            .help("Cancel Job")
                         }
                     }
                 }
@@ -385,6 +486,20 @@ struct JobCard: View {
             )
         }
         .buttonStyle(PlainButtonStyle())
+        .confirmationDialog(
+            "Cancel Job?",
+            isPresented: $showingCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel Job", role: .destructive) {
+                Task {
+                    await processingManager.cancelJob(id: job.id)
+                }
+            }
+            Button("Keep Job", role: .cancel) { }
+        } message: {
+            Text("This will stop the queued or active job for \(job.recordingName).")
+        }
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
@@ -445,8 +560,17 @@ struct JobDetailView: View {
     let job: ProcessingJob
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @State private var currentTime = Date()
     @State private var timer: Timer?
+    @State private var showingCancelConfirmation = false
+
+    private var isNativeMacModelessWindow: Bool {
+        if case .modelessWindow = presentationContext {
+            return true
+        }
+        return false
+    }
 
     var body: some View {
         NavigationStack {
@@ -626,11 +750,8 @@ struct JobDetailView: View {
 
                     // Cancel button for active/queued jobs
                     if job.status == .processing || job.status == .queued {
-                        Button {
-                            Task {
-                                await processingManager.cancelJob(id: job.id)
-                                dismiss()
-                            }
+                        Button(role: .destructive) {
+                            showingCancelConfirmation = true
                         } label: {
                             HStack {
                                 Image(systemName: "xmark.circle.fill")
@@ -641,6 +762,8 @@ struct JobDetailView: View {
                             .background(Color.red, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .foregroundColor(.white)
                         }
+                        .accessibilityLabel("Cancel Job for \(job.recordingName)")
+                        .accessibilityHint("Stops this queued or active job after confirmation.")
                     }
 
                     Spacer()
@@ -651,11 +774,36 @@ struct JobDetailView: View {
             .navigationTitle("Job Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(macOS)
+                if !isNativeMacModelessWindow {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") {
+                            dismiss()
+                        }
+                    }
+                }
+                #else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
                 }
+                #endif
+            }
+            .confirmationDialog(
+                "Cancel Job?",
+                isPresented: $showingCancelConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Cancel Job", role: .destructive) {
+                    Task {
+                        await processingManager.cancelJob(id: job.id)
+                        dismiss()
+                    }
+                }
+                Button("Keep Job", role: .cancel) { }
+            } message: {
+                Text("This will stop the queued or active job for \(job.recordingName).")
             }
         }
     }

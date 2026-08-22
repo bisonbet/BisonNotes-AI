@@ -196,8 +196,22 @@ struct ContentView: View {
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
             }
+            .nativeMacPresentationContext(.modalSheet)
             .nativeMacModalSizing(width: 760, height: 700)
-            .nativeMacModalDismissControl()
+#if os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        showingAISettings = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.ai-settings.close")
+                }
+            }
+            .onExitCommand {
+                showingAISettings = false
+            }
+#endif
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -224,7 +238,22 @@ struct ContentView: View {
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            .nativeMacPresentationContext(.modalSheet)
             .nativeMacModalSizing(width: 760, height: 700)
+#if os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        showingFluidAudioSettings = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.fluid-audio-settings.close")
+                }
+            }
+            .onExitCommand {
+                showingFluidAudioSettings = false
+            }
+#endif
         }
         .alert("Download Complete", isPresented: Binding(
             get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },

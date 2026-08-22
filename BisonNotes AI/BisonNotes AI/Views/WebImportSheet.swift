@@ -120,6 +120,7 @@ struct WebImportSheet: View {
                         dismiss()
                     }
                     .disabled(webImportManager.isImporting)
+                    .accessibilityIdentifier("bisonnotes.web-import.cancel")
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
@@ -127,6 +128,7 @@ struct WebImportSheet: View {
                         submitImport()
                     }
                     .disabled(!canImport)
+                    .accessibilityIdentifier("bisonnotes.web-import.import")
                 }
             }
             .alert("Import Link Failed", isPresented: $webImportManager.showingImportAlert) {
@@ -139,6 +141,12 @@ struct WebImportSheet: View {
                 pastedTranscriptText = ""
             }
         }
+        .nativeMacPresentationContext(.modalSheet)
+#if os(macOS)
+        .onExitCommand {
+            dismiss()
+        }
+#endif
     }
 
     private func submitImport() {

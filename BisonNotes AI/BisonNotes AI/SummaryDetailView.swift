@@ -34,6 +34,7 @@ struct SummaryDetailView: View {
     let recording: RecordingFile
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var nativeMacPresentationContext
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
@@ -109,6 +110,62 @@ struct SummaryDetailView: View {
         self._summaryData = State(initialValue: summaryData)
     }
 
+    private var isNativeMacSummaryWindow: Bool {
+        #if os(macOS)
+        if case .modelessWindow = nativeMacPresentationContext {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    private var summaryNavigationTitle: String {
+        guard isNativeMacSummaryWindow else { return "Summary" }
+
+        let recordingName = summaryData.recordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = recording.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleName = recordingName.isEmpty ? fallbackName : recordingName
+        return titleName.isEmpty ? "Summary" : "\(titleName) — Summary"
+    }
+
+    @ViewBuilder
+    private var exportToolbarButton: some View {
+        Button {
+            showingExportFormatPicker = true
+        } label: {
+            #if os(macOS)
+            if isExporting {
+                HStack(spacing: 4) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
+                }
+            } else {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            #else
+            HStack(spacing: 4) {
+                if isExporting {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
+                        .font(.caption)
+                } else {
+                    Image(systemName: "square.and.arrow.up")
+                    Text("Export")
+                        .font(.caption)
+                }
+            }
+            #endif
+        }
+        #if os(macOS)
+        .controlSize(.regular)
+        #endif
+        .disabled(isExporting)
+        .accessibilityLabel(activeExportFormat.map { "Exporting \($0.displayName)" } ?? "Export Summary")
+        .accessibilityHint("Choose PDF or RTF export format.")
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -138,31 +195,31 @@ struct SummaryDetailView: View {
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Summary")
+            .nativeMacWindowTitle(summaryNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier(BisonNotesAccessibilityID.summaryDetail)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showingExportFormatPicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            if isExporting {
-                                ProgressView().scaleEffect(0.8)
-                                Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
-                                    .font(.caption)
-                            } else {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("Export").font(.caption)
-                            }
-                        }
+                #if os(macOS)
+                if isNativeMacSummaryWindow {
+                    ToolbarItem(placement: .primaryAction) {
+                        exportToolbarButton
                     }
-                    .disabled(isExporting)
-                    .accessibilityLabel(activeExportFormat.map { "Exporting \($0.displayName)" } ?? "Export Summary")
-                    .accessibilityHint("Choose PDF or RTF export format.")
+                } else {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        exportToolbarButton
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("Done") { dismiss() }
+                    }
+                }
+                #else
+                ToolbarItem(placement: .navigationBarLeading) {
+                    exportToolbarButton
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                 }
+                #endif
             }
         }
         .configurationWarnings(
@@ -237,6 +294,7 @@ struct SummaryDetailView: View {
             if let locationData = recording.locationData {
                 LocationDetailView(locationData: locationData)
                     .nativeMacModalSizing(width: 680, height: 620)
+                    .nativeMacPresentationContext(.modalSheet)
             }
         }
         .sheet(isPresented: $showingLocationPicker) {
@@ -246,7 +304,7 @@ struct SummaryDetailView: View {
                 }
             )
             .nativeMacModalSizing(width: 700, height: 620)
-            .nativeMacModalDismissControl("Cancel")
+            .nativeMacPresentationContext(.modalSheet)
         }
         .sheet(isPresented: $showingShareSheet) {
             Group {
@@ -317,9 +375,16 @@ struct SummaryDetailView: View {
                 .navigationTitle(selectedAttachmentName)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
+                    #if os(macOS)
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", role: .cancel) { showingTextAttachment = false }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                    #else
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { showingTextAttachment = false }
                     }
+                    #endif
                 }
             }
             .nativeMacModalSizing(width: 760, height: 680)
@@ -333,20 +398,26 @@ struct SummaryDetailView: View {
                         .navigationTitle(selectedAttachmentName)
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
+                            #if os(macOS)
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Close", role: .cancel) { showingPDFAttachment = false }
+                                    .keyboardShortcut(.cancelAction)
+                            }
+                            #else
                             ToolbarItem(placement: .navigationBarTrailing) {
                                 Button("Done") { showingPDFAttachment = false }
                             }
+                            #endif
                         }
                 }
                 .nativeMacModalSizing(width: 800, height: 700)
             }
         }
         .sheet(isPresented: $showingNoteEditor) {
-            NoteEditorSheet(text: $noteDraft) {
-                saveUserNotes()
+            NoteEditorSheet(text: $noteDraft) { draft in
+                saveUserNotes(draft)
             }
             .nativeMacModalSizing(width: 680, height: 600)
-            .nativeMacModalDismissControl("Cancel")
         }
         .quickLookPreview($selectedAttachmentGenericURL)
         .alert("Attachment Error", isPresented: .constant(attachmentError != nil)) {
@@ -921,8 +992,8 @@ struct SummaryDetailView: View {
             set: { if !$0 { editingTitle = nil } }
         )) {
             TextField("Title", text: $customTitleText)
-            Button("Cancel") { editingTitle = nil }
-            Button("Use This Title") {
+            Button("Cancel", role: .cancel) { editingTitle = nil }
+            Button("Apply") {
                 updateRecordingName(to: customTitleText)
                 editingTitle = nil
             }
@@ -1083,7 +1154,6 @@ struct SummaryDetailView: View {
                 }
             )
             .nativeMacModalSizing(width: 560, height: 500)
-            .nativeMacModalDismissControl("Cancel")
         }
     }
 
@@ -1649,12 +1719,14 @@ struct SummaryDetailView: View {
         summaryData = rebuildSummaryData(userNotes: supplemental.userNotes, attachments: supplemental.attachments)
     }
 
-    private func saveUserNotes() {
+    private func saveUserNotes(_ draft: String) -> Bool {
         do {
-            try SummaryAttachmentStore.shared.saveUserNotes(noteDraft, summaryId: summaryData.id)
-            summaryData = rebuildSummaryData(userNotes: noteDraft, attachments: attachments)
+            try SummaryAttachmentStore.shared.saveUserNotes(draft, summaryId: summaryData.id)
+            summaryData = rebuildSummaryData(userNotes: draft, attachments: attachments)
+            return true
         } catch {
             attachmentError = "Unable to save notes: \(error.localizedDescription)"
+            return false
         }
     }
 
@@ -2291,6 +2363,21 @@ struct TitleSelectorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var customTitleText = ""
     @State private var showingCustomTitleField = false
+    @State private var selectedTitle: String
+    @State private var applyingCustomTitle = false
+
+    init(
+        titles: [TitleItem],
+        currentTitle: String,
+        onTitleSelected: @escaping (String) -> Void,
+        onCustomTitle: @escaping (String) -> Void
+    ) {
+        self.titles = titles
+        self.currentTitle = currentTitle
+        self.onTitleSelected = onTitleSelected
+        self.onCustomTitle = onCustomTitle
+        self._selectedTitle = State(initialValue: currentTitle)
+    }
 
     var body: some View {
         NavigationStack {
@@ -2319,7 +2406,7 @@ struct TitleSelectorView: View {
                         Spacer()
                     }
 
-                    Text(currentTitle)
+                    Text(selectedTitle)
                         .font(.body)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -2348,10 +2435,9 @@ struct TitleSelectorView: View {
                                 ForEach(titles.sorted { $0.confidence > $1.confidence }, id: \.id) { title in
                                     TitleOptionRow(
                                         title: title,
-                                        isSelected: title.text == currentTitle,
+                                        isSelected: title.text == selectedTitle,
                                         onSelect: {
-                                            onTitleSelected(title.text)
-                                            dismiss()
+                                            selectTitle(title.text)
                                         }
                                     )
                                 }
@@ -2385,8 +2471,15 @@ struct TitleSelectorView: View {
                                         Spacer()
 
                                         Button("Use This Title") {
-                                            onCustomTitle(customTitleText)
+                                            let trimmedTitle = customTitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                            #if os(macOS)
+                                            selectedTitle = trimmedTitle
+                                            applyingCustomTitle = true
+                                            showingCustomTitleField = false
+                                            #else
+                                            onCustomTitle(trimmedTitle)
                                             dismiss()
+                                            #endif
                                         }
                                         .buttonStyle(.borderedProminent)
                                         .disabled(customTitleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -2417,13 +2510,51 @@ struct TitleSelectorView: View {
             .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        applyTitle()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                #else
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
                 }
+                #endif
             }
         }
+    }
+
+    private func selectTitle(_ title: String) {
+        #if os(macOS)
+        selectedTitle = title
+        applyingCustomTitle = false
+        #else
+        onTitleSelected(title)
+        dismiss()
+        #endif
+    }
+
+    private func applyTitle() {
+        let trimmedTitle = selectedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return }
+
+        if applyingCustomTitle {
+            onCustomTitle(trimmedTitle)
+        } else {
+            onTitleSelected(trimmedTitle)
+        }
+        dismiss()
     }
 }
 
@@ -2596,12 +2727,10 @@ struct DateTimeEditorView: View {
                         .padding(16)
                         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                        // Action buttons
+                        #if !os(macOS)
+                        // Mobile sheets keep their existing in-content action flow.
                         VStack(spacing: 12) {
-                            Button(action: {
-                                onDateTimeSelected(combinedDateTime)
-                                dismiss()
-                            }) {
+                            Button(action: applyDateTime) {
                                 HStack {
                                     Image(systemName: "checkmark.circle")
                                     Text("Set This Date & Time")
@@ -2615,11 +2744,7 @@ struct DateTimeEditorView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
 
-                            Button(action: {
-                                // Reset to file date (current original date)
-                                onDateTimeSelected(currentDate)
-                                dismiss()
-                            }) {
+                            Button(action: resetToOriginalAndApply) {
                                 HStack {
                                     Image(systemName: "arrow.counterclockwise")
                                     Text("Reset to Original")
@@ -2633,6 +2758,7 @@ struct DateTimeEditorView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
                         }
+                        #endif
                     }
                     .padding(.horizontal, 20)
                     .padding(.bottom, 24)
@@ -2641,11 +2767,31 @@ struct DateTimeEditorView: View {
             .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+                ToolbarItem(placement: .secondaryAction) {
+                    Button("Reset to Original") {
+                        resetToOriginal()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        applyDateTime()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+                #else
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+                #endif
             }
         }
         .presentationDetents([.large])
@@ -2664,6 +2810,21 @@ struct DateTimeEditorView: View {
         combined.minute = timeComponents.minute
 
         return calendar.date(from: combined) ?? selectedDate
+    }
+
+    private func resetToOriginal() {
+        selectedDate = currentDate
+        selectedTime = currentDate
+    }
+
+    private func applyDateTime() {
+        onDateTimeSelected(combinedDateTime)
+        dismiss()
+    }
+
+    private func resetToOriginalAndApply() {
+        onDateTimeSelected(currentDate)
+        dismiss()
     }
 
     private func formatFullDateTime(_ date: Date) -> String {
@@ -2687,6 +2848,7 @@ struct LocationPickerView: View {
     @State private var manualLongitude = ""
     @State private var isGettingCurrentLocation = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var selectedLocation: LocationData?
 
     var body: some View {
         NavigationStack {
@@ -2704,6 +2866,17 @@ struct LocationPickerView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
                 .background(Color(.systemGroupedBackground))
+
+                #if os(macOS)
+                if selectedLocation != nil {
+                    Label("Location selected. Choose Apply to save it.", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 8)
+                }
+                #endif
 
                 ScrollView {
                     VStack(spacing: 24) {
@@ -2805,8 +2978,7 @@ struct LocationPickerView: View {
                                                     accuracy: 5.0, // Approximate accuracy for search results
                                                     address: selectedResult.address
                                                 )
-                                                onLocationSelected(locationData)
-                                                dismiss()
+                                                selectLocation(locationData)
                                             }
                                         )
                                     }
@@ -2889,11 +3061,27 @@ struct LocationPickerView: View {
             .background(Color(.systemGroupedBackground))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Apply") {
+                        applySelectedLocation()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedLocation == nil)
+                }
+                #else
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+                #endif
             }
         }
         .presentationDetents([.large])
@@ -2943,8 +3131,7 @@ struct LocationPickerView: View {
 
                     DispatchQueue.main.async {
                         self.isGettingCurrentLocation = false
-                        self.onLocationSelected(finalLocationData)
-                        self.dismiss()
+                        self.selectLocation(finalLocationData)
                     }
                 }
             }
@@ -3168,7 +3355,21 @@ struct LocationPickerView: View {
         )
 
         AppLog.shared.summarization("Using manual location", level: .debug)
-        onLocationSelected(locationData)
+        selectLocation(locationData)
+    }
+
+    private func selectLocation(_ location: LocationData) {
+        #if os(macOS)
+        selectedLocation = location
+        #else
+        onLocationSelected(location)
+        dismiss()
+        #endif
+    }
+
+    private func applySelectedLocation() {
+        guard let selectedLocation else { return }
+        onLocationSelected(selectedLocation)
         dismiss()
     }
 }
@@ -3846,7 +4047,7 @@ struct ShareSheet: View {
 
 private struct NoteEditorSheet: View {
     @Binding var text: String
-    var onSave: () -> Void
+    var onSave: (String) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var draft: String = ""
     @FocusState private var isFocused: Bool
@@ -3868,12 +4069,16 @@ private struct NoteEditorSheet: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    #if os(macOS)
+                    .keyboardShortcut(.cancelAction)
+                    #endif
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        text = draft
-                        onSave()
-                        dismiss()
+                        if onSave(draft) {
+                            text = draft
+                            dismiss()
+                        }
                     }
                 }
             }

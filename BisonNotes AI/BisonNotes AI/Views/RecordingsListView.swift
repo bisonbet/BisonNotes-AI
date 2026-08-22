@@ -19,6 +19,7 @@ class DeletionData: ObservableObject {
 struct RecordingsListView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var enhancedFileManager = EnhancedFileManager.shared
@@ -28,6 +29,7 @@ struct RecordingsListView: View {
     @State private var locationAddresses: [URL: String] = [:]
     @State private var preserveSummaryOnDelete = false
     @State private var showingEnhancedDeleteDialog = false
+    @State private var recordingPendingDirectDeletion: AudioRecordingFile?
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
     enum SelectionAction {
         case combine
@@ -83,6 +85,13 @@ struct RecordingsListView: View {
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
 
+    private var isNativeMacModelessWindow: Bool {
+        if case .modelessWindow = presentationContext {
+            return true
+        }
+        return false
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -99,7 +108,7 @@ struct RecordingsListView: View {
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
                     .nativeMacModalSizing(width: 520, height: 440)
-                    .nativeMacModalDismissControl("Cancel")
+                    .nativeMacPresentationContext(.modalSheet)
             }
             .sheet(isPresented: $showingEnhancedDeleteDialog) {
                 if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
@@ -156,9 +165,32 @@ struct RecordingsListView: View {
                     .nativeMacModalSizing(width: 680, height: 620)
                 }
             }
+            .confirmationDialog(
+                "Delete Recording?",
+                isPresented: Binding(
+                    get: { recordingPendingDirectDeletion != nil },
+                    set: { if !$0 { recordingPendingDirectDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Recording", role: .destructive) {
+                    guard let recording = recordingPendingDirectDeletion else { return }
+                    recordingPendingDirectDeletion = nil
+                    performDirectDeletion(recording)
+                }
+                Button("Cancel", role: .cancel) { recordingPendingDirectDeletion = nil }
+            } message: {
+                if let recording = recordingPendingDirectDeletion {
+                    Text(
+                        "Delete \(recording.name)? This removes the recording and its stored "
+                            + "transcript and summary where applicable."
+                    )
+                }
+            }
             .sheet(item: $selectedLocationData) { locationData in
                 LocationDetailView(locationData: locationData)
                     .nativeMacModalSizing(width: 680, height: 620)
+                    .nativeMacPresentationContext(.modalSheet)
             }
             .sheet(isPresented: $showingCombineView) {
                 if let recordings = recordingsToCombine {
@@ -176,7 +208,7 @@ struct RecordingsListView: View {
                     )
                     .environmentObject(appCoordinator)
                     .nativeMacModalSizing(width: 760, height: 680)
-                    .nativeMacModalDismissControl("Cancel")
+                    .nativeMacPresentationContext(.modalSheet)
                 }
             }
             .sheet(isPresented: $showingArchiveConfirmation) {
@@ -237,11 +269,12 @@ struct RecordingsListView: View {
                     EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                         .environmentObject(appCoordinator)
                         .nativeMacModalSizing(width: 820, height: 720)
-                        .nativeMacModalDismissControl("Cancel")
+                        .nativeMacPresentationContext(.modalSheet)
                 } else {
                     TranscriptDetailView(recording: entry, transcriptText: "")
                         .environmentObject(appCoordinator)
                         .nativeMacModalSizing(width: 820, height: 720)
+                        .nativeMacPresentationContext(.modalSheet)
                 }
             }
             .confirmationDialog(
@@ -268,11 +301,25 @@ struct RecordingsListView: View {
                 Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
             }
         }
+        .toolbar {
+            #if os(macOS)
+            if isNativeMacModelessWindow {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if isSelectionMode {
+                        selectionHeaderActions
+                    } else {
+                        standardHeaderActions
+                    }
+                }
+            }
+            #endif
+        }
         .sheet(item: $selectedRecordingForPlayer) { recording in
             AudioPlayerView(recording: recording)
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 720, height: 680)
+                .nativeMacPresentationContext(.modalSheet)
         }
         .onAppear {
             refreshFileRelationships()
@@ -324,10 +371,12 @@ struct RecordingsListView: View {
 
             Spacer()
 
-            if isSelectionMode {
-                selectionHeaderActions
-            } else {
-                standardHeaderActions
+            if !isNativeMacModelessWindow {
+                if isSelectionMode {
+                    selectionHeaderActions
+                } else {
+                    standardHeaderActions
+                }
             }
         }
         .padding(.horizontal, 20)
@@ -390,6 +439,7 @@ struct RecordingsListView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .accessibilityLabel("Filter Recordings")
+            .help("Filter Recordings")
 
             Menu {
                 if recordings.count >= 2 {
@@ -433,16 +483,22 @@ struct RecordingsListView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .accessibilityLabel("Recording Actions")
+            .help("Recording Actions")
 
-            Button(action: {
-                dismiss()
-            }) {
-                Image(systemName: "xmark")
-                    .font(.headline)
-                    .frame(width: 36, height: 36)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if !isNativeMacModelessWindow {
+                Button(action: {
+                    dismiss()
+                }) {
+                    Image(systemName: "xmark")
+                        .font(.headline)
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
+                }
+                .accessibilityLabel("Done")
             }
-            .accessibilityLabel("Done")
         }
     }
 
@@ -892,6 +948,7 @@ struct RecordingsListView: View {
             "Delete Recording",
             systemImage: "trash",
             tint: .red,
+            role: .destructive,
             recordingName: recording.name
         ) {
             deletionData.recordingToDelete = recording
@@ -928,10 +985,11 @@ struct RecordingsListView: View {
     private func recordingIconButton(_ label: String,
                                      systemImage: String,
                                      tint: Color,
+                                     role: ButtonRole? = nil,
                                      recordingId: UUID? = nil,
                                      recordingName: String? = nil,
                                      action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button(role: role, action: action) {
             Image(systemName: systemImage)
                 .font(.headline)
                 .foregroundColor(tint)
@@ -1317,20 +1375,26 @@ struct RecordingsListView: View {
                     self.deletionData.fileRelationships = relationships
                     self.showingEnhancedDeleteDialog = true
                 } else {
-                    // A missing relationship cache must not bypass Core Data and
-                    // iCloud deletion. Resolve the recording directly and use the
-                    // coordinator so its transcript, summary, and tombstone are
-                    // handled together.
-                    if let recordingEntry = appCoordinator.getRecording(url: recording.url),
-                       let recordingId = recordingEntry.id {
-                        appCoordinator.deleteRecording(id: recordingId)
-                        loadRecordings()
-                    } else {
-                        AppLog.shared.recording("Failed to resolve recording for deletion: \(recording.url.lastPathComponent)", level: .error)
-                    }
+                    // A missing relationship cache must not bypass confirmation.
+                    // Resolve the recording directly after the user confirms.
+                    recordingPendingDirectDeletion = recording
                 }
             }
         }
+    }
+
+    private func performDirectDeletion(_ recording: AudioRecordingFile) {
+        guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
+              let recordingId = recordingEntry.id else {
+            AppLog.shared.recording(
+                "Failed to resolve recording for deletion: \(recording.url.lastPathComponent)",
+                level: .error
+            )
+            return
+        }
+
+        appCoordinator.deleteRecording(id: recordingId)
+        loadRecordings()
     }
 
     private func deleteRecordingWithRelationships(_ recording: AudioRecordingFile, preserveSummary: Bool) async {

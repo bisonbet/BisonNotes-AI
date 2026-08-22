@@ -30,6 +30,19 @@ private struct TranscriptDeletionRequest {
     let hasSummary: Bool
 }
 
+/// The persisted parts of an editable transcript that represent unsaved work.
+/// The recording title is intentionally excluded because it has its own
+/// immediate persistence action in the editor.
+struct TranscriptEditorSnapshot: Equatable {
+    let segmentTexts: [String]
+    let speakerMappings: [String: String]
+
+    init(segments: [TranscriptSegment], speakerMappings: [String: String]) {
+        self.segmentTexts = segments.map(\.text)
+        self.speakerMappings = speakerMappings
+    }
+}
+
 struct TranscriptsView: View {
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -75,17 +88,19 @@ struct TranscriptsView: View {
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
                     .nativeMacModalSizing(width: 820, height: 720)
-                    .nativeMacModalDismissControl("Cancel")
+                    .nativeMacPresentationContext(.modalSheet)
             } else {
                 TranscriptDetailView(recording: recording, transcriptText: "")
                     .environmentObject(appCoordinator)
                     .environmentObject(recorderVM)
                     .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacPresentationContext(.modalSheet)
             }
         }
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
                 .nativeMacModalSizing(width: 680, height: 620)
+                .nativeMacPresentationContext(.modalSheet)
         }
         .confirmationDialog(
             "Clean Audio Before Transcribing?",
@@ -179,7 +194,7 @@ struct TranscriptsView: View {
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
                 .nativeMacModalSizing(width: 520, height: 440)
-                .nativeMacModalDismissControl("Cancel")
+                .nativeMacPresentationContext(.modalSheet)
         }
         .onAppear {
             loadRecordings()
@@ -1526,6 +1541,7 @@ struct EditableTranscriptView: View {
     let transcript: TranscriptData
     let transcriptManager: TranscriptManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @State private var editedSegments: [TranscriptSegment]
@@ -1538,13 +1554,17 @@ struct EditableTranscriptView: View {
     @State private var showingRerunAlert = false
     @State private var showingSaveSuccessAlert = false
     @State private var showingSaveErrorAlert = false
+    @State private var showingCloseConfirmation = false
     @State private var showingSpeakerEditor = false
     @State private var saveErrorMessage = ""
+    @State private var isSaving = false
+    @State private var isClosingAfterDecision = false
     @State private var isGeneratingSummary = false
     @State private var showSummarySheet = false
     @State private var summaryGenerationError: String?
     @State private var speakerLabelWarningMessage: String?
     @State private var summaryStateRefresh = false
+    @State private var savedTranscriptSnapshot: TranscriptEditorSnapshot
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
 
@@ -1557,6 +1577,28 @@ struct EditableTranscriptView: View {
         }
     }
 
+    private var currentTranscriptSnapshot: TranscriptEditorSnapshot {
+        TranscriptEditorSnapshot(segments: editedSegments, speakerMappings: speakerMappings)
+    }
+
+    private var isTranscriptDirty: Bool {
+        currentTranscriptSnapshot != savedTranscriptSnapshot
+    }
+
+    private var transcriptWindowTitle: String {
+        let name = savedRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Transcript" : "\(name) — Transcript"
+    }
+
+    private var isNativeMacModalEditor: Bool {
+        #if os(macOS)
+        if case .modalSheet = presentationContext {
+            return true
+        }
+        #endif
+        return false
+    }
+
     init(recording: RecordingEntry, transcript: TranscriptData, transcriptManager: TranscriptManager) {
         self.recording = recording
         self.transcript = transcript
@@ -1566,6 +1608,12 @@ struct EditableTranscriptView: View {
         let initialName = recording.recordingName ?? transcript.recordingName
         self._editableRecordingName = State(initialValue: initialName)
         self._savedRecordingName = State(initialValue: initialName)
+        self._savedTranscriptSnapshot = State(
+            initialValue: TranscriptEditorSnapshot(
+                segments: transcript.segments,
+                speakerMappings: transcript.speakerMappings
+            )
+        )
     }
 
     var body: some View {
@@ -1589,24 +1637,78 @@ struct EditableTranscriptView: View {
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Edit Transcript")
+            .nativeMacWindowTitle(transcriptWindowTitle)
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptDetail)
             .toolbar {
+                #if os(macOS)
+                if isNativeMacModalEditor {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel", role: .cancel) {
+                            dismiss()
+                        }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        transcriptSaveButton
+                    }
+                } else {
+                    ToolbarItem(placement: .primaryAction) {
+                        transcriptSaveButton
+                    }
+                }
+                #else
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        if saveTranscript() {
-                            showingSaveSuccessAlert = true
-                        } else {
-                            showingSaveErrorAlert = true
-                        }
-                    }
-                    .fontWeight(.semibold)
+                    transcriptSaveButton
                 }
+                #endif
             }
         }
+        #if os(macOS)
+        .focusedSceneValue(
+            \.transcriptSaveAction,
+            isTranscriptDirty && !isSaving && !isNativeMacModalEditor
+                ? TranscriptSaveAction { saveAndClose() }
+                : nil
+        )
+        .background {
+            if !isNativeMacModalEditor {
+                NativeMacWindowCloseGuard(
+                    allowsClose: { isClosingAfterDecision || !isTranscriptDirty },
+                    onCloseBlocked: {
+                        guard !showingCloseConfirmation else { return }
+                        showingCloseConfirmation = true
+                    }
+                )
+                .frame(width: 0, height: 0)
+            }
+        }
+        .confirmationDialog(
+            "Save Changes to Transcript?",
+            isPresented: $showingCloseConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Save Changes") {
+                saveAndClose()
+            }
+            .disabled(isSaving)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptCloseSaveButton)
+
+            Button("Discard Changes", role: .destructive) {
+                discardChangesAndClose()
+            }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptCloseDiscardButton)
+
+            Button("Cancel", role: .cancel) {
+                showingCloseConfirmation = false
+            }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptCloseCancelButton)
+        } message: {
+            Text("Your transcript changes have not been saved.")
+        }
+        #endif
         .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Rerun", role: .destructive) {
@@ -1615,6 +1717,7 @@ struct EditableTranscriptView: View {
         } message: {
             Text("This will replace the current transcript with a new transcription using the currently configured transcription service. This action cannot be undone.")
         }
+        #if !os(macOS)
         .alert("Transcript Saved", isPresented: $showingSaveSuccessAlert) {
             Button("OK") {
                 showingSaveSuccessAlert = false
@@ -1623,6 +1726,7 @@ struct EditableTranscriptView: View {
         } message: {
             Text("Your transcript changes have been saved.")
         }
+        #endif
         .alert("Save Failed", isPresented: $showingSaveErrorAlert) {
             Button("OK", role: .cancel) {
                 showingSaveErrorAlert = false
@@ -1656,6 +1760,7 @@ struct EditableTranscriptView: View {
                 speakerMappings: $speakerMappings
             )
             .nativeMacModalSizing(width: 620, height: 560)
+            .nativeMacPresentationContext(.modalSheet)
         }
         .sheet(isPresented: $showSummarySheet) {
             #if os(macOS)
@@ -1664,7 +1769,7 @@ struct EditableTranscriptView: View {
                     Text("Summary")
                         .font(.headline)
                     Spacer()
-                    Button("Done") {
+                    Button("Close", role: .cancel) {
                         showSummarySheet = false
                     }
                     .keyboardShortcut(.cancelAction)
@@ -1682,9 +1787,11 @@ struct EditableTranscriptView: View {
                 showSummarySheet = false
             }
             .nativeMacModalSizing(width: 760, height: 680)
+            .nativeMacPresentationContext(.modalSheet)
             #else
             summarySheetContent
                 .nativeMacModalSizing(width: 760, height: 680)
+                .nativeMacPresentationContext(.modalSheet)
             #endif
         }
         .alert("Unable to Generate Summary", isPresented: Binding(
@@ -1724,6 +1831,22 @@ struct EditableTranscriptView: View {
         .onAppear {
             refreshTranscriptFromCoreData()
         }
+    }
+
+    @ViewBuilder
+    private var transcriptSaveButton: some View {
+        #if os(macOS)
+        Button("Save", action: saveAndClose)
+            .fontWeight(.semibold)
+            .disabled(!isTranscriptDirty || isSaving)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptSaveButton)
+            .accessibilityHint("Saves transcript changes and closes this window.")
+        #else
+        Button("Save", action: saveForMobile)
+            .fontWeight(.semibold)
+            .disabled(isSaving)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptSaveButton)
+        #endif
     }
 
     @ViewBuilder
@@ -1926,6 +2049,53 @@ struct EditableTranscriptView: View {
             }
         }
     }
+
+    private func saveForMobile() {
+        guard !isSaving else { return }
+
+        isSaving = true
+        let didSave = saveTranscript()
+        isSaving = false
+
+        if didSave {
+            savedTranscriptSnapshot = currentTranscriptSnapshot
+            showingSaveSuccessAlert = true
+        } else {
+            showingSaveErrorAlert = true
+        }
+    }
+
+    #if os(macOS)
+    private func saveAndClose() {
+        guard !isSaving, isTranscriptDirty else { return }
+
+        showingCloseConfirmation = false
+        isSaving = true
+        let didSave = saveTranscript()
+        isSaving = false
+
+        guard didSave else {
+            showingSaveErrorAlert = true
+            return
+        }
+
+        savedTranscriptSnapshot = currentTranscriptSnapshot
+        closeAfterCloseDecision()
+    }
+
+    private func discardChangesAndClose() {
+        guard !isSaving else { return }
+        closeAfterCloseDecision()
+    }
+
+    private func closeAfterCloseDecision() {
+        showingCloseConfirmation = false
+        isClosingAfterDecision = true
+        DispatchQueue.main.async {
+            dismiss()
+        }
+    }
+    #endif
 
     private func saveTranscript() -> Bool {
         guard let recordingId = recording.id else {
@@ -2208,6 +2378,11 @@ struct EditableTranscriptView: View {
         }
         guard hasValidContent else { return }
 
+        savedTranscriptSnapshot = TranscriptEditorSnapshot(
+            segments: updatedTranscript.segments,
+            speakerMappings: updatedTranscript.speakerMappings
+        )
+
         // Force SwiftUI to detect the change by clearing first, then setting.
         editedSegments = []
         speakerMappings = updatedTranscript.speakerMappings
@@ -2414,7 +2589,7 @@ struct SpeakerEditingView: View {
                 Spacer(minLength: 16)
 
                 HStack(spacing: 10) {
-                    Button("Cancel") {
+                    Button("Cancel", role: .cancel) {
                         dismiss()
                     }
                     .keyboardShortcut(.cancelAction)
@@ -2573,8 +2748,18 @@ struct TranscriptDetailView: View {
     let recording: RecordingEntry
     let transcriptText: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
+
+    private var isNativeMacModalViewer: Bool {
+        #if os(macOS)
+        if case .modalSheet = presentationContext {
+            return true
+        }
+        #endif
+        return false
+    }
 
     var body: some View {
         // NavigationStack { Form } is the only sheet pattern that scrolls reliably
@@ -2629,12 +2814,23 @@ struct TranscriptDetailView: View {
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Transcript")
+            .nativeMacWindowTitle(
+                recording.recordingName.map { "\($0) — Transcript" } ?? "Transcript"
+            )
             .navigationBarTitleDisplayMode(.inline)
             .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptDetail)
             .toolbar {
+                #if os(macOS)
+                if isNativeMacModalViewer {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close", role: .cancel) { dismiss() }
+                    }
+                }
+                #else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") { dismiss() }
                 }
+                #endif
             }
             .onAppear {
                 if let recordingURL = appCoordinator.getAbsoluteURL(for: recording),
