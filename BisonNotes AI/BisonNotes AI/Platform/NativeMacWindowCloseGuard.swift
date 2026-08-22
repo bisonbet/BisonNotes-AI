@@ -86,6 +86,20 @@ struct NativeMacWindowCloseGuard: NSViewRepresentable {
             }
             return true
         }
+
+        override func responds(to aSelector: Selector!) -> Bool {
+            super.responds(to: aSelector)
+                || previousDelegate?.responds(to: aSelector) == true
+        }
+
+        override func forwardingTarget(for aSelector: Selector!) -> Any? {
+            if let previousDelegate,
+               previousDelegate !== self,
+               previousDelegate.responds(to: aSelector) {
+                return previousDelegate
+            }
+            return super.forwardingTarget(for: aSelector)
+        }
     }
 }
 #endif

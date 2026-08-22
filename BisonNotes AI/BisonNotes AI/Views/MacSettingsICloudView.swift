@@ -23,7 +23,9 @@ struct MacStorageICloudCard: View {
                 "Enable iCloud Sync",
                 isOn: Binding(
                     get: { iCloudManager.isEnabled },
-                    set: onToggleCloudSync
+                    set: { enabled in
+                        onToggleCloudSync(enabled)
+                    }
                 )
             )
                 .accessibilityValue(AccessibilitySupport.statusValue(isOn: iCloudManager.isEnabled))
