@@ -1,0 +1,5 @@
+{
+  "name": "BisonNotes AI (Linux lint & syntax)",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh"
+}

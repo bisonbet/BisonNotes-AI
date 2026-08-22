@@ -18,13 +18,21 @@ This is a **native iOS/watchOS Xcode project**. It requires **macOS with Xcode 1
 - **Code review/editing**: Read, search, and edit all Swift source files, Core Data model XML, plists, entitlements, etc.
 - **Git operations**: Full git workflow including branching, committing, and pushing.
 
-### Environment setup (already done by update script)
+### Environment setup (Cloud Agent)
 
-- **Swift 6.3.x** installed via [Swiftly](https://swift.org/install/linux/) at `~/.local/share/swiftly/`.
-- **SwiftLint 0.58.x** installed at `/usr/local/bin/swiftlint`.
-- Environment variables sourced from `~/.bashrc`:
-  - Swiftly env: `. "${SWIFTLY_HOME_DIR:-$HOME/.local/share/swiftly}/env.sh"`
-  - SourceKit path: `export LINUX_SOURCEKIT_LIB_PATH=...` (auto-computed from installed toolchain)
+The Cloud Agent environment is defined by `.cursor/environment.json`, whose
+`install` step runs `.cursor/install.sh`. That script is idempotent and:
+
+- Installs the Swift OS dependencies (libcurl, libpython, etc.).
+- Installs **Swift 6.3.3** via [Swiftly](https://swift.org/install/linux/) at `~/.local/share/swiftly/`.
+- Installs **SwiftLint 0.58.2** at `/usr/local/bin/swiftlint`.
+- Appends a guarded block to `~/.bashrc` (also picked up by login shells because
+ `~/.profile` sources `~/.bashrc`) that sets:
+ - Swiftly env: `. "${SWIFTLY_HOME_DIR:-$HOME/.local/share/swiftly}/env.sh"`
+ - SourceKit path: `export LINUX_SOURCEKIT_LIB_PATH=...` (auto-computed from the installed toolchain)
+
+To change the pinned Swift or SwiftLint version, edit the `SWIFT_VERSION` /
+`SWIFTLINT_VERSION` variables at the top of `.cursor/install.sh`.
 
 ### Running SwiftLint
 
@@ -34,7 +42,29 @@ swiftlint lint                    # Full lint with all details
 swiftlint lint --reporter summary # Summary table only
 ```
 
-SwiftLint runs with default rules (no `.swiftlint.yml` exists in the repo). The codebase has ~9,000 pre-existing violations (mostly `trailing_whitespace` and `line_length`), so lint errors from these rules are expected and not introduced by agents.
+SwiftLint runs with default rules. `BisonNotes AI/BisonNotes AI/.swiftlint.yml`
+declares a committed baseline (`SwiftLintBaseline.json`) that is meant to
+suppress the ~2,600 pre-existing violations (mostly `line_length` and body/type
+length rules) so only newly introduced violations surface.
+
+**Baseline portability caveat:** the committed `SwiftLintBaseline.json` was
+generated on macOS and stores absolute file URLs (`file:///Users/champ/...`).
+SwiftLint matches baseline entries by file path, so on a Linux checkout (or any
+path other than the one it was generated on) the baseline does **not** match and
+`swiftlint lint` reports the full ~2,600 pre-existing violations and exits
+non-zero. Those violations are pre-existing, not introduced by agents. To get a
+clean, baseline-filtered run on Linux, generate a local baseline first and lint
+against it:
+
+```bash
+cd "BisonNotes AI/BisonNotes AI"
+swiftlint lint --write-baseline /tmp/baseline.json   # capture current state
+swiftlint lint --baseline /tmp/baseline.json         # 0 new violations => clean
+```
+
+Do not commit a Linux-generated baseline over the macOS one: per-platform rule
+behavior can differ slightly, so the maintainer's macOS-generated baseline is
+the source of truth for the committed file.
 
 ### Running Swift syntax checks
 
