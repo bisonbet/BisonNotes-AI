@@ -8,9 +8,9 @@
 
 #if os(macOS)
 
+import CoreMedia
 import Foundation
 @preconcurrency import AVFoundation
-import CoreMedia
 import ScreenCaptureKit
 import Synchronization
 
@@ -35,14 +35,11 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	private var stream: SCStream?
 	private var assetWriter: AVAssetWriter?
 	private var audioInput: AVAssetWriterInput?
-	private var firstSampleTime: CMTime?
 	private var lastSourceTime: CMTime?
-	private var lastAdjustedTime: CMTime?
-	private var pauseStartedAt: CMTime?
-	private var accumulatedPausedDuration = CMTime.zero
+	private var writtenTimeline = MacSystemAudioWrittenTimeline()
+	private var timeline = MacSystemAudioTimeline()
 	private var didReceiveAudio = false
 	private var audibleAudioDuration: Double = 0
-	private var isPaused = false
 	private var stopErrorDescription: String?
 
 	private struct StopSnapshot: Sendable {
@@ -60,7 +57,7 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	@MainActor
-	func start() async throws {
+	func start(initiallyPaused: Bool = false) async throws {
 		let fileManager = FileManager.default
 		if fileManager.fileExists(atPath: outputURL.path) {
 			try fileManager.removeItem(at: outputURL)
@@ -114,16 +111,13 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 			self.assetWriter = writer
 			self.audioInput = input
 			self.stream = stream
-			self.firstSampleTime = nil
 			self.lastSourceTime = nil
-			self.lastAdjustedTime = nil
-			self.pauseStartedAt = nil
-			self.accumulatedPausedDuration = .zero
+			self.writtenTimeline = MacSystemAudioWrittenTimeline()
+			self.timeline.reset(initiallyPaused: initiallyPaused)
 			self.didReceiveAudio = false
 			self.audibleAudioDuration = 0
-			self.isPaused = false
 			self.stopErrorDescription = nil
-			pauseRequest.set(false)
+			pauseRequest.set(initiallyPaused)
 		}
 
 		try await stream.startCapture()
@@ -151,6 +145,11 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		// only a Sendable request here; the sample queue applies the transition
 		// alongside the rest of its queue-confined capture state.
 		pauseRequest.set(paused)
+	}
+
+	@MainActor
+	func capturedDuration() -> TimeInterval {
+		sampleQueue.sync { writtenTimeline.duration }
 	}
 
 	@MainActor
@@ -211,50 +210,24 @@ final class MacSystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 		guard sourceTime.isValid else { return }
 		lastSourceTime = sourceTime
 
-		let requestedPause = pauseRequest.get()
-		if requestedPause != isPaused {
-			isPaused = requestedPause
-			if requestedPause {
-				pauseStartedAt = sourceTime
-			}
-		}
-
-		if isPaused {
-			if pauseStartedAt == nil {
-				pauseStartedAt = sourceTime
-			}
-			return
-		}
-
-		if let pauseStartedAt {
-			let pauseDuration = CMTimeSubtract(sourceTime, pauseStartedAt)
-			if pauseDuration.isValid, pauseDuration.seconds > 0 {
-				accumulatedPausedDuration = CMTimeAdd(accumulatedPausedDuration, pauseDuration)
-			}
-			self.pauseStartedAt = nil
-		}
-
-		if firstSampleTime == nil {
-			firstSampleTime = sourceTime
+		timeline.setPaused(pauseRequest.get(), at: sourceTime)
+		guard let adjustment = timeline.adjustment(for: sourceTime) else { return }
+		if adjustment.startsWriterSession {
 			writer.startSession(atSourceTime: .zero)
 		}
 
-		guard let firstSampleTime else { return }
-		var adjustedTime = CMTimeSubtract(sourceTime, firstSampleTime)
-		adjustedTime = CMTimeSubtract(adjustedTime, accumulatedPausedDuration)
-		if adjustedTime < .zero {
-			adjustedTime = .zero
-		}
-		if let lastAdjustedTime, adjustedTime <= lastAdjustedTime {
-			return
-		}
-		self.lastAdjustedTime = adjustedTime
-
 		guard input.isReadyForMoreMediaData else { return }
-		guard let retimedBuffer = copy(sampleBuffer, withPresentationTime: adjustedTime) else { return }
+		guard let retimedBuffer = copy(
+			sampleBuffer,
+			withPresentationTime: adjustment.presentationTime
+		) else { return }
 
 		if input.append(retimedBuffer) {
 			didReceiveAudio = true
+			writtenTimeline.recordSample(
+				at: adjustment.presentationTime,
+				duration: MacSystemAudioSampleTiming.totalDuration(of: sampleBuffer)
+			)
 			if Self.containsAudibleSignal(sampleBuffer) {
 				let duration = CMSampleBufferGetDuration(sampleBuffer).seconds
 				if duration.isFinite, duration > 0 {

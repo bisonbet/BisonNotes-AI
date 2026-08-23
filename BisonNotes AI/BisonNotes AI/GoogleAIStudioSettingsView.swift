@@ -128,6 +128,7 @@ struct GoogleAIStudioSettingsView: View {
             .navigationTitle("Google AI Studio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
@@ -140,12 +141,30 @@ struct GoogleAIStudioSettingsView: View {
                     }
                     .disabled(apiKey.isEmpty)
                 }
+#endif
             }
             .alert("Connection Test", isPresented: $showingAlert) {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
             }
+#if os(macOS)
+            .onChange(of: apiKey) {
+                onConfigurationChanged()
+            }
+            .onChange(of: selectedModel) {
+                onConfigurationChanged()
+            }
+            .onChange(of: temperature) {
+                onConfigurationChanged()
+            }
+            .onChange(of: maxTokens) {
+                onConfigurationChanged()
+            }
+            .onChange(of: isEnabled) {
+                onConfigurationChanged()
+            }
+#endif
         }
     }
 

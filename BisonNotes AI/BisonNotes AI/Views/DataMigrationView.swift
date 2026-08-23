@@ -111,11 +111,20 @@ struct DataMigrationView: View {
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .accessibilityIdentifier("bisonnotes.data-migration.cancel")
+                }
+#else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+#endif
             }
             .alert("🛑 CRITICAL - DESTRUCTIVE ACTION", isPresented: $showingClearDatabaseAlert) {
                 Button("Cancel", role: .cancel) { }
@@ -128,10 +137,10 @@ struct DataMigrationView: View {
                 Text("🚨🚨🚨 EXTREME WARNING 🚨🚨🚨\n\nYou are about to PERMANENTLY DELETE ALL DATABASE DATA:\n\n❌ ALL TRANSCRIPTS will be DELETED FOREVER\n❌ ALL SUMMARIES will be DELETED FOREVER\n❌ ALL RECORDING METADATA will be DELETED FOREVER\n\n✅ Audio files will remain on disk (but without any metadata)\n\n⚠️ THIS ACTION CANNOT BE UNDONE\n⚠️ NO RECOVERY IS POSSIBLE\n⚠️ ALL PROCESSED DATA WILL BE LOST\n\nThis is an extreme troubleshooting measure. DO NOT proceed unless you:\n\n1. Have a backup of your data\n2. Understand you will lose ALL transcripts and summaries\n3. Are prepared to re-transcribe and re-summarize everything\n\nOnly tap 'DELETE EVERYTHING' if you absolutely understand the consequences.")
             }
             .alert("Cleanup Orphaned Data", isPresented: $showingCleanupAlert) {
-                Button("Cancel") {
+                Button("Cancel", role: .cancel) {
                     showingCleanupAlert = false
                 }
-                Button("Clean Up") {
+                Button("Clean Up", role: .destructive) {
                     Task {
                         await performCleanup()
                     }
@@ -142,7 +151,7 @@ struct DataMigrationView: View {
             }
             .alert("Cleanup Duplicate Summaries", isPresented: $showingDuplicateCleanupAlert) {
                 Button("Cancel", role: .cancel) { }
-                Button("Clean Up") {
+                Button("Clean Up", role: .destructive) {
                     let results = appCoordinator.coreDataManager.cleanupDuplicates()
                     duplicateCleanupResults = results
                 }
@@ -426,7 +435,7 @@ struct DataMigrationView: View {
                             Spacer()
                         }
 
-                        Button("Delete Orphaned Audio Files") {
+                        Button("Delete Orphaned Audio Files", role: .destructive) {
                             showingOrphanedFilesCleanup = true
                         }
                         .font(.body)
@@ -473,7 +482,7 @@ struct DataMigrationView: View {
                 .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
 
                 // Cleanup duplicate summaries/transcripts
-                Button(action: {
+                Button(role: .destructive, action: {
                     showingDuplicateCleanupAlert = true
                 }) {
                     HStack {
@@ -562,7 +571,7 @@ struct DataMigrationView: View {
                             .foregroundColor(.secondary)
                     }
                     Spacer()
-                    Button(action: {
+                    Button(role: .destructive, action: {
                         showingCleanupAlert = true
                     }) {
                         HStack {
@@ -639,7 +648,7 @@ struct DataMigrationView: View {
             }
 
             // Destructive action - Clear database
-            Button(action: {
+            Button(role: .destructive, action: {
                 showingClearDatabaseAlert = true
             }) {
                 HStack {
@@ -663,7 +672,7 @@ struct DataMigrationView: View {
         // MARK: - Safety Alerts
         .alert("Recover from iCloud", isPresented: $confirmRecoverCloud) {
             Button("Cancel", role: .cancel) { }
-            Button("Recover", role: .destructive) {
+            Button("Recover") {
                 Task {
                     migrationManager.setCloudSyncManagers(legacy: legacyiCloudManager)
                     _ = await migrationManager.recoverDataFromiCloud()
@@ -683,7 +692,7 @@ struct DataMigrationView: View {
             Text("This will permanently delete \(orphanedAudioFiles.count) orphaned audio files (\(formatFileSize(totalOrphanedSize))). This action cannot be undone.\n\nThese files exist on disk but are not referenced in your Core Data database.")
         }
         .alert("Cleanup Complete", isPresented: $showingOrphanedFilesResults) {
-            Button("OK") {
+            Button("OK", role: .cancel) {
                 Task {
                     await scanForOrphanedAudioFiles() // Refresh after cleanup
                 }
@@ -697,13 +706,13 @@ struct DataMigrationView: View {
                 }
             }
         }
+#if !os(macOS)
         .sheet(isPresented: $showingBackgroundProcessing) {
             BackgroundProcessingView()
-                .nativeMacModalSizing(width: 760, height: 680)
-                .nativeMacModalDismissControl()
         }
+#endif
         .alert("iCloud Sync Verification", isPresented: $showingSyncVerification) {
-            Button("OK") {
+            Button("OK", role: .cancel) {
                 showingSyncVerification = false
             }
             if let result = syncVerificationResult, result.unsyncedLocalCount > 0 {
@@ -727,6 +736,12 @@ struct DataMigrationView: View {
                 Text("Verifying sync status...")
             }
         }
+        .nativeMacPresentationContext(.modalSheet)
+#if os(macOS)
+        .onExitCommand {
+            dismiss()
+        }
+#endif
     }
 
     // MARK: - iCloud Maintenance

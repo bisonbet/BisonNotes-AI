@@ -102,6 +102,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var macScratchSegmentURLs: [URL] = []
 	var macSystemAudioCapture: MacSystemAudioCapture?
 	var macSystemAudioURL: URL?
+	var macSystemAudioStartupGate = MacSystemAudioStartupGate()
+	var macSystemAudioStartupGateTimeoutTask: Task<Void, Never>?
+	var macSystemAudioContinuesWithoutMicrophone = false
+	var macMicrophoneStartOffset: TimeInterval = 0
 	var isFinalizingMacRecording = false
 	let macCaptureHealth = RecordingCaptureHealth()
 	var macCaptureHealthTimer: Timer?
@@ -110,7 +114,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	#if os(macOS)
 	var macInputDeviceChangeTask: Task<Void, Never>?
 	var isRecoveringMacInput = false
-	var pendingMacInputRecovery: (keepPaused: Bool, notify: Bool)?
+	struct PendingMacInputRecovery {
+		let keepPaused: Bool
+		let notify: Bool
+		let systemAudioContinued: Bool
+	}
+	var pendingMacInputRecovery: PendingMacInputRecovery?
 	#endif
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds

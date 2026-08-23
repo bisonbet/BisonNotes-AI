@@ -86,8 +86,10 @@ extension AudioRecorderViewModel {
 
 		if !wasAlreadyWaiting {
 			AppLog.shared.audioSession("Mac recording input changed; sealing the current audio segment")
-			macSystemAudioCapture?.setPaused(true)
-			stopRecordingTimer()
+			if !macSystemAudioContinuesWithoutMicrophone {
+				macSystemAudioCapture?.setPaused(true)
+				stopRecordingTimer()
+			}
 			sealNativeMacScratchSegment()
 		}
 
@@ -99,7 +101,11 @@ extension AudioRecorderViewModel {
 		do {
 			try startNativeMacContinuation(at: finalURL)
 			macAwaitingRecoveryBuffer = true
-			pendingMacInputRecovery = (keepPaused: keepPaused, notify: wasAlreadyWaiting)
+			pendingMacInputRecovery = PendingMacInputRecovery(
+				keepPaused: keepPaused,
+				notify: wasAlreadyWaiting,
+				systemAudioContinued: macSystemAudioContinuesWithoutMicrophone
+			)
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
@@ -128,7 +134,11 @@ extension AudioRecorderViewModel {
 	}
 
 	@MainActor
-	func finishNativeMacInputRecovery(keepPaused: Bool, notify: Bool) async {
+	func finishNativeMacInputRecovery(
+		keepPaused: Bool,
+		notify: Bool,
+		systemAudioContinued: Bool
+	) async {
 		microphoneReconnectionTimer?.invalidate()
 		microphoneReconnectionTimer = nil
 		pendingMacInputRecovery = nil
@@ -139,7 +149,9 @@ extension AudioRecorderViewModel {
 		} else {
 			macSystemAudioCapture?.setPaused(false)
 			recordingState = .recording
-			startRecordingTimer()
+			if !systemAudioContinued {
+				startRecordingTimer()
+			}
 		}
 		errorMessage = "Recording continued with the available microphone."
 		AppLog.shared.audioSession("Mac recording resumed on the available input")

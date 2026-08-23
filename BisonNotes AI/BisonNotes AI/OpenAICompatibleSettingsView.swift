@@ -38,22 +38,6 @@ struct OpenAICompatibleSettingsView: View {
 
     init(onConfigurationChanged: (() -> Void)? = nil) {
         self.onConfigurationChanged = onConfigurationChanged
-
-        // Check if the compatible API is the selected engine
-        let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
-        let isSelectedEngine = selectedEngine == "OpenAI API Compatible"
-
-        // If this is the selected engine, automatically enable it
-        if isSelectedEngine {
-            UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            AppLog.shared.general("OpenAICompatibleSettingsView: Auto-enabled because it's the selected engine")
-        }
-
-        // Ensure enableOpenAICompatible has a default value in UserDefaults
-        if UserDefaults.standard.object(forKey: "enableOpenAICompatible") == nil {
-            UserDefaults.standard.set(isSelectedEngine, forKey: "enableOpenAICompatible")
-            AppLog.shared.general("OpenAICompatibleSettingsView: Initialized enableOpenAICompatible to \(isSelectedEngine)")
-        }
     }
 
     // MARK: - Private Methods
@@ -169,6 +153,7 @@ struct OpenAICompatibleSettingsView: View {
             .navigationTitle("Compatible API")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         // Ensure it's enabled when user is done configuring
@@ -183,6 +168,7 @@ struct OpenAICompatibleSettingsView: View {
                         dismiss()
                     }
                 }
+#endif
             }
             .alert("API Key Information", isPresented: $showingAPIKeyInfo) {
                 Button("OK") { }
@@ -197,6 +183,35 @@ struct OpenAICompatibleSettingsView: View {
                     AppLog.shared.general("OpenAICompatibleSettingsView: Auto-enabled on appear")
                 }
             }
+#if os(macOS)
+            .onChange(of: apiKey) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: selectedModel) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: baseURL) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: temperature) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: maxTokens) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: enableOpenAICompatible) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: manualFormatOverride) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: manualFormat) {
+                onConfigurationChanged?()
+            }
+            .onChange(of: allowInsecurePublicEndpoints) {
+                onConfigurationChanged?()
+            }
+#endif
         }
     }
 

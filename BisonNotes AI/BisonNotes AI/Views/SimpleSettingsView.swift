@@ -150,8 +150,22 @@ struct SimpleSettingsView: View {
             NavigationStack {
                 MLXSwiftSettingsView()
             }
+            .nativeMacPresentationContext(.modalSheet)
             .nativeMacModalSizing(width: 760, height: 700)
-            .nativeMacModalDismissControl()
+#if os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        showingMLXSwiftSettings = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.mlx-settings.close")
+                }
+            }
+            .onExitCommand {
+                showingMLXSwiftSettings = false
+            }
+#endif
         }
         .sheet(isPresented: $showingOnDeviceAIDownload) {
             OnDeviceAIDownloadView(
@@ -162,7 +176,32 @@ struct SimpleSettingsView: View {
                 }
             )
             .nativeMacModalSizing(width: 700, height: 620)
+            .nativeMacPresentationContext(.modalSheet)
+#if os(macOS)
+            .onExitCommand {
+                showingOnDeviceAIDownload = false
+            }
+#endif
         }
+#if os(macOS)
+        .sheet(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                // Mistral onboarding completed — mark first setup done and navigate
+                UserDefaults.standard.set(true, forKey: "hasCompletedFirstSetup")
+                if isFirstLaunch {
+                    NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("RequestLocationPermission"),
+                            object: nil
+                        )
+                    }
+                }
+            })
+            .nativeMacPresentationContext(.modalSheet)
+            .nativeMacModalSizing(width: 760, height: 700)
+        }
+#else
         .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 // Mistral onboarding completed — mark first setup done and navigate
@@ -170,11 +209,15 @@ struct SimpleSettingsView: View {
                 if isFirstLaunch {
                     NotificationCenter.default.post(name: NSNotification.Name("FirstSetupCompleted"), object: nil)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        NotificationCenter.default.post(name: NSNotification.Name("RequestLocationPermission"), object: nil)
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("RequestLocationPermission"),
+                            object: nil
+                        )
                     }
                 }
             })
         }
+#endif
     }
 
     private var headerSection: some View {

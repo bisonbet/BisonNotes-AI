@@ -235,6 +235,7 @@ struct SummariesView: View {
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
                 .nativeMacModalSizing(width: 520, height: 440)
+                .nativeMacPresentationContext(.modalSheet)
         }
     } // End of body variable
 

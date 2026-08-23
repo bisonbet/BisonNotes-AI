@@ -24,6 +24,17 @@ struct WebImportSheet: View {
             && !transcriptImportManager.isImporting
     }
 
+    /// An import in flight is not cancelled when this sheet goes away, so
+    /// dismissing mid-import would let the recording or transcript keep landing
+    /// after the user believes they backed out. Escape and Cancel both honor
+    /// this, including the pasted-transcript path that runs through
+    /// `transcriptImportManager`.
+    private var canDismiss: Bool {
+        !webImportManager.isImporting
+            && !fileImportManager.isImporting
+            && !transcriptImportManager.isImporting
+    }
+
     private var canImportPastedTranscript: Bool {
         !pastedTranscriptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !webImportManager.isImporting
@@ -119,7 +130,8 @@ struct WebImportSheet: View {
                     Button("Cancel") {
                         dismiss()
                     }
-                    .disabled(webImportManager.isImporting)
+                    .disabled(!canDismiss)
+                    .accessibilityIdentifier("bisonnotes.web-import.cancel")
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
@@ -127,6 +139,7 @@ struct WebImportSheet: View {
                         submitImport()
                     }
                     .disabled(!canImport)
+                    .accessibilityIdentifier("bisonnotes.web-import.import")
                 }
             }
             .alert("Import Link Failed", isPresented: $webImportManager.showingImportAlert) {
@@ -139,6 +152,13 @@ struct WebImportSheet: View {
                 pastedTranscriptText = ""
             }
         }
+        .nativeMacPresentationContext(.modalSheet)
+#if os(macOS)
+        .onExitCommand {
+            guard canDismiss else { return }
+            dismiss()
+        }
+#endif
     }
 
     private func submitImport() {

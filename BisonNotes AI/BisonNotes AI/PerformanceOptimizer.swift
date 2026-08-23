@@ -1088,13 +1088,29 @@ struct PerformanceMonitorView: View {
             .navigationTitle("Performance Monitor")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        isPresented = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.performance-monitor.close")
+                }
+#else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         isPresented = false
                     }
                 }
+#endif
             }
         }
+#if os(macOS)
+        .nativeMacPresentationContext(.modalSheet)
+        .onExitCommand {
+            isPresented = false
+        }
+#endif
     }
 }
 

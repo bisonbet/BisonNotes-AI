@@ -59,35 +59,18 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacSettingsRootView()
+        #else
         NavigationStack {
             settingsContent
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { dismiss() }
                     }
-                    #endif
                 }
-                #if os(macOS)
-                .navigationDestination(isPresented: $showingAISettings) {
-                    AISettingsView()
-                        .environmentObject(recorderVM)
-                }
-                .navigationDestination(isPresented: $showingTranscriptionSettings) {
-                    TranscriptionSettingsView()
-                }
-                .navigationDestination(isPresented: $showingBackgroundProcessing) {
-                    BackgroundProcessingView()
-                }
-                .navigationDestination(isPresented: $showingPreferences) {
-                    PreferencesView()
-                }
-                .navigationDestination(isPresented: $showingAcknowledgements) {
-                    AcknowledgementsView()
-                }
-                #endif
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -160,7 +143,6 @@ struct SettingsView: View {
             SummaryManager.shared.setEngine(newEngine)
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
-        #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
@@ -177,12 +159,10 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
         }
-        #endif
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 800, height: 700)
-                .nativeMacModalDismissControl("Cancel")
         }
         .overlay {
             if isPreparingLogs {
@@ -209,6 +189,7 @@ struct SettingsView: View {
                 .transition(.opacity)
             }
         }
+        #endif
     }
 
     @ViewBuilder

@@ -2869,7 +2869,6 @@ extension iCloudStorageManager {
             var activeRecordingRecordNames = trustedActiveManifest.recordings
             var activeTranscriptRecordNames = trustedActiveManifest.transcripts
             var activeSummaryRecordNames = trustedActiveManifest.summaries
-            let fileManager = FileManager.default
             let backupSourceSelection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
             let excludedRecordingIds = backupSourceSelection.excludedRecordingIds
             let recordings = backupSourceSelection.recordings.filter { recording in

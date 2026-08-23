@@ -4,10 +4,140 @@
 //
 
 import Foundation
+import CoreMedia
 import XCTest
 @testable import BisonNotes_AI
 
 final class MacRecordingReliabilityTests: XCTestCase {
+	func testSystemAudioStartupGateReleasesExactlyOnceForMicrophoneWrite() {
+		var gate = MacSystemAudioStartupGate()
+		let sessionID = UUID()
+		let startedAt = Date(timeIntervalSince1970: 10)
+		gate.begin(sessionID: sessionID, at: startedAt)
+
+		let release = gate.release(
+			sessionID: sessionID,
+			reason: .microphoneFirstWrite,
+			at: startedAt.addingTimeInterval(0.25)
+		)
+
+		XCTAssertEqual(release?.reason, .microphoneFirstWrite)
+		XCTAssertEqual(release?.elapsed, 0.25)
+		XCTAssertNil(
+			gate.release(
+				sessionID: sessionID,
+				reason: .safetyTimeout,
+				at: startedAt.addingTimeInterval(1.5)
+			)
+		)
+	}
+
+	func testSystemAudioStartupGateTimeoutWinsRaceExactlyOnce() {
+		var gate = MacSystemAudioStartupGate()
+		let sessionID = gate.begin(at: Date(timeIntervalSince1970: 20))
+
+		XCTAssertEqual(
+			gate.release(
+				sessionID: sessionID,
+				reason: .safetyTimeout,
+				at: Date(timeIntervalSince1970: 21.5)
+			)?.reason,
+			.safetyTimeout
+		)
+		XCTAssertNil(
+			gate.release(
+				sessionID: sessionID,
+				reason: .microphoneFirstWrite,
+				at: Date(timeIntervalSince1970: 21.5)
+			)
+		)
+	}
+
+	func testSystemAudioStartupGateRejectsStaleSessionTimeout() {
+		var gate = MacSystemAudioStartupGate()
+		let staleSessionID = gate.begin(at: Date(timeIntervalSince1970: 30))
+		let currentSessionID = gate.begin(at: Date(timeIntervalSince1970: 31))
+
+		XCTAssertNil(
+			gate.release(
+				sessionID: staleSessionID,
+				reason: .safetyTimeout,
+				at: Date(timeIntervalSince1970: 32)
+			)
+		)
+		XCTAssertEqual(gate.activeSessionID, currentSessionID)
+		XCTAssertNil(gate.releaseReason)
+	}
+
+	func testInitialSystemAudioGateDoesNotDoubleSubtractTime() throws {
+		var timeline = MacSystemAudioTimeline(initiallyPaused: true)
+		XCTAssertNil(timeline.adjustment(for: CMTime(seconds: 10, preferredTimescale: 48_000)))
+
+		timeline.setPaused(false, at: CMTime(seconds: 11.5, preferredTimescale: 48_000))
+		let first = try XCTUnwrap(
+			timeline.adjustment(for: CMTime(seconds: 11.5, preferredTimescale: 48_000))
+		)
+		let second = try XCTUnwrap(
+			timeline.adjustment(for: CMTime(seconds: 11.6, preferredTimescale: 48_000))
+		)
+
+		XCTAssertTrue(first.startsWriterSession)
+		XCTAssertEqual(first.presentationTime.seconds, 0, accuracy: 0.000_001)
+		XCTAssertEqual(second.presentationTime.seconds, 0.1, accuracy: 0.000_001)
+		XCTAssertEqual(timeline.accumulatedPausedDuration.seconds, 0, accuracy: 0.000_001)
+	}
+
+	func testOrdinarySystemAudioPauseIsRemovedFromTimeline() throws {
+		var timeline = MacSystemAudioTimeline()
+		_ = try XCTUnwrap(timeline.adjustment(for: CMTime(seconds: 10, preferredTimescale: 48_000)))
+		_ = try XCTUnwrap(timeline.adjustment(for: CMTime(seconds: 11, preferredTimescale: 48_000)))
+
+		timeline.setPaused(true, at: CMTime(seconds: 12, preferredTimescale: 48_000))
+		XCTAssertNil(timeline.adjustment(for: CMTime(seconds: 12, preferredTimescale: 48_000)))
+		timeline.setPaused(false, at: CMTime(seconds: 14, preferredTimescale: 48_000))
+		let resumed = try XCTUnwrap(
+			timeline.adjustment(for: CMTime(seconds: 14, preferredTimescale: 48_000))
+		)
+
+		XCTAssertEqual(resumed.presentationTime.seconds, 2, accuracy: 0.000_001)
+		XCTAssertEqual(timeline.accumulatedPausedDuration.seconds, 2, accuracy: 0.000_001)
+	}
+
+	func testDelayedMicrophoneStartsAtItsSystemAudioOffset() {
+		let startTime = MacAudioMixTiming.microphoneStartTime(for: 3.25)
+
+		XCTAssertEqual(startTime.seconds, 3.25, accuracy: 0.000_001)
+	}
+
+	func testMeetingMixPreservesTheLaterTrackEnd() {
+		let systemDuration = CMTime(seconds: 12, preferredTimescale: 48_000)
+		let microphoneEndTime = CMTime(seconds: 10, preferredTimescale: 48_000)
+
+		XCTAssertEqual(
+			MacAudioMixTiming.exportDuration(
+				microphoneEndTime: microphoneEndTime,
+				systemDuration: systemDuration
+			).seconds,
+			12,
+			accuracy: 0.000_001
+		)
+	}
+
+	func testWrittenSystemTimelineReportsTheLastSampleEnd() {
+		var timeline = MacSystemAudioWrittenTimeline()
+		timeline.recordSample(
+			at: CMTime(seconds: 2, preferredTimescale: 48_000),
+			duration: CMTime(seconds: 0.02, preferredTimescale: 48_000)
+		)
+
+		XCTAssertEqual(timeline.duration, 2.02, accuracy: 0.000_001)
+	}
+
+	func testActiveCombineCannotBeDismissed() {
+		XCTAssertFalse(CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: true))
+		XCTAssertTrue(CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: false))
+	}
+
     func testCaptureHealthRequiresARealFirstWrite() {
         let health = RecordingCaptureHealth()
         let start = Date(timeIntervalSince1970: 1_000)

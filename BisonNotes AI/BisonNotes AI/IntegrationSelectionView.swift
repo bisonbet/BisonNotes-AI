@@ -76,6 +76,7 @@ struct IntegrationSelectionView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityIdentifier("bisonnotes.integration.reminders")
 
                     // Calendar Option
                     Button(action: {
@@ -110,6 +111,7 @@ struct IntegrationSelectionView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(PlainButtonStyle())
+                    .accessibilityIdentifier("bisonnotes.integration.calendar")
 
                     // Google Calendar Option
                     if let onGoogleCalendar = onGoogleCalendarSelected {
@@ -145,12 +147,14 @@ struct IntegrationSelectionView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
                         .buttonStyle(PlainButtonStyle())
+                        .accessibilityIdentifier("bisonnotes.integration.google-calendar")
                     }
                 }
                 .padding(.horizontal)
 
                 Spacer()
 
+#if !os(macOS)
                 // Cancel Button
                 Button("Cancel") {
                     dismiss()
@@ -158,17 +162,34 @@ struct IntegrationSelectionView: View {
                 .font(.body)
                 .foregroundColor(.secondary)
                 .padding(.bottom, 20)
+#endif
             }
             .navigationTitle("Add to System")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.integration.cancel")
+                }
+#else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+#endif
             }
         }
+#if os(macOS)
+        .nativeMacPresentationContext(.modalSheet)
+        .onExitCommand {
+            dismiss()
+        }
+#endif
     }
 }
 

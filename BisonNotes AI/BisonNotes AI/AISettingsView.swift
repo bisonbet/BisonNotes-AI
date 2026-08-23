@@ -80,7 +80,7 @@ final class AISettingsViewModel: ObservableObject {
     }
 
     /// Moves the engine selection logic into the view model.
-    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
+    func selectEngine(_ engineType: AIEngineType) {
         guard engineType.isSupportedOnCurrentPlatform else {
             AppLog.shared.general("Ignored unsupported AI engine selection: \(engineType.rawValue)")
             return
@@ -135,7 +135,6 @@ final class AISettingsViewModel: ObservableObject {
 @MainActor
 struct AISettingsView: View {
     @StateObject private var viewModel: AISettingsViewModel
-    @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
     @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
@@ -155,6 +154,11 @@ struct AISettingsView: View {
     @State private var showingRegenerateConfirmation = false
     @State private var showOnDeviceEngines = true
     @State private var showCloudEngines = true
+#if os(macOS)
+    @State private var selectedMacEngineRawValue: String?
+
+    private static let macOverviewSelection = "__ai_settings_overview__"
+#endif
 
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
@@ -263,18 +267,20 @@ struct AISettingsView: View {
 
     var body: some View {
         Group {
+#if os(macOS)
+            macSettingsContent
+#else
             settingsContent
                 .navigationTitle("AI Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
-                    #endif
                 }
+#endif
         }
         .platformSettingsNavigation()
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
@@ -308,31 +314,7 @@ struct AISettingsView: View {
         } message: {
             Text(errorHandler.currentError?.localizedDescription ?? "An unknown error occurred.")
         }
-        #if os(macOS)
-        .navigationDestination(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView(onConfigurationChanged: {
-                self.refreshEngineStatuses()
-            })
-        }
-        .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
-            OpenAICompatibleSettingsView(onConfigurationChanged: {
-                Task { @MainActor in refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingGoogleAIStudioSettings) {
-            GoogleAIStudioSettingsView(onConfigurationChanged: {
-                Task { @MainActor in refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingMistralAISettings) {
-            MistralAISettingsView(onConfigurationChanged: {
-                Task { @MainActor in refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingMLXSwiftSettings) {
-            MLXSwiftSettingsView()
-        }
-        #else
+#if !os(macOS)
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
                 Task { @MainActor in refreshEngineStatuses() }
@@ -353,13 +335,245 @@ struct AISettingsView: View {
                 MLXSwiftSettingsView()
             }
         }
-        #endif
+#endif
+#if os(macOS)
+        .sheet(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                refreshEngineStatuses()
+            })
+            .nativeMacModalSizing(width: 760, height: 700)
+        }
+#else
         .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 refreshEngineStatuses()
             })
         }
+#endif
     }
+
+#if os(macOS)
+    private var macSettingsContent: some View {
+        HSplitView {
+            List(selection: $selectedMacEngineRawValue) {
+                Section("Summary") {
+                    Label("Summary & Management", systemImage: "slider.horizontal.3")
+                        .tag(Self.macOverviewSelection)
+                }
+
+                Section("AI Engines") {
+                    ForEach(AIEngineType.availableCases, id: \.rawValue) { engine in
+                        macEngineListRow(for: engine)
+                            .tag(engine.rawValue)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 210, idealWidth: 240, maxWidth: 280)
+
+            macEngineDetail
+                .frame(minWidth: 480)
+        }
+        .onAppear {
+            guard selectedMacEngineRawValue == nil else { return }
+            selectedMacEngineRawValue = currentEngineType?.rawValue
+                ?? Self.macOverviewSelection
+        }
+        // Sidebar selection only browses a provider's configuration. Switching
+        // the engine the app actually summarizes with is an explicit action in
+        // the detail pane, so opening a pane to check a key cannot silently
+        // repoint summarization at an unconfigured engine.
+        .onChange(of: selectedMacEngineRawValue) { _, newValue in
+            guard let newValue,
+                  newValue != Self.macOverviewSelection,
+                  AIEngineType.availableCases.contains(where: { $0.rawValue == newValue }) else {
+                return
+            }
+
+            refreshEngineStatuses()
+        }
+    }
+
+    @ViewBuilder
+    private var macEngineDetail: some View {
+        if selectedMacEngineRawValue == Self.macOverviewSelection || selectedMacEngineRawValue == nil {
+            macOverviewDetail
+        } else if let rawValue = selectedMacEngineRawValue,
+                  let engine = AIEngineType.availableCases.first(where: { $0.rawValue == rawValue }) {
+            macProviderDetail(for: engine)
+        } else {
+            macOverviewDetail
+        }
+    }
+
+    private var macOverviewDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modernHeader
+                modernCurrentEngineSection
+                modernTimeoutSection
+                modernSummaryDetailSection
+                modernSummaryThinkingSection
+                modernSummaryManagementSection
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private func macEngineListRow(for engine: AIEngineType) -> some View {
+        let status = engineStatuses[engine.rawValue]
+        let isSelectedEngine = selectedEngineName == engine.rawValue
+
+        HStack(spacing: 10) {
+            Image(systemName: iconName(for: engine))
+                .foregroundColor(engineColor(for: engine))
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(engine.displayName)
+                    .font(.subheadline.weight(.medium))
+                Text(shortDescription(for: engine))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            if isSelectedEngine {
+                Label("Selected", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                engineBadge(for: engine, status: status)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityValue(isSelectedEngine ? "Selected" : (status?.isAvailable == true ? "Ready" : "Needs setup"))
+    }
+
+    private func macProviderDetail(for engine: AIEngineType) -> some View {
+        VStack(spacing: 0) {
+            macEngineActivationBar(for: engine)
+
+            Divider()
+
+            macProviderConfiguration(for: engine)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func macEngineActivationBar(for engine: AIEngineType) -> some View {
+        let isActiveEngine = selectedEngineName == engine.rawValue
+
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(engine.displayName)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text(
+                    isActiveEngine
+                        ? "BisonNotes uses this engine for summaries."
+                        : "Editing these settings does not change the engine BisonNotes uses."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            if isActiveEngine {
+                Label("Current Engine", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.green)
+                    .accessibilityLabel("Current engine")
+            } else {
+                Button("Use This Engine") {
+                    viewModel.selectEngine(engine)
+                    refreshEngineStatuses()
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("bisonnotes.ai-settings.use-engine")
+                .accessibilityHint("Makes \(engine.displayName) the engine used for summaries.")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func macProviderConfiguration(for engine: AIEngineType) -> some View {
+        switch engine {
+        case .openAICompatible:
+            OpenAICompatibleSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .localLLM:
+            OllamaSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .googleAIStudio:
+            GoogleAIStudioSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .mistralAI:
+            MistralAISettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .mlxSwift:
+            MLXSwiftSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .appleNative:
+            macAppleNativeDetail
+        }
+    }
+
+    private var macAppleNativeDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                AISettingsCard(
+                    title: "Apple Native",
+                    systemImage: iconName(for: .appleNative),
+                    tint: engineColor(for: .appleNative)
+                ) {
+                    Text(AIEngineType.appleNative.description)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Label(
+                        AppleNativeEngine.modelAvailable
+                            ? "Foundation Models are available on this Mac."
+                            : "Foundation Models are not available on this Mac.",
+                        systemImage: AppleNativeEngine.modelAvailable ? "checkmark.circle" : "exclamationmark.triangle"
+                    )
+                    .foregroundColor(AppleNativeEngine.modelAvailable ? .green : .orange)
+
+                    Text(
+                        "Apple Native is configured through the system intelligence settings. "
+                            + "Summary detail, thinking, timeout, and regeneration controls are available "
+                            + "under Summary & Management."
+                    )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+#endif
 
     @ViewBuilder
     private var settingsContent: some View {
@@ -432,6 +646,7 @@ struct AISettingsView: View {
                         AIInfoRow(title: "Needs", value: requirement)
                     }
 
+                    #if !os(macOS)
                     if currentEngine != .appleNative {
                         Button {
                             openSettings(for: currentEngine)
@@ -443,6 +658,7 @@ struct AISettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(engineColor(for: currentEngine))
                     }
+                    #endif
                 }
             }
         }
@@ -662,7 +878,7 @@ private extension AISettingsView {
         let tint = engineColor(for: engine)
 
         return Button {
-            viewModel.selectEngine(engine, recorderVM: recorderVM)
+            viewModel.selectEngine(engine)
             refreshEngineStatuses()
         } label: {
             HStack(spacing: 14) {
@@ -836,7 +1052,7 @@ private extension AISettingsView {
         let isSelected = selectedEngineName == engine.rawValue
 
         return Button {
-            viewModel.selectEngine(engine, recorderVM: recorderVM)
+            viewModel.selectEngine(engine)
             refreshEngineStatuses()
         } label: {
             HStack(spacing: 10) {

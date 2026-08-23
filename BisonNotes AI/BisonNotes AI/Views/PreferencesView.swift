@@ -11,47 +11,117 @@ struct PreferencesView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var userPreferences = UserPreferences.shared
     @State private var showingTimeFormatExample = false
+    #if os(macOS)
+    @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
+    @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
+    #endif
 
     var body: some View {
+        #if os(macOS)
+        preferencesContent
+            .accessibilityIdentifier(BisonNotesAccessibilityID.settingsPaneGeneral)
+        #else
         PlatformSettingsNavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    headerSection
-                    timeFormatSection
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 36)
-                .frame(maxWidth: 700)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollIndicators(.hidden)
-            .background(Color(.systemGroupedBackground))
+            preferencesContent
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                #if !os(macOS)
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Done") {
                         dismiss()
                     }
                     .fontWeight(.medium)
                 }
-                #endif
             }
         }
+        #endif
+    }
+
+    private var preferencesContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                headerSection
+                timeFormatSection
+                #if os(macOS)
+                behaviorSection
+                #endif
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
     }
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
+            #if os(macOS)
+            Text("General")
+                .font(.largeTitle.weight(.bold))
+                .foregroundColor(.primary)
+            #else
             Text("Preferences")
                 .font(.largeTitle.weight(.bold))
                 .foregroundColor(.primary)
+            #endif
 
+            #if os(macOS)
+            Text("Customize display, behavior, and summary presentation.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            #else
             Text("Customize how BisonNotes AI displays information")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+            #endif
         }
     }
+
+    #if os(macOS)
+    private var behaviorSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.purple)
+                    .frame(width: 30, height: 30)
+                    .background(Color.purple.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Text("App Behavior")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+
+            Toggle("Comedy Mode", isOn: $comedyModeEnabled)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: comedyModeEnabled))
+
+            if comedyModeEnabled {
+                Picker("Style", selection: $comedyModeStyle) {
+                    Text("Snarky — dry wit & sarcasm").tag("snarky")
+                    Text("Funny — goofy & absurd").tag("funny")
+                }
+                .pickerStyle(.segmented)
+            }
+
+            Text(
+                "Add humor to the summary narrative while keeping tasks, reminders, titles, "
+                    + "and facts grounded in the transcript."
+            )
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
+    }
+    #endif
 
     private var timeFormatSection: some View {
         VStack(alignment: .leading, spacing: 16) {

@@ -52,6 +52,7 @@ struct OllamaSettingsView: View {
             .navigationTitle("Ollama Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         // Force refresh engine availability when settings are dismissed
@@ -60,6 +61,7 @@ struct OllamaSettingsView: View {
                         dismiss()
                     }
                 }
+#endif
             }
             .onAppear {
 #if os(macOS)
@@ -69,9 +71,15 @@ struct OllamaSettingsView: View {
             }
             .onChange(of: serverURL) {
                 resetConnection()
+#if os(macOS)
+                onConfigurationChanged?()
+#endif
             }
             .onChange(of: port) {
                 resetConnection()
+#if os(macOS)
+                onConfigurationChanged?()
+#endif
             }
             .onChange(of: selectedModel) {
                 onConfigurationChanged?()
@@ -85,6 +93,11 @@ struct OllamaSettingsView: View {
             .onChange(of: temperature) {
                 onConfigurationChanged?()
             }
+#if os(macOS)
+            .onChange(of: allowInsecurePublicEndpoints) {
+                onConfigurationChanged?()
+            }
+#endif
             .alert("Error", isPresented: $showingError) {
                 Button("OK") { }
             } message: {

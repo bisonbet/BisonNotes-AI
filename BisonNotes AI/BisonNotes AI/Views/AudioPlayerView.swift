@@ -14,6 +14,7 @@ struct AudioPlayerView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @State private var duration: TimeInterval = 0
     @State private var showingShareSheet = false
     @State private var editableTitle: String = ""
@@ -34,6 +35,14 @@ struct AudioPlayerView: View {
     @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
+    @State private var hasStoppedPlayback = false
+
+    private var isNativeMacModelessWindow: Bool {
+        if case .modelessWindow = presentationContext {
+            return true
+        }
+        return false
+    }
 
     private var displayTitle: String {
         currentSavedTitle.isEmpty ? recording.name : currentSavedTitle
@@ -60,18 +69,9 @@ struct AudioPlayerView: View {
 
                 Spacer()
 
-                Button(action: prepareAudioExport) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.headline)
-                        .foregroundColor(.accentColor)
-                        .frame(width: 38, height: 38)
-                        .background(
-                            Color(.secondarySystemGroupedBackground),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
+                if !isNativeMacModelessWindow {
+                    audioExportButton
                 }
-                .accessibilityLabel("Export Audio for \(displayTitle)")
-                .accessibilityHint("Opens sharing options for this audio file.")
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -174,20 +174,15 @@ struct AudioPlayerView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerPlaybackSection)
 
-                    Button("Close") {
-                        if recorderVM.isPlaying {
-                            recorderVM.stopPlaying()
+                    if !isNativeMacModelessWindow {
+                        Button("Close") {
+                            closeAudioPlayer()
                         }
-                        if let onClose {
-                            onClose()
-                        } else {
-                            dismiss()
-                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Close Audio Player")
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 4)
                     }
-                    .buttonStyle(.bordered)
-                    .accessibilityLabel("Close Audio Player")
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 4)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)
@@ -195,6 +190,22 @@ struct AudioPlayerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
+        .toolbar {
+            #if os(macOS)
+            if isNativeMacModelessWindow {
+                ToolbarItem(placement: .secondaryAction) {
+                    Button {
+                        prepareAudioExport()
+                    } label: {
+                        Label("Export Audio", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Export Audio for \(displayTitle)")
+                    .accessibilityHint("Opens sharing options for this audio file.")
+                    .help("Export Audio")
+                }
+            }
+            #endif
+        }
         .sheet(isPresented: $showingShareSheet, onDismiss: {
             audioExportURL = nil
             RecordingArchiveService.shared.cleanupAudioExportStaging()
@@ -210,11 +221,12 @@ struct AudioPlayerView: View {
                 EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
                     .environmentObject(appCoordinator)
                     .nativeMacModalSizing(width: 820, height: 720)
-                    .nativeMacModalDismissControl("Cancel")
+                    .nativeMacPresentationContext(.modalSheet)
             } else {
                 TranscriptDetailView(recording: entry, transcriptText: "")
                     .environmentObject(appCoordinator)
                     .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacPresentationContext(.modalSheet)
             }
         }
         .confirmationDialog(
@@ -245,9 +257,11 @@ struct AudioPlayerView: View {
         }
         .onAppear {
             AppLog.shared.recording("AudioPlayerView appeared", level: .debug)
+            hasStoppedPlayback = false
             editableTitle = recording.name
             currentSavedTitle = recording.name
             setupAudio()
+            refreshCloudSyncPreference()
         }
         .alert("Unable to Update Title", isPresented: Binding(
             get: { titleUpdateError != nil },
@@ -279,23 +293,52 @@ struct AudioPlayerView: View {
         } message: {
             Text(cloudSyncPreferenceError ?? "Unknown error")
         }
-        .onAppear {
-            refreshCloudSyncPreference()
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingCloudSyncPreferenceChanged"))) { _ in
             refreshCloudSyncPreference()
         }
         .onDisappear {
             AppLog.shared.recording("AudioPlayerView disappeared", level: .debug)
-            if recorderVM.isPlaying {
-                recorderVM.stopPlaying()
-            }
+            stopPlaybackIfNeeded()
         }
     }
 
     init(recording: AudioRecordingFile, onClose: (() -> Void)? = nil) {
         self.recording = recording
         self.onClose = onClose
+    }
+
+    private var audioExportButton: some View {
+        Button(action: prepareAudioExport) {
+            Image(systemName: "square.and.arrow.up")
+                .font(.headline)
+                .foregroundColor(.accentColor)
+                .frame(width: 38, height: 38)
+                .background(
+                    Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+        }
+        .accessibilityLabel("Export Audio for \(displayTitle)")
+        .accessibilityHint("Opens sharing options for this audio file.")
+        .help("Export Audio")
+    }
+
+    private func closeAudioPlayer() {
+        stopPlaybackIfNeeded()
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func stopPlaybackIfNeeded() {
+        guard !hasStoppedPlayback else { return }
+        hasStoppedPlayback = true
+
+        if recorderVM.isPlaying {
+            recorderVM.stopPlaying()
+        }
     }
 
     private var localOnlyPreferenceRow: some View {

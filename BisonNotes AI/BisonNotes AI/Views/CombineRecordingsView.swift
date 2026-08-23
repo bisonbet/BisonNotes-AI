@@ -60,22 +60,39 @@ struct CombineRecordingsView: View {
             .navigationTitle("Combine Recordings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        dismiss()
+                    }
+                    .disabled(isCombining)
+                    .accessibilityIdentifier("bisonnotes.combine.cancel")
+                }
+#else
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
+#endif
             }
             .alert("Error", isPresented: $showingError) {
-                Button("OK") { }
+                Button("OK", role: .cancel) { }
             } message: {
                 Text(errorMessage ?? "An unknown error occurred")
             }
             .alert("Delete Original Recordings?", isPresented: $showingDeleteConfirmation) {
+#if os(macOS)
+                Button("Keep Originals", role: .cancel) {
+                    // Keep the newly combined recording and leave both originals intact.
+                    finishCombining()
+                }
+#else
                 Button("Cancel", role: .cancel) {
                     // User cancelled, just finish without deleting
                     finishCombining()
                 }
+#endif
                 Button("Delete", role: .destructive) {
                     deleteOriginalRecordings()
                 }
@@ -86,6 +103,13 @@ struct CombineRecordingsView: View {
                 checkForTranscriptsAndSummaries()
             }
         }
+#if os(macOS)
+        .nativeMacPresentationContext(.modalSheet)
+        .onExitCommand {
+            guard CombineRecordingsDismissalPolicy.allowsDismissal(isCombining: isCombining) else { return }
+            dismiss()
+        }
+#endif
     }
 
     private var headerSection: some View {

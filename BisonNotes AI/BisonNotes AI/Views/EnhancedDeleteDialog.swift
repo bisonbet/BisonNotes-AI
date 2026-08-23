@@ -14,8 +14,6 @@ struct EnhancedDeleteDialog: View {
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -110,8 +108,9 @@ struct EnhancedDeleteDialog: View {
                         .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
+#if !os(macOS)
                     VStack(spacing: 12) {
-                        Button(action: onConfirm) {
+                        Button(role: .destructive, action: onConfirm) {
                             HStack {
                                 Image(systemName: "trash.fill")
                                 Text("Delete Recording")
@@ -132,6 +131,7 @@ struct EnhancedDeleteDialog: View {
                                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                     }
+#endif
                 }
                 .padding(20)
             }
@@ -139,13 +139,36 @@ struct EnhancedDeleteDialog: View {
             .navigationTitle("Delete Recording")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel", role: .cancel) {
+                        onCancel()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.delete-recording.cancel")
+                }
+
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("Delete Recording", role: .destructive) {
+                        onConfirm()
+                    }
+                    .accessibilityIdentifier("bisonnotes.delete-recording.confirm")
+                }
+#else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
                         onCancel()
                     }
                 }
+#endif
             }
         }
+#if os(macOS)
+        .nativeMacPresentationContext(.modalSheet)
+        .onExitCommand {
+            onCancel()
+        }
+#endif
         .onAppear {
             // Set default preserve summary option
             preserveSummary = relationships.summaryExists
@@ -160,28 +183,33 @@ struct EnhancedDeleteDialog: View {
         selectedColor: Color,
         action: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(isSelected ? selectedColor : .gray)
-                .font(.title3)
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(isSelected ? selectedColor : .gray)
+                    .font(.title3)
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundColor(.primary)
 
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
             }
-
-            Spacer()
+            .padding(12)
+            .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle())
         }
-        .padding(12)
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .contentShape(Rectangle())
-        .onTapGesture(perform: action)
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isSelected ? "Selected" : "Not selected")
+        .accessibilityHint("Selects this deletion option.")
     }
 }
 

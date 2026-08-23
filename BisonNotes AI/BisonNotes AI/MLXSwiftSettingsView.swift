@@ -77,6 +77,8 @@ struct MLXSwiftSettingsView: View {
 
     // MARK: - State
 
+    var onConfigurationChanged: (() -> Void)?
+
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(MLXSwiftSettingsKeys.enabled) private var isEnabled = false
@@ -92,6 +94,10 @@ struct MLXSwiftSettingsView: View {
     @State private var showingDeleteConfirmation = false
     @State private var modelToDelete: MLXModelOption?
     @State private var showingAdvancedSettings = false
+
+    init(onConfigurationChanged: (() -> Void)? = nil) {
+        self.onConfigurationChanged = onConfigurationChanged
+    }
 
     // MARK: - Body
 
@@ -178,6 +184,25 @@ struct MLXSwiftSettingsView: View {
         }
         .onChange(of: modelId) {
             downloadManager.refreshModelStatus()
+            onConfigurationChanged?()
+        }
+        .onChange(of: isEnabled) {
+            onConfigurationChanged?()
+        }
+        .onChange(of: temperature) {
+            onConfigurationChanged?()
+        }
+        .onChange(of: maxTokens) {
+            onConfigurationChanged?()
+        }
+        .onChange(of: topK) {
+            onConfigurationChanged?()
+        }
+        .onChange(of: topP) {
+            onConfigurationChanged?()
+        }
+        .onChange(of: repetitionPenalty) {
+            onConfigurationChanged?()
         }
     }
 

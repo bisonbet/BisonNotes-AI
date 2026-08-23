@@ -37,6 +37,7 @@ struct NativeSummaryWindowView: View {
                 )
             }
         }
+        .nativeMacPresentationContext(.modelessWindow)
         .frame(minWidth: 620, minHeight: 460)
     }
 }

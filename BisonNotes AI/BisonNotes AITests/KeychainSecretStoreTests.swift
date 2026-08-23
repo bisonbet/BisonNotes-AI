@@ -3,6 +3,7 @@
 //  BisonNotes AITests
 //
 
+import Security
 import XCTest
 @testable import BisonNotes_AI
 
@@ -71,6 +72,31 @@ final class KeychainSecretStoreTests: XCTestCase {
         XCTAssertNil(store.string(forKey: KeychainSecretStore.googleAIStudioAPIKey))
     }
 
+    func testReadsDoNotAdvanceSecretRevision() {
+        let key = KeychainSecretStore.googleAIStudioAPIKey
+        let initialRevision = store.revision(forKey: key)
+
+        _ = store.string(forKey: key)
+        _ = store.string(forKey: key)
+
+        XCTAssertEqual(store.revision(forKey: key), initialRevision)
+    }
+
+    func testSuccessfulMutationsAdvanceSecretRevision() {
+        let key = KeychainSecretStore.googleAIStudioAPIKey
+        let initialRevision = store.revision(forKey: key)
+
+        assertSuccess(store.setString("temporary-secret", forKey: key))
+        let storedRevision = store.revision(forKey: key)
+        XCTAssertGreaterThan(storedRevision, initialRevision)
+
+        _ = store.string(forKey: key)
+        XCTAssertEqual(store.revision(forKey: key), storedRevision)
+
+        assertSuccess(store.delete(forKey: key))
+        XCTAssertGreaterThan(store.revision(forKey: key), storedRevision)
+    }
+
     func testRemovesLegacyAWSSecretsFromUserDefaultsAndKeychain() {
         defaults.set(Data("legacy-credentials".utf8), forKey: KeychainSecretStore.legacyAWSCredentials)
         defaults.set("legacy-session-token", forKey: KeychainSecretStore.legacyAWSBedrockSessionToken)
@@ -86,6 +112,58 @@ final class KeychainSecretStoreTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSecureStorageCacheUsesTrimmedStoredValueAfterWrite() {
+        let fakeStore = FakeSecureStorageSecretStore()
+        let storage = SecureStorageValue(
+            key: "test-secret",
+            defaultValue: "",
+            store: fakeStore
+        )
+
+        storage.setValue("  saved-secret\n")
+
+        XCTAssertEqual(fakeStore.storedValue, "saved-secret")
+        XCTAssertEqual(storage.value, "saved-secret")
+    }
+
+    @MainActor
+    func testSecureStorageCacheUsesDefaultAfterWhitespaceDeletesSecret() {
+        let fakeStore = FakeSecureStorageSecretStore(storedValue: "saved-secret")
+        let storage = SecureStorageValue(
+            key: "test-secret",
+            defaultValue: "fallback",
+            store: fakeStore
+        )
+
+        storage.setValue(" \n\t ")
+
+        XCTAssertNil(fakeStore.storedValue)
+        XCTAssertEqual(storage.value, "fallback")
+    }
+
+    @MainActor
+    func testSecureStorageCacheRestoresPersistedValueAfterFailedWrite() {
+        let failure = KeychainSecretStoreError.operationFailed(
+            operation: .update,
+            status: errSecAuthFailed
+        )
+        let fakeStore = FakeSecureStorageSecretStore(
+            storedValue: "persisted-secret",
+            writeResult: .failure(failure)
+        )
+        let storage = SecureStorageValue(
+            key: "test-secret",
+            defaultValue: "",
+            store: fakeStore
+        )
+
+        storage.setValue("unsaved-secret")
+
+        XCTAssertEqual(fakeStore.storedValue, "persisted-secret")
+        XCTAssertEqual(storage.value, "persisted-secret")
+    }
+
     private func assertSuccess(
         _ result: Result<Void, KeychainSecretStoreError>,
         file: StaticString = #filePath,
@@ -94,5 +172,38 @@ final class KeychainSecretStoreTests: XCTestCase {
         if case .failure(let error) = result {
             XCTFail("Keychain mutation failed: \(error.localizedDescription)", file: file, line: line)
         }
+    }
+}
+
+private final class FakeSecureStorageSecretStore: SecureStorageSecretStore {
+    private(set) var storedValue: String?
+    private var currentRevision = 0
+    private let writeResult: Result<Void, KeychainSecretStoreError>
+
+    init(
+        storedValue: String? = nil,
+        writeResult: Result<Void, KeychainSecretStoreError> = .success(())
+    ) {
+        self.storedValue = storedValue
+        self.writeResult = writeResult
+    }
+
+    func string(forKey key: String) -> String? {
+        storedValue
+    }
+
+    func setString(
+        _ value: String,
+        forKey key: String
+    ) -> Result<Void, KeychainSecretStoreError> {
+        guard case .success = writeResult else { return writeResult }
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        storedValue = trimmedValue.isEmpty ? nil : trimmedValue
+        currentRevision += 1
+        return .success(())
+    }
+
+    func revision(forKey key: String) -> Int {
+        currentRevision
     }
 }

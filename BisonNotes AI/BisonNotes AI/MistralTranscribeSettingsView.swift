@@ -25,9 +25,18 @@ struct MistralTranscribeSettingsView: View {
 
     var body: some View {
         PlatformSettingsNavigationStack {
+            // This guard splits the whole body, not just the toolbar, so the
+            // branches read inverted compared with the sibling engine views
+            // (FluidAudioSettingsView, WhisperSettingsView), which wrap only
+            // their toolbar in `#if !os(macOS)`. The effect is the same.
             #if os(macOS)
+            // The Mac Settings scene hosts this pane inline, so the native
+            // content deliberately carries no Done/dismiss control: dismissing
+            // from an embedded detail would close the Settings window.
             nativeMacContent
             #else
+            // Everything below is compiled for non-macOS only, including the
+            // trailing Done button. macOS renders `nativeMacContent` above.
             Form {
                 apiConfigurationSection
                 transcriptionSettingsSection

@@ -117,12 +117,14 @@ final class KeychainSecretStore: Sendable {
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         switch status {
         case errSecSuccess:
+            bumpRevision(forKey: key)
             return .success(())
         case errSecItemNotFound:
             query.merge(attributes) { _, new in new }
             let addStatus = SecItemAdd(query as CFDictionary, nil)
             switch addStatus {
             case errSecSuccess:
+                bumpRevision(forKey: key)
                 return .success(())
             case errSecDuplicateItem:
                 let retryStatus = SecItemUpdate(
@@ -130,6 +132,7 @@ final class KeychainSecretStore: Sendable {
                     attributes as CFDictionary
                 )
                 if retryStatus == errSecSuccess {
+                    bumpRevision(forKey: key)
                     return .success(())
                 }
                 return report(.failure(.operationFailed(operation: .update, status: retryStatus)))
@@ -146,6 +149,7 @@ final class KeychainSecretStore: Sendable {
         let status = SecItemDelete(baseQuery(forKey: key) as CFDictionary)
         switch status {
         case errSecSuccess, errSecItemNotFound:
+            bumpRevision(forKey: key)
             return .success(())
         default:
             return report(.failure(.operationFailed(operation: .delete, status: status)))
@@ -190,6 +194,18 @@ final class KeychainSecretStore: Sendable {
         ]
     }
 
+    func revision(forKey key: String) -> Int {
+        UserDefaults.standard.integer(forKey: revisionKey(forKey: key))
+    }
+
+    private func bumpRevision(forKey key: String) {
+        UserDefaults.standard.set(revision(forKey: key) &+ 1, forKey: revisionKey(forKey: key))
+    }
+
+    private func revisionKey(forKey key: String) -> String {
+        "KeychainSecretStore.revision.\(service).\(key)"
+    }
+
     private func report(
         _ result: Result<Void, KeychainSecretStoreError>
     ) -> Result<Void, KeychainSecretStoreError> {
@@ -203,36 +219,94 @@ final class KeychainSecretStore: Sendable {
     }
 }
 
-@propertyWrapper
-struct SecureStorage: DynamicProperty {
+protocol SecureStorageSecretStore {
+    func string(forKey key: String) -> String?
+    func setString(_ value: String, forKey key: String) -> Result<Void, KeychainSecretStoreError>
+    func revision(forKey key: String) -> Int
+}
+
+extension KeychainSecretStore: SecureStorageSecretStore {}
+
+@MainActor
+final class SecureStorageValue: ObservableObject {
     private let key: String
     private let defaultValue: String
-    @State private var value: String
+    private let store: any SecureStorageSecretStore
+    @Published private(set) var value: String
+    private var observedRevision: Int
 
-    init(wrappedValue defaultValue: String, _ key: String) {
+    init(
+        key: String,
+        defaultValue: String,
+        store: any SecureStorageSecretStore = KeychainSecretStore.shared
+    ) {
         self.key = key
         self.defaultValue = defaultValue
-        _value = State(initialValue: KeychainSecretStore.shared.string(forKey: key) ?? defaultValue)
+        self.store = store
+        self.value = store.string(forKey: key) ?? defaultValue
+        self.observedRevision = store.revision(forKey: key)
     }
 
-    func update() {
-        let storedValue = KeychainSecretStore.shared.string(forKey: key) ?? defaultValue
+    /// Called from `SecureStorage.update()`, which runs inside a SwiftUI view
+    /// update. Publishing there is not allowed, so the revision is claimed
+    /// synchronously — keeping this idempotent per revision — while the value
+    /// change is handed to the next main-actor turn.
+    func refreshIfNeeded() {
+        let currentRevision = store.revision(forKey: key)
+        guard currentRevision != observedRevision else { return }
+
+        let storedValue = store.string(forKey: key) ?? defaultValue
+        observedRevision = currentRevision
+        guard storedValue != value else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.observedRevision == currentRevision,
+                  self.value != storedValue else { return }
+            self.value = storedValue
+        }
+    }
+
+    func setValue(_ newValue: String) {
+        let result = store.setString(newValue, forKey: key)
+        reconcileWithStoredValue()
+        if case .failure(let error) = result {
+            AppLog.shared.general(
+                "Secure setting persistence failed: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func reconcileWithStoredValue() {
+        let currentRevision = store.revision(forKey: key)
+        let storedValue = store.string(forKey: key) ?? defaultValue
+        observedRevision = currentRevision
         if storedValue != value {
             value = storedValue
         }
     }
+}
+
+@propertyWrapper
+@MainActor
+struct SecureStorage: @MainActor DynamicProperty {
+    @StateObject private var storage: SecureStorageValue
+
+    init(wrappedValue defaultValue: String, _ key: String) {
+        _storage = StateObject(
+            wrappedValue: SecureStorageValue(key: key, defaultValue: defaultValue)
+        )
+    }
+
+    func update() {
+        storage.refreshIfNeeded()
+    }
 
     var wrappedValue: String {
-        get { value }
+        get { storage.value }
         nonmutating set {
-            value = newValue
-            let result = KeychainSecretStore.shared.setString(newValue, forKey: key)
-            if case .failure(let error) = result {
-                AppLog.shared.general(
-                    "Secure setting persistence failed: \(error.localizedDescription)",
-                    level: .error
-                )
-            }
+            storage.setValue(newValue)
         }
     }
 

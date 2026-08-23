@@ -67,8 +67,7 @@ struct FluidAudioSettingsView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-
-                        Spacer(minLength: 24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         Picker("Parakeet Model", selection: $selectedModelVersion) {
                             ForEach(FluidAudioModelInfo.ModelVersion.allCases, id: \.self) { version in
@@ -77,7 +76,7 @@ struct FluidAudioSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 240)
+                        .frame(minWidth: 180, idealWidth: 210, maxWidth: 240)
                         .onChange(of: selectedModelVersion) { _, _ in
                             manager.invalidateForVersionChange()
                         }
@@ -171,6 +170,7 @@ struct FluidAudioSettingsView: View {
         .scrollContentBackground(.hidden)
         .background(Color(.systemGroupedBackground))
         .navigationTitle("On Device Transcription")
+#if !os(macOS)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") {
@@ -178,6 +178,7 @@ struct FluidAudioSettingsView: View {
                 }
             }
         }
+#endif
         .onAppear(perform: normalizeAndRefreshLocalSpeakerSettings)
         .onDisappear(perform: stopLocalSpeakerObservationTasks)
     }
