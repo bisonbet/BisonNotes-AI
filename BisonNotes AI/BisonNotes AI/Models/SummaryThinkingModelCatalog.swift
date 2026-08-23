@@ -15,6 +15,75 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
     /// Gemini 2.5's legacy budget field has a documented minimum of 1,024.
     static let geminiLightThinkingBudget = 1_024
 
+    /// Extra output budget for models that spend part of the completion on a
+    /// reasoning pass. `max_completion_tokens` covers reasoning *and* the answer
+    /// on chat-completion endpoints, so a budget sized for the answer alone gets
+    /// eaten by thinking and the answer comes back truncated mid-JSON.
+    static let reasoningTokenHeadroom = 4_096
+
+    /// Ceiling for any budget derived here, including truncation retry growth.
+    static let maximumCompletionTokenBudget = 32_768
+
+    /// Name markers that identify a reasoning model for budgeting purposes only.
+    /// This list is deliberately broader than the transport profiles below: an
+    /// output cap that is too high costs nothing (providers bill generated
+    /// tokens, not the cap), while one that is too low truncates the response.
+    private static let reasoningNameMarkers = [
+        "thinking",
+        "reasoning",
+        "-r1",
+        "qwq",
+        "magistral",
+        "gpt-oss",
+        "glm-4.5",
+        "glm-4.6",
+        "minimax-m",
+        "seed-oss"
+    ]
+
+    /// Whether the model is expected to emit reasoning tokens that count against
+    /// the completion budget. Used to size requests, never to choose a control
+    /// field — `requestOptions` remains the only source for those.
+    static func emitsReasoningTokens(
+        modelName: String,
+        engine: AIEngineType,
+        baseURL: String? = nil
+    ) -> Bool {
+        if profile(modelName: modelName, engine: engine, baseURL: baseURL).support != .unsupported {
+            return true
+        }
+
+        let model = normalized(modelName)
+        return reasoningNameMarkers.contains { model.contains($0) }
+    }
+
+    /// The completion budget to request for `configured` tokens of answer.
+    /// Non-reasoning models are left exactly as the user configured them.
+    static func completionTokenBudget(
+        configured: Int,
+        modelName: String,
+        engine: AIEngineType,
+        baseURL: String? = nil,
+        level: SummaryThinkingLevel = .current
+    ) -> Int {
+        guard configured > 0 else { return configured }
+        guard emitsReasoningTokens(modelName: modelName, engine: engine, baseURL: baseURL) else {
+            return configured
+        }
+
+        // A model told to think within an explicit budget needs that much room
+        // plus a small margin; everything else gets the generic headroom.
+        let options = requestOptions(
+            modelName: modelName,
+            engine: engine,
+            baseURL: baseURL,
+            level: level
+        )
+        let headroom = options.thinkingBudget.map { $0 + 512 } ?? reasoningTokenHeadroom
+
+        return min(configured + headroom, maximumCompletionTokenBudget)
+    }
+
     static func profile( // swiftlint:disable:this cyclomatic_complexity
         modelName: String,
         engine: AIEngineType? = nil,

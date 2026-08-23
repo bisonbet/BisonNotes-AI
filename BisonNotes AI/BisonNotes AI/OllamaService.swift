@@ -307,6 +307,13 @@ struct OllamaGenerateResponse: Codable, Sendable {
     let thinking: String?
     let done: Bool
     let done_reason: String?
+
+    /// Ollama stopped at `num_predict` rather than at the end of the answer, so
+    /// `response` is cut off part-way through. A thinking pass spends the same
+    /// budget, which is what usually exhausts it.
+    var wasTruncatedByTokenLimit: Bool {
+        done_reason == "length"
+    }
     let context: [Int]?
     let total_duration: Int64?
     let load_duration: Int64?
@@ -2525,80 +2532,36 @@ class OllamaService: ObservableObject {
         tools: [OllamaTool],
         useThinking: Bool = false
     ) async throws -> OllamaGenerateResponse {
-        guard isConnected else {
-            throw OllamaError.notConnected
-        }
-
-        try validateEndpoint()
-
-        let url = URL(string: "\(config.baseURL)/api/generate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let generateRequest = OllamaGenerateRequest(
-            model: model,
-            prompt: prompt,
-            stream: false,
-            format: nil,  // Don't force JSON format when using tools
-            options: OllamaOptions(
-                num_predict: config.maxTokens,
-                temperature: 0.1,  // Lower temperature for more consistent tool calling
-                top_p: 0.8,
-                top_k: 20
-            ),
-            tools: tools,
-            think: thinkingValue(for: model, useThinking: useThinking)
-        )
-
-        request.httpBody = try generateRequest.toJSONData()
-
-        Self.recordRequest()
         AppLog.shared.networking("OllamaService: Sending tool calling request with \(tools.count) tools", level: .debug)
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            AppLog.shared.networking("OllamaService: Tool calling network request failed: \(error.localizedDescription)", level: .error)
-            throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
+        let generateResponse = try await sendGenerateRequest(
+            model: model,
+            budget: outputTokenBudget(for: model),
+            label: "tool calling"
+        ) { budget in
+            OllamaGenerateRequest(
+                model: model,
+                prompt: prompt,
+                stream: false,
+                format: nil,  // Don't force JSON format when using tools
+                options: OllamaOptions(
+                    num_predict: budget,
+                    temperature: 0.1,  // Lower temperature for more consistent tool calling
+                    top_p: 0.8,
+                    top_k: 20
+                ),
+                tools: tools,
+                think: self.thinkingValue(for: model, useThinking: useThinking)
+            )
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            AppLog.shared.networking("OllamaService: Invalid HTTP response type for tool calling", level: .error)
-            throw OllamaError.serverError("Invalid HTTP response")
+        if let toolCalls = generateResponse.tool_calls {
+            AppLog.shared.networking("OllamaService: Received \(toolCalls.count) tool calls", level: .debug)
+        } else {
+            AppLog.shared.networking("OllamaService: No tool calls in response")
         }
 
-        guard httpResponse.statusCode == 200 else {
-            AppLog.shared.networking("OllamaService: HTTP error for tool calling - Status: \(httpResponse.statusCode)", level: .error)
-            throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
-        }
-
-        // Check if we have valid data first
-        guard !data.isEmpty else {
-            AppLog.shared.networking("OllamaService: Received empty tool calling response data", level: .error)
-            throw OllamaError.parsingError("Received empty response from server")
-        }
-
-        AppLog.shared.networking("OllamaService: Received tool calling response data of \(data.count) bytes", level: .debug)
-
-        do {
-            let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-
-            AppLog.shared.networking("OllamaService: Successfully decoded tool calling response")
-            if let toolCalls = generateResponse.tool_calls {
-                AppLog.shared.networking("OllamaService: Received \(toolCalls.count) tool calls", level: .debug)
-            } else {
-                AppLog.shared.networking("OllamaService: No tool calls in response")
-            }
-
-            return generateResponse
-        } catch {
-            AppLog.shared.networking("OllamaService: Tool calling JSON parsing failed: \(error.localizedDescription)", level: .error)
-            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
-
-            throw OllamaError.parsingError("Failed to parse tool calling JSON response: \(error.localizedDescription)")
-        }
+        return generateResponse
     }
 
     private func generateResponse(
@@ -2607,91 +2570,39 @@ class OllamaService: ObservableObject {
         cleanForJSON: Bool = true,
         useThinking: Bool = false
     ) async throws -> String {
-        guard isConnected else {
-            throw OllamaError.notConnected
-        }
-
-        try validateEndpoint()
-
-        let url = URL(string: "\(config.baseURL)/api/generate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let generateRequest = OllamaGenerateRequest(
+        let generateResponse = try await sendGenerateRequest(
             model: model,
-            prompt: prompt,
-            stream: false,
-            format: cleanForJSON ? .json : nil,
-            options: OllamaOptions(
-                num_predict: config.maxTokens,
-                temperature: cleanForJSON ? 0.0 : 0.3,  // Use 0.0 for deterministic structured outputs
-                top_p: cleanForJSON ? 0.8 : 0.95,       // Higher top_p for more diverse summaries
-                top_k: cleanForJSON ? 20 : 50           // More token choices for summaries
-            ),
-            tools: nil,  // No tools for traditional prompting
-            think: thinkingValue(for: model, useThinking: useThinking)
-        )
-
-        request.httpBody = try generateRequest.toJSONData()
-
-        Self.recordRequest()
-
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            AppLog.shared.networking("OllamaService: Network request failed: \(error.localizedDescription)", level: .error)
-            throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
+            budget: outputTokenBudget(for: model),
+            label: "generate"
+        ) { budget in
+            OllamaGenerateRequest(
+                model: model,
+                prompt: prompt,
+                stream: false,
+                format: cleanForJSON ? .json : nil,
+                options: OllamaOptions(
+                    num_predict: budget,
+                    temperature: cleanForJSON ? 0.0 : 0.3,  // Use 0.0 for deterministic structured outputs
+                    top_p: cleanForJSON ? 0.8 : 0.95,       // Higher top_p for more diverse summaries
+                    top_k: cleanForJSON ? 20 : 50           // More token choices for summaries
+                ),
+                tools: nil,  // No tools for traditional prompting
+                think: self.thinkingValue(for: model, useThinking: useThinking)
+            )
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            AppLog.shared.networking("OllamaService: Invalid HTTP response type", level: .error)
-            throw OllamaError.serverError("Invalid HTTP response")
+        if PerformanceOptimizer.shouldLogEngineInitialization() {
+            AppLog.shared.networking("OllamaService: Raw response content length: \(generateResponse.response.count) characters", level: .debug)
         }
 
-        guard httpResponse.statusCode == 200 else {
-            AppLog.shared.networking("OllamaService: HTTP error - Status: \(httpResponse.statusCode)", level: .error)
-            throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
-        }
+        // Clean up the response based on the expected format
+        let cleanedResponse = cleanForJSON
+            ? cleanOllamaResponse(generateResponse.response)
+            : cleanSummaryResponse(generateResponse.response)
 
-        // Check if we have valid data first
-        guard !data.isEmpty else {
-            AppLog.shared.networking("OllamaService: Received empty response data", level: .error)
-            throw OllamaError.parsingError("Received empty response from server")
-        }
+        AppLog.shared.networking("OllamaService: Cleaned response length: \(cleanedResponse.count) characters", level: .debug)
 
-        AppLog.shared.networking("OllamaService: Received response data of \(data.count) bytes", level: .debug)
-
-        do {
-            let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-
-            AppLog.shared.networking("OllamaService: Successfully decoded Ollama response")
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.networking("OllamaService: Raw response content length: \(generateResponse.response.count) characters", level: .debug)
-            }
-            AppLog.shared.networking("OllamaService: Response done: \(generateResponse.done)", level: .debug)
-
-            // Clean up the response based on the expected format
-            let cleanedResponse = cleanForJSON ? cleanOllamaResponse(generateResponse.response) : cleanSummaryResponse(generateResponse.response)
-
-            AppLog.shared.networking("OllamaService: Cleaned response length: \(cleanedResponse.count) characters", level: .debug)
-
-            return cleanedResponse
-        } catch {
-            AppLog.shared.networking("OllamaService: JSON parsing failed: \(error.localizedDescription)", level: .error)
-            AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
-
-            // Try to decode raw response for better error diagnostics
-            if let rawResponse = String(data: data, encoding: .utf8) {
-                // Check if this looks like a streaming response that wasn't properly handled
-                if rawResponse.contains("\"done\":false") {
-                    AppLog.shared.networking("OllamaService: Detected streaming response - this might be the issue")
-                }
-            }
-
-            throw OllamaError.parsingError("Failed to parse JSON response: \(error.localizedDescription). Response length: \(data.count) bytes")
-        }
+        return cleanedResponse
     }
 
     // MARK: - Structured Output Generation
@@ -2702,6 +2613,97 @@ class OllamaService: ObservableObject {
         schema: [String: Any],
         useThinking: Bool = false
     ) async throws -> String {
+        let generateResponse = try await sendGenerateRequest(
+            model: model,
+            // Structured output carries the whole summary payload, so it never
+            // runs below this floor even when the user configured less.
+            budget: outputTokenBudget(for: model, atLeast: Self.structuredOutputFloor),
+            label: "structured output"
+        ) { budget in
+            OllamaGenerateRequest(
+                model: model,
+                prompt: prompt,
+                stream: false,
+                format: .schema(schema),
+                options: OllamaOptions(
+                    num_predict: budget,
+                    temperature: 0.1,  // Slightly higher temperature for more natural, detailed responses
+                    top_p: 0.9,        // Higher top_p for more diverse, comprehensive content
+                    top_k: 40          // More choices for richer responses
+                ),
+                tools: nil,  // No tools when using structured outputs
+                think: self.thinkingValue(for: model, useThinking: useThinking)
+            )
+        }
+
+        AppLog.shared.networking("OllamaService: Structured response received, length: \(generateResponse.response.count) characters", level: .debug)
+
+        // For structured outputs, we expect valid JSON without need for cleaning
+        return generateResponse.response
+    }
+
+    // MARK: - Generate Transport
+
+    /// Smallest output budget a structured-output call is issued with.
+    private static let structuredOutputFloor = 4_096
+
+    /// The output budget for a model. `num_predict` caps the thinking pass and
+    /// the answer together, so reasoning models need headroom above the
+    /// configured answer size or the payload comes back cut off mid-JSON.
+    private func outputTokenBudget(for model: String, atLeast minimum: Int = 0) -> Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: max(config.maxTokens, minimum),
+            modelName: model,
+            engine: .localLLM
+        )
+    }
+
+    /// Sends a generate request and grows the output budget once when Ollama
+    /// stopped at `num_predict` instead of at the end of the answer. A truncated
+    /// payload is never returned to the parsers: partial JSON surfaces as a
+    /// malformed response, which hides the real cause from the user.
+    private func sendGenerateRequest(
+        model: String,
+        budget: Int,
+        label: String,
+        makeRequest: (Int) -> OllamaGenerateRequest
+    ) async throws -> OllamaGenerateResponse {
+        var attemptedBudget = budget
+        var generateResponse = try await performGenerate(makeRequest(attemptedBudget), label: label)
+
+        if generateResponse.wasTruncatedByTokenLimit {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                AppLog.shared.networking(
+                    "OllamaService: \(label) stopped at the \(attemptedBudget)-token num_predict limit; "
+                        + "retrying once with \(grownBudget)",
+                    level: .error
+                )
+
+                attemptedBudget = grownBudget
+                generateResponse = try await performGenerate(makeRequest(attemptedBudget), label: label)
+            }
+        }
+
+        guard !generateResponse.wasTruncatedByTokenLimit else {
+            throw SummarizationError.responseTruncated(
+                service: "Ollama (\(model))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: nil
+            )
+        }
+
+        return generateResponse
+    }
+
+    private func performGenerate(
+        _ generateRequest: OllamaGenerateRequest,
+        label: String
+    ) async throws -> OllamaGenerateResponse {
         guard isConnected else {
             throw OllamaError.notConnected
         }
@@ -2712,22 +2714,6 @@ class OllamaService: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let generateRequest = OllamaGenerateRequest(
-            model: model,
-            prompt: prompt,
-            stream: false,
-            format: .schema(schema),
-            options: OllamaOptions(
-                num_predict: max(config.maxTokens, 4096),  // Use at least 4096 tokens for comprehensive responses
-                temperature: 0.1,  // Slightly higher temperature for more natural, detailed responses
-                top_p: 0.9,        // Higher top_p for more diverse, comprehensive content
-                top_k: 40          // More choices for richer responses
-            ),
-            tools: nil,  // No tools when using structured outputs
-            think: thinkingValue(for: model, useThinking: useThinking)
-        )
-
         request.httpBody = try generateRequest.toJSONData()
 
         Self.recordRequest()
@@ -2736,42 +2722,47 @@ class OllamaService: ObservableObject {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
-            AppLog.shared.networking("OllamaService: Structured output network request failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: \(label) network request failed: \(error.localizedDescription)", level: .error)
             throw OllamaError.serverError("Network request failed: \(error.localizedDescription)")
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            AppLog.shared.networking("OllamaService: Invalid HTTP response type for structured output", level: .error)
+            AppLog.shared.networking("OllamaService: Invalid HTTP response type for \(label)", level: .error)
             throw OllamaError.serverError("Invalid HTTP response")
         }
 
         guard httpResponse.statusCode == 200 else {
-            AppLog.shared.networking("OllamaService: HTTP error for structured output - Status: \(httpResponse.statusCode)", level: .error)
+            AppLog.shared.networking("OllamaService: HTTP error for \(label) - Status: \(httpResponse.statusCode)", level: .error)
             throw OllamaError.serverError("Server returned status code \(httpResponse.statusCode)")
         }
 
         guard !data.isEmpty else {
-            AppLog.shared.networking("OllamaService: Received empty structured response data", level: .error)
+            AppLog.shared.networking("OllamaService: Received empty \(label) response data", level: .error)
             throw OllamaError.parsingError("Received empty response from server")
         }
 
-        AppLog.shared.networking("OllamaService: Received structured response data of \(data.count) bytes", level: .debug)
+        AppLog.shared.networking("OllamaService: Received \(label) response data of \(data.count) bytes", level: .debug)
 
         do {
             let generateResponse = try JSONDecoder().decode(OllamaGenerateResponse.self, from: data)
-
-            AppLog.shared.networking("OllamaService: Successfully decoded structured Ollama response")
-            AppLog.shared.networking("OllamaService: Structured response received, length: \(generateResponse.response.count) characters", level: .debug)
-            AppLog.shared.networking("OllamaService: Response done: \(generateResponse.done)", level: .debug)
-
-            // For structured outputs, we expect valid JSON without need for cleaning
-            return generateResponse.response
-
+            AppLog.shared.networking(
+                "OllamaService: \(label) done: \(generateResponse.done), reason: \(generateResponse.done_reason ?? "unreported")",
+                level: .debug
+            )
+            return generateResponse
         } catch {
-            AppLog.shared.networking("OllamaService: Structured output JSON parsing failed: \(error.localizedDescription)", level: .error)
+            AppLog.shared.networking("OllamaService: \(label) JSON parsing failed: \(error.localizedDescription)", level: .error)
             AppLog.shared.networking("OllamaService: Response data length: \(data.count) bytes", level: .error)
 
-            throw OllamaError.parsingError("Failed to parse structured JSON response: \(error.localizedDescription)")
+            // A streamed reply decoded as one object is a common misconfiguration;
+            // name it rather than blaming the JSON.
+            if let rawResponse = String(data: data, encoding: .utf8), rawResponse.contains("\"done\":false") {
+                AppLog.shared.networking("OllamaService: Detected streaming response - this might be the issue", level: .error)
+            }
+
+            throw OllamaError.parsingError(
+                "Failed to parse \(label) JSON response: \(error.localizedDescription). Response length: \(data.count) bytes"
+            )
         }
     }
 

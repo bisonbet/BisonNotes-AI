@@ -1172,6 +1172,11 @@ class SummaryManager: ObservableObject {
             if let sumError = error as? SummarizationError, case .contentSafetyBlock = sumError {
                 throw sumError
             }
+            // Truncation is deterministic and the engine already retried with a
+            // larger output budget; another pass would fail the same way.
+            if let sumError = error as? SummarizationError, case .responseTruncated = sumError {
+                throw sumError
+            }
             // Check for guardrail violations that weren't caught at the engine level
             let errorDesc = String(describing: error)
             if errorDesc.contains("guardrailViolation") || errorDesc.contains("unsafe content") {

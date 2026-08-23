@@ -104,6 +104,16 @@ New AI engines should follow the existing pattern:
 2. Add settings view (e.g., `NewAISettingsView.swift`)
 3. Integrate with `EnhancedTranscriptionManager` or appropriate manager
 4. Add engine monitoring and error handling
+5. Size its output budget and detect truncation as described below
+
+### Reasoning Output Budgets
+
+Every provider's output cap covers the model's **reasoning pass and its answer together**. A budget sized for the answer alone gets eaten by thinking, the payload arrives cut off mid-JSON, and the parser reports a malformed structured response — a message about the symptom, not the cause. `SummaryThinkingModelCatalog` owns the rules; `SummaryThinkingTests` covers them. Add new engines there, not with inline token math in the service.
+
+- **Ask for reasoning + answer, never just the answer.** `completionTokenBudget(configured:modelName:engine:baseURL:)` returns the user's configured Max Tokens plus headroom for models that reason, and the configured value unchanged for models that do not. Every request-building site calls it: `max_completion_tokens` (Compatible API), `max_tokens` (Mistral), `maxOutputTokens` (Gemini), `num_predict` (Ollama), `GenerateParameters.maxTokens` (MLX Swift — except when Light thinking is on, where `MLXSwiftEngine` applies its own `thinkingTokenAllowance` for the budget it explicitly requested).
+- **Headroom follows the model, not the Light toggle.** A thinking model reasons whether or not `SummaryThinkingLevel` asked it to, so `emitsReasoningTokens` gates the headroom, and it deliberately matches more names than `profile(...)` does. A cap that is too high costs nothing — providers bill generated tokens, not the cap — while one that is too low truncates the answer. Only `requestOptions` may decide which control *field* to send.
+- **Read the provider's own truncation signal; never infer it from the payload.** `finish_reason` of `length`/`max_tokens` (Compatible API, Mistral), `finishReason` of `MAX_TOKENS` (Gemini), `done_reason` of `length` (Ollama). Each is exposed as `wasTruncatedByTokenLimit` next to its response model.
+- **Retry once with a doubled budget, then fail loudly.** Reasoning length is unpredictable, so a single growth pass (capped at `maximumCompletionTokenBudget`) recovers the common case. What remains truncated throws `SummarizationError.responseTruncated`, which names the limit and the reasoning cost. Truncated content never reaches a parser. `SummaryManager` deliberately skips its blind retry for this error — the engine already grew the budget, so another pass would fail identically.
 
 ### Native macOS Build Notes
 
@@ -147,6 +157,7 @@ For AI-generated content display:
 - `AudioFileChunkingService.swift`: Shared ASR reassembly before post-ASR enrichment
 - `BackgroundProcessingManager.swift`: Background job management
 - `FutureAIEngines.swift`: AI engine implementations
+- `Models/SummaryThinkingModelCatalog.swift`: Model thinking capabilities and reasoning output budgets
 - `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
 

@@ -148,6 +148,162 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertNil(object["chat_template_kwargs"])
     }
 
+    // MARK: - Reasoning Output Budget
+
+    func testNonReasoningModelKeepsTheConfiguredOutputBudget() {
+        XCTAssertFalse(
+            SummaryThinkingModelCatalog.emitsReasoningTokens(
+                modelName: "llama-3.3-70b-instruct",
+                engine: .openAICompatible
+            )
+        )
+        XCTAssertEqual(
+            SummaryThinkingModelCatalog.completionTokenBudget(
+                configured: 4_096,
+                modelName: "llama-3.3-70b-instruct",
+                engine: .openAICompatible
+            ),
+            4_096
+        )
+    }
+
+    func testThinkingModelGetsHeadroomAboveTheConfiguredBudget() {
+        let budget = SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: 4_096,
+            modelName: "aurora/ornith-1.5-35b-a3b-thinking-gguf",
+            engine: .openAICompatible
+        )
+
+        XCTAssertEqual(budget, 4_096 + SummaryThinkingModelCatalog.reasoningTokenHeadroom)
+    }
+
+    func testBudgetHeadroomCoversReasoningModelsTheTransportCatalogDoesNotControl() {
+        // deepseek-r1 has no controllable transport on a compatible endpoint, but
+        // it still spends completion tokens thinking.
+        XCTAssertEqual(
+            SummaryThinkingModelCatalog.profile(
+                modelName: "deepseek-r1-distill-qwen-32b",
+                engine: .openAICompatible
+            ).support,
+            .unsupported
+        )
+        XCTAssertTrue(
+            SummaryThinkingModelCatalog.emitsReasoningTokens(
+                modelName: "deepseek-r1-distill-qwen-32b",
+                engine: .openAICompatible
+            )
+        )
+    }
+
+    func testDerivedBudgetStaysWithinTheCatalogCeiling() {
+        let budget = SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: SummaryThinkingModelCatalog.maximumCompletionTokenBudget,
+            modelName: "gpt-5-thinking",
+            engine: .openAICompatible
+        )
+
+        XCTAssertEqual(budget, SummaryThinkingModelCatalog.maximumCompletionTokenBudget)
+    }
+
+    func testTruncatedChoiceIsDetectedFromFinishReason() throws {
+        let json = """
+        {"index":0,"message":{"role":"assistant","content":"cut off mid-"},"finish_reason":"length"}
+        """
+        let choice = try JSONDecoder().decode(Choice.self, from: Data(json.utf8))
+        XCTAssertTrue(choice.wasTruncatedByTokenLimit)
+
+        let completed = """
+        {"index":0,"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}
+        """
+        XCTAssertFalse(
+            try JSONDecoder().decode(Choice.self, from: Data(completed.utf8)).wasTruncatedByTokenLimit
+        )
+    }
+
+    func testUsageReportsReasoningTokensWhenTheProviderSendsThem() throws {
+        let json = """
+        {"prompt_tokens":5735,"completion_tokens":4096,"total_tokens":9831,
+         "completion_tokens_details":{"reasoning_tokens":3110}}
+        """
+        let usage = try JSONDecoder().decode(Usage.self, from: Data(json.utf8))
+        XCTAssertEqual(usage.reasoningTokens, 3110)
+
+        let withoutDetails = """
+        {"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}
+        """
+        XCTAssertNil(try JSONDecoder().decode(Usage.self, from: Data(withoutDetails.utf8)).reasoningTokens)
+    }
+
+    func testTruncationErrorNamesTheLimitAndTheReasoningCost() {
+        let error = SummarizationError.responseTruncated(
+            service: "Compatible API (ornith-thinking)",
+            tokenLimit: 8_192,
+            reasoningTokens: 3_110
+        )
+
+        let description = error.errorDescription ?? ""
+        XCTAssertTrue(description.contains("8192"), description)
+        XCTAssertTrue(description.contains("3110"), description)
+        XCTAssertTrue(error.recoverySuggestion?.contains("Max Tokens") == true)
+    }
+
+    func testEveryEngineGivesItsReasoningModelsHeadroom() {
+        let cases: [(String, AIEngineType)] = [
+            ("aurora/ornith-1.5-35b-a3b-thinking-gguf", .openAICompatible),
+            ("magistral-medium-latest", .mistralAI),
+            ("gemini-3-flash-preview", .googleAIStudio),
+            ("qwen3.5:8b", .localLLM),
+            ("qwen3.5-4b", .mlxSwift)
+        ]
+
+        for (model, engine) in cases {
+            let budget = SummaryThinkingModelCatalog.completionTokenBudget(
+                configured: 4_096,
+                modelName: model,
+                engine: engine
+            )
+            XCTAssertGreaterThan(budget, 4_096, "\(model) on \(engine.rawValue) got no reasoning headroom")
+        }
+    }
+
+    func testOllamaResponseReportsTruncationFromDoneReason() throws {
+        let truncated = """
+        {"model":"qwen3.5:8b","created_at":"2026-08-22T21:19:17Z","response":"{\\"summary\\": \\"cut",
+         "done":true,"done_reason":"length"}
+        """
+        let decoded = try JSONDecoder().decode(OllamaGenerateResponse.self, from: Data(truncated.utf8))
+        XCTAssertTrue(decoded.wasTruncatedByTokenLimit)
+
+        let completed = """
+        {"model":"qwen3.5:8b","created_at":"2026-08-22T21:19:17Z","response":"done",
+         "done":true,"done_reason":"stop"}
+        """
+        XCTAssertFalse(
+            try JSONDecoder().decode(OllamaGenerateResponse.self, from: Data(completed.utf8)).wasTruncatedByTokenLimit
+        )
+    }
+
+    func testGeminiCandidateReportsTruncationFromFinishReason() throws {
+        let truncated = """
+        {"content":{"parts":[{"text":"{\\"summary\\": \\"cut"}]},"finishReason":"MAX_TOKENS"}
+        """
+        let candidate = try JSONDecoder().decode(
+            GoogleAIStudioService.Candidate.self,
+            from: Data(truncated.utf8)
+        )
+        XCTAssertTrue(candidate.wasTruncatedByTokenLimit)
+
+        let completed = """
+        {"content":{"parts":[{"text":"done"}]},"finishReason":"STOP"}
+        """
+        XCTAssertFalse(
+            try JSONDecoder().decode(
+                GoogleAIStudioService.Candidate.self,
+                from: Data(completed.utf8)
+            ).wasTruncatedByTokenLimit
+        )
+    }
+
     func testReasoningBlocksAreNotReturnedAsSummaryContent() throws {
         let response = """
         {"role":"assistant","content":[

@@ -780,16 +780,30 @@ private actor MLXSwiftService {
         return MLXSwiftSettingsKeys.defaultMaxTokens
     }
 
+    /// The generation cap covers the hidden reasoning pass as well as the final
+    /// output. A model that reasons does so whether or not Light thinking asked
+    /// it to, so the allowance follows the model's capability, not the toggle:
+    /// sizing the cap for the answer alone truncates the summary mid-sentence.
     private var configuredGenerationTokenBudget: Int {
-        let reasoningAllowance = isThinkingModeEnabled ? Self.thinkingTokenAllowance : 0
-        return configuredMaxTokens + reasoningAllowance
+        if isThinkingModeEnabled {
+            return configuredMaxTokens + Self.thinkingTokenAllowance
+        }
+
+        return SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: configuredMaxTokens,
+            modelName: configuredModelId,
+            engine: .mlxSwift
+        )
+    }
+
+    private var configuredModelId: String {
+        UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
+            ?? MLXSwiftSettingsKeys.defaultModelId
     }
 
     private var isThinkingModeEnabled: Bool {
         guard SummaryThinkingLevel.current == .light else { return false }
-        let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
-            ?? MLXSwiftSettingsKeys.defaultModelId
-        let profile = SummaryThinkingModelCatalog.profile(modelName: modelId, engine: .mlxSwift)
+        let profile = SummaryThinkingModelCatalog.profile(modelName: configuredModelId, engine: .mlxSwift)
         guard case .controllable(let transport) = profile.support else { return false }
         return transport == .mlx
     }

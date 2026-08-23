@@ -53,18 +53,14 @@ actor OpenAICompatibleService {
             model: config.effectiveModelId,
             messages: messages,
             temperature: effectiveTemperature(config.temperature, comedyMode: comedyMode),
-            maxCompletionTokens: config.maxTokens,
+            maxCompletionTokens: completionTokenBudget,
             reasoningEffort: reasoningEffort(),
             enableThinking: thinkingOptions.enableThinking,
             thinkingBudget: thinkingOptions.thinkingBudget,
             chatTemplateKwargs: thinkingOptions.chatTemplateKwargs
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: choice.message.content)
     }
@@ -83,18 +79,14 @@ actor OpenAICompatibleService {
             model: config.effectiveModelId,
             messages: messages,
             temperature: effectiveTemperature(0.1),
-            maxCompletionTokens: 1024,
+            maxCompletionTokens: metadataTokenBudget,
             reasoningEffort: nil,
             enableThinking: nil,
             thinkingBudget: nil,
             chatTemplateKwargs: nil
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return try ChatCompletionResponseParser.parseTasksFromJSON(choice.message.content)
     }
@@ -113,18 +105,14 @@ actor OpenAICompatibleService {
             model: config.effectiveModelId,
             messages: messages,
             temperature: effectiveTemperature(0.1),
-            maxCompletionTokens: 1024,
+            maxCompletionTokens: metadataTokenBudget,
             reasoningEffort: nil,
             enableThinking: nil,
             thinkingBudget: nil,
             chatTemplateKwargs: nil
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return try ChatCompletionResponseParser.parseRemindersFromJSON(choice.message.content)
     }
@@ -170,7 +158,7 @@ actor OpenAICompatibleService {
             model: config.effectiveModelId,
             messages: messages,
             temperature: completionTemperature,
-            maxCompletionTokens: config.maxTokens,
+            maxCompletionTokens: completionTokenBudget,
             responseFormat: nil,
             reasoningEffort: reasoningEffort(),
             enableThinking: thinkingOptions.enableThinking,
@@ -180,11 +168,7 @@ actor OpenAICompatibleService {
 
         AppLog.shared.networking("Provider: \(config.baseURL), format: \(cachedMessageFormat.displayName), response_format: none", level: .debug)
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         // Parse the JSON response with flexible envelope handling while keeping
         // the complete metadata contract strict.
@@ -339,6 +323,78 @@ actor OpenAICompatibleService {
             engine: .openAICompatible,
             baseURL: config.baseURL
         )
+    }
+
+    /// Answer budget for metadata-only calls. Extraction needs far less room
+    /// than a summary, but a reasoning model still thinks before answering.
+    private static let metadataAnswerTokens = 1_024
+
+    /// The output budget to request for a summary. The user's Max Tokens setting
+    /// sizes the answer; reasoning models get headroom on top of it because
+    /// `max_completion_tokens` covers the thinking pass as well.
+    private var completionTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: config.maxTokens,
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
+    }
+
+    private var metadataTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: Self.metadataAnswerTokens,
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
+    }
+
+    /// Sends a request and returns the first choice, growing the output budget
+    /// once when the provider stopped at the limit instead of at the end of the
+    /// answer. A truncated response is never handed to the parsers: partial JSON
+    /// surfaces as a malformed structured response, which hides the real cause.
+    private func requestCompletion(_ request: ChatCompletionRequest) async throws -> Choice {
+        var attemptedBudget = request.maxCompletionTokens ?? config.maxTokens
+        var response = try await makeAPICall(request: request)
+        var choice = try firstChoice(of: response)
+
+        if choice.wasTruncatedByTokenLimit {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                let reasoningDescription = response.usage?.reasoningTokens.map { "\($0)" } ?? "unreported"
+                AppLog.shared.networking(
+                    "Compatible API stopped at the \(attemptedBudget)-token output limit "
+                        + "(reasoning tokens: \(reasoningDescription)); retrying once with \(grownBudget)",
+                    level: .error
+                )
+
+                attemptedBudget = grownBudget
+                response = try await makeAPICall(request: request.withMaxCompletionTokens(grownBudget))
+                choice = try firstChoice(of: response)
+            }
+        }
+
+        guard !choice.wasTruncatedByTokenLimit else {
+            throw SummarizationError.responseTruncated(
+                service: "Compatible API (\(config.effectiveModelId))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: response.usage?.reasoningTokens
+            )
+        }
+
+        return choice
+    }
+
+    private func firstChoice(of response: ChatCompletionResponse) throws -> Choice {
+        guard let choice = response.choices.first else {
+            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
+        }
+        return choice
     }
 
     private func makeAPICall(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {

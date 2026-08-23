@@ -597,7 +597,8 @@ struct OpenAICompatibleSettingsView: View {
                 EmptyView()
             }
 
-            Text("Maximum tokens for response. Higher values allow longer summaries but cost more.")
+            Text("Maximum tokens for the summary itself. Higher values allow longer summaries but cost more. "
+                + "Thinking models get extra room on top of this so their reasoning pass does not cut the summary short.")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }

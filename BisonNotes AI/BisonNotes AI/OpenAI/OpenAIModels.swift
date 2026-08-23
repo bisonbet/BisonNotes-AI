@@ -96,6 +96,25 @@ struct ChatCompletionRequest: Codable, Sendable {
         self.thinkingBudget = thinkingBudget
         self.chatTemplateKwargs = chatTemplateKwargs
     }
+
+    /// A copy of this request with a larger output budget, used to retry once
+    /// after a reasoning pass consumed the original budget.
+    func withMaxCompletionTokens(_ tokens: Int) -> ChatCompletionRequest {
+        ChatCompletionRequest(
+            model: model,
+            messages: messages,
+            temperature: temperature,
+            maxCompletionTokens: tokens,
+            topP: topP,
+            frequencyPenalty: frequencyPenalty,
+            presencePenalty: presencePenalty,
+            responseFormat: responseFormat,
+            reasoningEffort: reasoningEffort,
+            enableThinking: enableThinking,
+            thinkingBudget: thinkingBudget,
+            chatTemplateKwargs: chatTemplateKwargs
+        )
+    }
 }
 
 // MARK: - Message Content Models
@@ -520,17 +539,41 @@ struct Choice: Codable, Sendable {
         case message
         case finishReason = "finish_reason"
     }
+
+    /// The provider stopped at the output limit rather than at the end of the
+    /// model's answer, so `message.content` is cut off part-way through.
+    var wasTruncatedByTokenLimit: Bool {
+        finishReason == "length" || finishReason == "max_tokens"
+    }
 }
 
 struct Usage: Codable, Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let totalTokens: Int
+    let completionTokensDetails: CompletionTokensDetails?
 
     enum CodingKeys: String, CodingKey {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
+        case completionTokensDetails = "completion_tokens_details"
+    }
+
+    /// Tokens the model spent on its reasoning pass, when the provider reports
+    /// them. These count against the same completion budget as the answer.
+    var reasoningTokens: Int? {
+        completionTokensDetails?.reasoningTokens
+    }
+}
+
+/// Optional breakdown of the completion budget. Providers that do not run a
+/// reasoning pass omit this object entirely.
+struct CompletionTokensDetails: Codable, Sendable {
+    let reasoningTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case reasoningTokens = "reasoning_tokens"
     }
 }
 

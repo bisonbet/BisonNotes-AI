@@ -328,6 +328,12 @@ final class ErrorHandler: ObservableObject {
                 .tryDifferentEngine,
                 .upgradeAccount
             ]
+        case .responseTruncated:
+            return [
+                .adjustSettings,
+                .tryDifferentEngine,
+                .retryOperation
+            ]
         default:
             return [
                 .retryOperation,

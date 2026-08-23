@@ -68,16 +68,12 @@ class MistralAISummarizationService {
             model: config.model.rawValue,
             messages: messages,
             temperature: config.temperature,
-            maxTokens: config.maxTokens,
+            maxTokens: completionTokenBudget,
             responseFormat: nil,
             reasoningEffort: thinkingOptions.reasoningEffort
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: choice.message.content)
     }
@@ -95,16 +91,12 @@ class MistralAISummarizationService {
             model: config.model.rawValue,
             messages: messages,
             temperature: 0.1,
-            maxTokens: 1024,
+            maxTokens: metadataTokenBudget,
             responseFormat: nil,
             reasoningEffort: nil
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return try ChatCompletionResponseParser.parseTasksFromJSON(choice.message.content)
     }
@@ -122,16 +114,12 @@ class MistralAISummarizationService {
             model: config.model.rawValue,
             messages: messages,
             temperature: 0.1,
-            maxTokens: 1024,
+            maxTokens: metadataTokenBudget,
             responseFormat: nil,
             reasoningEffort: nil
         )
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         return try ChatCompletionResponseParser.parseRemindersFromJSON(choice.message.content)
     }
@@ -160,7 +148,7 @@ class MistralAISummarizationService {
             model: config.model.rawValue,
             messages: messages,
             temperature: config.temperature,
-            maxTokens: config.maxTokens,
+            maxTokens: completionTokenBudget,
             responseFormat: config.supportsJsonResponseFormat ? ResponseFormat.json : nil,
             reasoningEffort: thinkingOptions.reasoningEffort
         )
@@ -168,11 +156,7 @@ class MistralAISummarizationService {
         logger.debug("Mistral AI Provider: \(self.config.baseURL, privacy: .public)")
         logger.debug("Using response_format: \(self.config.supportsJsonResponseFormat ? "json_object" : "none (flexible parsing)", privacy: .public)")
 
-        let response = try await makeAPICall(request: request)
-
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
-        }
+        let choice = try await requestCompletion(request)
 
         let cleanedContent = SummaryThinkingResponseCleaner.stripDelimitedThinking(
             from: choice.message.content
@@ -188,6 +172,76 @@ class MistralAISummarizationService {
     }
 
     // MARK: - Private Helper Methods
+
+    /// Answer budget for metadata-only calls. Extraction needs far less room
+    /// than a summary, but a reasoning model still thinks before answering.
+    private static let metadataAnswerTokens = 1_024
+
+    /// The output budget to request. `max_tokens` covers the reasoning pass as
+    /// well as the answer, so reasoning models such as Magistral need headroom
+    /// above the configured answer size or the summary comes back cut off.
+    private var completionTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: config.maxTokens,
+            modelName: config.model.rawValue,
+            engine: .mistralAI,
+            baseURL: config.baseURL
+        )
+    }
+
+    private var metadataTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: Self.metadataAnswerTokens,
+            modelName: config.model.rawValue,
+            engine: .mistralAI,
+            baseURL: config.baseURL
+        )
+    }
+
+    /// Sends a request and returns the first choice, growing the output budget
+    /// once when the provider stopped at the limit instead of at the end of the
+    /// answer. A truncated response is never handed to the parsers: partial JSON
+    /// surfaces as a malformed structured response, which hides the real cause.
+    private func requestCompletion(_ request: MistralChatCompletionRequest) async throws -> Choice {
+        var attemptedBudget = request.maxTokens ?? config.maxTokens
+        var response = try await makeAPICall(request: request)
+        var choice = try firstChoice(of: response)
+
+        if choice.wasTruncatedByTokenLimit {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                let reasoningDescription = response.usage?.reasoningTokens.map { "\($0)" } ?? "unreported"
+                logger.error("""
+                    Mistral AI stopped at the \(attemptedBudget, privacy: .public)-token output limit                     (reasoning tokens: \(reasoningDescription, privacy: .public));                     retrying once with \(grownBudget, privacy: .public)
+                    """)
+
+                attemptedBudget = grownBudget
+                response = try await makeAPICall(request: request.withMaxTokens(grownBudget))
+                choice = try firstChoice(of: response)
+            }
+        }
+
+        guard !choice.wasTruncatedByTokenLimit else {
+            throw SummarizationError.responseTruncated(
+                service: "Mistral AI (\(config.model.rawValue))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: response.usage?.reasoningTokens
+            )
+        }
+
+        return choice
+    }
+
+    private func firstChoice(of response: ChatCompletionResponse) throws -> Choice {
+        guard let choice = response.choices.first else {
+            throw SummarizationError.aiServiceUnavailable(service: "Mistral AI - No response choices")
+        }
+        return choice
+    }
 
     private func makeAPICall(request: MistralChatCompletionRequest) async throws -> ChatCompletionResponse {
         guard !config.apiKey.isEmpty else {

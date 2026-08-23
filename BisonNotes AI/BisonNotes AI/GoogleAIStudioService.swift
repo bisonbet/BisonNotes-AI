@@ -21,6 +21,16 @@ actor GoogleAIStudioService {
         let maxTokens: Int
         let enabled: Bool
         let apiKey: String
+
+        /// Gemini spends part of `maxOutputTokens` on its thinking pass, so a
+        /// budget sized for the answer alone comes back cut off mid-JSON.
+        var outputTokenBudget: Int {
+            SummaryThinkingModelCatalog.completionTokenBudget(
+                configured: maxTokens,
+                modelName: selectedModel,
+                engine: .googleAIStudio
+            )
+        }
     }
 
     private func configuration() -> Configuration {
@@ -114,6 +124,13 @@ actor GoogleAIStudioService {
 
     struct Candidate: Codable, Sendable {
         let content: Content
+        let finishReason: String?
+
+        /// Gemini stopped at `maxOutputTokens` rather than at the end of its
+        /// answer, so the JSON payload is cut off part-way through.
+        var wasTruncatedByTokenLimit: Bool {
+            finishReason == "MAX_TOKENS"
+        }
     }
 
     struct SummaryResponse: Codable, Sendable {
@@ -270,7 +287,7 @@ actor GoogleAIStudioService {
             "responseMimeType": "application/json",
             "responseSchema": schemaDict,
             "temperature": configuration.temperature,
-            "maxOutputTokens": configuration.maxTokens
+            "maxOutputTokens": configuration.outputTokenBudget
         ]
         if let thinkingConfig = geminiThinkingConfig(for: configuration.selectedModel) {
             var thinkingConfigDict: [String: Any] = [:]
@@ -311,7 +328,7 @@ actor GoogleAIStudioService {
                     propertyOrdering: []
                 ),
                 temperature: configuration.temperature,
-                maxOutputTokens: configuration.maxTokens,
+                maxOutputTokens: configuration.outputTokenBudget,
                 thinkingConfig: geminiThinkingConfig(for: configuration.selectedModel)
             )
         )
@@ -401,8 +418,10 @@ actor GoogleAIStudioService {
                 logger.warning("GoogleAIStudioService: Failed to parse JSON response: \(error)")
                 logger.warning("GoogleAIStudioService: Raw response length: \(cleanedText.count) chars, starts with valid JSON: \(cleanedText.hasPrefix("{"))")
 
-                // Check if the response is truncated
-                if cleanedText.contains("\"summary\"") && !cleanedText.hasSuffix("}") {
+                // Prefer the provider's own signal; fall back to the shape of
+                // the payload for responses that omit a finish reason.
+                if candidate.wasTruncatedByTokenLimit
+                    || (cleanedText.contains("\"summary\"") && !cleanedText.hasSuffix("}")) {
                     logger.error("GoogleAIStudioService: Response appears to be truncated")
 
                     // Try to extract partial information from truncated JSON
@@ -411,7 +430,11 @@ actor GoogleAIStudioService {
                         return formatStructuredResponse(partialResponse)
                     }
 
-                    throw SummarizationError.processingFailed(reason: "Response was truncated by API")
+                    throw SummarizationError.responseTruncated(
+                        service: "Google AI Studio (\(configuration().selectedModel))",
+                        tokenLimit: configuration().outputTokenBudget,
+                        reasoningTokens: nil
+                    )
                 }
 
                 return cleanedText

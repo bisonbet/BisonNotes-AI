@@ -176,4 +176,17 @@ struct MistralChatCompletionRequest: Codable {
         self.responseFormat = responseFormat
         self.reasoningEffort = reasoningEffort
     }
+
+    /// A copy of this request with a larger output budget, used to retry once
+    /// after a reasoning pass consumed the original budget.
+    func withMaxTokens(_ tokens: Int) -> MistralChatCompletionRequest {
+        MistralChatCompletionRequest(
+            model: model,
+            messages: messages,
+            temperature: temperature,
+            maxTokens: tokens,
+            responseFormat: responseFormat,
+            reasoningEffort: reasoningEffort
+        )
+    }
 }
