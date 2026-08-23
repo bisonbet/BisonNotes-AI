@@ -394,6 +394,31 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
             timedWords: timedWords
         )
     }
+
+    // MARK: - Speaker Cap Reporting
+
+    /// The LS-EEND speaker cap is a limit of the chosen method, not a failure.
+    /// Reporting it as a generic "no labels" leaves the user with nothing to act
+    /// on, even though the other method has no cap at all.
+    func testSpeakerCapWarningNamesTheLimitAndTheWayOut() {
+        let warning = LocalSpeakerLabelWarning.experimentalSpeakerLimit(
+            maximumSpeakers: LocalDiarizationMethod.experimentalLSEEND.maximumSupportedSpeakerCount ?? 0
+        )
+        let message = warning.userVisibleMessage
+
+        XCTAssertTrue(message.contains("10"), message)
+        XCTAssertTrue(message.contains("Offline VBx"), message)
+        XCTAssertNotEqual(
+            message,
+            LocalSpeakerLabelWarning.diarizationFailed(method: .experimentalLSEEND).userVisibleMessage
+        )
+    }
+
+    func testOnlyTheExperimentalMethodCapsSpeakerCount() {
+        XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.maximumSupportedSpeakerCount, 10)
+        XCTAssertNil(LocalDiarizationMethod.offlineVBx.maximumSupportedSpeakerCount)
+    }
+
 }
 
 extension LocalDiarizationOrchestrationTests {
@@ -624,4 +649,5 @@ private actor OrchestrationFakeLocalDiarizationService: LocalDiarizationModelMan
 
 private enum FakeDiarizerError: Error, Sendable {
     case failed
+
 }

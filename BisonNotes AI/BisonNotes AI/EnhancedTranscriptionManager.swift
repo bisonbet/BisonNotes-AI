@@ -381,6 +381,19 @@ struct LocalSpeakerLabelingCoordinator {
         } catch is CancellationError {
             await modelManager.unloadModel(for: configuration.method)
             throw CancellationError()
+        } catch let error as LocalDiarizationError {
+            await modelManager.unloadModel(for: configuration.method)
+            // The speaker cap is a limit of the chosen method, not a failure, and
+            // the other method has no cap — say so rather than reporting a generic
+            // "no labels" the user cannot act on.
+            if case .unsupportedSpeakerCount(_, let maximum) = error {
+                return baseResult.with(
+                    speakerLabelWarning: .experimentalSpeakerLimit(maximumSpeakers: maximum)
+                )
+            }
+            return baseResult.with(
+                speakerLabelWarning: .diarizationFailed(method: configuration.method)
+            )
         } catch {
             await modelManager.unloadModel(for: configuration.method)
             return baseResult.with(

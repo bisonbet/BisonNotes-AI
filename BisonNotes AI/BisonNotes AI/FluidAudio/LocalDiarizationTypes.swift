@@ -254,6 +254,7 @@ public enum LocalSpeakerLabelWarning: Codable, Equatable, Sendable {
     case diarizationFailed(method: LocalDiarizationMethod)
     case cancelled
     case experimentalDurationLimit(duration: TimeInterval, maximumDuration: TimeInterval)
+    case experimentalSpeakerLimit(maximumSpeakers: Int)
 
     public var userVisibleMessage: String {
         switch self {
@@ -269,6 +270,12 @@ public enum LocalSpeakerLabelWarning: Codable, Equatable, Sendable {
             return "Transcription completed without speaker labels."
         case .cancelled:
             return "Speaker labeling was cancelled; the unlabeled transcript is retained."
+        case .experimentalSpeakerLimit(let maximumSpeakers):
+            // The duration cap already tells the user what to do; a speaker cap
+            // that only said "no labels" would leave them with no way forward,
+            // even though switching method resolves it.
+            return "Transcription completed without speaker labels. LS-EEND supports up to "
+                + "\(maximumSpeakers) speakers; try Offline VBx, which has no speaker limit."
         case .experimentalDurationLimit:
             return "Transcription completed without speaker labels. LS-EEND supports completed files up to one hour."
         }
