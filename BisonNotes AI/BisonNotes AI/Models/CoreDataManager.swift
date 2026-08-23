@@ -453,11 +453,27 @@ class CoreDataManager: ObservableObject {
                 summary.transcriptId = nil
             }
 
-            transcripts.forEach { transcript in
-                enqueueTranscriptCloudDeletion(transcript)
-                context.delete(transcript)
+            // Capture before deleting, and enqueue only after the save lands:
+            // a rollback below would otherwise leave a queued cloud removal for a
+            // transcript that still exists locally, and the next sync would delete
+            // the cloud copy and then reconcile the local row away.
+            let cloudDeletions = transcripts.compactMap { transcript -> (transcriptId: UUID, recordingId: UUID?)? in
+                guard let transcriptId = transcript.id else { return nil }
+                return (
+                    transcriptId: transcriptId,
+                    recordingId: transcript.recordingId ?? transcript.recording?.id
+                )
             }
+
+            transcripts.forEach { context.delete($0) }
             try saveContext()
+
+            for deletion in cloudDeletions {
+                SummaryManager.shared.getiCloudManager().enqueueTranscriptRemovalFromiCloud(
+                    transcriptId: deletion.transcriptId,
+                    recordingId: deletion.recordingId
+                )
+            }
             AppLog.shared.coreData("Deleted transcript with ID: \(id)")
         } catch {
             context.rollback()
@@ -1405,7 +1421,12 @@ class CoreDataManager: ObservableObject {
             // Only clean up recordings that have absolutely no content
             if hasNoURL && hasNoTranscript && hasNoSummary {
                 AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
-                enqueueRecordingCloudDeletion(recording)
+                // Deliberately local-only. A deletion marker records that the *user*
+                // deleted something, and this is automatic housekeeping. Restoring a
+                // recording-only backup with audio excluded produces exactly this
+                // shape — no URL, transcript or summary — so tombstoning here would
+                // delete a perfectly good CloudKit recording, and its audio, on every
+                // device without anyone asking.
                 context.delete(recording)
                 cleanedCount += 1
             }

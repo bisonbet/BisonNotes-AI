@@ -4072,10 +4072,25 @@ extension iCloudStorageManager {
 
                 if let recordingId, let recording = recordingsById[recordingId] {
                     entry.recording = recording
-                    recording.transcript = entry
-                    recording.transcriptId = transcriptId
-                    if recording.transcriptionStatus == nil || recording.transcriptionStatus?.isEmpty == true {
-                        recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+
+                    // `existing` is matched on transcript id, so a cloud row with a
+                    // *different* id — the other device deleted and retranscribed —
+                    // arrives with nothing to compare against and would relink the
+                    // recording to the older transcript. Arbitrate against whatever
+                    // the recording currently points at before repointing it.
+                    if Self.shouldRelinkRecordingTranscript(
+                        candidateId: transcriptId,
+                        candidateTimestamp: localTranscriptContentTimestamp(entry),
+                        linkedId: recording.transcriptId ?? recording.transcript?.id,
+                        linkedTimestamp: recording.transcript.map(localTranscriptContentTimestamp) ?? nil
+                    ) {
+                        recording.transcript = entry
+                        recording.transcriptId = transcriptId
+                        if recording.transcriptionStatus == nil || recording.transcriptionStatus?.isEmpty == true {
+                            recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+                        }
+                    } else {
+                        result.localItemsKeptAsNewer += 1
                     }
                 }
 
@@ -6247,6 +6262,29 @@ extension iCloudStorageManager {
             candidateRecordName: candidate.recordID.recordName,
             currentRecordName: current.recordID.recordName
         )
+    }
+
+    /// Whether a restored transcript should become the one the recording points at.
+    ///
+    /// The restore leg matches cloud rows to local rows by transcript id, so a row
+    /// carrying a *different* id has no local counterpart to arbitrate against and
+    /// would otherwise be linked unconditionally. That is the delete-and-retranscribe
+    /// case: one device replaced its transcript, another still holds the old backup,
+    /// and relinking would point the recording at the older text and strand the
+    /// newer row for the duplicate prune to collect.
+    ///
+    /// Same id always relinks — it is the row already in place. Otherwise the newer
+    /// content timestamp wins, and an unknown timestamp on either side defers to the
+    /// existing link rather than guessing.
+    static func shouldRelinkRecordingTranscript(
+        candidateId: UUID,
+        candidateTimestamp: Date?,
+        linkedId: UUID?,
+        linkedTimestamp: Date?
+    ) -> Bool {
+        guard let linkedId, linkedId != candidateId else { return true }
+        guard let candidateTimestamp, let linkedTimestamp else { return false }
+        return candidateTimestamp > linkedTimestamp
     }
 
     /// The cloud half of the "one row per recording" rule, kept separate from the

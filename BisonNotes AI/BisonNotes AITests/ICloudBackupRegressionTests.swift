@@ -684,4 +684,80 @@ final class ICloudBackupRegressionTests: XCTestCase {
         }
     }
 
+
+    // MARK: - Transcript Relink Arbitration
+
+    func testRelinkKeepsTheNewerTranscriptWhenTheCloudRowHasADifferentId() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let linkedId = UUID()
+
+        // The other device deleted and retranscribed, so its backup carries an
+        // older transcript under a brand-new id. Matching is by id, so there is
+        // no local counterpart and nothing to compare — the recording must keep
+        // pointing at the newer row it already has.
+        XCTAssertFalse(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: base,
+                linkedId: linkedId,
+                linkedTimestamp: base.addingTimeInterval(600)
+            )
+        )
+
+        // The mirror image: the cloud row really is newer, so it should win.
+        XCTAssertTrue(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: base.addingTimeInterval(600),
+                linkedId: linkedId,
+                linkedTimestamp: base
+            )
+        )
+    }
+
+    func testRelinkAlwaysAcceptsTheRowTheRecordingAlreadyPointsAt() {
+        let sameId = UUID()
+        XCTAssertTrue(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: sameId,
+                candidateTimestamp: nil,
+                linkedId: sameId,
+                linkedTimestamp: Date()
+            )
+        )
+    }
+
+    func testRelinkTakesTheCandidateWhenNothingIsLinkedYet() {
+        XCTAssertTrue(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: nil,
+                linkedId: nil,
+                linkedTimestamp: nil
+            )
+        )
+    }
+
+    func testRelinkDefersToTheExistingLinkWhenEitherTimestampIsUnknown() {
+        // Unlike the upload and restore rules, an unknown age here must not
+        // overwrite a working link — there is a valid transcript in place and
+        // nothing to justify swapping it out.
+        XCTAssertFalse(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: nil,
+                linkedId: UUID(),
+                linkedTimestamp: Date()
+            )
+        )
+        XCTAssertFalse(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: Date(),
+                linkedId: UUID(),
+                linkedTimestamp: nil
+            )
+        )
+    }
+
 }
