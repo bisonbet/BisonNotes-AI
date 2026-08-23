@@ -2243,9 +2243,21 @@ class BackgroundProcessingManager: ObservableObject {
             let persistedEngine = jobEntry.engine ?? AIEngineType.mlxSwift.rawValue
             let normalizedEngine = persistedEngine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
-            let engine = ["openai", "gpt-4", "gpt-3.5"].contains(normalizedEngine) || !validEngineNames.contains(persistedEngine)
-                ? (DeviceCapabilities.supportsMLX ? AIEngineType.mlxSwift.rawValue : AIEngineType.mistralAI.rawValue)
-                : persistedEngine
+            // A queued OpenAI job has a successor: startup migrates that provider's
+            // key and selection to Compatible API, so send the job there rather than
+            // to an unrelated engine that may have no model or key configured.
+            let legacyOpenAINames = ["openai", "gpt-4", "gpt-3.5"]
+            let engine: String
+            if legacyOpenAINames.contains(normalizedEngine),
+               UserDefaults.standard.bool(forKey: "enableOpenAICompatible") {
+                engine = AIEngineType.openAICompatible.rawValue
+            } else if legacyOpenAINames.contains(normalizedEngine) || !validEngineNames.contains(persistedEngine) {
+                engine = DeviceCapabilities.supportsMLX
+                    ? AIEngineType.mlxSwift.rawValue
+                    : AIEngineType.mistralAI.rawValue
+            } else {
+                engine = persistedEngine
+            }
             type = .summarization(engine: engine)
         }
 

@@ -45,9 +45,21 @@ extension String {
     func strippingMarkdown() -> String {
         var result = self
         result = result.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "__(.+?)__", with: "$1", options: .regularExpression)
+        // CommonMark does not treat an underscore inside a word as emphasis, so
+        // these require a non-word character on both sides. Without that,
+        // get_user_name loses its underscores and reads as getusername — and
+        // transcripts of technical discussions are full of such identifiers.
+        result = result.replacingOccurrences(
+            of: "(?<![A-Za-z0-9_])__(.+?)__(?![A-Za-z0-9_])",
+            with: "$1",
+            options: .regularExpression
+        )
         result = result.replacingOccurrences(of: "\\*(.+?)\\*", with: "$1", options: .regularExpression)
-        result = result.replacingOccurrences(of: "_(.+?)_", with: "$1", options: .regularExpression)
+        result = result.replacingOccurrences(
+            of: "(?<![A-Za-z0-9_])_(.+?)_(?![A-Za-z0-9_])",
+            with: "$1",
+            options: .regularExpression
+        )
         result = result.replacingOccurrences(of: "`(.+?)`", with: "$1", options: .regularExpression)
         result = result.replacingOccurrences(of: "\\[(.+?)\\]\\(.+?\\)", with: "$1", options: .regularExpression)
         return result.replacingOccurrences(of: "(?m)^#{1,6}\\s*", with: "", options: .regularExpression)

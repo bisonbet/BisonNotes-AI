@@ -2312,7 +2312,19 @@ class iCloudStorageManager: ObservableObject {
             // Forget the local markers describing what is (or was) in iCloud so the next
             // backup uploads a complete fresh copy instead of a delta. Pending deletion
             // queues are dropped too: the records they targeted no longer exist.
-            resetLocalCloudSyncBookkeeping()
+            //
+            // Only once nothing failed. Records that survived an incomplete erase are
+            // still out there, and a normal sync between here and the user's retry
+            // would reconcile them against local data — while the UI has just said the
+            // erase changed nothing locally.
+            if result.failures.isEmpty {
+                resetLocalCloudSyncBookkeeping()
+            } else {
+                AppLog.shared.iCloudSync(
+                    "Kept local sync bookkeeping: \(result.failures.count) record(s) survived the erase",
+                    level: .error
+                )
+            }
 
             if result.failures.isEmpty {
                 await updateSyncStatus(.completed)
@@ -2643,8 +2655,10 @@ extension iCloudStorageManager {
         "enableOllama"
     ]
 
-    private static let platformSpecificSettingsKeys: Set<String> =
-        ollamaSettingsKeys.union(["SelectedAIEngine"])
+    // SelectedAIEngine is deliberately absent: rejecting it whenever the backup
+    // crossed platforms also dropped engines valid on both. resolveRestoredEngineSelection
+    // judges that key per engine instead.
+    private static let platformSpecificSettingsKeys: Set<String> = ollamaSettingsKeys
     private static let quarantinedBackupRecordNamesKey = "iCloudQuarantinedBackupRecordNamesV2"
     private static let quarantinedLegacySummaryRecordNamesKey = "iCloudQuarantinedLegacySummaryRecordNamesV2"
     private static let pendingDeletionMarkersKey = "iCloudPendingDeletionMarkersV1"
@@ -6264,6 +6278,39 @@ extension iCloudStorageManager {
         )
     }
 
+    /// What to do with a `SelectedAIEngine` value arriving from a settings backup.
+    enum RestoredEngineSelection: Equatable {
+        case accept
+        case replace(String)
+        case reject
+    }
+
+    /// Decides the fate of a restored engine selection.
+    ///
+    /// Rejecting the key whenever the backup came from the other platform drops
+    /// selections that are perfectly valid on both — Mistral, Gemini, Compatible
+    /// API, Apple Native — so support is judged per engine instead. Removed
+    /// providers are mapped where a successor exists: an OpenAI selection is
+    /// restored as Compatible API, which is where startup already migrates the
+    /// matching credentials, rather than being discarded alongside them.
+    static func resolveRestoredEngineSelection(_ selectedEngine: String) -> RestoredEngineSelection {
+        if LegacyLlamaMigration.isLegacyEngineIdentifier(selectedEngine) {
+            return .reject
+        }
+
+        // The removed cloud provider whose configuration survives under a new name.
+        if selectedEngine.caseInsensitiveCompare("OpenAI") == .orderedSame {
+            return .replace(AIEngineType.openAICompatible.rawValue)
+        }
+
+        guard let engine = AIEngineType(rawValue: selectedEngine) else {
+            // AWS Bedrock and anything else this build no longer knows about.
+            return .reject
+        }
+
+        return engine.isSupportedOnCurrentPlatform ? .accept : .reject
+    }
+
     /// Whether a restored transcript should become the one the recording points at.
     ///
     /// The restore leg matches cloud rows to local rows by transcript id, so a row
@@ -6660,6 +6707,25 @@ extension iCloudStorageManager {
     /// Adjusts a backed-up value for the device it is being restored onto.
     /// Returns nil to skip the key entirely.
     private func restoredValue(forKey key: String, rawValue: Any) -> Any? {
+        if key == "SelectedAIEngine", let selectedEngine = rawValue as? String {
+            switch Self.resolveRestoredEngineSelection(selectedEngine) {
+            case .accept:
+                return rawValue
+            case .replace(let replacement):
+                AppLog.shared.iCloudSync(
+                    "Restored engine selection '\(selectedEngine)' as '\(replacement)'",
+                    level: .debug
+                )
+                return replacement
+            case .reject:
+                AppLog.shared.iCloudSync(
+                    "Skipped restoring unsupported engine selection '\(selectedEngine)'",
+                    level: .debug
+                )
+                return nil
+            }
+        }
+
         guard key == MLXSwiftSettingsKeys.modelId else {
             return rawValue
         }
@@ -6689,17 +6755,6 @@ extension iCloudStorageManager {
             return false
         }
 
-        if key == "SelectedAIEngine",
-           let rawValue = try? PropertyListSerialization.propertyList(
-               from: encodedValue,
-               options: [],
-               format: nil
-           ),
-           let selectedEngine = rawValue as? String,
-           LegacyLlamaMigration.isLegacyEngineIdentifier(selectedEngine) {
-            return false
-        }
-
         guard Self.platformSpecificSettingsKeys.contains(key) else {
             return true
         }
@@ -6715,21 +6770,7 @@ extension iCloudStorageManager {
             return true
         }
 
-        if Self.ollamaSettingsKeys.contains(key) {
-            return false
-        }
-
-        guard key == "SelectedAIEngine",
-              let rawValue = try? PropertyListSerialization.propertyList(
-                  from: encodedValue,
-                  options: [],
-                  format: nil
-              ),
-              let selectedEngine = rawValue as? String else {
-            return true
-        }
-
-        return selectedEngine != AIEngineType.localLLM.rawValue
+        return !Self.ollamaSettingsKeys.contains(key)
     }
 
     private func applyLegacySensitiveSetting(_ rawValue: Any, forKey key: String) -> Bool {

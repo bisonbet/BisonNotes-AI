@@ -760,4 +760,41 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+
+    // MARK: - Restored Engine Selection
+
+    func testCrossPlatformRestoreKeepsEnginesValidOnBothPlatforms() {
+        // These were dropped wholesale whenever a backup crossed between macOS
+        // and iOS, even though every one of them works on both.
+        for engine in [AIEngineType.mistralAI, .googleAIStudio, .openAICompatible, .appleNative] {
+            XCTAssertEqual(
+                iCloudStorageManager.resolveRestoredEngineSelection(engine.rawValue),
+                .accept,
+                "\(engine.rawValue) should survive a cross-platform restore"
+            )
+        }
+    }
+
+    func testRestoreMapsOpenAIOntoItsSuccessor() {
+        // Startup migrates the OpenAI key and configuration to Compatible API,
+        // so discarding the selection would strand credentials that still work.
+        XCTAssertEqual(
+            iCloudStorageManager.resolveRestoredEngineSelection("OpenAI"),
+            .replace(AIEngineType.openAICompatible.rawValue)
+        )
+    }
+
+    func testRestoreRejectsProvidersThisBuildNoLongerHas() {
+        XCTAssertEqual(iCloudStorageManager.resolveRestoredEngineSelection("AWS Bedrock"), .reject)
+        XCTAssertEqual(iCloudStorageManager.resolveRestoredEngineSelection("AWS Transcribe"), .reject)
+    }
+
+    func testRestoreRejectsAnEngineTheCurrentPlatformCannotRun() {
+        let ollama = AIEngineType.localLLM
+        XCTAssertEqual(
+            iCloudStorageManager.resolveRestoredEngineSelection(ollama.rawValue),
+            ollama.isSupportedOnCurrentPlatform ? .accept : .reject
+        )
+    }
+
 }
