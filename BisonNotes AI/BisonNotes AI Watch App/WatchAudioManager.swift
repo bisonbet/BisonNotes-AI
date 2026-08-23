@@ -66,8 +66,8 @@ class WatchAudioManager: NSObject, ObservableObject {
     }
     
     deinit {
-        // Clean up resources
-        stopAllTimers()
+        // Clean up resources. A nonisolated deinit cannot reach @MainActor state,
+        // so the repeating timer invalidates itself once self is gone instead.
         audioRecorder?.stop()
     }
     
@@ -473,8 +473,13 @@ class WatchAudioManager: NSObject, ObservableObject {
     // MARK: - Timer Management
     
     private func startRecordingTimer() {
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                // The manager was deallocated mid-recording; stop the repeating
+                // timer rather than leaving it firing on the run loop forever.
+                timer.invalidate()
+                return
+            }
             
             Task { @MainActor in
                 guard let startTime = self.recordingStartTime else { return }

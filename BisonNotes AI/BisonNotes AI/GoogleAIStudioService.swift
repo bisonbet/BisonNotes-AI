@@ -197,12 +197,6 @@ actor GoogleAIStudioService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(configuration.apiKey, forHTTPHeaderField: "x-goog-api-key")
 
-        if useStructuredOutput {
-            request.httpBody = try createStructuredRequest(prompt: prompt, configuration: configuration)
-        } else {
-            request.httpBody = try createSimpleRequest(prompt: prompt, configuration: configuration)
-        }
-
         // Create a URLSession with timeout configuration
         let config = URLSessionConfiguration.default
         let timeout = SummarizationTimeouts.current()
@@ -211,24 +205,42 @@ actor GoogleAIStudioService {
         config.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: config)
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            if (error as? URLError)?.code == .timedOut {
-                throw SummarizationError.processingTimeout
+        var attemptedBudget = configuration.outputTokenBudget
+        request.httpBody = try createRequestBody(
+            prompt: prompt,
+            configuration: configuration,
+            useStructuredOutput: useStructuredOutput,
+            maxOutputTokens: attemptedBudget
+        )
+        var data = try await performRequest(request, using: session)
+
+        if responseWasTruncated(data) {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                logger.error(
+                    "Google AI Studio stopped at the \(attemptedBudget)-token output limit; retrying once with \(grownBudget)"
+                )
+                attemptedBudget = grownBudget
+                request.httpBody = try createRequestBody(
+                    prompt: prompt,
+                    configuration: configuration,
+                    useStructuredOutput: useStructuredOutput,
+                    maxOutputTokens: attemptedBudget
+                )
+                data = try await performRequest(request, using: session)
             }
-            throw error
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            logger.error("GoogleAIStudioService: API error - \(httpResponse.statusCode): \(errorMessage)")
-            throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(errorMessage)"]))
+        guard !responseWasTruncated(data) else {
+            throw SummarizationError.responseTruncated(
+                service: "Google AI Studio (\(configuration.selectedModel))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: nil
+            )
         }
 
         if useStructuredOutput {
@@ -240,7 +252,75 @@ actor GoogleAIStudioService {
 
     // MARK: - Request Creation
 
-    private func createStructuredRequest(prompt: String, configuration: Configuration) throws -> Data {
+    private func createRequestBody(
+        prompt: String,
+        configuration: Configuration,
+        useStructuredOutput: Bool,
+        maxOutputTokens: Int
+    ) throws -> Data {
+        if useStructuredOutput {
+            return try createStructuredRequest(
+                prompt: prompt,
+                configuration: configuration,
+                maxOutputTokens: maxOutputTokens
+            )
+        }
+        return try createSimpleRequest(
+            prompt: prompt,
+            configuration: configuration,
+            maxOutputTokens: maxOutputTokens
+        )
+    }
+
+    private func performRequest(_ request: URLRequest, using session: URLSession) async throws -> Data {
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            if (error as? URLError)?.code == .timedOut {
+                throw SummarizationError.processingTimeout
+            }
+            throw error
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SummarizationError.networkError(
+                underlying: NSError(
+                    domain: "GoogleAIStudio",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid response"]
+                )
+            )
+        }
+
+        if httpResponse.statusCode != 200 {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            logger.error("GoogleAIStudioService: API error - \(httpResponse.statusCode): \(errorMessage)")
+            throw SummarizationError.networkError(
+                underlying: NSError(
+                    domain: "GoogleAIStudio",
+                    code: httpResponse.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(errorMessage)"]
+                )
+            )
+        }
+
+        return data
+    }
+
+    private func responseWasTruncated(_ data: Data) -> Bool {
+        guard let response = try? JSONDecoder().decode(GeminiResponse.self, from: data),
+              let candidate = response.candidates.first else {
+            return false
+        }
+        return candidate.wasTruncatedByTokenLimit
+    }
+
+    private func createStructuredRequest(
+        prompt: String,
+        configuration: Configuration,
+        maxOutputTokens: Int
+    ) throws -> Data {
         // Create schema manually as JSON to avoid recursive struct issues
         let schemaDict: [String: Any] = [
             "type": "object",
@@ -287,7 +367,7 @@ actor GoogleAIStudioService {
             "responseMimeType": "application/json",
             "responseSchema": schemaDict,
             "temperature": configuration.temperature,
-            "maxOutputTokens": configuration.outputTokenBudget
+            "maxOutputTokens": maxOutputTokens
         ]
         if let thinkingConfig = geminiThinkingConfig(for: configuration.selectedModel) {
             var thinkingConfigDict: [String: Any] = [:]
@@ -316,7 +396,11 @@ actor GoogleAIStudioService {
         return try JSONSerialization.data(withJSONObject: requestDict)
     }
 
-    private func createSimpleRequest(prompt: String, configuration: Configuration) throws -> Data {
+    private func createSimpleRequest(
+        prompt: String,
+        configuration: Configuration,
+        maxOutputTokens: Int
+    ) throws -> Data {
         let request = GeminiRequest(
             contents: [Content(parts: [Part(text: prompt)])],
             generationConfig: GenerationConfig(
@@ -328,7 +412,7 @@ actor GoogleAIStudioService {
                     propertyOrdering: []
                 ),
                 temperature: configuration.temperature,
-                maxOutputTokens: configuration.outputTokenBudget,
+                maxOutputTokens: maxOutputTokens,
                 thinkingConfig: geminiThinkingConfig(for: configuration.selectedModel)
             )
         )

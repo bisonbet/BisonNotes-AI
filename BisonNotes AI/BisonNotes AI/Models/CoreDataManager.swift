@@ -398,9 +398,16 @@ class CoreDataManager: ObservableObject {
 
     private func enqueueSummaryCloudDeletion(_ summary: SummaryEntry) {
         guard let summaryId = summary.id else { return }
-        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
+        enqueueSummaryCloudDeletion(
             summaryId: summaryId,
             recordingId: summary.recordingId ?? summary.recording?.id
+        )
+    }
+
+    private func enqueueSummaryCloudDeletion(summaryId: UUID, recordingId: UUID?) {
+        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            recordingId: recordingId
         )
     }
 
@@ -1028,9 +1035,16 @@ class CoreDataManager: ObservableObject {
                 recording.lastModified = Date()
             }
 
+            let cloudDeletions = summaries.compactMap { summary -> (summaryId: UUID, recordingId: UUID?)? in
+                guard let summaryId = summary.id else { return nil }
+                return (
+                    summaryId: summaryId,
+                    recordingId: summary.recordingId ?? summary.recording?.id
+                )
+            }
+
             for summary in summaries {
                 AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
-                enqueueSummaryCloudDeletion(summary)
                 context.delete(summary)
             }
 
@@ -1043,6 +1057,13 @@ class CoreDataManager: ObservableObject {
                 // Rollback the deletion
                 context.rollback()
                 throw error
+            }
+
+            for deletion in cloudDeletions {
+                enqueueSummaryCloudDeletion(
+                    summaryId: deletion.summaryId,
+                    recordingId: deletion.recordingId
+                )
             }
         } catch {
             AppLog.shared.coreData("Error deleting summary: \(error)", level: .error)
