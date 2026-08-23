@@ -412,9 +412,7 @@ struct SimpleSettingsView: View {
             }
 
             Button(action: {
-                if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/#simple-vs-advanced-settings") {
-                    openURL(url)
-                }
+                openURL(BisonNotesDocumentation.releaseGuideURL)
             }) {
                 Label {
                     Text("Learn More About Processing Options")

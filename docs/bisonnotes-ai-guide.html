@@ -1,6 +1,7 @@
 <!-- BisonNotes AI - Complete User Guide -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
+<!-- This is the current v2.3 full guide; keep the existing /bisonnotes-ai/ page on v2.2 until shipped v2.2 builds no longer depend on it. -->
 
 <style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
 
@@ -10,7 +11,7 @@
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.3 (Build 1)</span>
+  <span class="bn-ver">v2.3 (Build 14)</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -50,10 +51,10 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.3 (BUILD 1)                                   -->
+<!-- WHAT'S NEW IN V2.3 (BUILD 14)                                  -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.3 (Build 1):</strong>
+  <strong>What&rsquo;s new in v2.3 (Build 14):</strong>
   <ul>
     <li><strong>Native Mac app.</strong> BisonNotes now runs as a native macOS app with Mac windows, dedicated Settings, standard File/Edit commands and shortcuts, native export and sharing, persistent archive access, and continuity with the data used by the previous Catalyst build.</li>
     <li><strong>Mac Share extension and recording widget.</strong> Import supported audio or transcript files from the macOS Share menu, or use a small or medium desktop widget to open BisonNotes and start recording.</li>
@@ -61,6 +62,9 @@
     <li><strong>Guided meeting-audio permission.</strong> Record Meeting Audio explains the Screen &amp; System Audio Recording requirement and the quit-and-reopen step. With Live Transcription enabled, the finalized combined recording is queued for transcription.</li>
     <li><strong>Larger local Mac model.</strong> Macs with at least 16 GB RAM can select Ternary Bonsai 27B for local MLX processing.</li>
     <li><strong>More reliable on-device transcription setup.</strong> Parakeet reuses complete cached models, clears stale missing-file state, and waits for model preparation before transcription begins.</li>
+    <li><strong>Opt-in local speaker labels.</strong> Completed Parakeet recordings, imports, and transcript re-runs can be labeled locally after transcription. Offline VBx is recommended; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. Failed labeling keeps the complete unlabeled transcript.</li>
+    <li><strong>Shared summary controls.</strong> Brief, Balanced, and Detailed settings apply across the active engines. Off or Light thinking is sent only when the selected model exposes a supported control, and reasoning output is kept out of visible summaries and structured metadata.</li>
+    <li><strong>Provider migration.</strong> AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are no longer shipped. Existing selections migrate to supported replacements; Ollama is available only on native macOS, while external llama.cpp servers remain usable through Compatible API.</li>
     <li><strong>Clean local-AI output.</strong> Thinking-capable MLX models keep their reasoning internal; partial reasoning traces and preambles are removed before summaries, tasks, reminders, and suggested titles are shown.</li>
     <li><strong>Durable summary deletion.</strong> Deleting only a summary now queues removal of its live and backup iCloud records so an offline deletion can finish the next time iCloud is available.</li>
     <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
@@ -181,7 +185,7 @@
 <h2 id="bn-recording">Recording Features</h2>
 
 <h3 id="bn-mac">Native Mac App (v2.3)</h3>
-<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.3 build 1 upgrades the app instead of creating a separate empty library.</p>
+<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.3 build 14 upgrades the app instead of creating a separate empty library.</p>
 <ul>
   <li><strong>Mac-native workspace</strong> &mdash; Summaries, transcripts, players, library views, location details, and processing views can use movable and resizable windows. Settings opens in its own Mac Settings window.</li>
   <li><strong>Commands and shortcuts</strong> &mdash; Standard File and Edit menus provide import, export, navigation, and editing commands where available.</li>
@@ -196,6 +200,7 @@
   <li><strong>Mac Share extension</strong> &mdash; Send supported audio and transcript files to BisonNotes from the macOS Share menu. The Mac and iOS extensions use the same protected, authorized import handoff.</li>
   <li><strong>Desktop recording widget</strong> &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center, then select Record to open the app and begin a new audio note.</li>
   <li><strong>Focused player</strong> &mdash; The Mac app keeps one recording player window and reuses it when you open a different recording, avoiding conflicting playback controls.</li>
+  <li><strong>Unsaved-edit protection</strong> &mdash; Closing an edited transcript asks for confirmation instead of silently discarding changes.</li>
   <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. Macs with 16 GB or more RAM can select Ternary Bonsai 27B (~8.5 GB).</li>
   <li><strong>Archive and export</strong> &mdash; Security-scoped archive locations survive relaunch, and native Mac RTF/PDF export and AppKit sharing are available.</li>
 </ul>
@@ -727,13 +732,15 @@
 <h3>AI Settings</h3>
 <ul>
   <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama on native macOS, and Apple Native engines</li>
-  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
+  <li><strong>Summary Detail</strong> &mdash; Choose Brief, Balanced, or Detailed narrative output; tasks, reminders, titles, and content type remain factual metadata.</li>
+  <li><strong>Summary Thinking</strong> &mdash; Choose Off or Light. Light is applied only when the selected model has a known safe thinking control; reasoning text is not shown in the final summary.</li>
+  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, and supported model-specific controls.</li>
   <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
   <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
 </ul>
 
 <h3>Comedy Mode</h3>
-<p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick a style (e.g.&nbsp;<em>snarky</em>), and supported engines will rewrite summaries in that voice. Disable it to return to the standard, neutral summary style.</p>
+<p>On native macOS, Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick <em>Snarky</em> or <em>Funny</em>, and supported engines will rewrite only the narrative summary in that voice. Tasks, reminders, titles, and facts remain grounded in the transcript. Disable it to return to the standard, neutral summary style.</p>
 
 <!-- ============================================================ -->
 <!-- ACCESSIBILITY                                                 -->

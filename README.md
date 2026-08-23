@@ -11,7 +11,7 @@
 
 ![Swift](https://img.shields.io/badge/Swift-6.0-orange?style=for-the-badge&logo=swift)
 ![SwiftUI](https://img.shields.io/badge/SwiftUI-blue?style=for-the-badge&logo=swift)
-![Xcode](https://img.shields.io/badge/Xcode-16+-147EFB?style=for-the-badge&logo=xcode)
+![Xcode](https://img.shields.io/badge/Xcode-26.6+-147EFB?style=for-the-badge&logo=xcode)
 ![Release](https://img.shields.io/github/v/release/bisonbet/BisonNotes-AI?style=for-the-badge&color=success)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
@@ -43,15 +43,20 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 >
 > BisonNotes AI is a personal productivity app. It is **not** HIPAA-compliant and we do not provide Business Associate Agreements (BAAs). Do not use it to record or process protected health information, and review the in-app notice before enabling iCloud sync.
 
-Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.3 (Build 1) Release Guide (WordPress)](docs/bisonnotes-ai-v2.3.html) • [llama.cpp Removal Migration](docs/llama-cpp-removal-migration.md) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
+Quick links: [Full User Guide](docs/bisonnotes-ai-guide.html) • [v2.2 Release Guide (WordPress)](docs/bisonnotes-ai-v2.2.html) • [v2.3 (Build 14) Release Guide (WordPress)](docs/bisonnotes-ai-v2.3.html) • [llama.cpp Removal Migration](docs/llama-cpp-removal-migration.md) • [Accessibility Matrix](docs/accessibility-matrix.md) • [Mistral AI Free Setup](docs/mistral-free-setup.md) • [Regression Testing Regimen](docs/testing-regimen.md) • [Build & Test](#build-and-test) • [Architecture](#architecture)
 
-## v2.3 (Build 1) Highlights
+The WordPress release guides are versioned snapshots. Publish `docs/bisonnotes-ai-v2.2.html` at `/bisonnotes-ai-v2-2/` and `docs/bisonnotes-ai-v2.3.html` at `/bisonnotes-ai-v2-3/`, and keep both pages available. Leave the existing `/bisonnotes-ai/` page on the v2.2 guide, or make it a v2.2 alias, until the already-shipped 2.2 binaries no longer depend on that URL. The in-app Help link derives the page slug from the installed marketing version, so newer builds open their matching release guide.
+
+## v2.3 (Build 14) Highlights
 - The Mac app is now a native macOS app while retaining the same bundle identity, app container, Core Data store, and iCloud container used by the previous Catalyst build. It adds native windows, a dedicated Settings window, standard File/Edit commands, keyboard shortcuts, persistent archive bookmarks, AppKit sharing, and native RTF/PDF export.
 - Native macOS now includes a Share extension for importing supported audio and transcript files from the Mac Share menu, plus small and medium desktop widgets that open BisonNotes and start a new recording.
 - Native Mac recording uses selectable Core Audio inputs plus ScreenCaptureKit meeting-audio capture. It remembers the preferred microphone through temporary disconnects, monitors input-device changes, preserves microphone segments across a device recovery, validates microphone and system tracks independently, saves whichever usable track remains, and retains failed source media in Application Support for recovery.
 - Enabling Record Meeting Audio now provides a guided Screen & System Audio Recording permission flow, including the required quit-and-reopen step. If Live Transcription is enabled, the finalized meeting recording is queued for file-based transcription so the combined audio is transcribed.
 - Native macOS can run the Ternary Bonsai 27B MLX model on Macs with at least 16 GB RAM; the approximately 8.5 GB model remains excluded from iPhone and iPad.
 - On-device Parakeet setup now recovers valid cached models more reliably, reports missing model assets accurately, and waits for model preparation to finish before starting transcription.
+- Local Speaker Labels are opt-in post-processing for completed Parakeet recordings, imports, and transcript re-runs. Offline VBx is the recommended method; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. A failed label pass keeps the complete unlabeled Parakeet transcript.
+- Summary controls are shared across the active engines: Brief, Balanced, or Detailed narrative output, plus Off or Light thinking when the selected model supports a safe thinking control. Thinking output stays out of the user-visible summary and structured metadata.
+- The provider surface is streamlined: AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are removed, existing selections migrate to supported replacements, Ollama is native-macOS-only, and external llama.cpp servers remain available through Compatible API.
 - Import from web links can now bring in direct audio/video files, transcript documents, and public YouTube captions, with a guided pasted-transcript recovery flow when YouTube blocks automated caption downloads.
 - Web downloads are bounded by content type and size, use isolated sessions, validate redirects and final media before persistence, preserve server-provided filenames, and clean up temporary files when downstream import fails.
 - Share imports now wait safely when another import is already running instead of deleting staged files, and caption cleanup removes one layer of HTML encoding without changing intentionally escaped text.
@@ -144,7 +149,7 @@ The project uses Swift Package Manager for dependency management. Major dependen
 All external dependencies are resolved automatically via Swift Package Manager when building in Xcode.
 
 ## Local Dev Setup
-- Requirements: macOS with Xcode (15+ recommended) and Command Line Tools (`xcode-select --install`).
+- Requirements: macOS with Xcode 26.6+ and Command Line Tools (`xcode-select --install`).
 - Clone/fork the repo, then open: `open "BisonNotes AI/BisonNotes AI.xcodeproj"`.
 - Select the "BisonNotes AI" scheme (iOS) or the watch scheme, choose a Simulator/device, and Run/ Test.
 - Branch/PR: create a feature branch in your fork, push changes, and open a PR. Include build/test results and screenshots for UI changes.
@@ -279,7 +284,7 @@ The app supports multiple AI engines for summarization and content analysis:
 | **Apple Native** | Apple Intelligence (Foundation Models) — fully on-device | iOS 26+, iPhone 15 Pro+ |
 | **Compatible API** | Any compatible chat-completion API (Nebius, Groq, LiteLLM, or an external llama.cpp-compatible server) | API key, internet |
 | **Mistral AI** | Mistral Large (25.12), Medium (25.08), Small 4 (26.03), Medium 3.5, Magistral Medium (25.09) | API key, internet |
-| **Google AI Studio** | Gemini 3 Flash Preview (default), Gemini 3.1 Flash Lite Preview | API key, internet |
+| **Google AI Studio** | Gemini 3.7 Flash (default), Gemini 3.5 Flash Lite | API key, internet |
 | **Ollama** | Local LLM server on native macOS (recommended: qwen3:30b, llama3.2, mistral-small3.2) | Ollama server running on the Mac |
 | **On Device AI** | Default on-device summarization with MLX Swift and Ternary Bonsai models | 4 GB+ RAM, model download |
 

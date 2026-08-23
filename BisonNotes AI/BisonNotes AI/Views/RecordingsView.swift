@@ -207,9 +207,7 @@ struct RecordingsView: View {
                         Spacer()
 
                         Button(action: {
-                            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                                openURL(url)
-                            }
+                            openURL(BisonNotesDocumentation.releaseGuideURL)
                         }) {
                             Image(systemName: "questionmark.circle")
                                 .font(.title3)

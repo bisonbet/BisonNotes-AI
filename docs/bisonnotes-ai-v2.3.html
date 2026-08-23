@@ -1,13 +1,15 @@
-<!-- BisonNotes AI v2.3 (Build 1) - WordPress Release and Upgrade Guide -->
+<!-- BisonNotes AI v2.3 (Build 14) - WordPress Release and Upgrade Guide -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag on one line: WordPress auto-paragraph formatting can break multi-line CSS. -->
+<!-- Publish this snapshot at /bisonnotes-ai-v2-3/ and keep the v2.2 page available for older builds. -->
+<!-- Keep the existing /bisonnotes-ai/ page on v2.2 while shipped v2.2 builds still open it. -->
 
 <style>.bn23 *,.bn23 *::before,.bn23 *::after{box-sizing:border-box}.bn23{max-width:960px;margin:0 auto;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + .35vw,19px);line-height:1.7;color:#1a1a1a;overflow-wrap:anywhere}.entry-content>.bn23,.post-inner .bn23,.page-content .bn23,.section-inner .bn23,.wp-block-post-content .bn23,.entry-content .bn23{max-width:960px!important;width:100%!important}.entry-content>*:has(.bn23),.post-inner:has(.bn23),.section-inner:has(.bn23){max-width:none!important;width:100%!important}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none!important}.bn23 h2{font-size:1.35rem;font-weight:750;margin:2.2rem 0 .75rem;padding-bottom:.35rem;border-bottom:2px solid #c0392b;color:#111}.bn23 h3{font-size:1.1rem;font-weight:700;margin:1.4rem 0 .45rem;color:#222}.bn23 p{margin:.55rem 0}.bn23 ul,.bn23 ol{margin:.4rem 0 .75rem;padding-left:1.4rem}.bn23 li{margin:.3rem 0}.bn23 a{color:#b33125;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.13em}.bn23 code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:.88em;word-break:break-all}.bn23-hero{text-align:center;padding:1.7rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 52%,#0f3460 100%);color:#fff;border-radius:12px;margin-bottom:1.4rem}.bn23-hero h1{color:#fff!important;font-size:1.65rem;line-height:1.25;margin:0;border:0!important;padding:0!important}.bn23-hero p{margin:.3rem 0 0;color:#fff;opacity:.88}.bn23-badge{display:inline-block;margin-top:.7rem;padding:.18rem .7rem;border-radius:999px;background:#c0392b;color:#fff;font-size:.78rem;font-weight:750}.bn23-toc{background:#f7f8f9;border:1px solid #dde1e5;border-radius:9px;padding:.9rem 1rem;margin:0 0 1.7rem}.bn23-toc strong{display:block;margin-bottom:.25rem}.bn23-toc ol{margin:0}.bn23-card,.bn23-info,.bn23-ok,.bn23-warn{border-radius:8px;padding:.85rem 1rem;margin:.8rem 0}.bn23-card{background:#f7f8f9;border:1px solid #dde1e5}.bn23-info{background:#eaf3fc;border-left:4px solid #2563eb}.bn23-ok{background:#eaf7ec;border-left:4px solid #238b45}.bn23-warn{background:#fef7e0;border-left:4px solid #d5960b}.bn23-grid{display:grid;grid-template-columns:1fr;gap:.75rem;margin:.8rem 0}.bn23-grid>div{background:#fff;border:1px solid #dde1e5;border-radius:9px;padding:.85rem 1rem}.bn23-grid h3{margin:0 0 .3rem}.bn23-grid p,.bn23-grid ul{font-size:.94rem}.bn23-steps{counter-reset:step;list-style:none;padding-left:0!important}.bn23-steps>li{counter-increment:step;position:relative;padding-left:2.4rem;margin:.8rem 0}.bn23-steps>li::before{content:counter(step);position:absolute;left:0;top:.05rem;width:1.65rem;height:1.65rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#c0392b;color:#fff;font-weight:750;font-size:.82rem}.bn23 small{font-size:.84rem;color:#555}@media(min-width:620px){.bn23-grid{grid-template-columns:1fr 1fr}}@media(max-width:619px){.bn23{padding:.7rem}.bn23-hero{padding:1.35rem .75rem}.bn23-hero h1{font-size:1.4rem}.bn23 h2{font-size:1.25rem}}</style>
 
 <div class="bn23">
 
 <div class="bn23-hero">
-  <h1>BisonNotes AI v2.3 (Build 1)</h1>
+  <h1>BisonNotes AI v2.3 (Build 14)</h1>
   <p>Release and Upgrade Guide for iPhone, iPad, Apple Watch, and Mac</p>
   <span class="bn23-badge">Native Mac app &bull; safer recording &bull; accessible workflows</span>
 </div>
@@ -19,6 +21,7 @@
     <li><a href="#bn23-mac">The native Mac app</a></li>
     <li><a href="#bn23-recording">Recording reliability</a></li>
     <li><a href="#bn23-import">Import From Link</a></li>
+    <li><a href="#bn23-ai">AI engines and summary controls</a></li>
     <li><a href="#bn23-accessibility">Accessibility</a></li>
     <li><a href="#bn23-upgrade">Upgrade checklist</a></li>
     <li><a href="#bn23-help">Troubleshooting and help</a></li>
@@ -27,7 +30,7 @@
 
 <h2 id="bn23-overview">Release Overview</h2>
 
-<p>Version 2.3 (Build 1) is a major Mac, recording-reliability, web-import, and accessibility release. The Mac app has moved from Mac Catalyst to a native macOS target while keeping the same app identity and data location. iPhone, iPad, and Apple Watch continue to use the familiar BisonNotes workflow.</p>
+<p>Version 2.3 (Build 14) is a major Mac, recording-reliability, provider, web-import, and accessibility release. The Mac app has moved from Mac Catalyst to a native macOS target while keeping the same app identity and data location. iPhone, iPad, and Apple Watch continue to use the familiar BisonNotes workflow.</p>
 
 <div class="bn23-grid">
   <div>
@@ -54,13 +57,44 @@
     <h3>Clean local-AI output</h3>
     <p>Thinking-capable MLX models keep reasoning internal; summaries and extracted actions show only the final response.</p>
   </div>
+  <div>
+    <h3>Opt-in speaker labels</h3>
+    <p>Completed Parakeet recordings, imports, and transcript re-runs can receive local speaker labels after transcription.</p>
+  </div>
+  <div>
+    <h3>Provider migration</h3>
+    <p>Removed provider selections migrate to supported engines, while Ollama remains available only in the native Mac app.</p>
+  </div>
 </div>
 
-<p>v2.3 (Build 1) also improves iPad navigation, playback controls, state contrast, deterministic accessibility-test startup, native Mac archive presentation, Settings navigation, Parakeet model preparation, caption cleanup, and safe retry behavior when a shared file arrives during another import.</p>
+<p>v2.3 (Build 14) also improves iPad navigation, playback controls, state contrast, deterministic accessibility-test startup, native Mac archive presentation, Settings navigation, Parakeet model preparation, caption cleanup, and safe retry behavior when a shared file arrives during another import.</p>
+
+<h2 id="bn23-ai">AI Engines and Summary Controls</h2>
+
+<p>Choose the engine that fits the device, privacy, and workflow. The current release offers MLX Swift and Apple Native on-device summarization where supported, Mistral AI, Google AI Studio, Compatible API, and Ollama on native macOS. AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are no longer shipped.</p>
+
+<div class="bn23-info"><strong>Existing settings:</strong> Older OpenAI selections move to Compatible API when their saved endpoint can be reused. Removed local llama.cpp selections move to the closest supported MLX model when possible, and old GGUF files/settings are cleaned up. If no replacement is ready, BisonNotes leaves the engine unconfigured or chooses a configured fallback rather than silently sending data to a new provider.</div>
+
+<h3>Summary detail and thinking</h3>
+<ul>
+  <li><strong>Brief:</strong> Key points, decisions, and deadlines in a compact summary.</li>
+  <li><strong>Balanced:</strong> A practical mix of the main ideas and supporting context.</li>
+  <li><strong>Detailed:</strong> More facts, context, nuance, and conclusions from the transcript.</li>
+  <li><strong>Thinking:</strong> Off sends no thinking override. Light requests a short reasoning pass only for models with a known safe control. Thinking text is removed from the visible summary and does not change factual tasks, reminders, titles, or content type.</li>
+</ul>
+
+<h3>Local Speaker Labels</h3>
+<p>Turn on <strong>Local Speaker Labels</strong> in On Device settings, then explicitly prepare the speaker model. Labels run after a completed Parakeet recording, imported audio file, or transcript re-run; they do not run during Live Transcription, do not silently download, and keep audio on the device.</p>
+<ul>
+  <li><strong>Offline VBx &mdash; Recommended:</strong> Estimates the speaker count without an app-side two- or three-speaker cap.</li>
+  <li><strong>LS-EEND &mdash; Experimental:</strong> Uses the DIHARD3 500 ms model for up to 10 speakers and complete files up to one hour; labels may be over-segmented or less stable.</li>
+  <li><strong>Safe fallback:</strong> If the model is missing, the duration or speaker limit is reached, or alignment fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a warning.</li>
+  <li><strong>Rename speakers:</strong> Open the completed transcript, edit its speaker controls, and save the mapping for speaker-aware transcript and summary views.</li>
+</ul>
 
 <h2 id="bn23-mac">The Native Mac App</h2>
 
-<div class="bn23-ok"><strong>Your existing Mac library is preserved.</strong> The native app uses the same bundle identity, app container, Core Data store, and iCloud container as the previous Catalyst version. Installing the matching v2.3 build 1 release upgrades BisonNotes instead of creating a separate empty library.</div>
+<div class="bn23-ok"><strong>Your existing Mac library is preserved.</strong> The native app uses the same bundle identity, app container, Core Data store, and iCloud container as the previous Catalyst version. Installing the matching v2.3 build 14 release upgrades BisonNotes instead of creating a separate empty library.</div>
 
 <h3>A more natural Mac workspace</h3>
 <ul>
@@ -72,6 +106,7 @@
   <li>A native Share extension imports supported audio and transcript files sent to BisonNotes from the macOS Share menu.</li>
   <li>A small or medium desktop widget can open BisonNotes and start a new recording.</li>
   <li>Archive locations use security-scoped bookmarks so BisonNotes can restore access after relaunch.</li>
+  <li>Closing an edited transcript asks for confirmation instead of silently discarding unsaved changes.</li>
 </ul>
 
 <h3>Local AI on Apple silicon</h3>
@@ -83,7 +118,7 @@
 
 <h2 id="bn23-recording">Recording Reliability on Mac</h2>
 
-<p>The v2.3 build 1 Mac recorder is designed to fail safely when a microphone, USB interface, Bluetooth device, or system-audio source changes unexpectedly.</p>
+<p>The v2.3 build 14 Mac recorder is designed to fail safely when a microphone, USB interface, Bluetooth device, or system-audio source changes unexpectedly.</p>
 
 <ul>
   <li><strong>Selectable input:</strong> Choose the built-in microphone or an available USB/Bluetooth input in Transcription Settings. BisonNotes remembers the choice through a temporary disconnect and reselects it when the device returns.</li>
@@ -115,7 +150,7 @@
 
 <h2 id="bn23-accessibility">Accessibility</h2>
 
-<p>Version 2.3 (Build 1) expands accessibility semantics and automated audit coverage across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and Apple Watch recording.</p>
+<p>Version 2.3 (Build 14) expands accessibility semantics and automated audit coverage across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and Apple Watch recording.</p>
 
 <ul>
   <li><strong>VoiceOver:</strong> Main controls, content rows, playback actions, setup choices, settings, transcript/summary actions, and Watch recording states expose clearer labels, values, and hints.</li>
@@ -131,7 +166,7 @@
 <ol class="bn23-steps">
   <li><strong>Let current work finish.</strong> Complete active recordings, transcriptions, summaries, and iCloud jobs before installing the update.</li>
   <li><strong>Keep a copy of critical audio.</strong> Export any irreplaceable meeting recording before a major app or operating-system update.</li>
-  <li><strong>Install v2.3 build 1 normally.</strong> On Mac, install the new build over the existing BisonNotes app; do not delete the old app&rsquo;s container or support files.</li>
+  <li><strong>Install v2.3 build 14 normally.</strong> On Mac, install the new build over the existing BisonNotes app; do not delete the old app&rsquo;s container or support files.</li>
   <li><strong>Open the library first.</strong> Confirm that expected recordings, transcripts, summaries, settings, and Keep on This Device states are present.</li>
   <li><strong>Review Mac permissions.</strong> Confirm Microphone access. If you use meeting-audio capture, also confirm Screen &amp; System Audio Recording access in macOS System Settings, then quit and reopen BisonNotes after granting it.</li>
   <li><strong>Run a short recording test.</strong> Record speech, optionally play system audio, stop, play back the result, and verify the duration before relying on the setup for a long meeting.</li>
@@ -149,13 +184,13 @@
 </ul>
 
 <h3>Meeting audio is missing but the microphone was saved</h3>
-<p>Confirm Screen &amp; System Audio Recording permission, quit and reopen BisonNotes after granting it, and verify that the other app was producing sustained audible output. If the system track is silent or unavailable, v2.3 build 1 intentionally finalizes the usable microphone recording instead of discarding it.</p>
+<p>Confirm Screen &amp; System Audio Recording permission, quit and reopen BisonNotes after granting it, and verify that the other app was producing sustained audible output. If the system track is silent or unavailable, v2.3 build 14 intentionally finalizes the usable microphone recording instead of discarding it.</p>
 
 <h3>A shared file does not appear immediately</h3>
 <p>If BisonNotes is already importing another item, it leaves the newly shared file staged and retries it on a later app activation instead of discarding it. Let the active import finish, then bring BisonNotes forward again.</p>
 
 <h3>An on-device transcription model will not become ready</h3>
-<p>Open Transcription Settings and retry the model setup. v2.3 build 1 reuses complete cached Parakeet models, clears stale state when required files are missing, and waits for model preparation to finish before starting transcription.</p>
+<p>Open Transcription Settings and retry the model setup. v2.3 build 14 reuses complete cached Parakeet models, clears stale state when required files are missing, and waits for model preparation to finish before starting transcription.</p>
 
 <h3>A web import is rejected</h3>
 <p>Confirm the address points directly to a supported file over HTTPS, is within the supported size limit, and does not require an interactive login. Signed download links are supported when the final response is valid media or a supported transcript document.</p>
@@ -168,6 +203,6 @@
   <p><a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">Report an issue on GitHub</a></p>
 </div>
 
-<p style="text-align:center"><small>Last updated for BisonNotes AI v2.3 (Build 1). Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
+<p style="text-align:center"><small>Last updated for BisonNotes AI v2.3 (Build 14). Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
 
 </div>
