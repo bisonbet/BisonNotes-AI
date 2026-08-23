@@ -305,6 +305,15 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             do {
                 return try await processSingleChunk(text, service: service)
             } catch {
+                // A truncated answer is an output-budget problem, not an input-context
+                // one, and its message names a token limit — the prose match below
+                // would read that as "context exceeded" and replace a clear error
+                // with a far more expensive retry that truncates all over again.
+                if let summarizationError = error as? SummarizationError,
+                   case .responseTruncated = summarizationError {
+                    throw summarizationError
+                }
+
                 // If the server reports a context window issue, retry with chunked processing
                 let errorMessage = error.localizedDescription.lowercased()
                 if errorMessage.contains("context") || errorMessage.contains("token") {
@@ -789,6 +798,15 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 return try await processSingleChunk(text)
             }
         } catch {
+            // A truncated answer is an output-budget problem, not an input-context
+            // one, and its message names a token limit — the prose match below
+            // would read that as "context exceeded" and replace a clear error
+            // with a far more expensive retry that truncates all over again.
+            if let summarizationError = error as? SummarizationError,
+               case .responseTruncated = summarizationError {
+                throw summarizationError
+            }
+
             // If the server reports a context window issue, retry with chunked processing
             let errorMessage = error.localizedDescription.lowercased()
             if errorMessage.contains("context") || errorMessage.contains("token") {

@@ -345,6 +345,43 @@ final class SummaryThinkingTests: XCTestCase {
         )
     }
 
+        // MARK: - Truncation vs Context-Window Classification
+
+    /// Two engines decide whether to fall back to chunked processing by matching
+    /// "context" or "token" in the error text. A truncation error names its token
+    /// limit, so it collides with that match — and re-chunking is the wrong remedy
+    /// for an output-budget problem, since every chunk truncates the same way.
+    func testTruncationErrorTextCollidesWithTheContextWindowHeuristic() {
+        let truncated = SummarizationError.responseTruncated(
+            service: "Ollama (qwen3.5:8b)",
+            tokenLimit: 8_192,
+            reasoningTokens: 3_110
+        )
+        let message = (truncated.errorDescription ?? "").lowercased()
+
+        // This is why the engines must match on the typed case before the text:
+        // the message legitimately says "token" and always will.
+        XCTAssertTrue(message.contains("token"), "message: \(message)")
+        XCTAssertFalse(message.contains("context"), "message: \(message)")
+    }
+
+    func testTruncationIsDistinguishableFromOtherSummarizationErrors() {
+        let truncated = SummarizationError.responseTruncated(
+            service: "Google AI Studio (gemini-3.7-flash)",
+            tokenLimit: 8_192,
+            reasoningTokens: nil
+        )
+        let unavailable = SummarizationError.aiServiceUnavailable(service: "Google AI Studio")
+
+        func isTruncation(_ error: SummarizationError) -> Bool {
+            if case .responseTruncated = error { return true }
+            return false
+        }
+
+        XCTAssertTrue(isTruncation(truncated))
+        XCTAssertFalse(isTruncation(unavailable))
+    }
+
         func testReasoningBlocksAreNotReturnedAsSummaryContent() throws {
         let response = """
         {"role":"assistant","content":[
