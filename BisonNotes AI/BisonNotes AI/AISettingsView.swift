@@ -379,14 +379,17 @@ struct AISettingsView: View {
             selectedMacEngineRawValue = currentEngineType?.rawValue
                 ?? Self.macOverviewSelection
         }
+        // Sidebar selection only browses a provider's configuration. Switching
+        // the engine the app actually summarizes with is an explicit action in
+        // the detail pane, so opening a pane to check a key cannot silently
+        // repoint summarization at an unconfigured engine.
         .onChange(of: selectedMacEngineRawValue) { _, newValue in
             guard let newValue,
                   newValue != Self.macOverviewSelection,
-                  let engine = AIEngineType.availableCases.first(where: { $0.rawValue == newValue }) else {
+                  AIEngineType.availableCases.contains(where: { $0.rawValue == newValue }) else {
                 return
             }
 
-            viewModel.selectEngine(engine)
             refreshEngineStatuses()
         }
     }
@@ -454,8 +457,61 @@ struct AISettingsView: View {
         .accessibilityValue(isSelectedEngine ? "Selected" : (status?.isAvailable == true ? "Ready" : "Needs setup"))
     }
 
-    @ViewBuilder
     private func macProviderDetail(for engine: AIEngineType) -> some View {
+        VStack(spacing: 0) {
+            macEngineActivationBar(for: engine)
+
+            Divider()
+
+            macProviderConfiguration(for: engine)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func macEngineActivationBar(for engine: AIEngineType) -> some View {
+        let isActiveEngine = selectedEngineName == engine.rawValue
+
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(engine.displayName)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text(
+                    isActiveEngine
+                        ? "BisonNotes uses this engine for summaries."
+                        : "Editing these settings does not change the engine BisonNotes uses."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            if isActiveEngine {
+                Label("Current Engine", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.green)
+                    .accessibilityLabel("Current engine")
+            } else {
+                Button("Use This Engine") {
+                    viewModel.selectEngine(engine)
+                    refreshEngineStatuses()
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("bisonnotes.ai-settings.use-engine")
+                .accessibilityHint("Makes \(engine.displayName) the engine used for summaries.")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func macProviderConfiguration(for engine: AIEngineType) -> some View {
         switch engine {
         case .openAICompatible:
             OpenAICompatibleSettingsView(onConfigurationChanged: {

@@ -43,6 +43,18 @@ struct TranscriptEditorSnapshot: Equatable {
     }
 }
 
+/// Decides whether a transcript reload may overwrite what is in the editor.
+/// "TranscriptionCompleted" is posted for every recording, so an unrelated
+/// background job must never replace edits the user has not saved.
+enum TranscriptEditorRefreshPolicy {
+    static func allowsReplacingEditorContent(
+        hasUnsavedEdits: Bool,
+        isUserRequestedReplacement: Bool
+    ) -> Bool {
+        isUserRequestedReplacement || !hasUnsavedEdits
+    }
+}
+
 struct TranscriptsView: View {
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
@@ -1577,6 +1589,8 @@ struct EditableTranscriptView: View {
     @State private var speakerLabelWarningMessage: String?
     @State private var summaryStateRefresh = false
     @State private var savedTranscriptSnapshot: TranscriptEditorSnapshot
+    @State private var isReloadingTranscript = false
+    @State private var transcriptReloadToken = UUID()
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
 
@@ -1594,7 +1608,12 @@ struct EditableTranscriptView: View {
     }
 
     private var isTranscriptDirty: Bool {
-        currentTranscriptSnapshot != savedTranscriptSnapshot
+        // `updateVisibleTranscript` empties `editedSegments` for one runloop turn
+        // to force the segment bindings to rebuild. Reporting that transient
+        // state as unsaved work would arm Save, Command-S, and the close guard
+        // against an empty transcript.
+        guard !isReloadingTranscript else { return false }
+        return currentTranscriptSnapshot != savedTranscriptSnapshot
     }
 
     private var transcriptWindowTitle: String {
@@ -1831,7 +1850,7 @@ struct EditableTranscriptView: View {
                 if let warningMessage = userInfo["speakerLabelWarning"] as? String {
                     speakerLabelWarningMessage = warningMessage
                 }
-                refreshTranscriptFromCoreData()
+                refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
                 isRerunningTranscription = false
                 AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
@@ -1856,7 +1875,7 @@ struct EditableTranscriptView: View {
         #else
         Button("Save", action: saveForMobile)
             .fontWeight(.semibold)
-            .disabled(isSaving)
+            .disabled(isSaving || isReloadingTranscript)
             .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptSaveButton)
         #endif
     }
@@ -2063,7 +2082,7 @@ struct EditableTranscriptView: View {
     }
 
     private func saveForMobile() {
-        guard !isSaving else { return }
+        guard !isSaving, !isReloadingTranscript else { return }
 
         isSaving = true
         let didSave = saveTranscript()
@@ -2292,7 +2311,10 @@ struct EditableTranscriptView: View {
                     } else {
                         self.speakerLabelWarningMessage = nil
                     }
-                    self.updateVisibleTranscript(with: transcriptData)
+                    self.updateVisibleTranscript(
+                        with: transcriptData,
+                        replacingUnsavedEdits: true
+                    )
                     self.isRerunningTranscription = false
 
                     var userInfo: [String: Any] = ["recordingURL": recordingURL]
@@ -2353,8 +2375,9 @@ struct EditableTranscriptView: View {
                 AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
                 speakerLabelWarningMessage = replacement.speakerLabelWarning?.userVisibleMessage
 
-                // Immediately refresh the UI with the updated transcript data
-                refreshTranscriptFromCoreData()
+                // Immediately refresh the UI with the updated transcript data.
+                // The user confirmed this rerun, so it replaces live edits.
+                refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
 
                 // Post notification to refresh the main transcripts view
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
@@ -2366,7 +2389,7 @@ struct EditableTranscriptView: View {
         }
     }
 
-    private func refreshTranscriptFromCoreData() {
+    private func refreshTranscriptFromCoreData(replacingUnsavedEdits: Bool = false) {
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             return
         }
@@ -2379,29 +2402,65 @@ struct EditableTranscriptView: View {
            let recordingId = recordingEntry.id,
            let updatedTranscript = appCoordinator.getTranscriptData(for: recordingId) {
 
-            updateVisibleTranscript(with: updatedTranscript)
+            updateVisibleTranscript(
+                with: updatedTranscript,
+                replacingUnsavedEdits: replacingUnsavedEdits
+            )
         }
     }
 
-    private func updateVisibleTranscript(with updatedTranscript: TranscriptData) {
+    private func updateVisibleTranscript(
+        with updatedTranscript: TranscriptData,
+        replacingUnsavedEdits: Bool = false
+    ) {
         // Only update if we have segments with actual content.
         let hasValidContent = updatedTranscript.segments.contains {
             !$0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines).isEmpty
         }
         guard hasValidContent else { return }
 
-        savedTranscriptSnapshot = TranscriptEditorSnapshot(
+        let incomingSnapshot = TranscriptEditorSnapshot(
             segments: updatedTranscript.segments,
             speakerMappings: updatedTranscript.speakerMappings
         )
 
+        // Re-baselining the snapshot below also clears the dirty flag, so an
+        // unguarded refresh would drop unsaved work without the unsaved-changes
+        // prompt. Only a rerun the user explicitly confirmed replaces edits.
+        guard TranscriptEditorRefreshPolicy.allowsReplacingEditorContent(
+            hasUnsavedEdits: isTranscriptDirty,
+            isUserRequestedReplacement: replacingUnsavedEdits
+        ) else {
+            AppLog.shared.transcription(
+                "Skipped transcript refresh: the editor has unsaved changes",
+                level: .debug
+            )
+            return
+        }
+
+        // Already showing exactly what the store holds — no rebuild needed, but
+        // re-anchor the baseline so the editor cannot read as dirty against a
+        // stale snapshot.
+        guard incomingSnapshot != currentTranscriptSnapshot else {
+            savedTranscriptSnapshot = incomingSnapshot
+            return
+        }
+
         // Force SwiftUI to detect the change by clearing first, then setting.
+        let reloadToken = UUID()
+        transcriptReloadToken = reloadToken
+        isReloadingTranscript = true
         editedSegments = []
         speakerMappings = updatedTranscript.speakerMappings
 
         // Small delay to ensure the List/Form rebuilds its segment bindings.
+        // The saved baseline moves with the restored segments so the editor is
+        // never momentarily "dirty" against an empty transcript.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            guard self.transcriptReloadToken == reloadToken else { return }
             self.editedSegments = updatedTranscript.segments
+            self.savedTranscriptSnapshot = incomingSnapshot
+            self.isReloadingTranscript = false
         }
     }
 }

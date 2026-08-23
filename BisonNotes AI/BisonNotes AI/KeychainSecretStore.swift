@@ -247,14 +247,23 @@ final class SecureStorageValue: ObservableObject {
         self.observedRevision = store.revision(forKey: key)
     }
 
+    /// Called from `SecureStorage.update()`, which runs inside a SwiftUI view
+    /// update. Publishing there is not allowed, so the revision is claimed
+    /// synchronously — keeping this idempotent per revision — while the value
+    /// change is handed to the next main-actor turn.
     func refreshIfNeeded() {
         let currentRevision = store.revision(forKey: key)
         guard currentRevision != observedRevision else { return }
 
         let storedValue = store.string(forKey: key) ?? defaultValue
         observedRevision = currentRevision
-        if storedValue != value {
-            value = storedValue
+        guard storedValue != value else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.observedRevision == currentRevision,
+                  self.value != storedValue else { return }
+            self.value = storedValue
         }
     }
 

@@ -2,6 +2,33 @@ import XCTest
 @testable import BisonNotes_AI
 
 final class TranscriptEditorCloseBehaviorTests: XCTestCase {
+    func testUnrelatedTranscriptionCompletionCannotReplaceUnsavedEdits() {
+        XCTAssertFalse(
+            TranscriptEditorRefreshPolicy.allowsReplacingEditorContent(
+                hasUnsavedEdits: true,
+                isUserRequestedReplacement: false
+            )
+        )
+    }
+
+    func testConfirmedRerunReplacesUnsavedEdits() {
+        XCTAssertTrue(
+            TranscriptEditorRefreshPolicy.allowsReplacingEditorContent(
+                hasUnsavedEdits: true,
+                isUserRequestedReplacement: true
+            )
+        )
+    }
+
+    func testCleanEditorAlwaysAcceptsRefreshedTranscript() {
+        XCTAssertTrue(
+            TranscriptEditorRefreshPolicy.allowsReplacingEditorContent(
+                hasUnsavedEdits: false,
+                isUserRequestedReplacement: false
+            )
+        )
+    }
+
     func testSnapshotTracksOnlyEditableTranscriptContent() {
         let originalSegment = TranscriptSegment(
             speaker: "speaker_1",

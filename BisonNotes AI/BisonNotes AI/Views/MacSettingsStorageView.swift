@@ -14,6 +14,10 @@ struct MacStorageSettingsPane: View {
     @State private var isRunningCloudBackupAction = false
     @State private var cloudBackupActionMessage = ""
     @State private var cloudBackupActionIsError = false
+    /// Measured once per appearance. Computing it in `body` would stat every
+    /// recording on the main thread on each render, and this pane re-renders
+    /// whenever `iCloudManager` publishes during a sync.
+    @State private var localStorageText: String?
 
     var body: some View {
         MacSettingsPaneScroll(
@@ -36,7 +40,10 @@ struct MacStorageSettingsPane: View {
             )
             .accessibilityIdentifier(BisonNotesAccessibilityID.iCloudSection)
 
-            MacStorageLocalStorageCard(storageText: totalRecordingsStorageString)
+            MacStorageLocalStorageCard(storageText: localStorageText ?? "Calculating…")
+        }
+        .onAppear {
+            localStorageText = totalRecordingsStorageString
         }
         .alert("iCloud Sync Notice", isPresented: $showingICloudComplianceNotice) {
             Button("Cancel", role: .cancel) { }
@@ -152,6 +159,7 @@ private extension MacStorageSettingsPane {
                         + "\(settingsText)\(reviewText)."
                 cloudBackupActionIsError = false
                 isRunningCloudBackupAction = false
+                localStorageText = totalRecordingsStorageString
             }
         } catch {
             await MainActor.run {

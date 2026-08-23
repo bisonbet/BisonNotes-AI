@@ -48,7 +48,7 @@ struct MacRecordingSettingsPane: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel(input.portName)
                         .accessibilityValue(
-                            "(input.portType.rawValue), "
+                            "\(input.portType.rawValue), "
                                 + (recorderVM.selectedInput?.uid == input.uid ? "Selected" : "Not selected")
                         )
                         .accessibilityHint("Selects this microphone for new recordings.")
