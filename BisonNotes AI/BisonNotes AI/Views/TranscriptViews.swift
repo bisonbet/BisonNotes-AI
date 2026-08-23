@@ -524,7 +524,9 @@ struct TranscriptsView: View {
             if item.source == .audio {
                 recordingRowView((recording: item.recording, transcript: item.transcript))
             } else {
-                importedTranscriptRowView((recording: item.recording, transcript: item.transcript))
+                importedTranscriptRowView((recording: item.recording, transcript: item.transcript)) {
+                    requestTranscriptDeletion(for: item.recording, imported: true)
+                }
             }
         }
     }
@@ -740,7 +742,9 @@ struct TranscriptsView: View {
             }
 
             ForEach(importedItems, id: \.recording.objectID) { item in
-                importedTranscriptRowView((recording: item.recording, transcript: item.transcript))
+                importedTranscriptRowView((recording: item.recording, transcript: item.transcript)) {
+                    requestTranscriptDeletion(for: item.recording, imported: true)
+                }
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
@@ -910,6 +914,7 @@ struct TranscriptsView: View {
                 .accessibilityLabel(
                     "Delete imported transcript \(recordingData.recording.recordingName ?? "Untitled Import")"
                 )
+                .help("Delete Imported Transcript")
             }
         }
         .padding(16)
@@ -927,6 +932,13 @@ struct TranscriptsView: View {
             if let onDelete {
                 Button(role: .destructive, action: onDelete) {
                     Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+        .contextMenu {
+            if let onDelete {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete Imported Transcript", systemImage: "trash")
                 }
             }
         }
