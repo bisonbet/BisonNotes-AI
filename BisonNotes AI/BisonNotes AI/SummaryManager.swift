@@ -505,6 +505,16 @@ class SummaryManager: ObservableObject {
                 if let fallbackEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = fallbackEngine
                     AppLog.shared.summarization("Set \(fallbackEngine.name) as fallback engine")
+
+                    if Self.shouldPersistFallbackSelection(
+                        savedEngineName: engineName,
+                        knownEngineNames: Set(availableEngines.keys)
+                    ) {
+                        UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
+                        AppLog.shared.summarization(
+                            "Replaced unrecognized engine selection '\(engineName)' with '\(fallbackEngine.name)'"
+                        )
+                    }
                 }
             }
         }
@@ -513,6 +523,24 @@ class SummaryManager: ObservableObject {
             "AI engines ready: \(successfullyInitialized)/\(allEngineTypes.count) initialized; " +
             "active engine: \(getCurrentEngineName())"
         )
+    }
+
+    /// Whether a persisted engine selection should be rewritten to the engine
+    /// actually in use.
+    ///
+    /// A name the app still recognizes is left alone even when that engine is
+    /// temporarily unavailable — it is the user's preference and can become
+    /// valid again once the server is reachable or the key is entered. A name
+    /// no build recognizes never will: it names a removed provider, usually
+    /// arriving by way of an iCloud settings restore from an older build. Left
+    /// in place it strands every reader that keys off the raw string, because
+    /// their `?? default` never fires for a non-nil value.
+    nonisolated static func shouldPersistFallbackSelection(
+        savedEngineName: String?,
+        knownEngineNames: Set<String>
+    ) -> Bool {
+        guard let savedEngineName, savedEngineName != "None" else { return false }
+        return !knownEngineNames.contains(savedEngineName)
     }
 
     func setEngine(_ engineName: String) {

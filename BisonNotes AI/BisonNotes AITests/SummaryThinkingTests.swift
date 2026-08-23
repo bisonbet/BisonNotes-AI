@@ -310,7 +310,42 @@ final class SummaryThinkingTests: XCTestCase {
         )
     }
 
-    func testReasoningBlocksAreNotReturnedAsSummaryContent() throws {
+    // MARK: - Engine Selection Recovery
+
+    func testUnrecognizedEngineSelectionIsRewrittenToTheFallback() {
+        // "AWS Bedrock" names a provider this build removed. It can still reach
+        // a device through an iCloud settings restore from an older backup, and
+        // the one-shot launch migration will not run again to repair it.
+        XCTAssertTrue(
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: "AWS Bedrock",
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue))
+            )
+        )
+    }
+
+    func testRecognizedButUnavailableEngineKeepsTheUsersPreference() {
+        // Ollama is a real engine that is simply unreachable right now; the
+        // preference must survive so it works again when the server comes back.
+        XCTAssertFalse(
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: AIEngineType.localLLM.rawValue,
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue))
+            )
+        )
+    }
+
+    func testDeliberateNoneSelectionIsNeverRewritten() {
+        let known = Set(AIEngineType.allCases.map(\.rawValue))
+        XCTAssertFalse(
+            SummaryManager.shouldPersistFallbackSelection(savedEngineName: "None", knownEngineNames: known)
+        )
+        XCTAssertFalse(
+            SummaryManager.shouldPersistFallbackSelection(savedEngineName: nil, knownEngineNames: known)
+        )
+    }
+
+        func testReasoningBlocksAreNotReturnedAsSummaryContent() throws {
         let response = """
         {"role":"assistant","content":[
           {"type":"thinking","thinking":[{"type":"text","text":"hidden reasoning"}]},
