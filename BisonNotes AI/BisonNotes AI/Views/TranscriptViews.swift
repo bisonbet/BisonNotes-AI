@@ -1716,6 +1716,11 @@ struct EditableTranscriptView: View {
                 .frame(width: 0, height: 0)
             }
         }
+        // A windowed editor is protected by NativeMacWindowCloseGuard, but a sheet
+        // has no equivalent: Escape on macOS and swipe-down on iOS both dismiss
+        // straight past the confirmation below. Block those while edits are
+        // pending so unsaved work is only ever discarded on purpose.
+        .interactiveDismissDisabled(isTranscriptDirty && !isSaving)
         .confirmationDialog(
             "Save Changes to Transcript?",
             isPresented: $showingCloseConfirmation,
