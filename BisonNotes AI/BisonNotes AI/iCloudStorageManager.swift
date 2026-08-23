@@ -6113,6 +6113,13 @@ extension iCloudStorageManager {
         transcript.lastModified ?? transcript.createdAt
     }
 
+    /// SummaryEntry has no `lastModified` of its own, so the backup writes this
+    /// same value into both `generatedAt` and `lastModified` on the cloud record
+    /// and the two dedupe rules line up. The one asymmetry is deliberate: where
+    /// this returns nil the upload substitutes `Date()`, so a summary carrying
+    /// neither timestamp sorts oldest locally but newest in the cloud for a
+    /// single pass. The restore leg then writes that stamp back into the row and
+    /// the two agree from the next cycle on.
     private func localSummaryContentTimestamp(_ summary: SummaryEntry) -> Date? {
         summary.generatedAt ?? summary.recording?.recordingDate
     }
@@ -6234,15 +6241,33 @@ extension iCloudStorageManager {
         newerThan current: CKRecord,
         timestampKeys: [String]
     ) -> Bool {
-        let candidateTimestamp = backupRecordTimestamp(candidate, keys: timestampKeys)
-        let currentTimestamp = backupRecordTimestamp(current, keys: timestampKeys)
+        Self.isBackupRecordNewer(
+            candidateTimestamp: backupRecordTimestamp(candidate, keys: timestampKeys),
+            currentTimestamp: backupRecordTimestamp(current, keys: timestampKeys),
+            candidateRecordName: candidate.recordID.recordName,
+            currentRecordName: current.recordID.recordName
+        )
+    }
 
+    /// The cloud half of the "one row per recording" rule, kept separate from the
+    /// CKRecord plumbing so it can be tested directly against its local counterpart
+    /// in `latestPerRecording`. The two must pick the same winner from the same
+    /// facts, or devices trade uploads and deletions forever.
+    ///
+    /// Record names are the row identifier behind a per-type constant prefix, so
+    /// ordering them is equivalent to ordering the identifiers themselves.
+    static func isBackupRecordNewer(
+        candidateTimestamp: Date,
+        currentTimestamp: Date,
+        candidateRecordName: String,
+        currentRecordName: String
+    ) -> Bool {
         if candidateTimestamp != currentTimestamp {
             return candidateTimestamp > currentTimestamp
         }
 
         // Deterministic tie-breaker for equal timestamps.
-        return candidate.recordID.recordName > current.recordID.recordName
+        return candidateRecordName > currentRecordName
     }
 
     private func backupRecordTimestamp(_ record: CKRecord, keys: [String]) -> Date {

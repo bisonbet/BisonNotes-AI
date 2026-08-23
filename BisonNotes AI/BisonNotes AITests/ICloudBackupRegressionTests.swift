@@ -583,4 +583,105 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
         return recordingId
     }
+
+    // MARK: - Local / Cloud Dedupe Parity
+
+    /// `latestPerRecording` deduplicates the local rows and
+    /// `isBackupRecordNewer` deduplicates the cloud records. Both must name the
+    /// same winner from the same facts; if they disagree each device keeps
+    /// re-uploading what the other just deleted.
+    private struct DedupeRow {
+        let id: UUID
+        let timestamp: Date?
+    }
+
+    private func localWinner(_ rows: [DedupeRow], recordingId: UUID) -> UUID? {
+        let result = iCloudStorageManager.latestPerRecording(
+            rows,
+            recordingId: { _ in recordingId },
+            timestamp: { $0.timestamp },
+            identifier: { $0.id }
+        )
+        return result.kept.first?.id
+    }
+
+    private func cloudWinner(_ rows: [DedupeRow], prefix: String) -> UUID? {
+        // Mirrors resolveLatestRecordsPerRecording's fold over one record type,
+        // whose record names all share that type's constant prefix.
+        var winner: DedupeRow?
+        for row in rows {
+            guard let current = winner else {
+                winner = row
+                continue
+            }
+            let isNewer = iCloudStorageManager.isBackupRecordNewer(
+                candidateTimestamp: row.timestamp ?? .distantPast,
+                currentTimestamp: current.timestamp ?? .distantPast,
+                candidateRecordName: prefix + row.id.uuidString,
+                currentRecordName: prefix + current.id.uuidString
+            )
+            if isNewer { winner = row }
+        }
+        return winner?.id
+    }
+
+    func testLocalAndCloudDedupeAgreeOnTheWinner() {
+        let recordingId = UUID()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+
+        // Distinct timestamps, deliberately not in input order.
+        let distinct = [
+            DedupeRow(id: UUID(), timestamp: base),
+            DedupeRow(id: UUID(), timestamp: base.addingTimeInterval(90)),
+            DedupeRow(id: UUID(), timestamp: base.addingTimeInterval(45))
+        ]
+        XCTAssertEqual(
+            localWinner(distinct, recordingId: recordingId),
+            cloudWinner(distinct, prefix: "summary-backup-"),
+            "Newest row must win on both sides"
+        )
+
+        // Equal timestamps fall through to the identifier tie-breaker, which is
+        // the case where a prefix mismatch would silently split the two rules.
+        let tied = (0..<6).map { _ in DedupeRow(id: UUID(), timestamp: base) }
+        XCTAssertEqual(
+            localWinner(tied, recordingId: recordingId),
+            cloudWinner(tied, prefix: "transcript-backup-"),
+            "Tie-break must resolve identically under a per-type record-name prefix"
+        )
+
+        // A row with no timestamp must not out-rank a timestamped one on either side.
+        let missing = [
+            DedupeRow(id: UUID(), timestamp: nil),
+            DedupeRow(id: UUID(), timestamp: base)
+        ]
+        XCTAssertEqual(
+            localWinner(missing, recordingId: recordingId),
+            cloudWinner(missing, prefix: "summary-backup-")
+        )
+        XCTAssertEqual(localWinner(missing, recordingId: recordingId), missing[1].id)
+    }
+
+    func testTieBreakerIsIndependentOfTheRecordNamePrefix() {
+        // Record names are prefix + uuidString. A shared prefix must not change
+        // the relative order, which is what lets the local rule compare bare
+        // identifiers while the cloud rule compares full record names.
+        let a = UUID()
+        let b = UUID()
+        let byIdentifier = a.uuidString > b.uuidString
+
+        for prefix in ["", "summary-backup-", "transcript-backup-", "zzz"] {
+            XCTAssertEqual(
+                iCloudStorageManager.isBackupRecordNewer(
+                    candidateTimestamp: .distantPast,
+                    currentTimestamp: .distantPast,
+                    candidateRecordName: prefix + a.uuidString,
+                    currentRecordName: prefix + b.uuidString
+                ),
+                byIdentifier,
+                "Prefix '\(prefix)' changed the tie-break outcome"
+            )
+        }
+    }
+
 }
