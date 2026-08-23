@@ -445,9 +445,15 @@ class WatchAudioManager: NSObject, ObservableObject {
     }
     
     private func monitorBatteryLevel() {
-        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            
+        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                // Nothing holds a reference to this timer, so a deallocated
+                // manager would otherwise leave it firing on the run loop for
+                // the remaining life of the app.
+                timer.invalidate()
+                return
+            }
+
             Task { @MainActor in
                 self.updateBatteryLevel()
                 
