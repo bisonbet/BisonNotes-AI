@@ -35,7 +35,7 @@ actor GoogleAIStudioService {
 
     private func configuration() -> Configuration {
         Configuration(
-            selectedModel: UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview",
+            selectedModel: UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3.7-flash",
             temperature: UserDefaults.standard.object(forKey: "googleAIStudioTemperature") == nil
                 ? 0.1
                 : UserDefaults.standard.double(forKey: "googleAIStudioTemperature"),
@@ -688,8 +688,8 @@ actor GoogleAIStudioService {
     func loadAvailableModels() async throws -> [String] {
         // Return only the specific Gemini models
         return [
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite-preview"
+            "gemini-3.7-flash",
+            "gemini-3.5-flash-lite"
         ]
     }
 }

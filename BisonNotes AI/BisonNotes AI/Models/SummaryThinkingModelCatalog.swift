@@ -237,7 +237,7 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
                 ?? AppSettingsKeys.Defaults.ollamaModelName
         case .googleAIStudio:
             return UserDefaults.standard.string(forKey: "googleAIStudioModel")
-                ?? "gemini-3-flash-preview"
+                ?? "gemini-3.7-flash"
         case .mlxSwift:
             return UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
                 ?? MLXSwiftSettingsKeys.defaultModelId

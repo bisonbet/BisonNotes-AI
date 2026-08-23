@@ -100,10 +100,16 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertTrue(oldMistral.isEmpty)
 
         let gemini3 = SummaryThinkingModelCatalog.requestOptions(
-            modelName: "gemini-3-flash-preview",
+            modelName: "gemini-3.7-flash",
             engine: .googleAIStudio
         )
         XCTAssertEqual(gemini3.thinkingLevel, "low")
+
+        let geminiFlashLite = SummaryThinkingModelCatalog.requestOptions(
+            modelName: "gemini-3.5-flash-lite",
+            engine: .googleAIStudio
+        )
+        XCTAssertEqual(geminiFlashLite.thinkingLevel, "low")
 
         let gemini25 = SummaryThinkingModelCatalog.requestOptions(
             modelName: "gemini-2.5-flash",
@@ -251,7 +257,7 @@ final class SummaryThinkingTests: XCTestCase {
         let cases: [(String, AIEngineType)] = [
             ("aurora/ornith-1.5-35b-a3b-thinking-gguf", .openAICompatible),
             ("magistral-medium-latest", .mistralAI),
-            ("gemini-3-flash-preview", .googleAIStudio),
+            ("gemini-3.7-flash", .googleAIStudio),
             ("qwen3.5:8b", .localLLM),
             ("qwen3.5-4b", .mlxSwift)
         ]

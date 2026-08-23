@@ -3989,7 +3989,8 @@ extension iCloudStorageManager {
                     result.localItemsKeptAsNewer += 1
                 }
 
-                if includeAudioFiles,
+                if applyCloudRecording,
+                   includeAudioFiles,
                    let asset = record[Self.fieldAudioAsset] as? CKAsset,
                    let assetURL = asset.fileURL,
                    fileManager.fileExists(atPath: assetURL.path) {

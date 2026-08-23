@@ -212,7 +212,7 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
         didFinishWith result: MFMailComposeResult,
         error: Error?
     ) {
-        MainActor.assumeIsolated {
+        Task { @MainActor in
             controller.dismiss(animated: true) {
                 LogEmailPresenter.onDismiss?()
                 LogEmailPresenter.onDismiss = nil

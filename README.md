@@ -299,8 +299,8 @@ Summarization models:
 
 Google AI Studio provides access to Gemini models:
 
-- **Gemini 3 Flash Preview**: Fast and efficient — Default (`gemini-3-flash-preview`)
-- **Gemini 3.1 Flash Lite Preview**: Lightweight variant for quick processing (`gemini-3.1-flash-lite-preview`)
+- **Gemini 3.7 Flash**: Fast and efficient — Default (`gemini-3.7-flash`)
+- **Gemini 3.5 Flash Lite**: Lightweight variant for quick processing (`gemini-3.5-flash-lite`)
 
 ### On-Device AI
 

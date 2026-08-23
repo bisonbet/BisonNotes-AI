@@ -255,7 +255,7 @@ struct AISettingsView: View {
             let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
             return modelName
         case .googleAIStudio:
-            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
+            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3.7-flash"
             return model
         case .mlxSwift:
             let model = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId) ?? MLXSwiftSettingsKeys.defaultModelId

@@ -67,6 +67,7 @@ class WatchAudioManager: NSObject, ObservableObject {
     
     deinit {
         // Clean up resources
+        stopAllTimers()
         audioRecorder?.stop()
     }
     

@@ -495,6 +495,32 @@ struct BisonNotesAIApp: App {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
+    /// Migrates persisted Google AI Studio selections to the current model IDs.
+    /// This is separate from the older removed-model migration so existing users
+    /// who already completed that migration also receive the updated model names.
+    private func migrateGoogleAIStudioModels() {
+        let migrationKey = "googleAIStudioModelNamesMigrated_v1"
+        let defaults = UserDefaults.standard
+
+        guard !defaults.bool(forKey: migrationKey) else {
+            return
+        }
+
+        let replacements = [
+            "gemini-3-flash-preview": "gemini-3.7-flash",
+            "gemini-3.1-flash-lite-preview": "gemini-3.5-flash-lite"
+        ]
+        let googleKey = "googleAIStudioModel"
+
+        if let storedModel = defaults.string(forKey: googleKey),
+           let replacement = replacements[storedModel] {
+            defaults.set(replacement, forKey: googleKey)
+            NSLog("✅ Google AI Studio model migrated from '\(storedModel)' to '\(replacement)'")
+        }
+
+        defaults.set(true, forKey: migrationKey)
+    }
+
     /// Migrates any persisted llama.cpp selection to the closest MLX model and
     /// removes the old engine's settings and known downloaded GGUF files.
     /// This also handles stale pre-v2.0 selections that should never be active
@@ -647,6 +673,7 @@ struct BisonNotesAIApp: App {
         migrateRemovedProviderSelections()
         migrateWhisperKitToParakeet()
         migrateRemovedModels()
+        migrateGoogleAIStudioModels()
         migrateUnsupportedMLXModelSelection()
         migrateiCloudSensitiveBackupDefault()
         setupDarwinNotificationObserver()
