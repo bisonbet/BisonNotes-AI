@@ -1171,26 +1171,37 @@ class CoreDataManager: ObservableObject {
 
     // MARK: - Delete Operations
 
-    func deleteRecording(id: UUID) {
+    func deleteRecording(id: UUID) throws {
         guard let recording = getRecording(id: id) else {
             AppLog.shared.coreData("Recording not found for deletion: \(id)", level: .error)
             return
         }
 
-        // Clean up supplemental data (notes + attachment files) before the cascade delete removes the summary entry.
-        if let summaryId = recording.summaryId {
-            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
-        }
+        // Capture identifiers before the delete. Enqueue the cloud tombstone and
+        // remove attachment files only after the save lands: a failed save rolls
+        // the row back, and a tombstone queued first would still delete the
+        // recording from other devices.
+        let recordingId = recording.id ?? id
+        let transcriptIds = [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 }
+        let summaryIds = [recording.summaryId ?? recording.summary?.id].compactMap { $0 }
 
-        // Core Data will handle cascade deletion of related transcript and summary
-        enqueueRecordingCloudDeletion(recording)
         context.delete(recording)
-
         do {
-            try context.save()
+            try saveContext()
             AppLog.shared.coreData("Recording deleted: \(id)")
         } catch {
             AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
+            context.rollback()
+            throw error
+        }
+
+        SummaryManager.shared.getiCloudManager().enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: transcriptIds,
+            summaryIds: summaryIds
+        )
+        for summaryId in summaryIds {
+            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
         }
     }
 
@@ -1458,8 +1469,11 @@ class CoreDataManager: ObservableObject {
             let hasNoSummary = recording.summary == nil
 
             if hasNoURL && hasNoTranscript && hasNoSummary {
-                // Delete this orphaned record
-                enqueueRecordingCloudDeletion(recording)
+                // Delete this leftover row locally only. A deletion marker
+                // means the *user* deleted something; this is automatic
+                // housekeeping. Restoring a recording-only backup with audio
+                // excluded produces the same empty shape, so tombstoning here
+                // would erase a valid CloudKit recording on every device.
                 context.delete(recording)
                 fixedCount += 1
             }

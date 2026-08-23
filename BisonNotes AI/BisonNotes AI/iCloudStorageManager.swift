@@ -4175,10 +4175,25 @@ extension iCloudStorageManager {
 
                 if let recordingId, let recording = recordingsById[recordingId] {
                     entry.recording = recording
-                    recording.summary = entry
-                    recording.summaryId = summaryId
-                    if recording.summaryStatus == nil || recording.summaryStatus?.isEmpty == true {
-                        recording.summaryStatus = ProcessingStatus.completed.rawValue
+
+                    // Same rule as transcripts: `existing` is matched on summary
+                    // id, so a cloud row from delete-and-regenerate arrives with
+                    // nothing to compare against and would steal the recording's
+                    // pointer. Arbitrate against whatever the recording currently
+                    // points at before repointing it.
+                    if Self.shouldRelinkRecordingTranscript(
+                        candidateId: summaryId,
+                        candidateTimestamp: localSummaryContentTimestamp(entry),
+                        linkedId: recording.summaryId ?? recording.summary?.id,
+                        linkedTimestamp: recording.summary.map(localSummaryContentTimestamp) ?? nil
+                    ) {
+                        recording.summary = entry
+                        recording.summaryId = summaryId
+                        if recording.summaryStatus == nil || recording.summaryStatus?.isEmpty == true {
+                            recording.summaryStatus = ProcessingStatus.completed.rawValue
+                        }
+                    } else {
+                        result.localItemsKeptAsNewer += 1
                     }
                 }
 
@@ -4775,7 +4790,7 @@ extension iCloudStorageManager {
         pendingTranscriptCloudRemovals.removeAll { $0.transcriptId == transcriptId }
     }
 
-    private func clearPendingRecordingDeletion(recordingId: UUID) {
+    func clearPendingRecordingDeletion(recordingId: UUID) {
         pendingCloudDeletionMarkers.removeAll { $0.recordingId == recordingId }
     }
 
@@ -4936,8 +4951,15 @@ extension iCloudStorageManager {
                 guard let recording, recording.isCloudSyncDisabled == false else {
                     continue
                 }
-                appCoordinator.coreDataManager.deleteRecording(id: target.id)
-                application.deletedLocalItems += 1
+                do {
+                    try appCoordinator.coreDataManager.deleteRecording(id: target.id)
+                    application.deletedLocalItems += 1
+                } catch {
+                    AppLog.shared.iCloudSync(
+                        "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",
+                        level: .error
+                    )
+                }
             case .transcript:
                 let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id)
                 let transcriptParent = transcript.flatMap { candidate in
@@ -6316,9 +6338,9 @@ extension iCloudStorageManager {
     /// The restore leg matches cloud rows to local rows by transcript id, so a row
     /// carrying a *different* id has no local counterpart to arbitrate against and
     /// would otherwise be linked unconditionally. That is the delete-and-retranscribe
-    /// case: one device replaced its transcript, another still holds the old backup,
-    /// and relinking would point the recording at the older text and strand the
-    /// newer row for the duplicate prune to collect.
+    /// (or delete-and-regenerate-summary) case: one device replaced its child row,
+    /// another still holds the old backup, and relinking would point the recording
+    /// at the older content and strand the newer row for the duplicate prune to collect.
     ///
     /// Same id always relinks — it is the row already in place. Otherwise the newer
     /// content timestamp wins, and an unknown timestamp on either side defers to the

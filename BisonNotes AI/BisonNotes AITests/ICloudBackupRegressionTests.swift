@@ -95,6 +95,32 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 1)
     }
 
+    func testFixingIncompletelyDeletedRecordingsDoesNotEnqueueACloudTombstone() throws {
+        // A recording-only restore with audio excluded has no URL, transcript,
+        // or summary. Launch housekeeping used to publish a user-deletion
+        // marker for that shape and then wipe the CloudKit copy everywhere.
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = RecordingEntry(context: context)
+        let recordingId = UUID()
+        recording.id = recordingId
+        recording.recordingName = "Metadata-only leftover"
+        recording.recordingDate = Date()
+        recording.recordingURL = nil
+        recording.duration = 0
+        recording.fileSize = 0
+        recording.lastModified = Date()
+        try context.save()
+
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 0)
+
+        let fixed = appCoordinator.fixIncompletelyDeletedRecordings()
+
+        XCTAssertEqual(fixed, 1)
+        XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 0)
+    }
+
     func testDeletingSummaryQueuesPendingiCloudRemovalWhenSyncIsUnavailable() async throws {
         let recordingId = try createCompleteRecording(named: "Delete Summary")
         let summaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
@@ -685,7 +711,32 @@ final class ICloudBackupRegressionTests: XCTestCase {
     }
 
 
-    // MARK: - Transcript Relink Arbitration
+    // MARK: - Transcript / Summary Relink Arbitration
+
+    /// Summaries share `shouldRelinkRecordingTranscript`. A cloud summary with a
+    /// different id — the other device deleted and regenerated — must not steal
+    /// the recording's pointer unless it is actually newer.
+    func testRelinkKeepsTheNewerSummaryWhenTheCloudRowHasADifferentId() {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let linkedId = UUID()
+
+        XCTAssertFalse(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: base,
+                linkedId: linkedId,
+                linkedTimestamp: base.addingTimeInterval(600)
+            )
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldRelinkRecordingTranscript(
+                candidateId: UUID(),
+                candidateTimestamp: base.addingTimeInterval(600),
+                linkedId: linkedId,
+                linkedTimestamp: base
+            )
+        )
+    }
 
     func testRelinkKeepsTheNewerTranscriptWhenTheCloudRowHasADifferentId() {
         let base = Date(timeIntervalSince1970: 1_700_000_000)

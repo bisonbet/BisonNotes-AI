@@ -203,12 +203,20 @@ class AppDataCoordinator: ObservableObject {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let summaryIds = coreDataManager.getSummary(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let iCloudManager = SummaryManager.shared.getiCloudManager()
+        // Persist the deletion intent first so a crash after the local save
+        // still tells other devices. Withdraw it if the local delete rolls back.
         iCloudManager.enqueueRecordingDeletionForiCloud(
             recordingId: id,
             transcriptIds: transcriptIds,
             summaryIds: summaryIds
         )
-        coreDataManager.deleteRecording(id: id)
+        do {
+            try coreDataManager.deleteRecording(id: id)
+        } catch {
+            iCloudManager.clearPendingRecordingDeletion(recordingId: id)
+            AppLog.shared.coreData("Failed to delete recording \(id); withdrew the iCloud deletion marker: \(error)", level: .error)
+            return
+        }
 
         Task {
             do {
