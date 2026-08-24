@@ -95,6 +95,47 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 1)
     }
 
+    func testDeletingImportedRecordingWithoutTranscriptQueuesRecordingTombstone() throws {
+        let audioURL = tempDirectory.appendingPathComponent("orphan-import.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = appCoordinator.addRecording(
+            url: audioURL,
+            name: "Orphan Imported Transcript",
+            date: Date(),
+            fileSize: 1_024,
+            duration: 0.1,
+            quality: .whisperOptimized
+        )
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        recording.audioQuality = "imported"
+        try appCoordinator.coreDataManager.saveContext()
+
+        XCTAssertNil(appCoordinator.getTranscript(for: recordingId))
+
+        appCoordinator.deleteRecording(id: recordingId)
+
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId))
+        XCTAssertEqual(
+            SummaryManager.shared.getiCloudManager().pendingCloudDeletionCountForTesting,
+            1
+        )
+    }
+
+    func testTranscriptLookupFallsBackToRecordingRelationship() throws {
+        let recordingId = try createRecordingOnly(named: "Relationship Transcript")
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let transcript = TranscriptEntry(context: context)
+        let transcriptId = UUID()
+        transcript.id = transcriptId
+        transcript.recording = appCoordinator.getRecording(id: recordingId)
+        transcript.segments = "[]"
+        transcript.createdAt = Date()
+        transcript.lastModified = Date()
+        try context.save()
+
+        XCTAssertEqual(appCoordinator.getTranscript(for: recordingId)?.id, transcriptId)
+    }
+
     func testFixingIncompletelyDeletedRecordingsDoesNotEnqueueACloudTombstone() throws {
         // A recording-only restore with audio excluded has no URL, transcript,
         // or summary. Launch housekeeping used to publish a user-deletion
@@ -586,16 +627,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
     }
 
     private func createCompleteRecording(named name: String) throws -> UUID {
-        let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
-        try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = appCoordinator.addRecording(
-            url: audioURL,
-            name: name,
-            date: Date(),
-            fileSize: 1_024,
-            duration: 30,
-            quality: .whisperOptimized
-        )
+        let recordingId = try createRecordingOnly(named: name)
         let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Transcript for \(name)", startTime: 0, endTime: 2)]
@@ -608,6 +640,19 @@ final class ICloudBackupRegressionTests: XCTestCase {
             originalLength: 60
         )
         return recordingId
+    }
+
+    private func createRecordingOnly(named name: String) throws -> UUID {
+        let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        return appCoordinator.addRecording(
+            url: audioURL,
+            name: name,
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
     }
 
     // MARK: - Local / Cloud Dedupe Parity

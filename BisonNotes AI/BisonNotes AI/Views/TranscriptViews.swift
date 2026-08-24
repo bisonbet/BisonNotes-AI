@@ -24,7 +24,7 @@ private struct TranscriptWithDate {
 
 private struct TranscriptDeletionRequest {
     let recordingId: UUID
-    let transcriptId: UUID
+    let transcriptId: UUID?
     let recordingName: String
     let imported: Bool
     let hasSummary: Bool
@@ -449,6 +449,7 @@ struct TranscriptsView: View {
     ) -> some View {
         let availableRecordings = filtered.filter { $0.transcript != nil }
         let availableImported = filteredImported.filter { $0.transcript != nil }
+        let unavailableImported = filteredImported.filter { $0.transcript == nil }
         let pendingRecordings = filtered.filter { $0.transcript == nil }
         let availableTranscripts = (
             transcriptItemsWithDates(availableRecordings, source: .audio)
@@ -498,6 +499,20 @@ struct TranscriptsView: View {
                             if isTranscriptDateSectionExpanded(sectionData.section) {
                                 transcriptDateSectionRows(sectionData.items)
                             }
+                        }
+                    }
+                }
+
+                if !unavailableImported.isEmpty {
+                    transcriptSectionHeader(
+                        title: "Imported Items Needing Cleanup",
+                        count: unavailableImported.count,
+                        systemImage: "exclamationmark.triangle"
+                    )
+
+                    ForEach(unavailableImported, id: \.recording.objectID) { item in
+                        importedTranscriptRowView((recording: item.recording, transcript: item.transcript)) {
+                            requestTranscriptDeletion(for: item.recording, imported: true)
                         }
                     }
                 }
@@ -661,7 +676,6 @@ struct TranscriptsView: View {
 
         // Respect the same date/search filters as the main page
         let importedWithDates: [ImportedWithDate] = filteredImportedTranscripts.compactMap { item in
-            guard item.transcript != nil else { return nil }
             guard let date = item.recording.recordingDate else { return nil }
             return ImportedWithDate(recording: item.recording, transcript: item.transcript, date: date)
         }
@@ -888,27 +902,46 @@ struct TranscriptsView: View {
         onDelete: (() -> Void)? = nil
     ) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            Button(action: {
-                presentTranscript(recordingData.recording)
-            }) {
-                importedTranscriptRowContent(recordingData, showsChevron: onDelete == nil)
+            if recordingData.transcript != nil {
+                Button(action: {
+                    presentTranscript(recordingData.recording)
+                }) {
+                    importedTranscriptRowContent(recordingData, showsChevron: onDelete == nil)
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityCard(
+                    label: AccessibilitySupport.transcriptRowLabel(
+                        name: recordingData.recording.recordingName ?? "Untitled Import",
+                        source: "Imported"
+                    ),
+                    value: AccessibilitySupport.transcriptRowValue(
+                        date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
+                        wordCount: recordingData.transcript.map { transcriptWordCount($0) },
+                        hasSummary: recordingData.recording.summary != nil
+                            || recordingData.recording.summaryId != nil
+                            || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
+                    ),
+                    hint: "Opens this imported transcript."
+                )
+            } else {
+                importedTranscriptRowContent(recordingData, showsChevron: false)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityCard(
+                        label: AccessibilitySupport.transcriptRowLabel(
+                            name: recordingData.recording.recordingName ?? "Untitled Import",
+                            source: "Imported"
+                        ),
+                        value: AccessibilitySupport.transcriptRowValue(
+                            date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
+                            wordCount: nil,
+                            hasSummary: recordingData.recording.summary != nil
+                                || recordingData.recording.summaryId != nil
+                                || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
+                        ),
+                        hint: "The imported transcript is unavailable. Delete this item to remove the leftover entry."
+                    )
             }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityCard(
-                label: AccessibilitySupport.transcriptRowLabel(
-                    name: recordingData.recording.recordingName ?? "Untitled Import",
-                    source: "Imported"
-                ),
-                value: AccessibilitySupport.transcriptRowValue(
-                    date: UserPreferences.shared.formatMediumDateTime(recordingData.recording.recordingDate ?? Date()),
-                    wordCount: recordingData.transcript.map { transcriptWordCount($0) },
-                    hasSummary: recordingData.recording.summary != nil
-                        || recordingData.recording.summaryId != nil
-                        || recordingData.recording.summaryStatus == ProcessingStatus.completed.rawValue
-                ),
-                hint: "Opens this imported transcript."
-            )
 
             if let onDelete {
                 Divider()
@@ -981,6 +1014,10 @@ struct TranscriptsView: View {
                     Text("\(transcript.segments.reduce(0) { $0 + $1.text.split(separator: " ").count }) words")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                } else {
+                    Text("Transcript unavailable")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
                 }
             }
 
@@ -1369,9 +1406,19 @@ struct TranscriptsView: View {
 
     private func requestTranscriptDeletions(for items: [(recording: RecordingEntry, imported: Bool)]) {
         let requests = items.compactMap { item -> TranscriptDeletionRequest? in
-            guard let recordingId = item.recording.id,
-                  let transcriptId = appCoordinator.coreDataManager.getTranscript(for: recordingId)?.id else {
-                AppLog.shared.transcription("Cannot delete transcript: missing recording or transcript ID", level: .error)
+            guard let recordingId = item.recording.id else {
+                AppLog.shared.transcription("Cannot delete transcript: missing recording ID", level: .error)
+                return nil
+            }
+
+            // Imported rows can outlive their TranscriptEntry after a failed import,
+            // partial restore, or an older deletion path. They are still explicitly
+            // deletable recording placeholders. For normal recordings, retain the
+            // strict transcript-ID requirement.
+            let transcriptId = item.recording.transcript?.id
+                ?? appCoordinator.coreDataManager.getTranscript(for: recordingId)?.id
+            if transcriptId == nil && !item.imported {
+                AppLog.shared.transcription("Cannot delete transcript: missing transcript ID", level: .error)
                 return nil
             }
 
@@ -1420,8 +1467,8 @@ struct TranscriptsView: View {
             if shouldDeleteImportedRecording {
                 appCoordinator.deleteRecording(id: request.recordingId)
                 AppLog.shared.transcription("Deleted imported transcript and its recording entry")
-            } else {
-                try await appCoordinator.deleteTranscript(id: request.transcriptId)
+            } else if let transcriptId = request.transcriptId {
+                try await appCoordinator.deleteTranscript(id: transcriptId)
                 if request.imported {
                     recording.recordingURL = nil
                     recording.lastModified = Date()
@@ -1430,6 +1477,16 @@ struct TranscriptsView: View {
                 } else {
                     AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
                 }
+            } else if request.imported {
+                // There is no transcript row to delete, but a summary may still be
+                // anchored to this imported recording. Preserve that summary while
+                // removing the temporary audio relationship.
+                recording.recordingURL = nil
+                recording.lastModified = Date()
+                try? appCoordinator.coreDataManager.saveContext()
+                AppLog.shared.transcription("Removed unavailable imported transcript, preserved summary")
+            } else {
+                AppLog.shared.transcription("Cannot delete transcript: no transcript ID", level: .error)
             }
         } catch {
             AppLog.shared.transcription("Failed to delete transcript: \(error)", level: .error)

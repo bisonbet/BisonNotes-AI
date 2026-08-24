@@ -428,7 +428,14 @@ class CoreDataManager: ObservableObject {
 
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
+        // Older and partially restored rows may have the Core Data relationship
+        // populated while the denormalized recordingId field is absent. Treat
+        // either representation as the same transcript for UI and deletion paths.
+        fetchRequest.predicate = NSPredicate(
+            format: "recordingId == %@ OR recording.id == %@",
+            recordingId as CVarArg,
+            recordingId as CVarArg
+        )
         // Sort by lastModified to get the most recent transcript
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.lastModified, ascending: false)]
 
