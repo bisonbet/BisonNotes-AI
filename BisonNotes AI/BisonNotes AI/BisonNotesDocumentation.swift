@@ -32,7 +32,7 @@ enum BisonNotesDocumentation {
     }
 
     /// Builds the WordPress page URL from the app's major/minor marketing version.
-    /// WordPress page slugs use hyphens for dotted versions, for example 2.3 -> 2-3.
+    /// WordPress page slugs use hyphens for dotted versions, for example 2.4 -> 2-4.
     static func releaseGuideURL(
         forMarketingVersion marketingVersion: String?,
         fragment: String? = nil

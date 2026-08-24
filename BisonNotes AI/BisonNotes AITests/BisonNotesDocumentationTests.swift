@@ -8,8 +8,8 @@ final class BisonNotesDocumentationTests: XCTestCase {
             "https://www.bisonnetworking.com/bisonnotes-ai-v2-2/"
         )
         XCTAssertEqual(
-            BisonNotesDocumentation.releaseGuideURL(forMarketingVersion: "2.3").absoluteString,
-            "https://www.bisonnetworking.com/bisonnotes-ai-v2-3/"
+            BisonNotesDocumentation.releaseGuideURL(forMarketingVersion: "2.4").absoluteString,
+            "https://www.bisonnetworking.com/bisonnotes-ai-v2-4/"
         )
     }
 
@@ -20,10 +20,10 @@ final class BisonNotesDocumentationTests: XCTestCase {
         // the page.
         XCTAssertEqual(
             BisonNotesDocumentation.releaseGuideURL(
-                forMarketingVersion: "2.3",
-                fragment: "bn23-ai"
+                forMarketingVersion: "2.4",
+                fragment: "bn24-ai"
             ).absoluteString,
-            "https://www.bisonnetworking.com/bisonnotes-ai-v2-3/#bn23-ai"
+            "https://www.bisonnetworking.com/bisonnotes-ai-v2-4/#bn24-ai"
         )
     }
 
