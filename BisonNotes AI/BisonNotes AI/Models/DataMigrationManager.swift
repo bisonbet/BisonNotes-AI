@@ -581,6 +581,10 @@ class DataMigrationManager: ObservableObject {
         recordings.forEach { enqueueRecordingDeletion($0) }
         transcripts.forEach { enqueueTranscriptDeletion($0) }
         summaries.forEach { enqueueSummaryDeletion($0) }
+
+        // The batch delete bypassed relationship callbacks, so every attachment
+        // folder is now unreachable.
+        SummaryAttachmentStore.shared.pruneOrphans(against: context)
     }
 
     func debugCoreDataContents() async {
@@ -700,6 +704,11 @@ class DataMigrationManager: ObservableObject {
             // Step 4: Remove entries with missing audio files
             migrationStatus = "Cleaning up missing audio files..."
             results.cleanedMissingFiles = await cleanupMissingAudioFiles(report.missingAudioFiles)
+
+        // One sweep after the repairs, rather than per delete site: cascade
+        // deletes never run our code, so reconciling against the store is the
+        // only way to catch every folder left behind.
+        SummaryAttachmentStore.shared.pruneOrphans(against: context)
             migrationProgress = 0.9
 
             // Step 5: Save changes

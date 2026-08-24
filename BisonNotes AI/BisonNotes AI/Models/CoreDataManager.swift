@@ -1291,6 +1291,17 @@ class CoreDataManager: ObservableObject {
         recording.lastModified = max(current, date)
     }
 
+    /// Removes attachment folders left behind by summaries that no longer exist.
+    ///
+    /// Deliberately reconciliation rather than another staged cleanup at each
+    /// delete site: a cascade delete never runs our code at all, and the batch
+    /// delete behind "clear all data" bypasses relationship callbacks, so no
+    /// amount of call-site diligence catches every case.
+    @discardableResult
+    func pruneOrphanedSummaryAttachments() -> Int? {
+        SummaryAttachmentStore.shared.pruneOrphans(against: context)
+    }
+
     func getRecording(forSummaryId summaryId: UUID) -> RecordingEntry? {
         fetchRecordings(
             matching: NSPredicate(
