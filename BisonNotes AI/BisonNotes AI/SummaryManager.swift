@@ -508,7 +508,10 @@ class SummaryManager: ObservableObject {
 
                     if Self.shouldPersistFallbackSelection(
                         savedEngineName: engineName,
-                        knownEngineNames: Set(availableEngines.keys)
+                        knownEngineNames: Set(availableEngines.keys),
+                        removedProviderMigrationCompleted: UserDefaults.standard.bool(
+                            forKey: AppSettingsKeys.removedProviderSelectionsMigrated
+                        )
                     ) {
                         UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
                         AppLog.shared.summarization(
@@ -535,12 +538,21 @@ class SummaryManager: ObservableObject {
     /// arriving by way of an iCloud settings restore from an older build. Left
     /// in place it strands every reader that keys off the raw string, because
     /// their `?? default` never fires for a non-nil value.
+    ///
+    /// The exception is timing. This registry is built on first access to
+    /// `SummaryManager.shared`, which can happen before the launch migrations
+    /// run, and until they have run an unrecognized name may still be a removed
+    /// provider they can map to a successor — "OpenAI" becomes Compatible API
+    /// with its credentials intact. Overwriting it first would destroy the only
+    /// evidence of what the user had. So the rewrite waits for them.
     nonisolated static func shouldPersistFallbackSelection(
         savedEngineName: String?,
-        knownEngineNames: Set<String>
+        knownEngineNames: Set<String>,
+        removedProviderMigrationCompleted: Bool
     ) -> Bool {
         guard let savedEngineName, savedEngineName != "None" else { return false }
-        return !knownEngineNames.contains(savedEngineName)
+        guard !knownEngineNames.contains(savedEngineName) else { return false }
+        return removedProviderMigrationCompleted
     }
 
     func setEngine(_ engineName: String) {

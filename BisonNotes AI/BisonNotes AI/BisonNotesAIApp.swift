@@ -142,7 +142,7 @@ struct BisonNotesAIApp: App {
     /// Migrates selections that depended on removed provider options.
     /// Existing compatible-API summarization selections are preserved.
     private func migrateRemovedProviderSelections() {
-        let migrationKey = "removedProviderSelectionsMigrated_v2.3"
+        let migrationKey = AppSettingsKeys.removedProviderSelectionsMigrated
         let previousMigrationKey = "removedProviderSelectionsMigrated_v2.5"
         let defaults = UserDefaults.standard
 

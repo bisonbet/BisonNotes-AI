@@ -10,6 +10,11 @@ import Combine
 
 /// A centralized location for UserDefaults keys to prevent typos and improve maintainability.
 struct AppSettingsKeys {
+    /// Set once the launch pass that maps removed providers to their successors
+    /// has run. Read by the engine registry, which is built on first access to
+    /// SummaryManager and must not rewrite a selection that pass can still map.
+    static let removedProviderSelectionsMigrated = "removedProviderSelectionsMigrated_v2.3"
+
     static let ollamaServerURL = "ollamaServerURL"
     static let ollamaPort = "ollamaPort"
     static let ollamaModelName = "ollamaModelName"

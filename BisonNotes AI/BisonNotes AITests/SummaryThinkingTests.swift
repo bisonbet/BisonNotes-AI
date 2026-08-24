@@ -319,8 +319,32 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertTrue(
             SummaryManager.shouldPersistFallbackSelection(
                 savedEngineName: "AWS Bedrock",
-                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue))
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue)),
+                removedProviderMigrationCompleted: true
             )
+        )
+    }
+
+    func testEngineSelectionIsNotRewrittenBeforeTheMigrationHasRun() {
+        // The registry is built on first access to SummaryManager, which can
+        // happen before the launch migrations. "OpenAI" is not a known engine,
+        // but the migration maps it to Compatible API along with its
+        // credentials — overwriting it first would destroy the only record of
+        // what the user had configured.
+        XCTAssertFalse(
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: "OpenAI",
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue)),
+                removedProviderMigrationCompleted: false
+            )
+        )
+        XCTAssertTrue(
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: "OpenAI",
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue)),
+                removedProviderMigrationCompleted: true
+            ),
+            "once the migration has had its chance, a still-unknown name is dead"
         )
     }
 
@@ -330,7 +354,8 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertFalse(
             SummaryManager.shouldPersistFallbackSelection(
                 savedEngineName: AIEngineType.localLLM.rawValue,
-                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue))
+                knownEngineNames: Set(AIEngineType.allCases.map(\.rawValue)),
+                removedProviderMigrationCompleted: true
             )
         )
     }
@@ -338,10 +363,18 @@ final class SummaryThinkingTests: XCTestCase {
     func testDeliberateNoneSelectionIsNeverRewritten() {
         let known = Set(AIEngineType.allCases.map(\.rawValue))
         XCTAssertFalse(
-            SummaryManager.shouldPersistFallbackSelection(savedEngineName: "None", knownEngineNames: known)
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: "None",
+                knownEngineNames: known,
+                removedProviderMigrationCompleted: true
+            )
         )
         XCTAssertFalse(
-            SummaryManager.shouldPersistFallbackSelection(savedEngineName: nil, knownEngineNames: known)
+            SummaryManager.shouldPersistFallbackSelection(
+                savedEngineName: nil,
+                knownEngineNames: known,
+                removedProviderMigrationCompleted: true
+            )
         )
     }
 
