@@ -890,4 +890,29 @@ final class ICloudBackupRegressionTests: XCTestCase {
         }
     }
 
+
+    // MARK: - Recording Content Timestamp
+
+    /// CLAUDE.md makes lastModified the value iCloud arbitration compares for a
+    /// recording. Writing an older summary's generatedAt straight into it made the
+    /// local row look older than the cloud copy, inviting a stale copy to
+    /// overwrite newer local metadata.
+    func testRecordingTimestampNeverMovesBackward() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        let older = now.addingTimeInterval(-3_600)
+        let newer = now.addingTimeInterval(3_600)
+
+        XCTAssertEqual(max(now, older), now, "an older summary must not rewind the recording")
+        XCTAssertEqual(max(now, newer), newer, "a newer summary still advances it")
+
+        // And the arbitration rule this protects: a local row that looks older
+        // loses to the cloud copy.
+        XCTAssertFalse(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: older, cloudTimestamp: now)
+        )
+        XCTAssertTrue(
+            iCloudStorageManager.shouldUploadLocalVersion(localTimestamp: now, cloudTimestamp: now)
+        )
+    }
+
 }
