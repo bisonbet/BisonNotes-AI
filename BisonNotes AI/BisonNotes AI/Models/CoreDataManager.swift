@@ -855,18 +855,26 @@ class CoreDataManager: ObservableObject {
         // Keep one authoritative summary per recording after the save succeeds.
         let duplicateSummaries = summariesForRecording.filter { $0.objectID != summaryEntry.objectID }
         if !duplicateSummaries.isEmpty {
-            duplicateSummaries.forEach { summary in
-                if let summaryId = summary.id {
-                    try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
-                }
-                enqueueSummaryCloudDeletion(summary)
-                context.delete(summary)
+            let supersededIds: [(summaryId: UUID, recordingId: UUID?)] = duplicateSummaries.compactMap {
+                guard let summaryId = $0.id else { return nil }
+                return (summaryId, $0.recordingId ?? $0.recording?.id)
             }
+            duplicateSummaries.forEach { context.delete($0) }
             do {
                 try context.save()
             } catch {
                 context.rollback()
                 throw error
+            }
+
+            // Only once the save has landed: a rollback would otherwise leave the
+            // superseded rows pointing at attachments that no longer exist.
+            for superseded in supersededIds {
+                enqueueSummaryCloudDeletion(
+                    summaryId: superseded.summaryId,
+                    recordingId: superseded.recordingId
+                )
+                try? SummaryAttachmentStore.shared.deleteAll(for: superseded.summaryId)
             }
         }
 
@@ -978,32 +986,62 @@ class CoreDataManager: ObservableObject {
         return summary.id
     }
 
+    /// Reads the authoritative summary for a recording.
+    ///
+    /// This used to delete the losing duplicates here, along with their
+    /// attachment files, and queue cloud tombstones for them — all as a side
+    /// effect of a read. That published a durable deletion for a summary another
+    /// device might still be pointing at, without any of the safeguards the
+    /// convergent prune applies: no unreferenced check, and a winner chosen by a
+    /// different rule, so two devices could each delete the other's copy.
+    ///
+    /// Duplicates are now left alone. `pruneSupersededLocalDuplicates` removes
+    /// them during reconcile, where every device derives the same winner from the
+    /// same data and no tombstone is written.
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        // Sort by generatedAt descending to get the most recent summary
-        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
 
         do {
             let summaries = try context.fetch(fetchRequest)
-            if summaries.count > 1 {
-                AppLog.shared.coreData("Found \(summaries.count) summaries for recording \(recordingId) — auto-cleaning duplicates", level: .debug)
-                // Keep the most recent (index 0), delete the rest immediately
-                for summary in summaries.dropFirst() {
-                    AppLog.shared.coreData("Auto-deleting duplicate summary ID=\(summary.id?.uuidString ?? "nil"), length=\(summary.summary?.count ?? 0)", level: .debug)
-                    if let summaryId = summary.id {
-                        try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
-                    }
-                    enqueueSummaryCloudDeletion(summary)
-                    context.delete(summary)
-                }
-                try? context.save()
+            guard summaries.count > 1 else {
+                return summaries.first
             }
-            return summaries.first
+
+            AppLog.shared.coreData(
+                "Found \(summaries.count) summaries for recording \(recordingId); "
+                    + "returning the row iCloud arbitration converges on",
+                level: .debug
+            )
+            return summaries.max { lhs, rhs in
+                Self.summaryIsConvergentlyEarlier(
+                    lhsTimestamp: lhs.generatedAt ?? lhs.recording?.recordingDate,
+                    lhsId: lhs.id,
+                    rhsTimestamp: rhs.generatedAt ?? rhs.recording?.recordingDate,
+                    rhsId: rhs.id
+                )
+            }
         } catch {
             AppLog.shared.coreData("Error fetching summary: \(error)", level: .error)
             return nil
         }
+    }
+
+    /// Orders two summaries exactly as `iCloudStorageManager.latestPerRecording`
+    /// does, so a read shows the same row the sync will settle on. Newest content
+    /// timestamp wins; equal timestamps break on the identifier.
+    static func summaryIsConvergentlyEarlier(
+        lhsTimestamp: Date?,
+        lhsId: UUID?,
+        rhsTimestamp: Date?,
+        rhsId: UUID?
+    ) -> Bool {
+        let lhs = lhsTimestamp ?? .distantPast
+        let rhs = rhsTimestamp ?? .distantPast
+        if lhs != rhs {
+            return lhs < rhs
+        }
+        return (lhsId?.uuidString ?? "") < (rhsId?.uuidString ?? "")
     }
 
     func getSummaryData(for recordingId: UUID) -> EnhancedSummaryData? {

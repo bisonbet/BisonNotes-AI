@@ -848,4 +848,46 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+
+    // MARK: - Read-Time Winner Matches Sync
+
+    /// `getSummary(for:)` and `latestPerRecording` must name the same row. When
+    /// they disagreed, a read showed one summary while sync converged on another
+    /// — and the read path then deleted the row the other device was using.
+    func testReadTimeSummaryWinnerMatchesTheSyncWinner() {
+        struct Row { let id: UUID; let timestamp: Date? }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let recordingId = UUID()
+
+        let cases: [[Row]] = [
+            [Row(id: UUID(), timestamp: base),
+             Row(id: UUID(), timestamp: base.addingTimeInterval(120)),
+             Row(id: UUID(), timestamp: base.addingTimeInterval(60))],
+            // Equal timestamps: the identifier tie-break has to agree too.
+            (0..<5).map { _ in Row(id: UUID(), timestamp: base) },
+            // A row with no timestamp must lose to one that has it, on both sides.
+            [Row(id: UUID(), timestamp: nil), Row(id: UUID(), timestamp: base)]
+        ]
+
+        for rows in cases {
+            let syncWinner = iCloudStorageManager.latestPerRecording(
+                rows,
+                recordingId: { _ in recordingId },
+                timestamp: { $0.timestamp },
+                identifier: { $0.id }
+            ).kept.first?.id
+
+            let readWinner = rows.max { lhs, rhs in
+                CoreDataManager.summaryIsConvergentlyEarlier(
+                    lhsTimestamp: lhs.timestamp,
+                    lhsId: lhs.id,
+                    rhsTimestamp: rhs.timestamp,
+                    rhsId: rhs.id
+                )
+            }?.id
+
+            XCTAssertEqual(readWinner, syncWinner)
+        }
+    }
+
 }
