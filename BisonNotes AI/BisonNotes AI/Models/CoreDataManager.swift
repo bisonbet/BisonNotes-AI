@@ -474,7 +474,11 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    func deleteTranscript(id: UUID?) throws {
+    /// Deletes a transcript and, once the save has landed, tells iCloud.
+    ///
+    /// `enqueueCloudDeletion` is false when applying a marker that came from
+    /// another device — see `deleteRecording(id:enqueueCloudDeletion:)`.
+    func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
         guard let id else { return }
 
         do {
@@ -517,7 +521,7 @@ class CoreDataManager: ObservableObject {
                 effects.stage(transcript: $0)
                 context.delete($0)
             }
-            try save(committing: effects)
+            try save(committing: effects, localOnly: !enqueueCloudDeletion)
             AppLog.shared.coreData("Deleted transcript with ID: \(id)")
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
@@ -1085,7 +1089,13 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    func deleteSummary(id: UUID?) throws {
+    /// Deletes a summary and, once the save has landed, removes its attachment
+    /// files and tells iCloud.
+    ///
+    /// `enqueueCloudDeletion` is false when applying a marker that came from
+    /// another device. Attachment files are still removed either way — they are
+    /// local state, not a claim about what the user deleted.
+    func deleteSummary(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
         guard let id = id else {
             AppLog.shared.coreData("Cannot delete summary: ID is nil", level: .error)
             return
@@ -1120,7 +1130,7 @@ class CoreDataManager: ObservableObject {
             }
 
             do {
-                try save(committing: effects)
+                try save(committing: effects, localOnly: !enqueueCloudDeletion)
                 AppLog.shared.coreData("Successfully deleted summary with ID: \(id)")
             } catch {
                 AppLog.shared.coreData("Failed to save context after deleting summary: \(error)", level: .error)

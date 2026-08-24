@@ -4990,7 +4990,19 @@ extension iCloudStorageManager {
                 )
 
                 guard transcript != nil, transcriptParent?.isCloudSyncDisabled != true else { continue }
-                try? appCoordinator.coreDataManager.deleteTranscript(id: target.id)
+                do {
+                    // Applying another device's marker; raising one of our own
+                    // would re-create the tombstone after a revive withdrew it.
+                    try appCoordinator.coreDataManager.deleteTranscript(
+                        id: target.id,
+                        enqueueCloudDeletion: false
+                    )
+                } catch {
+                    AppLog.shared.iCloudSync(
+                        "Failed to apply iCloud transcript deletion locally for \(target.id.uuidString): \(error)",
+                        level: .error
+                    )
+                }
                 if appCoordinator.coreDataManager.getTranscript(id: target.id) == nil {
                     application.deletedLocalItems += 1
                 }
@@ -5016,8 +5028,20 @@ extension iCloudStorageManager {
                 )
 
                 guard summary != nil, summaryParent?.isCloudSyncDisabled != true else { continue }
-                try? SummaryAttachmentStore.shared.deleteAll(for: target.id)
-                try? appCoordinator.coreDataManager.deleteSummary(id: target.id)
+                do {
+                    // deleteSummary removes the attachment files itself, but only
+                    // once the row deletion has committed. Doing it here first
+                    // destroyed the user's notes even when that save rolled back.
+                    try appCoordinator.coreDataManager.deleteSummary(
+                        id: target.id,
+                        enqueueCloudDeletion: false
+                    )
+                } catch {
+                    AppLog.shared.iCloudSync(
+                        "Failed to apply iCloud summary deletion locally for \(target.id.uuidString): \(error)",
+                        level: .error
+                    )
+                }
                 if appCoordinator.coreDataManager.getSummary(id: target.id) == nil {
                     application.deletedLocalItems += 1
                 }
