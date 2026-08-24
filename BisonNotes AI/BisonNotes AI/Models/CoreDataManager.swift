@@ -1291,6 +1291,16 @@ class CoreDataManager: ObservableObject {
         recording.lastModified = max(current, date)
     }
 
+    func getRecording(forSummaryId summaryId: UUID) -> RecordingEntry? {
+        fetchRecordings(
+            matching: NSPredicate(
+                format: "summaryId == %@ OR summary.id == %@",
+                summaryId as CVarArg,
+                summaryId as CVarArg
+            )
+        ).first
+    }
+
     private func fetchRecordings(matching predicate: NSPredicate) -> [RecordingEntry] {
         let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         request.predicate = predicate

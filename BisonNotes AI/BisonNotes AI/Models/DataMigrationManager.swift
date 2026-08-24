@@ -527,13 +527,12 @@ class DataMigrationManager: ObservableObject {
         let transcripts = (try? context.fetch(TranscriptEntry.fetchRequest())) ?? []
         let summaries = (try? context.fetch(SummaryEntry.fetchRequest())) ?? []
 
-        // Batch deletes bypass Core Data relationship callbacks. Queue every durable
-        // tombstone first so a later iCloud reconcile cannot restore the cleared store.
-        recordings.forEach { enqueueRecordingDeletion($0) }
-        transcripts.forEach { enqueueTranscriptDeletion($0) }
-        summaries.forEach { enqueueSummaryDeletion($0) }
-
+        // Batch deletes bypass Core Data relationship callbacks, so the tombstones
+        // are raised here rather than through the usual delete paths. They are
+        // raised only once the store is actually empty: queueing first and then
+        // failing the delete would wipe iCloud while the local rows survived.
         let entities = ["RecordingEntry", "TranscriptEntry", "SummaryEntry"]
+        var clearedEveryEntity = true
 
         for entityName in entities {
             let fetchRequest = NSFetchRequest<NSFetchRequestResult>(entityName: entityName)
@@ -543,6 +542,7 @@ class DataMigrationManager: ObservableObject {
                 try context.execute(deleteRequest)
                 AppLog.shared.dataMigration("Cleared all \(entityName) entries")
             } catch {
+                clearedEveryEntity = false
                 AppLog.shared.dataMigration("Error clearing \(entityName): \(error)", level: .error)
             }
         }
@@ -552,7 +552,21 @@ class DataMigrationManager: ObservableObject {
             AppLog.shared.dataMigration("Core Data cleared successfully")
         } catch {
             AppLog.shared.dataMigration("Error saving after clearing Core Data: \(error)", level: .error)
+            context.rollback()
+            return
         }
+
+        guard clearedEveryEntity else {
+            AppLog.shared.dataMigration(
+                "Store only partly cleared; withholding iCloud tombstones so a retry is still possible",
+                level: .error
+            )
+            return
+        }
+
+        recordings.forEach { enqueueRecordingDeletion($0) }
+        transcripts.forEach { enqueueTranscriptDeletion($0) }
+        summaries.forEach { enqueueSummaryDeletion($0) }
     }
 
     func debugCoreDataContents() async {

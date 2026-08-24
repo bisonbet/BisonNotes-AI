@@ -242,6 +242,12 @@ class AppDataCoordinator: ObservableObject {
 
         do {
             try coreDataManager.deleteTranscript(id: id)
+            guard coreDataManager.getTranscript(id: id) == nil else {
+                // Nothing was deleted — the row was not there. Withdraw the marker
+                // rather than tombstoning something this device never saw.
+                iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
+                return
+            }
         } catch {
             iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
             throw error
@@ -260,10 +266,11 @@ class AppDataCoordinator: ObservableObject {
         let summary = coreDataManager.getSummary(id: id)
         let recordingId = summary?.recordingId
             ?? summary?.recording?.id
-            ?? coreDataManager.getAllRecordings().first(where: { $0.summaryId == id })?.id
+            ?? coreDataManager.getRecording(forSummaryId: id)?.id
 
-        // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
-        try? SummaryAttachmentStore.shared.deleteAll(for: id)
+        // Attachment files are removed by deleteSummary once its save commits.
+        // Doing it here destroyed the user's notes even when the delete below
+        // threw and the marker was withdrawn.
 
         // Persist the deletion intent before the local delete. This closes the crash window
         // where a device could remove its local summary and never tell the other devices.
@@ -274,6 +281,10 @@ class AppDataCoordinator: ObservableObject {
 
         do {
             try coreDataManager.deleteSummary(id: id)
+            guard coreDataManager.getSummary(id: id) == nil else {
+                iCloudManager.clearPendingSummaryRemoval(summaryId: id)
+                return
+            }
         } catch {
             iCloudManager.clearPendingSummaryRemoval(summaryId: id)
             throw error
