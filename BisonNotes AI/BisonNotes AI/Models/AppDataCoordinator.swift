@@ -213,6 +213,8 @@ class AppDataCoordinator: ObservableObject {
         do {
             try coreDataManager.deleteRecording(id: id)
         } catch {
+            // Covers the not-found case too: nothing was deleted here, so the
+            // marker queued a moment ago must not go on to delete it elsewhere.
             iCloudManager.clearPendingRecordingDeletion(recordingId: id)
             AppLog.shared.coreData("Failed to delete recording \(id); withdrew the iCloud deletion marker: \(error)", level: .error)
             return

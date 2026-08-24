@@ -713,7 +713,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
     // MARK: - Transcript / Summary Relink Arbitration
 
-    /// Summaries share `shouldRelinkRecordingTranscript`. A cloud summary with a
+    /// Summaries share `shouldRelinkRestoredRow`. A cloud summary with a
     /// different id — the other device deleted and regenerated — must not steal
     /// the recording's pointer unless it is actually newer.
     func testRelinkKeepsTheNewerSummaryWhenTheCloudRowHasADifferentId() {
@@ -721,7 +721,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let linkedId = UUID()
 
         XCTAssertFalse(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: base,
                 linkedId: linkedId,
@@ -729,7 +729,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             )
         )
         XCTAssertTrue(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: base.addingTimeInterval(600),
                 linkedId: linkedId,
@@ -747,7 +747,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         // no local counterpart and nothing to compare — the recording must keep
         // pointing at the newer row it already has.
         XCTAssertFalse(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: base,
                 linkedId: linkedId,
@@ -757,7 +757,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         // The mirror image: the cloud row really is newer, so it should win.
         XCTAssertTrue(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: base.addingTimeInterval(600),
                 linkedId: linkedId,
@@ -769,7 +769,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
     func testRelinkAlwaysAcceptsTheRowTheRecordingAlreadyPointsAt() {
         let sameId = UUID()
         XCTAssertTrue(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: sameId,
                 candidateTimestamp: nil,
                 linkedId: sameId,
@@ -780,7 +780,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
     func testRelinkTakesTheCandidateWhenNothingIsLinkedYet() {
         XCTAssertTrue(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: nil,
                 linkedId: nil,
@@ -794,7 +794,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         // overwrite a working link — there is a valid transcript in place and
         // nothing to justify swapping it out.
         XCTAssertFalse(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: nil,
                 linkedId: UUID(),
@@ -802,7 +802,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             )
         )
         XCTAssertFalse(
-            iCloudStorageManager.shouldRelinkRecordingTranscript(
+            iCloudStorageManager.shouldRelinkRestoredRow(
                 candidateId: UUID(),
                 candidateTimestamp: Date(),
                 linkedId: UUID(),

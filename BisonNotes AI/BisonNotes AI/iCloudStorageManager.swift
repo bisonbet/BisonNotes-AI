@@ -4092,7 +4092,7 @@ extension iCloudStorageManager {
                     // arrives with nothing to compare against and would relink the
                     // recording to the older transcript. Arbitrate against whatever
                     // the recording currently points at before repointing it.
-                    if Self.shouldRelinkRecordingTranscript(
+                    if Self.shouldRelinkRestoredRow(
                         candidateId: transcriptId,
                         candidateTimestamp: localTranscriptContentTimestamp(entry),
                         linkedId: recording.transcriptId ?? recording.transcript?.id,
@@ -4181,7 +4181,7 @@ extension iCloudStorageManager {
                     // nothing to compare against and would steal the recording's
                     // pointer. Arbitrate against whatever the recording currently
                     // points at before repointing it.
-                    if Self.shouldRelinkRecordingTranscript(
+                    if Self.shouldRelinkRestoredRow(
                         candidateId: summaryId,
                         candidateTimestamp: localSummaryContentTimestamp(entry),
                         linkedId: recording.summaryId ?? recording.summary?.id,
@@ -4952,8 +4952,16 @@ extension iCloudStorageManager {
                     continue
                 }
                 do {
-                    try appCoordinator.coreDataManager.deleteRecording(id: target.id)
+                    // Applying someone else's tombstone, so do not raise one of
+                    // our own on the way back out.
+                    try appCoordinator.coreDataManager.deleteRecording(
+                        id: target.id,
+                        enqueueCloudDeletion: false
+                    )
                     application.deletedLocalItems += 1
+                } catch CoreDataDeletionError.recordingNotFound {
+                    // Already gone locally — the marker has nothing left to apply.
+                    continue
                 } catch {
                     AppLog.shared.iCloudSync(
                         "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",
@@ -6333,9 +6341,10 @@ extension iCloudStorageManager {
         return engine.isSupportedOnCurrentPlatform ? .accept : .reject
     }
 
-    /// Whether a restored transcript should become the one the recording points at.
+    /// Whether a restored row should become the one the recording points at.
+    /// Shared by the transcript and summary restore legs.
     ///
-    /// The restore leg matches cloud rows to local rows by transcript id, so a row
+    /// The restore leg matches cloud rows to local rows by id, so a row
     /// carrying a *different* id has no local counterpart to arbitrate against and
     /// would otherwise be linked unconditionally. That is the delete-and-retranscribe
     /// (or delete-and-regenerate-summary) case: one device replaced its child row,
@@ -6345,7 +6354,7 @@ extension iCloudStorageManager {
     /// Same id always relinks — it is the row already in place. Otherwise the newer
     /// content timestamp wins, and an unknown timestamp on either side defers to the
     /// existing link rather than guessing.
-    static func shouldRelinkRecordingTranscript(
+    static func shouldRelinkRestoredRow(
         candidateId: UUID,
         candidateTimestamp: Date?,
         linkedId: UUID?,

@@ -225,13 +225,37 @@ enum ChatCompletionResponseParser {
 
     /// Normalizes text that was valid JSON but contained a second layer of
     /// escaping, which some compatible gateways return for Markdown strings.
+    ///
+    /// `JSONDecoder` has already resolved the real JSON escaping by the time this
+    /// runs, so anything left is literal text the model meant to send. Unescaping
+    /// unconditionally turned a Windows path like `C:\new_folder` into a newline
+    /// and a regex `\t` into a tab, then stripped the surviving backslashes —
+    /// quietly corrupting summaries about anything technical.
     static func normalizeModelText(_ text: String) -> String {
+        guard looksDoubleEncoded(text) else {
+            return text
+        }
+
         var normalized = text
         normalized = normalized.replacingOccurrences(of: "\\n", with: "\n")
         normalized = normalized.replacingOccurrences(of: "\\r", with: "\n")
         normalized = normalized.replacingOccurrences(of: "\\t", with: "\t")
         normalized = normalized.replacingOccurrences(of: "\\\"", with: "\"")
         return removeInvalidEscapeMarkers(from: normalized)
+    }
+
+    /// A double-encoded payload arrives as one flat run with its line breaks still
+    /// spelled `\n`, so real line breaks anywhere are proof the text already
+    /// decoded correctly and its backslashes are the model's own.
+    ///
+    /// This is a heuristic, and deliberately the conservative one: it can leave a
+    /// genuinely double-encoded single-line string alone, which shows the escape
+    /// sequence to the reader. The alternative failure destroys content.
+    private static func looksDoubleEncoded(_ text: String) -> Bool {
+        guard text.contains("\\n") || text.contains("\\r") else {
+            return false
+        }
+        return !text.contains("\n") && !text.contains("\r\n")
     }
 
     private static func removeInvalidEscapeMarkers(from text: String) -> String {

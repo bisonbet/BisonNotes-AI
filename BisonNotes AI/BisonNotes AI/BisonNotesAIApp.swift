@@ -231,18 +231,39 @@ struct BisonNotesAIApp: App {
             return
         }
 
+        applyReadyTranscriptionEngine(
+            in: defaults,
+            key: key,
+            hasOnDeviceAISupport: hasOnDeviceAISupport,
+            reason: "removed cloud transcription selection"
+        )
+    }
+
+    /// Picks a transcription engine that can actually run right now.
+    ///
+    /// On-device support is not enough on its own: Parakeet rejects every request
+    /// until its model is downloaded, so selecting it for a device that has not
+    /// fetched one leaves the user's next transcription failing with no
+    /// explanation. Mistral needs a key for the same reason. When neither is
+    /// ready the selection is left unconfigured, which prompts rather than fails.
+    private func applyReadyTranscriptionEngine(
+        in defaults: UserDefaults,
+        key: String,
+        hasOnDeviceAISupport: Bool,
+        reason: String
+    ) {
         if hasOnDeviceAISupport,
            TranscriptionEngine.fluidAudio.isAvailable,
            FluidAudioManager.shared.isModelReady {
             defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: key)
             defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
-            NSLog("✅ Migrated removed cloud transcription selection to On-Device transcription")
+            NSLog("✅ Migrated \(reason) to On-Device transcription")
         } else if AIEngineFactory.createEngine(type: .mistralAI).isAvailable {
             defaults.set(TranscriptionEngine.mistralAI.rawValue, forKey: key)
-            NSLog("✅ Migrated removed cloud transcription selection to configured Mistral AI")
+            NSLog("✅ Migrated \(reason) to configured Mistral AI")
         } else {
             defaults.set(TranscriptionEngine.notConfigured.rawValue, forKey: key)
-            NSLog("⚠️ No ready transcription engine is available; leaving selection unconfigured")
+            NSLog("⚠️ No ready transcription engine for \(reason); leaving selection unconfigured")
         }
     }
 
@@ -278,14 +299,12 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        if hasOnDeviceAISupport {
-            defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: key)
-            defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
-            NSLog("✅ Migrated unavailable transcription selection to On-Device transcription")
-        } else {
-            defaults.set(TranscriptionEngine.mistralAI.rawValue, forKey: key)
-            NSLog("✅ Migrated unavailable transcription selection to Mistral AI")
-        }
+        applyReadyTranscriptionEngine(
+            in: defaults,
+            key: key,
+            hasOnDeviceAISupport: hasOnDeviceAISupport,
+            reason: "unavailable transcription selection"
+        )
     }
 
     /// Carries an existing OpenAI configuration into the compatible API engine.

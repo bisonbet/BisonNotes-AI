@@ -412,7 +412,9 @@ struct SimpleSettingsView: View {
             }
 
             Button(action: {
-                openURL(BisonNotesDocumentation.releaseGuideURL)
+                // Lands on "AI Engines and Summary Controls" — the section this
+                // screen is asking about — rather than the top of the guide.
+                openURL(BisonNotesDocumentation.releaseGuideURL(fragment: "bn23-ai"))
             }) {
                 Label {
                     Text("Learn More About Processing Options")
