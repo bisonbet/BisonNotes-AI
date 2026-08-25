@@ -2,6 +2,16 @@
 
 ## Status
 
+Implemented on branch `v2.4-icloud-sync-perf` (branched from `v2.4` at `a33ced6e`). Phases 1-6 and the automated test plan are done; the physical two-device production matrix below is **not** — it needs matching TestFlight builds and cannot be run from a simulator or a development-environment build.
+
+Where the implementation deliberately differs from the plan:
+
+- The manifest commit stays at the end of the backup leg (right after its batched save and delete) rather than after the restore leg applies cloud winners locally, so a failure in the restore leg cannot leave successfully uploaded records unlisted.
+- Recording records are read without `audioAsset` and the few that turn out to need saving are refetched in full first. Writing a partially fetched record back with `.ifServerRecordUnchanged` risks clearing the fields that were not fetched, and one extra small fetch is cheaper than that risk.
+- An empty cloud is an error only for a restore the user asked for. During a routine reconcile it is an ordinary state (new account, or every recording marked Keep on This Device) and must not fail the sync.
+
+Original plan follows.
+
 Implementation plan for the `v2.4` release branch. This document is intended as a handoff to Luna or another implementation agent.
 
 Planning baseline:

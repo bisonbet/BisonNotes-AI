@@ -96,6 +96,17 @@ Always use `CoreDataManager` for data operations. Never access Core Data directl
 - **An edit that lands more than `deletionReviveGraceInterval` after a delete beats that delete.** The tombstone is withdrawn and the item uploads again on the same pass. The grace window absorbs cross-device clock skew; a marker with no usable `deletedAt` never revives anything.
 - **Only one transcript and one summary per recording sync.** `backupSourceSelection` uploads just the newest row per recording, and reconcile prunes local rows that a newer row supersedes — but never a row the recording still points at, and never with a tombstone, because every device derives the same winner from the same data. `latestPerRecording` (local) and `resolveLatestRecordsPerRecording` (cloud) must stay in step; if they disagree, devices trade uploads and deletions forever.
 
+### iCloud Sync Engine
+
+Every CloudKit request goes through the components under `BisonNotes AI/Services/`, and tests script them rather than the network. Four rules keep routine sync in seconds rather than minutes; `CloudKitBatchExecutorTests`, `CloudKitRetryPolicyTests`, `CloudContentIndexCoordinatorTests`, `ICloudSyncOrchestrationTests`, `CloudAudioAssetPolicyTests`, and `CloudSyncMetricsTests` cover them.
+
+- **Read by known id, in batches.** The `content_index` manifest names every live record, so a routine pass fetches the whole dataset in two batched requests. `CKQuery` scans and zone-change fetches are reserved for first install, a missing or untrusted manifest, explicit repair, and schema diagnostics — never the routine path. Never walk a collection one `CKRecord` at a time.
+- **One snapshot per run, one coordinator.** `performBackup` reads the cloud once, decides every winner in memory, and issues one batched save and one batched delete; the restore leg reuses that snapshot. `CloudSyncOperationCoordinator` serializes all operations — requests that arrive mid-run join it or collapse into a single follow-up, and say so in their result rather than returning zeroed counts that look like success.
+- **`content_index` is only ever mutated as a delta.** `CloudContentIndexCoordinator` reapplies the run's `ManifestDelta` onto the server's record on `.serverRecordChanged`, a removal always beats a concurrent add, and full replacement is for repair and migration only. The generic copy-every-field merge must never touch the manifest or a deletion marker.
+- **Metadata never waits on audio.** Recording records are fetched without `audioAsset`; a recording that turns out to need saving is refetched in full first, so a partially fetched record is never written back. Assets are built from immutable per-run staging copies, and audio bytes and throughput are reported separately from metadata timing.
+
+Retries live in `CloudKitRetryPolicy`: honor `CKErrorRetryAfterKey`, bounded jittered backoff otherwise, at most three retries, and a requested wait over 30 seconds becomes a persisted eligibility time and a deferred result instead of a sleeping foreground task. Nothing — fetch, save, or scan — may issue a request before that time. Automatic triggers ask `shouldStartRoutineSnapshot(force:)` first; queued edits and user deletions are never delayed by the maintenance throttle, and throttle timestamps advance only after a complete run.
+
 Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Database Tools deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
 
 ### AI Engine Integration
@@ -149,6 +160,7 @@ For AI-generated content display:
 - `Models/CoreDataManager.swift`: Core Data access layer
 - `Models/AppDataCoordinator.swift`: Unified data coordination
 - `iCloudStorageManager.swift`: CloudKit backup, restore, reconcile, and multi-device arbitration
+- `Services/CloudKitTransport.swift`, `Services/CloudKitBatchExecutor.swift`, `Services/CloudContentIndexCoordinator.swift`, `Services/CloudSyncOperationCoordinator.swift`, `Services/CloudSyncMetrics.swift`, `Services/CloudAudioAssetStaging.swift`: the sync engine the manager runs on
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
