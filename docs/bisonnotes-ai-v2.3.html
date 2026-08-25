@@ -1,4 +1,4 @@
-<!-- BisonNotes AI v2.3 (Build 14) - WordPress Release and Upgrade Guide -->
+<!-- BisonNotes AI v2.3 - WordPress Release and Upgrade Guide -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag on one line: WordPress auto-paragraph formatting can break multi-line CSS. -->
 <!-- Publish this snapshot at /bisonnotes-ai-v2-3/ and keep the v2.2 page available for older builds. -->
@@ -9,7 +9,7 @@
 <div class="bn23">
 
 <div class="bn23-hero">
-  <h1>BisonNotes AI v2.3 (Build 14)</h1>
+  <h1>BisonNotes AI v2.3</h1>
   <p>Release and Upgrade Guide for iPhone, iPad, Apple Watch, and Mac</p>
   <span class="bn23-badge">Native Mac app &bull; safer recording &bull; accessible workflows</span>
 </div>
@@ -30,7 +30,7 @@
 
 <h2 id="bn23-overview">Release Overview</h2>
 
-<p>Version 2.3 (Build 14) is a major Mac, recording-reliability, provider, web-import, and accessibility release. The Mac app has moved from Mac Catalyst to a native macOS target while keeping the same app identity and data location. iPhone, iPad, and Apple Watch continue to use the familiar BisonNotes workflow.</p>
+<p>Version 2.3 is a major Mac, recording-reliability, provider, web-import, and accessibility release. The Mac app has moved from Mac Catalyst to a native macOS target while keeping the same app identity and data location. iPhone, iPad, and Apple Watch continue to use the familiar BisonNotes workflow.</p>
 
 <div class="bn23-grid">
   <div>
@@ -67,7 +67,7 @@
   </div>
 </div>
 
-<p>v2.3 (Build 14) also improves iPad navigation, playback controls, state contrast, deterministic accessibility-test startup, native Mac archive presentation, Settings navigation, Parakeet model preparation, caption cleanup, and safe retry behavior when a shared file arrives during another import.</p>
+<p>v2.3 also improves iPad navigation, playback controls, state contrast, deterministic accessibility-test startup, native Mac archive presentation, Settings navigation, Parakeet model preparation, caption cleanup, and safe retry behavior when a shared file arrives during another import.</p>
 
 <h2 id="bn23-ai">AI Engines and Summary Controls</h2>
 
@@ -94,7 +94,7 @@
 
 <h2 id="bn23-mac">The Native Mac App</h2>
 
-<div class="bn23-ok"><strong>Your existing Mac library is preserved.</strong> The native app uses the same bundle identity, app container, Core Data store, and iCloud container as the previous Catalyst version. Installing the matching v2.3 build 14 release upgrades BisonNotes instead of creating a separate empty library.</div>
+<div class="bn23-ok"><strong>Your existing Mac library is preserved.</strong> The native app uses the same bundle identity, app container, Core Data store, and iCloud container as the previous Catalyst version. Installing the matching v2.3 release upgrades BisonNotes instead of creating a separate empty library.</div>
 
 <h3>A more natural Mac workspace</h3>
 <ul>
@@ -118,7 +118,7 @@
 
 <h2 id="bn23-recording">Recording Reliability on Mac</h2>
 
-<p>The v2.3 build 14 Mac recorder is designed to fail safely when a microphone, USB interface, Bluetooth device, or system-audio source changes unexpectedly.</p>
+<p>The v2.3 Mac recorder is designed to fail safely when a microphone, USB interface, Bluetooth device, or system-audio source changes unexpectedly.</p>
 
 <ul>
   <li><strong>Selectable input:</strong> Choose the built-in microphone or an available USB/Bluetooth input in Transcription Settings. BisonNotes remembers the choice through a temporary disconnect and reselects it when the device returns.</li>
@@ -150,7 +150,7 @@
 
 <h2 id="bn23-accessibility">Accessibility</h2>
 
-<p>Version 2.3 (Build 14) expands accessibility semantics and automated audit coverage across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and Apple Watch recording.</p>
+<p>Version 2.3 expands accessibility semantics and automated audit coverage across setup, recording, imports, recordings, playback, transcripts, summaries, settings, and Apple Watch recording.</p>
 
 <ul>
   <li><strong>VoiceOver:</strong> Main controls, content rows, playback actions, setup choices, settings, transcript/summary actions, and Watch recording states expose clearer labels, values, and hints.</li>
@@ -166,7 +166,7 @@
 <ol class="bn23-steps">
   <li><strong>Let current work finish.</strong> Complete active recordings, transcriptions, summaries, and iCloud jobs before installing the update.</li>
   <li><strong>Keep a copy of critical audio.</strong> Export any irreplaceable meeting recording before a major app or operating-system update.</li>
-  <li><strong>Install v2.3 build 14 normally.</strong> On Mac, install the new build over the existing BisonNotes app; do not delete the old app&rsquo;s container or support files.</li>
+  <li><strong>Install v2.3 normally.</strong> On Mac, install the new version over the existing BisonNotes app; do not delete the old app&rsquo;s container or support files.</li>
   <li><strong>Open the library first.</strong> Confirm that expected recordings, transcripts, summaries, settings, and Keep on This Device states are present.</li>
   <li><strong>Review Mac permissions.</strong> Confirm Microphone access. If you use meeting-audio capture, also confirm Screen &amp; System Audio Recording access in macOS System Settings, then quit and reopen BisonNotes after granting it.</li>
   <li><strong>Run a short recording test.</strong> Record speech, optionally play system audio, stop, play back the result, and verify the duration before relying on the setup for a long meeting.</li>
@@ -184,13 +184,13 @@
 </ul>
 
 <h3>Meeting audio is missing but the microphone was saved</h3>
-<p>Confirm Screen &amp; System Audio Recording permission, quit and reopen BisonNotes after granting it, and verify that the other app was producing sustained audible output. If the system track is silent or unavailable, v2.3 build 14 intentionally finalizes the usable microphone recording instead of discarding it.</p>
+<p>Confirm Screen &amp; System Audio Recording permission, quit and reopen BisonNotes after granting it, and verify that the other app was producing sustained audible output. If the system track is silent or unavailable, v2.3 intentionally finalizes the usable microphone recording instead of discarding it.</p>
 
 <h3>A shared file does not appear immediately</h3>
 <p>If BisonNotes is already importing another item, it leaves the newly shared file staged and retries it on a later app activation instead of discarding it. Let the active import finish, then bring BisonNotes forward again.</p>
 
 <h3>An on-device transcription model will not become ready</h3>
-<p>Open Transcription Settings and retry the model setup. v2.3 build 14 reuses complete cached Parakeet models, clears stale state when required files are missing, and waits for model preparation to finish before starting transcription.</p>
+<p>Open Transcription Settings and retry the model setup. v2.3 reuses complete cached Parakeet models, clears stale state when required files are missing, and waits for model preparation to finish before starting transcription.</p>
 
 <h3>A web import is rejected</h3>
 <p>Confirm the address points directly to a supported file over HTTPS, is within the supported size limit, and does not require an interactive login. Signed download links are supported when the final response is valid media or a supported transcript document.</p>
@@ -203,6 +203,6 @@
   <p><a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">Report an issue on GitHub</a></p>
 </div>
 
-<p style="text-align:center"><small>Last updated for BisonNotes AI v2.3 (Build 14). Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
+<p style="text-align:center"><small>Last updated for BisonNotes AI v2.3. Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
 
 </div>
