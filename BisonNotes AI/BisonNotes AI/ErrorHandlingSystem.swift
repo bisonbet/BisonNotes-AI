@@ -39,18 +39,9 @@ final class ErrorHandler: ObservableObject {
         }
     }
 
-    func handleSummarizationError(_ error: SummarizationError, recordingName: String = "", showToUser: Bool = true) {
-        let context = recordingName.isEmpty ? "Summarization" : "Summarization for \(recordingName)"
-        handle(error, context: context, showToUser: showToUser)
-    }
-
     func clearCurrentError() {
         currentError = nil
         showingErrorAlert = false
-    }
-
-    func clearErrorHistory() {
-        errorHistory.removeAll()
     }
 
     // MARK: - Validation Methods
@@ -179,23 +170,6 @@ final class ErrorHandler: ObservableObject {
         )
     }
 
-    // MARK: - Recovery Methods
-
-    func suggestRecoveryActions(for error: AppError) -> [RecoveryAction] {
-        switch error {
-        case .summarization(let summaryError):
-            return suggestSummarizationRecovery(summaryError)
-        case .validation(let validationError):
-            return suggestValidationRecovery(validationError)
-        case .network(let networkError):
-            return suggestNetworkRecovery(networkError)
-        case .storage(let storageError):
-            return suggestStorageRecovery(storageError)
-        case .system(let systemError):
-            return suggestSystemRecovery(systemError)
-        }
-    }
-
     // MARK: - Private Helper Methods
 
     private func logError(_ error: AppError, context: String) {
@@ -282,98 +256,6 @@ final class ErrorHandler: ObservableObject {
         }
     }
 
-    // MARK: - Recovery Suggestion Methods
-
-    private func suggestSummarizationRecovery(_ error: SummarizationError) -> [RecoveryAction] {
-        switch error {
-        case .transcriptTooShort:
-            return [
-                .retryWithLongerContent,
-                .adjustSettings,
-                .contactSupport
-            ]
-        case .transcriptTooLong:
-            return [
-                .splitContent,
-                .adjustSettings,
-                .tryDifferentEngine
-            ]
-        case .aiServiceUnavailable:
-            return [
-                .tryDifferentEngine,
-                .retryLater,
-                .checkNetworkConnection
-            ]
-        case .processingTimeout:
-            return [
-                .retryWithShorterContent,
-                .checkNetworkConnection,
-                .tryDifferentEngine
-            ]
-        case .insufficientContent:
-            return [
-                .retryWithBetterContent,
-                .adjustSettings,
-                .manualSummary
-            ]
-        case .networkError:
-            return [
-                .checkNetworkConnection,
-                .retryLater,
-                .tryOfflineMode
-            ]
-        case .quotaExceeded:
-            return [
-                .waitAndRetry,
-                .tryDifferentEngine,
-                .upgradeAccount
-            ]
-        case .responseTruncated:
-            return [
-                .adjustSettings,
-                .tryDifferentEngine,
-                .retryOperation
-            ]
-        default:
-            return [
-                .retryOperation,
-                .tryDifferentEngine,
-                .contactSupport
-            ]
-        }
-    }
-
-    private func suggestValidationRecovery(_ error: ValidationError) -> [RecoveryAction] {
-        return [
-            .checkInput,
-            .adjustSettings,
-            .retryOperation
-        ]
-    }
-
-    private func suggestNetworkRecovery(_ error: NetworkError) -> [RecoveryAction] {
-        return [
-            .checkNetworkConnection,
-            .retryLater,
-            .tryOfflineMode
-        ]
-    }
-
-    private func suggestStorageRecovery(_ error: StorageError) -> [RecoveryAction] {
-        return [
-            .freeUpSpace,
-            .checkPermissions,
-            .restartApp
-        ]
-    }
-
-    private func suggestSystemRecovery(_ error: SystemError) -> [RecoveryAction] {
-        return [
-            .restartApp,
-            .updateApp,
-            .contactSupport
-        ]
-    }
 }
 
 // MARK: - Error Types
@@ -757,78 +639,6 @@ enum SummaryImprovement: Sendable {
             return "No tasks or reminders were extracted"
         case .slowProcessing(let time):
             return "Processing took \(String(format: "%.1f", time))s, consider shorter content"
-        }
-    }
-}
-
-// MARK: - Recovery Actions
-
-enum RecoveryAction: CaseIterable, Sendable {
-    case retryOperation
-    case retryWithLongerContent
-    case retryWithShorterContent
-    case retryWithBetterContent
-    case splitContent
-    case adjustSettings
-    case tryDifferentEngine
-    case retryLater
-    case checkNetworkConnection
-    case tryOfflineMode
-    case waitAndRetry
-    case upgradeAccount
-    case checkInput
-    case freeUpSpace
-    case checkPermissions
-    case restartApp
-    case updateApp
-    case manualSummary
-    case contactSupport
-
-    var title: String {
-        switch self {
-        case .retryOperation: return "Retry"
-        case .retryWithLongerContent: return "Use Longer Content"
-        case .retryWithShorterContent: return "Use Shorter Content"
-        case .retryWithBetterContent: return "Improve Content Quality"
-        case .splitContent: return "Split Content"
-        case .adjustSettings: return "Adjust Settings"
-        case .tryDifferentEngine: return "Try Different AI Engine"
-        case .retryLater: return "Try Again Later"
-        case .checkNetworkConnection: return "Check Network"
-        case .tryOfflineMode: return "Use Offline Mode"
-        case .waitAndRetry: return "Wait and Retry"
-        case .upgradeAccount: return "Upgrade Account"
-        case .checkInput: return "Check Input"
-        case .freeUpSpace: return "Free Up Space"
-        case .checkPermissions: return "Check Permissions"
-        case .restartApp: return "Restart App"
-        case .updateApp: return "Update App"
-        case .manualSummary: return "Create Manual Summary"
-        case .contactSupport: return "Contact Support"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .retryOperation: return "Try the operation again"
-        case .retryWithLongerContent: return "Record longer audio with more content"
-        case .retryWithShorterContent: return "Use shorter content that's easier to process"
-        case .retryWithBetterContent: return "Ensure clear speech and meaningful content"
-        case .splitContent: return "Break large content into smaller parts"
-        case .adjustSettings: return "Modify app settings for better results"
-        case .tryDifferentEngine: return "Switch to a different AI summarization engine"
-        case .retryLater: return "Wait a moment and try again"
-        case .checkNetworkConnection: return "Verify your internet connection"
-        case .tryOfflineMode: return "Use local processing instead"
-        case .waitAndRetry: return "Wait for quota reset and try again"
-        case .upgradeAccount: return "Upgrade to premium for higher limits"
-        case .checkInput: return "Verify your input is correct"
-        case .freeUpSpace: return "Delete files to free up storage space"
-        case .checkPermissions: return "Grant necessary app permissions"
-        case .restartApp: return "Close and reopen the app"
-        case .updateApp: return "Install the latest app version"
-        case .manualSummary: return "Create a summary manually"
-        case .contactSupport: return "Get help from our support team"
         }
     }
 }

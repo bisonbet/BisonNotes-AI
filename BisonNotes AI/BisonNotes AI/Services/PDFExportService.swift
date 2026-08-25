@@ -60,16 +60,6 @@ class PDFExportService {
         return createSmallFallbackMapImage(for: locationData, size: size)
     }
 
-    // MARK: - Configuration
-
-    /// Reset the map generation flag to try generating maps again (deprecated - maps are now stored)
-    /// Call this if you want to re-enable map generation after it was disabled due to failures
-    @available(*, deprecated, message: "Maps are now stored persistently, this method is no longer needed")
-    func resetMapGeneration() {
-        UserDefaults.standard.set(false, forKey: "skipMapGeneration")
-        AppLog.shared.fileManagement("PDFExportService: Map generation re-enabled")
-    }
-
     // MARK: - Main Export Function
 
     @MainActor
