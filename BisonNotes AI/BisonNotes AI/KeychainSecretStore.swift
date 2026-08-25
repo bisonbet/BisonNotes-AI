@@ -2,29 +2,73 @@
 //  KeychainSecretStore.swift
 //  BisonNotes AI
 //
-//  Keychain-backed storage for API keys and cloud credentials.
+//  Keychain-backed storage for API keys and legacy-secret cleanup.
 //
 
 import Foundation
 import Security
 import SwiftUI
 
-final class KeychainSecretStore {
+enum KeychainSecretStoreError: Equatable, LocalizedError, Sendable {
+    enum Operation: String, Sendable {
+        case add
+        case update
+        case delete
+    }
+
+    case invalidString
+    case operationFailed(operation: Operation, status: OSStatus)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidString:
+            return "The secure value could not be encoded."
+        case .operationFailed(let operation, let status):
+            return "Keychain \(operation.rawValue) failed with status \(status)."
+        }
+    }
+}
+
+final class KeychainSecretStore: Sendable {
     static let shared = KeychainSecretStore()
 
     static let openAIAPIKey = "openAIAPIKey"
     static let openAICompatibleAPIKey = "openAICompatibleAPIKey"
     static let googleAIStudioAPIKey = "googleAIStudioAPIKey"
     static let mistralAPIKey = "mistralAPIKey"
-    static let awsCredentials = "AWSCredentials"
-    static let awsBedrockSessionToken = "awsBedrockSessionToken"
+    static let legacyAWSCredentials = "AWSCredentials"
+    static let legacyAWSBedrockSessionToken = "awsBedrockSessionToken"
+
+    /// Settings and secret identifiers written by builds that included AWS.
+    /// AWS is no longer supported, so old values must not be restored into
+    /// UserDefaults or retained in the app's Keychain namespace.
+    static let legacyAWSSettingKeys: Set<String> = [
+        legacyAWSCredentials,
+        legacyAWSBedrockSessionToken,
+        "awsAccessKey",
+        "awsSecretKey",
+        "awsSecretAccessKey",
+        "awsRegion",
+        "awsBucketName",
+        "awsBedrockModel",
+        "awsBedrockTemperature",
+        "awsBedrockMaxTokens",
+        "awsBedrockUseProfile",
+        "awsBedrockProfileName",
+        "awsBedrockModelMigrated_v1.3",
+        "enableAWSBedrock",
+        "enableAWSTranscribe"
+    ]
+
+    static func isLegacyAWSSettingKey(_ key: String) -> Bool {
+        legacyAWSSettingKeys.contains(key)
+    }
 
     private static let stringSecretKeys = [
         openAIAPIKey,
         openAICompatibleAPIKey,
         googleAIStudioAPIKey,
-        mistralAPIKey,
-        awsBedrockSessionToken
+        mistralAPIKey
     ]
 
     private let service: String
@@ -38,15 +82,17 @@ final class KeychainSecretStore {
         return String(data: data, encoding: .utf8)
     }
 
-    func setString(_ value: String, forKey key: String) {
+    @discardableResult
+    func setString(_ value: String, forKey key: String) -> Result<Void, KeychainSecretStoreError> {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedValue.isEmpty else {
-            delete(forKey: key)
-            return
+            return delete(forKey: key)
         }
 
-        guard let data = trimmedValue.data(using: .utf8) else { return }
-        setData(data, forKey: key)
+        guard let data = trimmedValue.data(using: .utf8) else {
+            return report(.failure(.invalidString))
+        }
+        return setData(data, forKey: key)
     }
 
     func data(forKey key: String) -> Data? {
@@ -60,7 +106,8 @@ final class KeychainSecretStore {
         return result as? Data
     }
 
-    func setData(_ data: Data, forKey key: String) {
+    @discardableResult
+    func setData(_ data: Data, forKey key: String) -> Result<Void, KeychainSecretStoreError> {
         var query = baseQuery(forKey: key)
         let attributes: [String: Any] = [
             kSecValueData as String: data,
@@ -68,32 +115,75 @@ final class KeychainSecretStore {
         ]
 
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        guard status != errSecSuccess else { return }
-
-        if status != errSecItemNotFound {
-            SecItemDelete(query as CFDictionary)
+        switch status {
+        case errSecSuccess:
+            bumpRevision(forKey: key)
+            return .success(())
+        case errSecItemNotFound:
+            query.merge(attributes) { _, new in new }
+            let addStatus = SecItemAdd(query as CFDictionary, nil)
+            switch addStatus {
+            case errSecSuccess:
+                bumpRevision(forKey: key)
+                return .success(())
+            case errSecDuplicateItem:
+                let retryStatus = SecItemUpdate(
+                    baseQuery(forKey: key) as CFDictionary,
+                    attributes as CFDictionary
+                )
+                if retryStatus == errSecSuccess {
+                    bumpRevision(forKey: key)
+                    return .success(())
+                }
+                return report(.failure(.operationFailed(operation: .update, status: retryStatus)))
+            default:
+                return report(.failure(.operationFailed(operation: .add, status: addStatus)))
+            }
+        default:
+            return report(.failure(.operationFailed(operation: .update, status: status)))
         }
-
-        query.merge(attributes) { _, new in new }
-        SecItemAdd(query as CFDictionary, nil)
     }
 
-    func delete(forKey key: String) {
-        SecItemDelete(baseQuery(forKey: key) as CFDictionary)
+    @discardableResult
+    func delete(forKey key: String) -> Result<Void, KeychainSecretStoreError> {
+        let status = SecItemDelete(baseQuery(forKey: key) as CFDictionary)
+        switch status {
+        case errSecSuccess, errSecItemNotFound:
+            bumpRevision(forKey: key)
+            return .success(())
+        default:
+            return report(.failure(.operationFailed(operation: .delete, status: status)))
+        }
     }
 
-    func migrateLegacySecretsFromUserDefaults(_ defaults: UserDefaults = .standard) {
+    @discardableResult
+    func migrateLegacySecretsFromUserDefaults(_ defaults: UserDefaults = .standard) -> [KeychainSecretStoreError] {
+        var failures: [KeychainSecretStoreError] = []
+
         for key in Self.stringSecretKeys {
             if data(forKey: key) == nil, let legacyValue = defaults.string(forKey: key), !legacyValue.isEmpty {
-                setString(legacyValue, forKey: key)
+                let result = setString(legacyValue, forKey: key)
+                if case .failure(let error) = result {
+                    failures.append(error)
+                    continue
+                }
             }
             defaults.removeObject(forKey: key)
         }
 
-        if data(forKey: Self.awsCredentials) == nil, let legacyData = defaults.data(forKey: Self.awsCredentials) {
-            setData(legacyData, forKey: Self.awsCredentials)
+        // AWS provider support was removed. Clean up old opaque credential
+        // blobs and individual AWS fields instead of migrating them to a
+        // credential format that no current provider consumes.
+        for key in Self.legacyAWSSettingKeys {
+            let result = delete(forKey: key)
+            if case .failure(let error) = result {
+                failures.append(error)
+                continue
+            }
+            defaults.removeObject(forKey: key)
         }
-        defaults.removeObject(forKey: Self.awsCredentials)
+
+        return failures
     }
 
     private func baseQuery(forKey key: String) -> [String: Any] {
@@ -103,32 +193,120 @@ final class KeychainSecretStore {
             kSecAttrAccount as String: key
         ]
     }
-}
 
-@propertyWrapper
-struct SecureStorage: DynamicProperty {
-    private let key: String
-    private let defaultValue: String
-    @State private var value: String
-
-    init(wrappedValue defaultValue: String, _ key: String) {
-        self.key = key
-        self.defaultValue = defaultValue
-        _value = State(initialValue: KeychainSecretStore.shared.string(forKey: key) ?? defaultValue)
+    func revision(forKey key: String) -> Int {
+        UserDefaults.standard.integer(forKey: revisionKey(forKey: key))
     }
 
-    func update() {
-        let storedValue = KeychainSecretStore.shared.string(forKey: key) ?? defaultValue
+    private func bumpRevision(forKey key: String) {
+        UserDefaults.standard.set(revision(forKey: key) &+ 1, forKey: revisionKey(forKey: key))
+    }
+
+    private func revisionKey(forKey key: String) -> String {
+        "KeychainSecretStore.revision.\(service).\(key)"
+    }
+
+    private func report(
+        _ result: Result<Void, KeychainSecretStoreError>
+    ) -> Result<Void, KeychainSecretStoreError> {
+        if case .failure(let error) = result {
+            AppLog.shared.general(
+                "Secure credential storage operation failed: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+        return result
+    }
+}
+
+protocol SecureStorageSecretStore {
+    func string(forKey key: String) -> String?
+    func setString(_ value: String, forKey key: String) -> Result<Void, KeychainSecretStoreError>
+    func revision(forKey key: String) -> Int
+}
+
+extension KeychainSecretStore: SecureStorageSecretStore {}
+
+@MainActor
+final class SecureStorageValue: ObservableObject {
+    private let key: String
+    private let defaultValue: String
+    private let store: any SecureStorageSecretStore
+    @Published private(set) var value: String
+    private var observedRevision: Int
+
+    init(
+        key: String,
+        defaultValue: String,
+        store: any SecureStorageSecretStore = KeychainSecretStore.shared
+    ) {
+        self.key = key
+        self.defaultValue = defaultValue
+        self.store = store
+        self.value = store.string(forKey: key) ?? defaultValue
+        self.observedRevision = store.revision(forKey: key)
+    }
+
+    /// Called from `SecureStorage.update()`, which runs inside a SwiftUI view
+    /// update. Publishing there is not allowed, so the revision is claimed
+    /// synchronously — keeping this idempotent per revision — while the value
+    /// change is handed to the next main-actor turn.
+    func refreshIfNeeded() {
+        let currentRevision = store.revision(forKey: key)
+        guard currentRevision != observedRevision else { return }
+
+        let storedValue = store.string(forKey: key) ?? defaultValue
+        observedRevision = currentRevision
+        guard storedValue != value else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.observedRevision == currentRevision,
+                  self.value != storedValue else { return }
+            self.value = storedValue
+        }
+    }
+
+    func setValue(_ newValue: String) {
+        let result = store.setString(newValue, forKey: key)
+        reconcileWithStoredValue()
+        if case .failure(let error) = result {
+            AppLog.shared.general(
+                "Secure setting persistence failed: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func reconcileWithStoredValue() {
+        let currentRevision = store.revision(forKey: key)
+        let storedValue = store.string(forKey: key) ?? defaultValue
+        observedRevision = currentRevision
         if storedValue != value {
             value = storedValue
         }
     }
+}
+
+@propertyWrapper
+@MainActor
+struct SecureStorage: @MainActor DynamicProperty {
+    @StateObject private var storage: SecureStorageValue
+
+    init(wrappedValue defaultValue: String, _ key: String) {
+        _storage = StateObject(
+            wrappedValue: SecureStorageValue(key: key, defaultValue: defaultValue)
+        )
+    }
+
+    func update() {
+        storage.refreshIfNeeded()
+    }
 
     var wrappedValue: String {
-        get { value }
+        get { storage.value }
         nonmutating set {
-            value = newValue
-            KeychainSecretStore.shared.setString(newValue, forKey: key)
+            storage.setValue(newValue)
         }
     }
 

@@ -19,12 +19,76 @@ enum MLXSwiftSettingsKeys {
     static let topP = "mlxSwiftTopP"
     static let repetitionPenalty = "mlxSwiftRepeatPenalty"
 
+    static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
     static let defaultModelId = "prism-ml/Ternary-Bonsai-4B-mlx-2bit"
+    static let largeModelId = "prism-ml/Ternary-Bonsai-8B-mlx-2bit"
+    static let macModelId = "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
     static let defaultMaxTokens = 2700
     static let defaultTemperature: Double = 0.7
     static let defaultTopK = 40
     static let defaultTopP: Double = 0.95
     static let defaultRepetitionPenalty: Double = 1.1
+
+    // MARK: Device Tiers
+
+    /// Smallest amount of RAM any MLX model runs on.
+    static let minimumSupportedRAMGB: Double = 4.0
+
+    /// Minimum device RAM in GB required by each model. Mirrors
+    /// `MLXModelOption.requiredRAM`, but lives here so migrations and iCloud
+    /// restore can pick a runnable model without depending on the settings view.
+    static let minimumRAMGB: [String: Double] = [
+        smallModelId: 4.0,
+        defaultModelId: 6.0,
+        largeModelId: 8.0,
+        macModelId: 16.0
+    ]
+
+    /// The model a device should start on when nothing has been chosen yet.
+    /// Returns nil below the 4GB floor, where MLX is unavailable entirely.
+    /// The 8B and 27B models stay opt-in rather than becoming a default.
+    static func recommendedModelId(forRAM ramGB: Double) -> String? {
+        guard ramGB >= minimumSupportedRAMGB else { return nil }
+        return ramGB < 6.0 ? smallModelId : defaultModelId
+    }
+
+    /// Clamps a model id to one this device can actually run. A selection
+    /// carried over from a larger device (or from the Mac-only 27B catalog)
+    /// would otherwise strand the engine on a model it can never load.
+    static func supportedModelId(_ modelId: String?, forRAM ramGB: Double) -> String? {
+        guard let modelId,
+              let requiredRAM = minimumRAMGB[modelId],
+              ramGB >= requiredRAM,
+              isSelectableOnCurrentPlatform(modelId) else {
+            return recommendedModelId(forRAM: ramGB)
+        }
+        return modelId
+    }
+
+    /// Writes a runnable model id into `defaults` when the stored one is
+    /// missing or too large for this device, leaving a valid choice untouched.
+    /// Call this wherever MLX is turned on, so the engine never starts out
+    /// pointing at a model the device cannot load.
+    @discardableResult
+    static func normalizeStoredModelId(
+        in defaults: UserDefaults = .standard,
+        ramGB: Double
+    ) -> String? {
+        let stored = defaults.string(forKey: modelId)
+        guard let supported = supportedModelId(stored, forRAM: ramGB) else { return nil }
+        if stored != supported {
+            defaults.set(supported, forKey: modelId)
+        }
+        return supported
+    }
+
+    private static func isSelectableOnCurrentPlatform(_ modelId: String) -> Bool {
+        #if os(macOS)
+        return true
+        #else
+        return modelId != macModelId
+        #endif
+    }
 }
 
 // MARK: - Download Manager
@@ -174,13 +238,7 @@ final class MLXSwiftEngine: SummarizationEngine, ConnectionTestable {
         ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         guard isAvailable else {
             throw SummarizationError.configurationRequired(
                 message: "MLX Swift is not enabled. Enable it in AI Settings before using it."
@@ -318,14 +376,17 @@ extension MLXSwiftDownloadManager {
 // MARK: MLX Service Actor
 
 private actor MLXSwiftService {
-    private static let thinkingTokenAllowance = 4_096
-    #if os(macOS)
-    private static let thinkingModelId = "prism-ml/Ternary-Bonsai-27B-mlx-2bit"
-    #endif
+    /// Extra generation room reserved for a selected Light thinking pass.
+    /// This is deliberately below the previous always-on allowance.
+    private static let thinkingTokenAllowance = 1_536
 
     private var modelContainer: ModelContainer?
     private var loadedModelId: String?
-    private var memoryObserver: NSObjectProtocol?
+    /// Held outside actor isolation so the nonisolated deinit can unregister
+    /// the memory-warning observer; NotificationCenter keeps block observers
+    /// alive until `removeObserver`, regardless of the weak capture below.
+    private let memoryObservers = LifecycleObserverTokens()
+    private var hasMemoryObserver = false
     private var receivedMemoryWarning = false
 
     /// Maximum input tokens per chunk for MLX inference. With the Metal buffer
@@ -336,23 +397,17 @@ private actor MLXSwiftService {
     init() {}
 
     private func ensureMemoryObserver() {
-        guard memoryObserver == nil else { return }
+        guard !hasMemoryObserver else { return }
 
-        let observer = NotificationCenter.default.addObserver(
+        memoryObservers.add(NotificationCenter.default.addObserver(
             forName: PlatformLifecycle.didReceiveMemoryWarningNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             guard let self else { return }
             Task { await self.handleMemoryWarning() }
-        }
-        self.memoryObserver = observer
-    }
-
-    deinit {
-        if let memoryObserver {
-            NotificationCenter.default.removeObserver(memoryObserver)
-        }
+        })
+        hasMemoryObserver = true
     }
 
     private func handleMemoryWarning() {
@@ -391,13 +446,7 @@ private actor MLXSwiftService {
         }
     }
 
-    func processComplete(text: String) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         ensureMemoryObserver()
         receivedMemoryWarning = false
 
@@ -412,7 +461,7 @@ private actor MLXSwiftService {
 
         AppLog.shared.summarization("[MLXSwift] Transcript: \(tokenCount) tokens, input limit: \(inputLimit) tokens/chunk")
 
-        let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+        let result: SummarizationResult
         if tokenCount > inputLimit {
             AppLog.shared.summarization("[MLXSwift] Chunking transcript into ~\(inputLimit)-token pieces", level: .debug)
             result = try await processChunked(text: text, maxTokens: inputLimit)
@@ -426,13 +475,7 @@ private actor MLXSwiftService {
         return result
     }
 
-    private func processChunked(text: String, maxTokens: Int) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    private func processChunked(text: String, maxTokens: Int) async throws -> SummarizationResult {
         let chunks = TokenManager.chunkText(text, maxTokens: maxTokens)
         var chunkResults: [MLXSwiftStructuredResponse] = []
 
@@ -456,27 +499,26 @@ private actor MLXSwiftService {
             )
         }
 
-        return try await consolidate(chunkResults: chunkResults, originalContentType: ContentAnalyzer.classifyContent(text))
+        return try await consolidate(
+            chunkResults: chunkResults,
+            originalContentType: ContentAnalyzer.classifyContent(text),
+            originalWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
     }
 
-    private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
-        let wordCount = transcript.split(separator: " ").count
-        let targetWords = max(200, Int(Double(wordCount) * 0.15))
+    private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> SummarizationResult {
+        let wordCount = transcript.split(whereSeparator: { $0.isWhitespace }).count
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount
+        )
 
         let prompt = """
         Analyze the following transcript and extract the actual content discussed. \
         Base your response ONLY on what is actually mentioned in the transcript.
 
-        1. A STRUCTURED OUTLINE SUMMARY
-           - CRITICAL: The summary must be approximately \(targetWords) words long.
+        1. A STRUCTURED OUTLINE SUMMARY at the selected detail level
+           \(detailInstructions)
            - Use sections: Overview, Key Facts, Important Notes, Conclusions.
-           - Expand on details using nested bullet points.
            - Write about what was ACTUALLY discussed in the transcript, not generic examples.
         2. A list of actionable tasks (personal items only) - ONLY include tasks that are actually mentioned
         3. Time-sensitive reminders and deadlines - ONLY include reminders that are actually mentioned
@@ -523,14 +565,9 @@ private actor MLXSwiftService {
 
     private func consolidate(
         chunkResults: [MLXSwiftStructuredResponse],
-        originalContentType: ContentType
-    ) async throws -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+        originalContentType: ContentType,
+        originalWordCount: Int
+    ) async throws -> SummarizationResult {
         let encodedChunks = chunkResults.enumerated().map { index, result in
             """
             Chunk \(index + 1):
@@ -548,11 +585,16 @@ private actor MLXSwiftService {
             """
         }.joined(separator: "\n\n")
 
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: originalWordCount
+        )
+
         let prompt = """
         Merge these partial transcript analyses into one cohesive final result.
 
         Rules:
-        - Combine the summaries into one unified summary preserving all key details.
+        - Combine the summaries into one unified summary at the selected detail level.
+        \(detailInstructions)
         - Deduplicate tasks and reminders across chunks.
         - Keep the best 3-5 titles.
         - Write about what was ACTUALLY discussed, not generic examples.
@@ -589,7 +631,8 @@ private actor MLXSwiftService {
         return MLXSwiftResponseParser.parseMarkdown(rawResponse, fallbackText: encodedChunks)
     }
 
-    private static let systemInstruction = """
+    private var systemInstruction: String {
+        """
     You are an AI assistant specialized in processing audio transcripts. \
     Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
@@ -604,14 +647,15 @@ private actor MLXSwiftService {
     - Base titles on the ACTUAL topics discussed, not generic examples
 
     Provide:
-    1. A comprehensive summary using Markdown formatting based on what was actually discussed
+    1. A summary at the selected detail level using Markdown formatting based on what was actually discussed
     2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
     3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
     4. Suggested titles based on the ACTUAL main topics discussed
 
-    Be thorough but concise. Focus on information that is personally relevant to the speaker \
+    Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker \
     and actually appears in the transcript.
-    """
+    """ + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    }
 
     private func generate(prompt: String) async throws -> String {
         let container = try await loadContainer()
@@ -630,7 +674,7 @@ private actor MLXSwiftService {
         if isThinkingModeEnabled {
             templateContext = ["enable_thinking": true]
             AppLog.shared.summarization(
-                "[MLXSwift] Thinking mode enabled: \(Self.thinkingTokenAllowance)-token hidden reasoning allowance, "
+                "[MLXSwift] Light thinking enabled: \(Self.thinkingTokenAllowance)-token hidden reasoning allowance, "
                 + "\(configuredMaxTokens)-token final-output target"
             )
         } else {
@@ -639,7 +683,7 @@ private actor MLXSwiftService {
 
         let session = ChatSession(
             container,
-            instructions: Self.systemInstruction,
+            instructions: systemInstruction,
             generateParameters: parameters,
             additionalContext: templateContext
         )
@@ -667,11 +711,13 @@ private actor MLXSwiftService {
             }
         }
         guard result == KERN_SUCCESS else { return 0 }
-        let pageSize = UInt64(vm_kernel_page_size)
-        let free = UInt64(stats.free_count) * pageSize
-        let inactive = UInt64(stats.inactive_count) * pageSize
-        let speculative = UInt64(stats.speculative_count) * pageSize
-        let purgeable = UInt64(stats.purgeable_count) * pageSize
+		var pageSizeValue: vm_size_t = 0
+		guard host_page_size(mach_host_self(), &pageSizeValue) == KERN_SUCCESS else { return 0 }
+		let pageSizeBytes = UInt64(pageSizeValue)
+		let free = UInt64(stats.free_count) * pageSizeBytes
+		let inactive = UInt64(stats.inactive_count) * pageSizeBytes
+		let speculative = UInt64(stats.speculative_count) * pageSizeBytes
+		let purgeable = UInt64(stats.purgeable_count) * pageSizeBytes
         return free + inactive + speculative + purgeable
         #else
         return UInt64(os_proc_available_memory())
@@ -734,26 +780,39 @@ private actor MLXSwiftService {
         return MLXSwiftSettingsKeys.defaultMaxTokens
     }
 
+    /// The generation cap covers the hidden reasoning pass as well as the final
+    /// output. A model that reasons does so whether or not Light thinking asked
+    /// it to, so the allowance follows the model's capability, not the toggle:
+    /// sizing the cap for the answer alone truncates the summary mid-sentence.
     private var configuredGenerationTokenBudget: Int {
-        let reasoningAllowance = isThinkingModeEnabled ? Self.thinkingTokenAllowance : 0
-        return configuredMaxTokens + reasoningAllowance
+        if isThinkingModeEnabled {
+            return configuredMaxTokens + Self.thinkingTokenAllowance
+        }
+
+        return SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: configuredMaxTokens,
+            modelName: configuredModelId,
+            engine: .mlxSwift
+        )
+    }
+
+    private var configuredModelId: String {
+        UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
+            ?? MLXSwiftSettingsKeys.defaultModelId
     }
 
     private var isThinkingModeEnabled: Bool {
-        #if os(macOS)
-        let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
-            ?? MLXSwiftSettingsKeys.defaultModelId
-        return modelId == Self.thinkingModelId
-        #else
-        return false
-        #endif
+        guard SummaryThinkingLevel.current == .light else { return false }
+        let profile = SummaryThinkingModelCatalog.profile(modelName: configuredModelId, engine: .mlxSwift)
+        guard case .controllable(let transport) = profile.support else { return false }
+        return transport == .mlx
     }
 
     private var configuredContextTokens: Int {
         if UserDefaults.standard.object(forKey: MLXSwiftSettingsKeys.contextTokens) != nil {
             return UserDefaults.standard.integer(forKey: MLXSwiftSettingsKeys.contextTokens)
         }
-        return DeviceCapabilities.onDeviceLLMContextSize
+        return DeviceCapabilities.onDeviceAIContextSize
     }
 
     private var configuredTemperature: Float {
@@ -799,13 +858,7 @@ enum MLXSwiftResponseParser {
     static func parse(
         _ rawResponse: String,
         fallbackText: String
-    ) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) -> SummarizationResult {
         let cleaned = stripThinking(from: rawResponse)
         if let data = extractJSONObject(from: cleaned).data(using: .utf8),
            let decoded = try? JSONDecoder().decode(CompleteResponse.self, from: data) {
@@ -814,7 +867,7 @@ enum MLXSwiftResponseParser {
 
         AppLog.shared.summarization("[MLXSwift] Could not parse structured JSON, using raw response as summary", level: .error)
         let fallbackSummary = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (
+        return SummarizationResult(
             summary: fallbackSummary.isEmpty ? "## Summary\n\nNo summary was generated." : fallbackSummary,
             tasks: [],
             reminders: [],
@@ -828,13 +881,7 @@ enum MLXSwiftResponseParser {
     static func parseMarkdown(
         _ rawResponse: String,
         fallbackText: String
-    ) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    ) -> SummarizationResult {
         let cleaned = stripThinking(from: rawResponse)
         let contentType = ContentAnalyzer.classifyContent(fallbackText)
 
@@ -886,7 +933,7 @@ enum MLXSwiftResponseParser {
             return parse(cleaned, fallbackText: fallbackText)
         }
 
-        return (
+        return SummarizationResult(
             summary: summary,
             tasks: tasks,
             reminders: reminders,
@@ -971,13 +1018,7 @@ private struct CompleteResponse: Decodable {
     var titles: [TitleDTO]?
     var contentType: String?
 
-    func toSummaryResult(fallbackText: String) -> (
-        summary: String,
-        tasks: [TaskItem],
-        reminders: [ReminderItem],
-        titles: [TitleItem],
-        contentType: ContentType
-    ) {
+    func toSummaryResult(fallbackText: String) -> SummarizationResult {
         let parsedContentType = ContentType(rawValue: contentType ?? "")
             ?? ContentAnalyzer.classifyContent(fallbackText)
         let parsedTasks = (tasks ?? []).compactMap { $0.toTaskItem() }
@@ -985,7 +1026,7 @@ private struct CompleteResponse: Decodable {
         let parsedTitles = (titles ?? []).compactMap { $0.toTitleItem() }
         let trimmedSummary = (summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return (
+        return SummarizationResult(
             summary: trimmedSummary.isEmpty ? "## Summary\n\nNo summary was generated." : trimmedSummary,
             tasks: parsedTasks,
             reminders: parsedReminders,

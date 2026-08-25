@@ -14,6 +14,7 @@ enum SummarizationError: Error, LocalizedError {
     case processingFailed(reason: String)
     case configurationRequired(message: String)
     case contentSafetyBlock(engine: String)
+    case responseTruncated(service: String, tokenLimit: Int, reasoningTokens: Int?)
 
     var errorDescription: String? {
         switch self {
@@ -39,6 +40,12 @@ enum SummarizationError: Error, LocalizedError {
             return message
         case .contentSafetyBlock(let engine):
             return "\(engine) blocked this content due to safety guardrails. Please try a different AI engine."
+        case .responseTruncated(let service, let tokenLimit, let reasoningTokens):
+            if let reasoningTokens, reasoningTokens > 0 {
+                return "\(service) hit its \(tokenLimit)-token output limit before finishing. "
+                    + "\(reasoningTokens) of those tokens were the model's own thinking, leaving too few for the summary."
+            }
+            return "\(service) hit its \(tokenLimit)-token output limit before finishing the summary."
         }
     }
 
@@ -65,7 +72,9 @@ enum SummarizationError: Error, LocalizedError {
         case .configurationRequired:
             return "Go to Settings to configure an AI engine for summarization."
         case .contentSafetyBlock:
-            return "This transcript triggered safety filters on this AI engine. Try a different AI engine in Settings (e.g., OpenAI, Claude, or Gemini)."
+            return "This transcript triggered safety filters on this AI engine. Try a different AI engine in Settings (e.g., Mistral, Gemini, or a compatible API)."
+        case .responseTruncated:
+            return "Raise Max Tokens for this engine in Settings, or pick a model that does not spend most of its output on thinking."
         }
     }
 }

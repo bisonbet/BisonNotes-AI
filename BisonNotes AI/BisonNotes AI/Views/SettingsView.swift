@@ -36,14 +36,13 @@ struct SettingsView: View {
     @State private var macSystemAudioPermissionAlert: MacSystemAudioPermissionAlert?
 
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = "On Device"
-    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = "On-Device AI"
+    @AppStorage("SelectedAIEngine") private var selectedAIEngine: String = AIEngineType.mlxSwift.rawValue
     @AppStorage("WatchIntegrationEnabled") private var watchIntegrationEnabled: Bool = true
     @AppStorage("WatchAutoSync") private var watchAutoSync: Bool = true
     @AppStorage("WatchBatteryAware") private var watchBatteryAware: Bool = true
     @AppStorage("iCloudBackupIncludeAudioFiles") private var iCloudBackupIncludeAudioFiles: Bool = false
     @AppStorage("iCloudBackupIncludeSettings") private var iCloudBackupIncludeSettings: Bool = true
     @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = false
-    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
     @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
     @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
     @State private var isRunningCloudBackupAction = false
@@ -60,35 +59,18 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        MacSettingsRootView()
+        #else
         NavigationStack {
             settingsContent
                 .navigationTitle("Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") { dismiss() }
                     }
-                    #endif
                 }
-                #if os(macOS)
-                .navigationDestination(isPresented: $showingAISettings) {
-                    AISettingsView()
-                        .environmentObject(recorderVM)
-                }
-                .navigationDestination(isPresented: $showingTranscriptionSettings) {
-                    TranscriptionSettingsView()
-                }
-                .navigationDestination(isPresented: $showingBackgroundProcessing) {
-                    BackgroundProcessingView()
-                }
-                .navigationDestination(isPresented: $showingPreferences) {
-                    PreferencesView()
-                }
-                .navigationDestination(isPresented: $showingAcknowledgements) {
-                    AcknowledgementsView()
-                }
-                #endif
         }
         .alert("Regeneration Complete", isPresented: $regenerationManager.showingRegenerationAlert) {
             Button("OK") {
@@ -145,12 +127,12 @@ struct SettingsView: View {
                 )
             }
         }
+        #if !os(macOS)
         .sheet(isPresented: $showingCloudReview) {
-            CloudReviewItemsView(includeAudioFiles: iCloudBackupIncludeAudioFiles)
+            CloudReviewItemsView()
                 .environmentObject(appCoordinator)
-                .nativeMacModalSizing(width: 780, height: 700)
-                .nativeMacModalDismissControl()
         }
+        #endif
         .onAppear {
             refreshEngineStatuses()
             Task {
@@ -161,32 +143,6 @@ struct SettingsView: View {
             SummaryManager.shared.setEngine(newEngine)
             AppLog.shared.log("SettingsView: Updated AI engine to '\(newEngine)'", level: .debug, category: .general)
         }
-        .onChange(of: enableExperimentalModels) { _, newValue in
-            // This toggle only gates legacy On-Device AI (llama) experimental
-            // models and unlocks the legacy engine on <6GB devices. MLX is
-            // unrelated and must not be touched here.
-            OnDeviceLLMDownloadManager.shared.refreshModelStatus()
-
-            guard !newValue else { return }
-
-            // If the currently selected legacy model is no longer in the
-            // available set (e.g. it was experimental-only), reset to the
-            // first available legacy model.
-            let currentModelId = UserDefaults.standard.string(forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId) ?? ""
-            if !OnDeviceLLMModelInfo.availableModels.contains(where: { $0.id == currentModelId }),
-               let firstAvailable = OnDeviceLLMModelInfo.availableModels.first {
-                UserDefaults.standard.set(firstAvailable.id, forKey: OnDeviceLLMModelInfo.SettingsKeys.selectedModelId)
-            }
-
-            // If the user is on the legacy engine but the device no longer
-            // has any legacy models available, fall through to Apple Native.
-            let onDeviceHasModels = !OnDeviceLLMModelInfo.availableModels.isEmpty
-            if selectedAIEngine == AIEngineType.onDeviceLLM.rawValue && !onDeviceHasModels {
-                selectedAIEngine = AIEngineType.appleNative.rawValue
-                SummaryManager.shared.setEngine(AIEngineType.appleNative.rawValue)
-            }
-        }
-        #if !os(macOS)
         .sheet(isPresented: $showingAISettings) {
             AISettingsView()
                 .environmentObject(recorderVM)
@@ -203,12 +159,10 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
         }
-        #endif
         .sheet(isPresented: $showingDataMigration) {
             DataMigrationView()
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 800, height: 700)
-                .nativeMacModalDismissControl("Cancel")
         }
         .overlay {
             if isPreparingLogs {
@@ -235,6 +189,7 @@ struct SettingsView: View {
                 .transition(.opacity)
             }
         }
+        #endif
     }
 
     @ViewBuilder
@@ -422,7 +377,7 @@ struct SettingsView: View {
                     )
                     .disabled(!iCloudBackupIncludeSettings)
 
-                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                Text("API keys stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -464,7 +419,7 @@ struct SettingsView: View {
                 }
 
                 Button {
-                    showingCloudReview = true
+                    presentCloudReview()
                 } label: {
                     Label("Review iCloud Items", systemImage: "tray.full")
                         .frame(maxWidth: .infinity)
@@ -546,17 +501,13 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
             }
 
-            Text("Make AI summaries entertaining with a comedic twist. All information is preserved.")
+            Text(
+                "Add humor to the summary narrative while keeping tasks, reminders, titles, "
+                    + "and facts grounded in the transcript."
+            )
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-            Divider()
-
-            Toggle("Experimental features", isOn: $enableExperimentalModels)
-                .accessibilityValue(AccessibilitySupport.statusValue(isOn: enableExperimentalModels))
-            Text("Exposes experimental on-device models. Experimental models are less reliable and may produce empty summaries.")
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
     }
@@ -800,7 +751,7 @@ struct SettingsView: View {
                 Toggle("Include app settings", isOn: $iCloudBackupIncludeSettings)
                 Toggle("Include sensitive settings", isOn: $iCloudBackupIncludeSensitiveSettings)
                     .disabled(!iCloudBackupIncludeSettings)
-                Text("API keys and AWS credentials stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
+                Text("API keys stay in Keychain and are never included in iCloud settings backups. Leave sensitive settings off unless you explicitly want eligible future sensitive preferences copied to iCloud.")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -835,7 +786,7 @@ struct SettingsView: View {
                 .disabled(isRunningCloudBackupAction)
 
                 Button {
-                    showingCloudReview = true
+                    presentCloudReview()
                 } label: {
                     Label("Review iCloud Items", systemImage: "tray.full")
                 }
@@ -980,15 +931,10 @@ struct SettingsView: View {
                 }
             }
         } footer: {
-            Text("Make AI summaries entertaining with a comedic twist. All information is preserved — just delivered with flair.")
-        }
-    }
-
-    private var experimentalSection: some View {
-        Section {
-            Toggle("Experimental features", isOn: $enableExperimentalModels)
-        } footer: {
-            Text("Exposes experimental models in the On Device AI (Legacy) engine and the smaller Ternary Bonsai 1.7B model in the On Device AI engine. Experimental models are less reliable and may produce empty summaries.")
+            Text(
+                "Add humor to the summary narrative while keeping tasks, reminders, titles, "
+                    + "and facts grounded in the transcript."
+            )
         }
     }
 
@@ -1089,6 +1035,14 @@ struct SettingsView: View {
         openWindow(id: NativeWindowID.backgroundProcessing)
         #else
         showingBackgroundProcessing = true
+        #endif
+    }
+
+    private func presentCloudReview() {
+        #if os(macOS)
+        openWindow(id: NativeWindowID.cloudReview)
+        #else
+        showingCloudReview = true
         #endif
     }
 
@@ -1242,10 +1196,6 @@ struct SettingsView: View {
         }
         PlatformApp.open(url)
         #endif
-    }
-
-    private func clearAllSummaries() {
-        // This function is no longer needed as summaries are managed by the coordinator
     }
 
     // MARK: - iCloud Sync Functions
@@ -1482,12 +1432,12 @@ private enum MacSystemAudioPermissionAlert: Identifiable {
     }
 }
 
-private struct CloudReviewItemsView: View {
+struct CloudReviewItemsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var appCoordinator: AppDataCoordinator
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
 
-    let includeAudioFiles: Bool
+    @AppStorage("iCloudBackupIncludeAudioFiles") private var includeAudioFiles = false
 
     @State private var actionMessage = ""
     @State private var actionIsError = false
@@ -1560,17 +1510,45 @@ private struct CloudReviewItemsView: View {
                             }
                             .buttonStyle(.bordered)
                             .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
+                            .confirmationDialog(
+                                "Delete this item from iCloud?",
+                                isPresented: Binding(
+                                    get: { itemPendingDelete?.id == item.id },
+                                    set: { isPresented in
+                                        if !isPresented, itemPendingDelete?.id == item.id {
+                                            itemPendingDelete = nil
+                                        }
+                                    }
+                                ),
+                                titleVisibility: .visible
+                            ) {
+                                Button("Delete from iCloud", role: .destructive) {
+                                    Task { await delete(item) }
+                                }
+                                Button("Cancel", role: .cancel) {
+                                    itemPendingDelete = nil
+                                }
+                            } message: {
+                                Text(
+                                    "This removes app-created iCloud sync records for the selected item. " +
+                                    "It does not delete anything already stored locally on this device."
+                                )
+                            }
                         }
                     }
                     .padding(.vertical, 6)
                 }
             }
             .navigationTitle("iCloud Items Review")
+            #if !os(macOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
+                #if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { dismiss() }
                 }
+                #endif
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         Task { await refresh() }
@@ -1579,25 +1557,6 @@ private struct CloudReviewItemsView: View {
                     }
                     .disabled(iCloudManager.isScanningCloudReviewItems || workingItemId != nil)
                 }
-            }
-            .confirmationDialog(
-                "Delete this item from iCloud?",
-                isPresented: Binding(
-                    get: { itemPendingDelete != nil },
-                    set: { if !$0 { itemPendingDelete = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Delete from iCloud", role: .destructive) {
-                    if let item = itemPendingDelete {
-                        Task { await delete(item) }
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    itemPendingDelete = nil
-                }
-            } message: {
-                Text("This removes app-created iCloud sync records for the selected item. It does not delete anything already stored locally on this device.")
             }
             .task {
                 await refresh()

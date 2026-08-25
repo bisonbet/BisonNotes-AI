@@ -29,20 +29,21 @@ struct BisonNotesComplicationView: View {
     var entry: BisonNotesProvider.Entry
     @Environment(\.widgetFamily) private var family
     @Environment(\.widgetRenderingMode) private var renderingMode
-    @Environment(\.showsWidgetLabel) private var showsWidgetLabel
 
+    // Both assets share the same artwork and framing, so the mark keeps its size
+    // and position when a face switches between full-color and tinted rendering.
     private var glyphImage: some View {
         Group {
             if renderingMode == .fullColor {
                 Image("BisonGlyphColor")
                     .resizable()
-                    .scaledToFit()
             } else {
                 Image("BisonGlyphTemplate")
                     .resizable()
-                    .scaledToFit()
             }
         }
+        .scaledToFit()
+        .widgetAccentable()
     }
 
     var body: some View {
@@ -51,29 +52,34 @@ struct BisonNotesComplicationView: View {
             Text("Rec \(entry.recordingMinutes)m")
 
         case .accessoryCircular:
+            // The artwork carries its own margin, so only a hair of padding is
+            // needed to stay clear of the circular mask.
             glyphImage
-                .padding(4)
+                .padding(2)
                 .widgetLabel {
-                    if showsWidgetLabel {
-                        Text("\(entry.newNotesCount) new")
-                    }
+                    Text("\(entry.newNotesCount) new")
                 }
 
         case .accessoryRectangular:
-            VStack(alignment: .leading, spacing: 2) {
-                Text("BisonNotes")
-                    .font(.headline)
-                Text("\(entry.newNotesCount) New Notes")
-                    .font(.system(size: 16, weight: .semibold))
-                Text(entry.statusText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 5) {
+                glyphImage
+                    .frame(width: 26, height: 26)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("\(entry.newNotesCount) New Notes")
+                        .font(.headline)
+                        .widgetAccentable()
+                    Text(entry.statusText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
             }
-            .padding(.vertical, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
         case .accessoryCorner:
             glyphImage
-                .padding(4)
+                .padding(2)
                 .widgetLabel {
                     Text("\(entry.newNotesCount)")
                 }

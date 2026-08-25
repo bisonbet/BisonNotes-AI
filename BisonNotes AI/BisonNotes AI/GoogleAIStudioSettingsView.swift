@@ -11,7 +11,7 @@ import os.log
 struct GoogleAIStudioSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @SecureStorage(KeychainSecretStore.googleAIStudioAPIKey) private var apiKey: String = ""
-    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
+    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3.7-flash"
     @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
     @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 4096
     @AppStorage("enableGoogleAIStudio") private var isEnabled: Bool = false
@@ -25,8 +25,8 @@ struct GoogleAIStudioSettingsView: View {
     let onConfigurationChanged: () -> Void
 
     private let availableModels = [
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite-preview"
+        "gemini-3.7-flash",
+        "gemini-3.5-flash-lite"
     ]
 
     var body: some View {
@@ -128,6 +128,7 @@ struct GoogleAIStudioSettingsView: View {
             .navigationTitle("Google AI Studio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
@@ -140,12 +141,30 @@ struct GoogleAIStudioSettingsView: View {
                     }
                     .disabled(apiKey.isEmpty)
                 }
+#endif
             }
             .alert("Connection Test", isPresented: $showingAlert) {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
             }
+#if os(macOS)
+            .onChange(of: apiKey) {
+                onConfigurationChanged()
+            }
+            .onChange(of: selectedModel) {
+                onConfigurationChanged()
+            }
+            .onChange(of: temperature) {
+                onConfigurationChanged()
+            }
+            .onChange(of: maxTokens) {
+                onConfigurationChanged()
+            }
+            .onChange(of: isEnabled) {
+                onConfigurationChanged()
+            }
+#endif
         }
     }
 

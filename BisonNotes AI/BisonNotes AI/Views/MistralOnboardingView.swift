@@ -52,14 +52,28 @@ struct MistralOnboardingView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .animation(.easeInOut(duration: 0.3), value: currentStep)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Mistral setup step \(currentStep + 1) of \(totalSteps)")
             }
             .navigationTitle("Mistral AI Setup")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
+#else
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
+#endif
             }
+#if os(macOS)
+            .onExitCommand {
+                dismiss()
+            }
+#endif
         }
     }
 

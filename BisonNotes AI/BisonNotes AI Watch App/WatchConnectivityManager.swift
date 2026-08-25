@@ -82,8 +82,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             session.delegate = nil
         }
         self.session = nil
-        retryTimer?.invalidate()
-        connectivityDebounceTimer?.invalidate()
+        // Timer callbacks capture the manager weakly and normal lifecycle
+        // paths invalidate both timers before teardown. Swift 6 deinitializers
+        // are nonisolated, so actor-owned Timer properties cannot be touched
+        // here safely.
     }
 
     // MARK: - Setup Methods
@@ -552,6 +554,14 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         return 1.0 // Fallback for non-watchOS platforms
         #endif
     }
+
+    private nonisolated static func currentBatteryLevel() -> Float {
+        #if canImport(WatchKit)
+        return WKInterfaceDevice.current().batteryLevel
+        #else
+        return 1.0
+        #endif
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -584,26 +594,32 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        let isReachable = session.isReachable
         DispatchQueue.main.async {
             let wasReachable = self.connectionState == .connected
-            print("⌚ Phone reachability changed: \(session.isReachable)")
+            print("⌚ Phone reachability changed: \(isReachable)")
 
             // Debounce connectivity changes to prevent rapid state churn
             self.connectivityDebounceTimer?.invalidate()
-            self.connectivityDebounceTimer = Timer.scheduledTimer(withTimeInterval: self.connectivityDebounceDelay, repeats: false) { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.handleDebouncedReachabilityChange(session: session, wasReachable: wasReachable)
+            let manager = self
+            self.connectivityDebounceTimer = Timer.scheduledTimer(withTimeInterval: self.connectivityDebounceDelay, repeats: false) { [weak manager] _ in
+                guard let manager else { return }
+                Task { @MainActor in
+                    manager.handleDebouncedReachabilityChange(
+                        isReachable: isReachable,
+                        wasReachable: wasReachable
+                    )
                 }
             }
         }
     }
 
     /// Handle debounced reachability changes
-    private func handleDebouncedReachabilityChange(session: WCSession, wasReachable: Bool) {
-        print("⌚ Processing debounced reachability change: \(session.isReachable)")
+    private func handleDebouncedReachabilityChange(isReachable: Bool, wasReachable: Bool) {
+        print("⌚ Processing debounced reachability change: \(isReachable)")
         updateConnectionState()
 
-        if session.isReachable {
+        if isReachable {
             if !wasReachable {
                 // updateConnectionState already triggered handleConnectionRestored
                 // for the transition; just request a sync
@@ -634,38 +650,88 @@ extension WatchConnectivityManager: WCSessionDelegate {
         print("⌚ Sent throttled sync request")
     }
 
+    /// Serialize framework-owned WatchConnectivity dictionaries before they
+    /// cross into the MainActor-owned message processor.
+    private nonisolated static func propertyListData(for payload: [String: Any]) -> Data? {
+        try? PropertyListSerialization.data(
+            fromPropertyList: payload,
+            format: .binary,
+            options: 0
+        )
+    }
+
+    private static func propertyListPayload(from data: Data) -> [String: Any]? {
+        try? PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        ) as? [String: Any]
+    }
+
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        guard let messageData = Self.propertyListData(for: message) else {
+            print("⌚ Received phone message was not a valid property list")
+            return
+        }
+
         DispatchQueue.main.async {
+            guard let message = Self.propertyListPayload(from: messageData) else {
+                print("⌚ Failed to decode received phone message")
+                return
+            }
             self.processPhoneMessage(message)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
-        DispatchQueue.main.async {
-            self.processPhoneMessage(message)
+        let messageData = Self.propertyListData(for: message)
+        let reply: [String: Any] = [
+            "status": "received",
+            "watchAppActive": true,
+            "batteryLevel": Self.currentBatteryLevel(),
+            "timestamp": Date().timeIntervalSince1970
+        ]
+        replyHandler(reply)
 
-            // Send reply with current watch status
-            let reply: [String: Any] = [
-                "status": "received",
-                "watchAppActive": true,
-                "batteryLevel": self.getBatteryLevel(),
-                "timestamp": Date().timeIntervalSince1970
-            ]
-            replyHandler(reply)
+        guard let messageData else {
+            print("⌚ Received phone message was not a valid property list")
+            return
+        }
+
+        DispatchQueue.main.async {
+            guard let message = Self.propertyListPayload(from: messageData) else {
+                print("⌚ Failed to decode received phone message")
+                return
+            }
+            self.processPhoneMessage(message)
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        guard let contextData = Self.propertyListData(for: applicationContext) else {
+            print("⌚ Received application context was not a valid property list")
+            return
+        }
+
         DispatchQueue.main.async {
             print("⌚ Received application context from phone")
-            self.processPhoneMessage(applicationContext)
+            if let applicationContext = Self.propertyListPayload(from: contextData) {
+                self.processPhoneMessage(applicationContext)
+            }
         }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
+        guard let userInfoData = Self.propertyListData(for: userInfo) else {
+            print("⌚ Received user info was not a valid property list")
+            return
+        }
+
         DispatchQueue.main.async {
             print("⌚ Received user info from phone")
-            self.processPhoneMessage(userInfo)
+            if let userInfo = Self.propertyListPayload(from: userInfoData) {
+                self.processPhoneMessage(userInfo)
+            }
         }
     }
 

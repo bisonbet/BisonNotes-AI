@@ -66,8 +66,8 @@ class WatchAudioManager: NSObject, ObservableObject {
     }
     
     deinit {
-        // Clean up resources
-        recordingTimer?.invalidate()
+        // Clean up resources. A nonisolated deinit cannot reach @MainActor state,
+        // so the repeating timer invalidates itself once self is gone instead.
         audioRecorder?.stop()
     }
     
@@ -98,16 +98,15 @@ class WatchAudioManager: NSObject, ObservableObject {
         }
 
         // Request permission and setup recording
-        AVAudioApplication.requestRecordPermission { [weak self] granted in
+        let manager = self
+        AVAudioApplication.requestRecordPermission { granted in
             DispatchQueue.main.async {
-                guard let self = self else { return }
-                
                 if granted {
-                    self.setupAndStartRecording()
+                    manager.setupAndStartRecording()
                 } else {
                     let error = WatchAudioError.permissionDenied("Microphone permission denied")
-                    self.onError?(error)
-                    self.errorMessage = error.localizedDescription
+                    manager.onError?(error)
+                    manager.errorMessage = error.localizedDescription
                 }
             }
         }
@@ -446,9 +445,15 @@ class WatchAudioManager: NSObject, ObservableObject {
     }
     
     private func monitorBatteryLevel() {
-        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            
+        Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                // Nothing holds a reference to this timer, so a deallocated
+                // manager would otherwise leave it firing on the run loop for
+                // the remaining life of the app.
+                timer.invalidate()
+                return
+            }
+
             Task { @MainActor in
                 self.updateBatteryLevel()
                 
@@ -474,8 +479,13 @@ class WatchAudioManager: NSObject, ObservableObject {
     // MARK: - Timer Management
     
     private func startRecordingTimer() {
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                // The manager was deallocated mid-recording; stop the repeating
+                // timer rather than leaving it firing on the run loop forever.
+                timer.invalidate()
+                return
+            }
             
             Task { @MainActor in
                 guard let startTime = self.recordingStartTime else { return }

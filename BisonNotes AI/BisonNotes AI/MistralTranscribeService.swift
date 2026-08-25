@@ -172,6 +172,9 @@ class MistralTranscribeService: NSObject, ObservableObject {
             // Check if chunking is needed
             let needsChunking = try await chunkingService.shouldChunkFile(url, for: .mistralAI)
             if needsChunking {
+                guard let recordingId else {
+                    throw MistralTranscribeError.recordingIdentityRequired
+                }
                 currentStatus = "Chunking audio file..."
                 progress = 0.05
                 let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .mistralAI)
@@ -205,7 +208,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
                     originalURL: url,
                     recordingName: url.deletingPathExtension().lastPathComponent,
                     recordingDate: creationDate,
-                    recordingId: recordingId ?? UUID()
+                    recordingId: recordingId
                 )
                 // Clean up chunk files
                 try await chunkingService.cleanupChunks(chunks)
@@ -430,6 +433,7 @@ enum MistralTranscribeError: LocalizedError {
     case apiError(String)
     case invalidResponse(String)
     case networkError(Error)
+    case recordingIdentityRequired
 
     var errorDescription: String? {
         switch self {
@@ -447,6 +451,8 @@ enum MistralTranscribeError: LocalizedError {
             return "Invalid response from Mistral: \(message)"
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
+        case .recordingIdentityRequired:
+            return "A recording ID is required for chunked transcription."
         }
     }
 }

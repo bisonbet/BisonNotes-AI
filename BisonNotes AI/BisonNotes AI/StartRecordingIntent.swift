@@ -9,17 +9,17 @@ import AppIntents
 import Foundation
 
 struct StartRecordingIntent: AppIntent {
-    static var title: LocalizedStringResource = "Start Recording"
-    static var description = IntentDescription("Start recording an audio note with BisonNotes AI")
+    static let title: LocalizedStringResource = "Start Recording"
+    static let description = IntentDescription("Start recording an audio note with BisonNotes AI")
 
     // Configure the intent to open the app
-    static var openAppWhenRun: Bool = true
+    static let openAppWhenRun = true
 
     // Make this intent available for shortcuts and action button
-    static var isDiscoverable: Bool = true
+    static let isDiscoverable = true
 
     // Optimize for Control Center usage
-    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {
         ActionButtonLaunchManager.requestRecordingStart()

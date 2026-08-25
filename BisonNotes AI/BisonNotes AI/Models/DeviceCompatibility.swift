@@ -46,29 +46,26 @@ struct DeviceCompatibility {
     // MARK: - On-Device AI Support
 
     /// Check if device supports on-device AI (summarization)
-    /// Requires 6GB+ RAM (uses DeviceCapabilities for consistency)
+    /// Requires 4GB+ RAM for the MLX 1.7B model (uses DeviceCapabilities for consistency)
     static var isOnDeviceAISupported: Bool {
-        return DeviceCapabilities.supportsOnDeviceLLM
+        return DeviceCapabilities.supportsMLX
     }
 
     // MARK: - FluidAudio Support
 
-    /// Cached result for FluidAudio support check
-    private static var _cachedFluidAudioSupport: Bool?
-    private static var _hasLoggedFluidAudioSupport = false
+    /// The support check is evaluated once by Swift's thread-safe lazy static
+    /// initialization. Keeping the cached value immutable avoids unsynchronized
+    /// global mutation while preserving the existing one-time log behavior.
+    private static let fluidAudioSupport = calculateFluidAudioSupport()
 
     /// FluidAudio requires iOS 17+ and 4GB+ RAM for CoreML/ANE model inference
     static var isFluidAudioSupported: Bool {
-        if let cached = _cachedFluidAudioSupport {
-            return cached
-        }
+        fluidAudioSupport
+    }
 
+    private static func calculateFluidAudioSupport() -> Bool {
         guard #available(iOS 17.0, *) else {
-            if !_hasLoggedFluidAudioSupport {
-                AppLog.shared.performance("DeviceCompatibility: iOS 17+ required for FluidAudio")
-                _hasLoggedFluidAudioSupport = true
-            }
-            _cachedFluidAudioSupport = false
+            AppLog.shared.performance("DeviceCompatibility: iOS 17+ required for FluidAudio")
             return false
         }
 
@@ -77,16 +74,12 @@ struct DeviceCompatibility {
         let totalMemoryGB = Double(totalMemory) / 1_073_741_824.0
         let hasEnoughRAM = totalMemoryGB >= 4.0
 
-        if !_hasLoggedFluidAudioSupport {
-            if hasEnoughRAM {
-                AppLog.shared.performance("DeviceCompatibility: FluidAudio supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
-            } else {
-                AppLog.shared.performance("DeviceCompatibility: FluidAudio requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
-            }
-            _hasLoggedFluidAudioSupport = true
+        if hasEnoughRAM {
+            AppLog.shared.performance("DeviceCompatibility: FluidAudio supported (RAM: \(String(format: "%.1f", totalMemoryGB))GB)")
+        } else {
+            AppLog.shared.performance("DeviceCompatibility: FluidAudio requires 4GB+ RAM (Device has \(String(format: "%.1f", totalMemoryGB))GB)")
         }
 
-        _cachedFluidAudioSupport = hasEnoughRAM
         return hasEnoughRAM
     }
 }

@@ -54,7 +54,9 @@ final class ShareViewController: NSViewController {
                 NSLog("📎 Mac Share Extension: notified running host app")
             }
 
-            self?.completeRequest()
+			Task { @MainActor [weak self] in
+				self?.completeRequest()
+			}
         }
     }
 

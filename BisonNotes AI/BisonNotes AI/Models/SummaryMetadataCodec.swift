@@ -9,8 +9,6 @@ struct SummaryMetadataPayload: Codable {
 /// These should match the engineType properties of SummarizationEngine implementations
 struct AIEngineTypeConstants {
     static let googleAI = "Google AI"
-    static let openAI = "OpenAI"
-    static let awsBedrock = "AWS Bedrock"
     static let openAICompatible = "OpenAI API Compatible"
     static let mistralAI = "Mistral AI"
     static let ollama = "Ollama"
@@ -50,9 +48,7 @@ enum SummaryMetadataCodec {
                     methodLower.contains("compatible") || methodLower.contains("custom api") {
             return AIEngineTypeConstants.openAICompatible
         } else if methodLower.contains("openai") || methodLower.contains("gpt") {
-            return AIEngineTypeConstants.openAI
-        } else if methodLower.contains("bedrock") || methodLower.contains("claude") || methodLower.contains("aws") {
-            return AIEngineTypeConstants.awsBedrock
+            return AIEngineTypeConstants.aiAssistant
         } else if methodLower.contains("mistral ai") {
             return AIEngineTypeConstants.mistralAI
         } else if methodLower.contains("ollama") {

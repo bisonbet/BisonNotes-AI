@@ -20,7 +20,9 @@ struct ContentView: View {
     @State private var showingLocationPermission = false
     @State private var pendingActionButtonRecording = false
     @State private var showingAppleIntelligenceMigrationAlert = false
-    @State private var showingOnDeviceLLMSettings = false
+    @State private var showingLlamaCppRemovalAlert = false
+    @State private var showingOllamaMigrationAlert = false
+    @State private var showingAISettings = false
     @State private var showingWhisperKitRemovedAlert = false
     @State private var showingWhisperKitSwitchedAlert = false
     @State private var showingParakeetMigrationAlert = false
@@ -28,6 +30,7 @@ struct ContentView: View {
     @State private var showingUnsupportedFileAlert = false
     @State private var showingCrashReport = false
     @StateObject private var downloadMonitor = OnDeviceAIDownloadMonitor.shared
+    @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     @State private var showSplash = true
 
     var body: some View {
@@ -100,6 +103,26 @@ struct ContentView: View {
         .task {
             handleActionButtonLaunchIfNeeded()
         }
+        .alert(
+            "Transcription Completed Without Speaker Labels",
+            isPresented: Binding(
+                get: { transcriptionStarter.lastTranscriptionWarning != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        transcriptionStarter.clearLastTranscriptionWarning()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                transcriptionStarter.clearLastTranscriptionWarning()
+            }
+        } message: {
+            Text(
+                transcriptionStarter.lastTranscriptionWarning?.userVisibleMessage
+                    ?? "The transcript was saved without local speaker labels."
+            )
+        }
     }
 
     private var shouldShowSplash: Bool {
@@ -140,17 +163,55 @@ struct ContentView: View {
             Text("We use your location to log where each recording happens, helping you organize and revisit your audio notes with helpful context.")
         }
         .alert("Apple Intelligence Has Been Removed", isPresented: $showingAppleIntelligenceMigrationAlert) {
-            Button("Configure On-Device AI") {
-                showingOnDeviceLLMSettings = true
+            Button("Configure AI Settings") {
+                showingAISettings = true
             }
         } message: {
-            Text("Apple Intelligence has been removed from the app. Your settings have been automatically updated to use On-Device AI, which provides similar functionality. Please download an AI model to continue using on-device AI processing.")
+            Text("Apple Intelligence has been removed from the app. Your settings have been moved to the current AI engine. Review AI Settings to download an MLX model or choose another provider.")
         }
-        .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            NavigationStack {
-                OnDeviceLLMSettingsView()
+        .alert("On Device AI Has Been Upgraded", isPresented: $showingLlamaCppRemovalAlert) {
+            Button("Open AI Settings") {
+                showingAISettings = true
             }
+            Button("Later", role: .cancel) { }
+        } message: {
+            Text(
+                "The older on-device engine has been removed and its downloaded models were "
+                    + "deleted to reclaim storage. Your settings were moved to the closest "
+                    + "On Device AI model, which needs to be downloaded before your next summary."
+            )
+        }
+        .alert("Ollama Is Now Mac Only", isPresented: $showingOllamaMigrationAlert) {
+            Button("OK") { }
+        } message: {
+            Text(
+                "Ollama is now available only in the native macOS app. "
+                    + "This device was switched to an on-device AI engine when supported. "
+                    + "Open Setup → AI Settings to download or configure its model."
+            )
+        }
+        .sheet(isPresented: $showingAISettings) {
+            NavigationStack {
+                AISettingsView()
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+            }
+            .nativeMacPresentationContext(.modalSheet)
             .nativeMacModalSizing(width: 760, height: 700)
+#if os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        showingAISettings = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.ai-settings.close")
+                }
+            }
+            .onExitCommand {
+                showingAISettings = false
+            }
+#endif
         }
         .alert("Switched to Parakeet", isPresented: $showingWhisperKitSwitchedAlert) {
             Button("OK") { }
@@ -177,7 +238,22 @@ struct ContentView: View {
             NavigationStack {
                 FluidAudioSettingsView()
             }
+            .nativeMacPresentationContext(.modalSheet)
             .nativeMacModalSizing(width: 760, height: 700)
+#if os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        showingFluidAudioSettings = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.fluid-audio-settings.close")
+                }
+            }
+            .onExitCommand {
+                showingFluidAudioSettings = false
+            }
+#endif
         }
         .alert("Download Complete", isPresented: Binding(
             get: { downloadMonitor.showingCompletionAlert && !recorderVM.isRecording },
@@ -291,7 +367,6 @@ struct ContentView: View {
 
         // Phase 6: Set AppDelegate reference to AudioRecorderViewModel for notification handling
         AppDelegate.recorderViewModel = recorderVM
-        AppLog.shared.log("AppDelegate.recorderViewModel reference set", category: .general)
 
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
@@ -307,18 +382,13 @@ struct ContentView: View {
                     } else {
                         // Core Data has existing recordings
 
-                        // Always run URL migration to ensure relative paths
-                        AppLog.shared.log("Running URL migration to ensure relative paths...", level: .debug, category: .general)
                         appCoordinator.syncRecordingURLs()
-                        AppLog.shared.log("URL migration completed", category: .general)
 
                         // Clean up any orphaned records and missing files
-                        AppLog.shared.log("Cleaning up orphaned records...", level: .debug, category: .general)
                         let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
                         let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
 
                         // Also clean up recordings that reference missing files
-                        AppLog.shared.log("Cleaning up recordings with missing files...", level: .debug, category: .general)
                         let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
 
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount
@@ -366,6 +436,22 @@ struct ContentView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                             showingAppleIntelligenceMigrationAlert = true
                             UserDefaults.standard.removeObject(forKey: "showAppleIntelligenceMigrationAlert")
+                        }
+                    }
+
+                    // Check if a legacy llama.cpp selection was moved to MLX.
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showLlamaCppRemovalAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingLlamaCppRemovalAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showLlamaCppRemovalAlert")
+                        }
+                    }
+
+                    // Check if a legacy Ollama selection was moved off iOS/iPadOS.
+                    if !isFirstLaunch && UserDefaults.standard.bool(forKey: "showOllamaMigrationAlert") {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            showingOllamaMigrationAlert = true
+                            UserDefaults.standard.removeObject(forKey: "showOllamaMigrationAlert")
                         }
                     }
 

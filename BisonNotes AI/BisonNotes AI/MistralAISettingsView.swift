@@ -76,7 +76,7 @@ struct MistralAISettingsView: View {
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
 
-                        Text("Mistral uses OpenAI-compatible chat endpoints. Keep the default base URL unless you use a gateway.")
+                        Text("Mistral uses standard chat-completion endpoints. Keep the default base URL unless you use a gateway.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -202,6 +202,7 @@ struct MistralAISettingsView: View {
             .navigationTitle("Mistral AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") { dismiss() }
                 }
@@ -210,17 +211,50 @@ struct MistralAISettingsView: View {
                     Button("Save") { saveSettings() }
                         .disabled(apiKey.isEmpty)
                 }
+#endif
             }
             .alert("Connection Test", isPresented: $showingAlert) {
                 Button("OK") { }
             } message: {
                 Text(alertMessage)
             }
+#if os(macOS)
+            .sheet(isPresented: $showingOnboarding) {
+                MistralOnboardingView(onSetupComplete: {
+                    onConfigurationChanged()
+                })
+                .nativeMacModalSizing(width: 760, height: 700)
+            }
+#else
             .platformFullScreenCover(isPresented: $showingOnboarding) {
                 MistralOnboardingView(onSetupComplete: {
                     onConfigurationChanged()
                 })
             }
+#endif
+#if os(macOS)
+            .onChange(of: apiKey) {
+                onConfigurationChanged()
+            }
+            .onChange(of: baseURL) {
+                onConfigurationChanged()
+            }
+            .onChange(of: selectedModel) {
+                onConfigurationChanged()
+            }
+            .onChange(of: temperature) {
+                onConfigurationChanged()
+            }
+            .onChange(of: maxTokens) {
+                onConfigurationChanged()
+            }
+            .onChange(of: isEnabled) {
+                onConfigurationChanged()
+            }
+            .onChange(of: supportsJsonResponseFormat) {
+                onConfigurationChanged()
+            }
+#endif
         }
     }
 

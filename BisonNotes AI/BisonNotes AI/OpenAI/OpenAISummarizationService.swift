@@ -1,28 +1,27 @@
 //
-//  OpenAISummarizationService.swift
+//  OpenAICompatibleService.swift
 //  Audio Journal
 //
-//  Refactored OpenAI service with standardized title generation
+//  Compatible API service with standardized title generation
 //
 
 import Foundation
 
-// MARK: - OpenAI Summarization Service
+// MARK: - Compatible API Service
 
-class OpenAISummarizationService: ObservableObject {
+actor OpenAICompatibleService {
 
     // MARK: - Properties
 
-    @Published var config: OpenAISummarizationConfig
+    private let config: OpenAICompatibleConfig
     private let session: URLSession
 
     // Cache the message format to avoid repeated UserDefaults reads and ensure consistency
     private let cachedMessageFormat: MessageContentFormat
-    private let cachedShouldUseResponseFormat: Bool
 
     // MARK: - Initialization
 
-    init(config: OpenAISummarizationConfig) {
+    init(config: OpenAICompatibleConfig) {
         self.config = config
 
         let sessionConfig = URLSessionConfiguration.default
@@ -35,14 +34,14 @@ class OpenAISummarizationService: ObservableObject {
         // 2. Performance overhead of repeated UserDefaults reads
         // 3. Inconsistent format detection mid-session if settings change
         self.cachedMessageFormat = MessageFormatDetector.detectFormat(for: config.baseURL)
-        self.cachedShouldUseResponseFormat = MessageFormatDetector.shouldUseResponseFormat(for: config.baseURL)
     }
 
     // MARK: - Public Methods
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .summary, text: text)
+        let comedyMode = ComedyMode.current
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: text)
 
         // Use cached message format (determined at initialization)
         let messages = [
@@ -50,26 +49,25 @@ class OpenAISummarizationService: ObservableObject {
             ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: effectiveTemperature(config.temperature),
-            maxCompletionTokens: config.maxTokens,
-            reasoningEffort: reasoningEffort()
+            temperature: effectiveTemperature(config.temperature, comedyMode: comedyMode),
+            maxCompletionTokens: completionTokenBudget,
+            reasoningEffort: reasoningEffort(),
+            enableThinking: thinkingOptions.enableThinking,
+            thinkingBudget: thinkingOptions.thinkingBudget,
+            chatTemplateKwargs: thinkingOptions.chatTemplateKwargs
         )
 
-        let response = try await makeAPICall(request: request)
+        let choice = try await requestCompletion(request)
 
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
-        }
-
-        return choice.message.content
+        return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: choice.message.content)
     }
 
     func extractTasks(from text: String) async throws -> [TaskItem] {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .tasks, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .tasks, contentType: .general)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .tasks, text: text)
 
         // Use cached message format (determined at initialization)
         let messages = [
@@ -77,26 +75,25 @@ class OpenAISummarizationService: ObservableObject {
             ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: effectiveTemperature(0.1),
-            maxCompletionTokens: 1024,
-            reasoningEffort: reasoningEffort()
+            maxCompletionTokens: metadataTokenBudget,
+            reasoningEffort: nil,
+            enableThinking: nil,
+            thinkingBudget: nil,
+            chatTemplateKwargs: nil
         )
 
-        let response = try await makeAPICall(request: request)
+        let choice = try await requestCompletion(request)
 
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
-        }
-
-        return try OpenAIResponseParser.parseTasksFromJSON(choice.message.content)
+        return try ChatCompletionResponseParser.parseTasksFromJSON(choice.message.content)
     }
 
     func extractReminders(from text: String) async throws -> [ReminderItem] {
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .reminders, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .reminders, contentType: .general)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .reminders, text: text)
 
         // Use cached message format (determined at initialization)
         let messages = [
@@ -104,21 +101,20 @@ class OpenAISummarizationService: ObservableObject {
             ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
-        let request = OpenAIChatCompletionRequest(
+        let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
             temperature: effectiveTemperature(0.1),
-            maxCompletionTokens: 1024,
-            reasoningEffort: reasoningEffort()
+            maxCompletionTokens: metadataTokenBudget,
+            reasoningEffort: nil,
+            enableThinking: nil,
+            thinkingBudget: nil,
+            chatTemplateKwargs: nil
         )
 
-        let response = try await makeAPICall(request: request)
+        let choice = try await requestCompletion(request)
 
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
-        }
-
-        return try OpenAIResponseParser.parseRemindersFromJSON(choice.message.content)
+        return try ChatCompletionResponseParser.parseRemindersFromJSON(choice.message.content)
     }
 
     func extractTitles(from text: String) async throws -> [TitleItem] {
@@ -133,50 +129,60 @@ class OpenAISummarizationService: ObservableObject {
         return ContentAnalyzer.classifyContent(text)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // First classify the content
         let contentType = try await classifyContent(text)
+        let comedyMode = ComedyMode.current
+        let detailLevel = SummaryDetailLevel.current
 
         // Create a comprehensive prompt for all tasks
-        let systemPrompt = OpenAIPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
-        let userPrompt = OpenAIPromptGenerator.createUserPrompt(for: .complete, text: text)
+        let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
+        let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: text)
 
-        // Use cached message format and response format settings (determined at initialization)
+        let completionTemperature = effectiveTemperature(config.temperature, comedyMode: comedyMode)
+        let temperatureDescription = completionTemperature.map { String(format: "%.1f", $0) } ?? "reasoning-default"
+        AppLog.shared.networking(
+            "Compatible API complete prompt settings: detail=\(detailLevel.displayName), "
+                + "comedy=\(comedyMode.rawValue), temperature=\(temperatureDescription)",
+            level: .debug
+        )
+
+        // Use the cached message format. Compatible endpoints vary widely in
+        // their support for response_format, so flexible parsing is safer.
         let messages = [
             ChatMessage(role: "system", content: systemPrompt, format: cachedMessageFormat),
             ChatMessage(role: "user", content: userPrompt, format: cachedMessageFormat)
         ]
 
-        // IMPORTANT: For OpenAI Compatible APIs, don't use response_format
-        // LiteLLM and other routers may proxy to various providers (Bedrock, Anthropic, Ollama, etc.)
-        // and response_format support varies widely:
-        // - Some providers don't support it at all
-        // - Others interpret it differently (e.g., Bedrock wraps in {"json": {...}})
-        // - Some trigger tool calling instead of direct JSON
-        //
-        // Best practice: Only use response_format with official OpenAI API
-        // For all others, rely on explicit prompts and flexible parsing
-        let request = OpenAIChatCompletionRequest(
+        let request = ChatCompletionRequest(
             model: config.effectiveModelId,
             messages: messages,
-            temperature: effectiveTemperature(config.temperature),
-            maxCompletionTokens: config.maxTokens,
-            responseFormat: cachedShouldUseResponseFormat ? ResponseFormat.json : nil,
-            reasoningEffort: reasoningEffort()
+            temperature: completionTemperature,
+            maxCompletionTokens: completionTokenBudget,
+            responseFormat: nil,
+            reasoningEffort: reasoningEffort(),
+            enableThinking: thinkingOptions.enableThinking,
+            thinkingBudget: thinkingOptions.thinkingBudget,
+            chatTemplateKwargs: thinkingOptions.chatTemplateKwargs
         )
 
-        AppLog.shared.networking("Provider: \(config.baseURL), format: \(cachedMessageFormat.displayName), response_format: \(cachedShouldUseResponseFormat ? "json_object" : "none")", level: .debug)
+        AppLog.shared.networking("Provider: \(config.baseURL), format: \(cachedMessageFormat.displayName), response_format: none", level: .debug)
 
-        let response = try await makeAPICall(request: request)
+        let choice = try await requestCompletion(request)
 
-        guard let choice = response.choices.first else {
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI - No response choices")
-        }
-
-        // Parse the JSON response with flexible format handling
-        // Supports: standard format, wrapped format, markdown code blocks, plain text fallback
-        let result = try OpenAIResponseParser.parseCompleteResponseFromJSON(choice.message.content)
-        return (result.summary, result.tasks, result.reminders, result.titles, contentType)
+        // Parse the JSON response with flexible envelope handling while keeping
+        // the complete metadata contract strict.
+        let cleanedContent = SummaryThinkingResponseCleaner.stripDelimitedThinking(
+            from: choice.message.content
+        )
+        let result = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(cleanedContent)
+        return SummarizationResult(
+            summary: SummaryThinkingResponseCleaner.stripDelimitedThinking(from: result.summary),
+            tasks: result.tasks,
+            reminders: result.reminders,
+            titles: result.titles,
+            contentType: contentType
+        )
     }
 
     func testConnection() async -> Bool {
@@ -184,65 +190,35 @@ class OpenAISummarizationService: ObservableObject {
             let testPrompt = "Hello, this is a test message. Please respond with 'Test successful'."
             let response = try await generateSummary(from: testPrompt, contentType: .general)
             let success = response.contains("Test successful") || response.contains("test successful")
-            AppLog.shared.networking("OpenAI connection test \(success ? "successful" : "failed")")
+            AppLog.shared.networking("Compatible API connection test \(success ? "successful" : "failed")")
             return success
         } catch {
-            AppLog.shared.networking("OpenAI connection test failed: \(error)", level: .error)
+            AppLog.shared.networking("Compatible API connection test failed: \(error)", level: .error)
             return false
         }
     }
 
     // MARK: - Static Methods
 
-    /// Fetch predefined OpenAI models (for official OpenAI API)
-    static func fetchModels(apiKey: String, baseURL: String) async throws -> [OpenAISummarizationModel] {
+    /// Fetch available models from a compatible API endpoint.
+    /// Returns raw model IDs that can be used with the configured provider.
+    static func fetchCompatibleModels(
+        apiKey: String,
+        baseURL: String,
+        allowInsecurePublicEndpoints: Bool = UserDefaults.standard.bool(
+            forKey: EndpointSecurityPolicy.allowInsecurePublicEndpointsKey
+        )
+    ) async throws -> [String] {
         guard !apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
         }
 
-        if let message = EndpointSecurityPolicy.validationMessage(for: baseURL) {
-            throw SummarizationError.aiServiceUnavailable(service: message)
-        }
+        let normalizedBaseURL = Self.normalizedBaseURL(baseURL)
 
-        guard let url = URL(string: "\(baseURL)/models") else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid base URL")
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let session = URLSession.shared
-        let (_, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid response")
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            throw SummarizationError.aiServiceUnavailable(service: "HTTP \(httpResponse.statusCode)")
-        }
-
-        // For OpenAI, return the predefined models
-        // The actual API returns many models but we only support specific ones
-        return OpenAISummarizationModel.allCases
-    }
-
-    /// Fetch available models from an OpenAI-compatible API (for third-party providers)
-    /// Returns raw model IDs that can be used with any compatible API
-    static func fetchCompatibleModels(apiKey: String, baseURL: String) async throws -> [String] {
-        guard !apiKey.isEmpty else {
-            throw SummarizationError.aiServiceUnavailable(service: "API key is empty")
-        }
-
-        // Normalize base URL - remove trailing slash if present
-        var normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if normalizedBaseURL.hasSuffix("/") {
-            normalizedBaseURL.removeLast()
-        }
-
-        if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
+        if let message = EndpointSecurityPolicy.validationMessage(
+            for: normalizedBaseURL,
+            allowInsecurePublicEndpoints: allowInsecurePublicEndpoints
+        ) {
             throw SummarizationError.aiServiceUnavailable(service: message)
         }
 
@@ -256,7 +232,7 @@ class OpenAISummarizationService: ObservableObject {
         request.httpMethod = "GET"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = OpenAISummarizationConfig.connectionTestTimeout
+        request.timeoutInterval = OpenAICompatibleConfig.connectionTestTimeout
 
         let session = URLSession.shared
         let (data, response) = try await session.data(for: request)
@@ -269,7 +245,7 @@ class OpenAISummarizationService: ObservableObject {
 
         guard httpResponse.statusCode == 200 else {
             // Try to parse error response
-            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+            if let errorResponse = try? JSONDecoder().decode(CompatibleAPIErrorResponse.self, from: data) {
                 throw SummarizationError.aiServiceUnavailable(service: "API Error: \(errorResponse.error.message)")
             }
 
@@ -279,10 +255,10 @@ class OpenAISummarizationService: ObservableObject {
 
         // Parse the models response
         do {
-            let modelsResponse = try JSONDecoder().decode(OpenAIModelsListResponse.self, from: data)
+            let modelsResponse = try JSONDecoder().decode(CompatibleModelsResponse.self, from: data)
             let modelIds = modelsResponse.data.map { $0.id }.sorted()
 
-            AppLog.shared.networking("Fetched \(modelIds.count) models from OpenAI-compatible API", level: .debug)
+            AppLog.shared.networking("Fetched \(modelIds.count) models from compatible API", level: .debug)
 
             return modelIds
         } catch {
@@ -291,67 +267,156 @@ class OpenAISummarizationService: ObservableObject {
         }
     }
 
+    /// Normalizes a provider base URL before appending an API path.
+    /// This keeps model discovery and chat requests on the same endpoint.
+    static func normalizedBaseURL(_ baseURL: String) -> String {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while normalized.count > 1, normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized
+    }
+
+    /// Compatible providers commonly expose the same reasoning-model IDs as
+    /// OpenAI, even when the endpoint itself is not hosted by OpenAI.
+    static func isReasoningModel(_ modelID: String) -> Bool {
+        let lowercasedModelID = modelID.lowercased()
+        return lowercasedModelID.hasPrefix("gpt-5") || lowercasedModelID.hasPrefix("gpt5") ||
+               lowercasedModelID.hasPrefix("o1") || lowercasedModelID.hasPrefix("o3") ||
+               lowercasedModelID.hasPrefix("o4") || lowercasedModelID.contains("reasoning")
+    }
+
     // MARK: - Private Helper Methods
 
-    /// Check if a base URL is the official OpenAI API
-    /// Uses precise URL parsing to avoid false positives
-    private func isOfficialOpenAI(baseURL: String) -> Bool {
-        guard let url = URL(string: baseURL),
-              let host = url.host?.lowercased() else {
-            return false
-        }
-
-        // Must be exactly "api.openai.com" or a subdomain of "openai.com"
-        return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
-    }
-
-    /// Check if the current model is a GPT-5 variant (reasoning model)
-    /// GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano) don't support temperature or other
-    /// sampling parameters. They use reasoning.effort and verbosity instead.
+    /// Check if the current model is a reasoning model.
     private func isReasoningModel() -> Bool {
-        let modelId = config.effectiveModelId.lowercased()
-        // GPT-5 family and o-series are reasoning models
-        return modelId.hasPrefix("gpt-5") || modelId.hasPrefix("gpt5") ||
-               modelId.hasPrefix("o1") || modelId.hasPrefix("o3") || modelId.hasPrefix("o4")
+        Self.isReasoningModel(config.effectiveModelId)
     }
 
-    /// Returns temperature value appropriate for the current model
-    /// Reasoning models (GPT-5, o1, o3, o4) don't support custom temperature, returns nil for those
-    private func effectiveTemperature(_ temperature: Double) -> Double? {
-        return isReasoningModel() ? nil : temperature
+    /// Returns a temperature value appropriate for the current model. Comedy
+    /// needs enough variation to produce a narrative voice; roast-level snark
+    /// needs a higher floor than playful humor. Preserve a user's higher setting
+    /// but lift very low settings that would otherwise produce bland prose.
+    private func effectiveTemperature(_ temperature: Double, comedyMode: ComedyMode = .off) -> Double? {
+        guard !isReasoningModel() else { return nil }
+        switch comedyMode {
+        case .off:
+            return temperature
+        case .snarky:
+            return max(temperature, 0.8)
+        case .funny:
+            return max(temperature, 0.6)
+        }
     }
 
-    /// Returns reasoning effort for reasoning models, nil for others
-    /// GPT-5 models use reasoning_effort instead of temperature
+    /// Returns reasoning effort for reasoning models, nil for others.
     /// Values: "low" (faster, fewer tokens), "medium" (balanced), "high" (more thorough)
     private func reasoningEffort() -> String? {
-        return isReasoningModel() ? "low" : nil
+        return thinkingOptions.reasoningEffort
     }
 
-    private func makeAPICall(request: OpenAIChatCompletionRequest) async throws -> OpenAIChatCompletionResponse {
+    /// Translates the shared summary preference into the request contract for
+    /// the selected compatible model family. `.none` returns all nil fields.
+    private var thinkingOptions: SummaryThinkingRequestOptions {
+        SummaryThinkingModelCatalog.requestOptions(
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
+    }
+
+    /// Answer budget for metadata-only calls. Extraction needs far less room
+    /// than a summary, but a reasoning model still thinks before answering.
+    private static let metadataAnswerTokens = 1_024
+
+    /// The output budget to request for a summary. The user's Max Tokens setting
+    /// sizes the answer; reasoning models get headroom on top of it because
+    /// `max_completion_tokens` covers the thinking pass as well.
+    private var completionTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: config.maxTokens,
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
+    }
+
+    private var metadataTokenBudget: Int {
+        SummaryThinkingModelCatalog.completionTokenBudget(
+            configured: Self.metadataAnswerTokens,
+            modelName: config.effectiveModelId,
+            engine: .openAICompatible,
+            baseURL: config.baseURL
+        )
+    }
+
+    /// Sends a request and returns the first choice, growing the output budget
+    /// once when the provider stopped at the limit instead of at the end of the
+    /// answer. A truncated response is never handed to the parsers: partial JSON
+    /// surfaces as a malformed structured response, which hides the real cause.
+    private func requestCompletion(_ request: ChatCompletionRequest) async throws -> Choice {
+        var attemptedBudget = request.maxCompletionTokens ?? config.maxTokens
+        var response = try await makeAPICall(request: request)
+        var choice = try firstChoice(of: response)
+
+        if choice.wasTruncatedByTokenLimit {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                let reasoningDescription = response.usage?.reasoningTokens.map { "\($0)" } ?? "unreported"
+                AppLog.shared.networking(
+                    "Compatible API stopped at the \(attemptedBudget)-token output limit "
+                        + "(reasoning tokens: \(reasoningDescription)); retrying once with \(grownBudget)",
+                    level: .error
+                )
+
+                attemptedBudget = grownBudget
+                response = try await makeAPICall(request: request.withMaxCompletionTokens(grownBudget))
+                choice = try firstChoice(of: response)
+            }
+        }
+
+        guard !choice.wasTruncatedByTokenLimit else {
+            throw SummarizationError.responseTruncated(
+                service: "Compatible API (\(config.effectiveModelId))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: response.usage?.reasoningTokens
+            )
+        }
+
+        return choice
+    }
+
+    private func firstChoice(of response: ChatCompletionResponse) throws -> Choice {
+        guard let choice = response.choices.first else {
+            throw SummarizationError.aiServiceUnavailable(service: "Compatible API - No response choices")
+        }
+        return choice
+    }
+
+    private func makeAPICall(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
         // Validate configuration before making API call
         guard !config.apiKey.isEmpty else {
-            AppLog.shared.networking("OpenAI API key is empty", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key not configured")
+            AppLog.shared.networking("Compatible API key is empty", level: .error)
+            throw SummarizationError.aiServiceUnavailable(service: "Compatible API key not configured")
         }
 
-        // Only validate sk- prefix for official OpenAI API
-        // Third-party providers (LiteLLM, Nebius, etc.) use different key formats
-        // Use precise URL matching to avoid false positives (e.g., malicious-api.openai.com.evil.com)
-        if isOfficialOpenAI(baseURL: config.baseURL) && !config.apiKey.hasPrefix("sk-") {
-            AppLog.shared.networking("OpenAI API key format is invalid", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI API key format is invalid")
-        }
-
-        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
-            AppLog.shared.networking("Blocked insecure OpenAI endpoint: \(config.baseURL)", level: .error)
+        let normalizedBaseURL = Self.normalizedBaseURL(config.baseURL)
+        if let message = EndpointSecurityPolicy.validationMessage(for: normalizedBaseURL) {
+            AppLog.shared.networking("Blocked insecure compatible API endpoint: \(normalizedBaseURL)", level: .error)
             throw SummarizationError.aiServiceUnavailable(service: message)
         }
 
-        AppLog.shared.networking("OpenAI API Configuration - Model: \(config.effectiveModelId), BaseURL: \(config.baseURL)", level: .debug)
+        AppLog.shared.networking(
+            "Compatible API configuration - Model: \(config.effectiveModelId), BaseURL: \(normalizedBaseURL)",
+            level: .debug
+        )
 
-        guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
-            throw SummarizationError.aiServiceUnavailable(service: "Invalid OpenAI base URL: \(config.baseURL)")
+        guard let url = URL(string: "\(normalizedBaseURL)/chat/completions") else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid compatible API base URL: \(config.baseURL)")
         }
 
         var urlRequest = URLRequest(url: url)
@@ -364,47 +429,47 @@ class OpenAISummarizationService: ObservableObject {
             let encoder = JSONEncoder()
             urlRequest.httpBody = try encoder.encode(request)
 
-            AppLog.shared.networking("OpenAI API request size: \(urlRequest.httpBody?.count ?? 0) bytes", level: .debug)
+            AppLog.shared.networking("Compatible API request size: \(urlRequest.httpBody?.count ?? 0) bytes", level: .debug)
         } catch {
             throw SummarizationError.aiServiceUnavailable(service: "Failed to encode request: \(error.localizedDescription)")
         }
 
         do {
-            AppLog.shared.networking("Making OpenAI API request...", level: .debug)
+            AppLog.shared.networking("Making compatible API request...", level: .debug)
             let (data, response) = try await session.data(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from OpenAI")
+                throw SummarizationError.aiServiceUnavailable(service: "Invalid response from compatible API")
             }
 
             if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.networking("OpenAI API Response - Status: \(httpResponse.statusCode), size: \(data.count) bytes", level: .debug)
+                AppLog.shared.networking("Compatible API response - Status: \(httpResponse.statusCode), size: \(data.count) bytes", level: .debug)
             }
 
             if httpResponse.statusCode != 200 {
                 // Try to parse error response
-                if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
-                    AppLog.shared.networking("OpenAI API Error: \(errorResponse.error.message)", level: .error)
-                    throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: \(errorResponse.error.message)")
+                if let errorResponse = try? JSONDecoder().decode(CompatibleAPIErrorResponse.self, from: data) {
+                    AppLog.shared.networking("Compatible API error: \(errorResponse.error.message)", level: .error)
+                    throw SummarizationError.aiServiceUnavailable(service: "Compatible API error: \(errorResponse.error.message)")
                 } else {
-                    AppLog.shared.networking("OpenAI API Error: HTTP \(httpResponse.statusCode)", level: .error)
-                    throw SummarizationError.aiServiceUnavailable(service: "OpenAI API Error: HTTP \(httpResponse.statusCode)")
+                    AppLog.shared.networking("Compatible API error: HTTP \(httpResponse.statusCode)", level: .error)
+                    throw SummarizationError.aiServiceUnavailable(service: "Compatible API error: HTTP \(httpResponse.statusCode)")
                 }
             }
 
             let decoder = JSONDecoder()
             // Pass the expected message format through userInfo for proper ChatMessage decoding
             decoder.userInfo[ChatMessage.formatKey] = cachedMessageFormat
-            let apiResponse = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+            let apiResponse = try decoder.decode(ChatCompletionResponse.self, from: data)
 
             let tokenCount = apiResponse.usage?.totalTokens ?? 0
-            AppLog.shared.networking("OpenAI API Success - Model: \(apiResponse.model), Tokens: \(tokenCount), response: \(apiResponse.choices.first?.message.content.count ?? 0) chars", level: .debug)
+            AppLog.shared.networking("Compatible API success - Model: \(apiResponse.model), Tokens: \(tokenCount), response: \(apiResponse.choices.first?.message.content.count ?? 0) chars", level: .debug)
 
             return apiResponse
 
         } catch {
-            AppLog.shared.networking("OpenAI API request failed: \(error)", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: "OpenAI API request failed: \(error.localizedDescription)")
+            AppLog.shared.networking("Compatible API request failed: \(error)", level: .error)
+            throw SummarizationError.aiServiceUnavailable(service: "Compatible API request failed: \(error.localizedDescription)")
         }
     }
 }

@@ -3,26 +3,23 @@ import Textual
 
 enum AIService {
     case googleAI
-    case openAI
-    case bedrock
     case ollama
     case whisper
     case onDevice
+    case compatibleAPI
 
     var description: String {
         switch self {
         case .googleAI:
             return "google"
-        case .openAI:
-            return "openai"
-        case .bedrock:
-            return "bedrock"
         case .ollama:
             return "ollama"
         case .whisper:
             return "whisper"
         case .onDevice:
             return "on-device"
+        case .compatibleAPI:
+            return "compatible-api"
         }
     }
 
@@ -33,10 +30,8 @@ enum AIService {
 
         if engineLower.contains("google") || modelLower.contains("gemini") {
             return .googleAI
-        } else if engineLower.contains("openai") || modelLower.contains("gpt") {
-            return .openAI
-        } else if engineLower.contains("bedrock") || modelLower.contains("claude") || engineLower.contains("aws") {
-            return .bedrock
+        } else if engineLower.contains("compatible") || engineLower.contains("custom api") {
+            return .compatibleAPI
         } else if engineLower.contains("ollama") {
             return .ollama
         } else if engineLower.contains("whisper") {
@@ -44,8 +39,8 @@ enum AIService {
         } else if engineLower.contains("device") || engineLower.contains("apple") || engineLower.contains("mlx") || modelLower.contains("intelligence") || modelLower.contains("gemma") || modelLower.contains("phi") || modelLower.contains("qwen") || modelLower.contains("llama") || modelLower.contains("mistral") || modelLower.contains("olmo") || modelLower.contains("alpaca") || modelLower.contains("bonsai") || modelLower.contains("ternary") {
             return .onDevice
         } else {
-            // Default to bedrock for unknown services
-            return .bedrock
+            // Unknown services use the generic compatible-API style.
+            return .compatibleAPI
         }
     }
 }
@@ -88,9 +83,10 @@ struct AITextView: View {
         // Step 1: Sanitize encoding issues (Unicode replacement chars, smart quotes, etc.)
         cleaned = cleaned.sanitizedForDisplay()
 
-        // Step 2: Normalize line endings and escape sequences
-        cleaned = cleaned.replacingOccurrences(of: "\\n", with: "\n")
-        cleaned = cleaned.replacingOccurrences(of: "\\r", with: "\n")
+        // Step 2: Normalize line endings and model-generated escape sequences.
+        // This also cleans summaries saved by older builds that displayed
+        // literal `\n`, `\"`, or invalid markers such as `\A`.
+        cleaned = ChatCompletionResponseParser.normalizeModelText(cleaned)
 
         // Step 3: Remove JSON wrappers
         cleaned = cleaned.replacingOccurrences(of: "^\"summary\"\\s*:\\s*\"", with: "", options: .regularExpression)

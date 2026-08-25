@@ -1,69 +1,17 @@
 //
-//  OpenAIModels.swift
+//  CompatibleAPIModels.swift
 //  Audio Journal
 //
-//  OpenAI models and configuration for AI summarization
+//  Shared chat-completion models and configuration for compatible AI services
 //
 
 import Foundation
 
-// MARK: - OpenAI Models for Summarization
+// MARK: - Compatible API Configuration
 
-enum OpenAISummarizationModel: String, CaseIterable {
-    case gpt41Mini = "gpt-4.1-mini"
-    case gpt5Mini = "gpt-5-mini"
-    case gpt54Mini = "gpt-5.4-mini"
-
-    var displayName: String {
-        switch self {
-        case .gpt41Mini:
-            return "GPT-4.1 Mini"
-        case .gpt5Mini:
-            return "GPT-5 Mini"
-        case .gpt54Mini:
-            return "GPT-5.4 Mini"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .gpt41Mini:
-            return "Balanced performance and cost, suitable for most summarization tasks"
-        case .gpt5Mini:
-            return "Next-generation model with enhanced reasoning and efficiency"
-        case .gpt54Mini:
-            return "Latest GPT-5 mini model with improved reasoning and efficiency"
-        }
-    }
-
-    var maxTokens: Int {
-        switch self {
-        case .gpt41Mini:
-            return 2048
-        case .gpt5Mini:
-            return 8192
-        case .gpt54Mini:
-            return 8192
-        }
-    }
-
-    var costTier: String {
-        switch self {
-        case .gpt41Mini:
-            return "Standard"
-        case .gpt5Mini:
-            return "Premium"
-        case .gpt54Mini:
-            return "Premium"
-        }
-    }
-}
-
-// MARK: - OpenAI Configuration
-
-struct OpenAISummarizationConfig: Equatable {
+struct OpenAICompatibleConfig: Equatable, Sendable {
     let apiKey: String
-    let model: OpenAISummarizationModel
+    let modelID: String
     let baseURL: String
     let temperature: Double
     let maxTokens: Int
@@ -73,26 +21,26 @@ struct OpenAISummarizationConfig: Equatable {
     static var defaultTimeout: TimeInterval { SummarizationTimeouts.current() }
     static let connectionTestTimeout: TimeInterval = 30.0
 
-    static var `default`: OpenAISummarizationConfig {
-        return OpenAISummarizationConfig(
+    static var `default`: OpenAICompatibleConfig {
+        return OpenAICompatibleConfig(
             apiKey: "",
-            model: .gpt41Mini,
-            baseURL: "https://api.openai.com/v1",
+            modelID: "",
+            baseURL: "",
             temperature: 0.1,
             maxTokens: 2048,
-            timeout: OpenAISummarizationConfig.defaultTimeout,
+            timeout: OpenAICompatibleConfig.defaultTimeout,
             dynamicModelId: nil
         )
     }
 
     var effectiveModelId: String {
-        return dynamicModelId ?? model.rawValue
+        return dynamicModelId ?? modelID
     }
 }
 
-// MARK: - OpenAI API Request/Response Models
+// MARK: - Chat Completion Request/Response Models
 
-struct OpenAIChatCompletionRequest: Codable {
+struct ChatCompletionRequest: Codable, Sendable {
     let model: String
     let messages: [ChatMessage]
     let temperature: Double?
@@ -101,7 +49,10 @@ struct OpenAIChatCompletionRequest: Codable {
     let frequencyPenalty: Double?
     let presencePenalty: Double?
     let responseFormat: ResponseFormat?
-    let reasoningEffort: String?  // For GPT-5 and o-series reasoning models: "low", "medium", "high"
+    let reasoningEffort: String?  // For reasoning models: "low", "medium", "high"
+    let enableThinking: Bool?      // Qwen-compatible hosted APIs
+    let thinkingBudget: Int?       // Qwen/Gemini-compatible hosted APIs
+    let chatTemplateKwargs: [String: Bool]? // vLLM/llama.cpp-compatible APIs
 
     enum CodingKeys: String, CodingKey {
         case model
@@ -113,9 +64,25 @@ struct OpenAIChatCompletionRequest: Codable {
         case presencePenalty = "presence_penalty"
         case responseFormat = "response_format"
         case reasoningEffort = "reasoning_effort"
+        case enableThinking = "enable_thinking"
+        case thinkingBudget = "thinking_budget"
+        case chatTemplateKwargs = "chat_template_kwargs"
     }
 
-    init(model: String, messages: [ChatMessage], temperature: Double? = nil, maxCompletionTokens: Int? = nil, topP: Double? = nil, frequencyPenalty: Double? = nil, presencePenalty: Double? = nil, responseFormat: ResponseFormat? = nil, reasoningEffort: String? = nil) {
+    init(
+        model: String,
+        messages: [ChatMessage],
+        temperature: Double? = nil,
+        maxCompletionTokens: Int? = nil,
+        topP: Double? = nil,
+        frequencyPenalty: Double? = nil,
+        presencePenalty: Double? = nil,
+        responseFormat: ResponseFormat? = nil,
+        reasoningEffort: String? = nil,
+        enableThinking: Bool? = nil,
+        thinkingBudget: Int? = nil,
+        chatTemplateKwargs: [String: Bool]? = nil
+    ) {
         self.model = model
         self.messages = messages
         self.temperature = temperature
@@ -125,13 +92,35 @@ struct OpenAIChatCompletionRequest: Codable {
         self.presencePenalty = presencePenalty
         self.responseFormat = responseFormat
         self.reasoningEffort = reasoningEffort
+        self.enableThinking = enableThinking
+        self.thinkingBudget = thinkingBudget
+        self.chatTemplateKwargs = chatTemplateKwargs
+    }
+
+    /// A copy of this request with a larger output budget, used to retry once
+    /// after a reasoning pass consumed the original budget.
+    func withMaxCompletionTokens(_ tokens: Int) -> ChatCompletionRequest {
+        ChatCompletionRequest(
+            model: model,
+            messages: messages,
+            temperature: temperature,
+            maxCompletionTokens: tokens,
+            topP: topP,
+            frequencyPenalty: frequencyPenalty,
+            presencePenalty: presencePenalty,
+            responseFormat: responseFormat,
+            reasoningEffort: reasoningEffort,
+            enableThinking: enableThinking,
+            thinkingBudget: thinkingBudget,
+            chatTemplateKwargs: chatTemplateKwargs
+        )
     }
 }
 
 // MARK: - Message Content Models
 
-enum MessageContentFormat {
-    case string      // Standard OpenAI format: "content": "text"
+enum MessageContentFormat: Equatable, Sendable {
+    case string      // Standard chat-completion format: "content": "text"
     case blocks      // Nebius/Anthropic format: "content": [{"type": "text", "text": "..."}]
 
     /// Human-readable description for logging and display
@@ -145,12 +134,55 @@ enum MessageContentFormat {
     }
 }
 
-struct ContentBlock: Codable {
+struct ContentBlock: Codable, Sendable {
     let type: String
     let text: String
+
+    init(type: String, text: String) {
+        self.type = type
+        self.text = text
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case content
+        case thinking
+        case reasoning
+    }
+
+    /// Mistral reasoning responses may represent thinking as nested blocks,
+    /// while other compatible providers use a flat `text` field. Keep decoding
+    /// permissive and let ChatMessage.content hide reasoning blocks later.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        type = try container.decodeIfPresent(String.self, forKey: .type) ?? "text"
+
+        if let textValue = try container.decodeIfPresent(String.self, forKey: .text) {
+            text = textValue
+        } else if let contentValue = try container.decodeIfPresent(String.self, forKey: .content) {
+            text = contentValue
+        } else if let thinkingBlocks = try? container.decode([ContentBlock].self, forKey: .thinking) {
+            text = thinkingBlocks.map(\.text).joined(separator: "\n")
+        } else if let thinkingText = try? container.decode(String.self, forKey: .thinking) {
+            text = thinkingText
+        } else if let reasoningBlocks = try? container.decode([ContentBlock].self, forKey: .reasoning) {
+            text = reasoningBlocks.map(\.text).joined(separator: "\n")
+        } else if let reasoningText = try? container.decode(String.self, forKey: .reasoning) {
+            text = reasoningText
+        } else {
+            text = ""
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(type, forKey: .type)
+        try container.encode(text, forKey: .text)
+    }
 }
 
-struct ChatMessage: Codable {
+struct ChatMessage: Codable, Sendable {
     let role: String
     private let stringContent: String?
     private let blockContent: [ContentBlock]?
@@ -192,8 +224,12 @@ struct ChatMessage: Codable {
         if let stringContent = stringContent {
             return stringContent
         } else if let blockContent = blockContent, !blockContent.isEmpty {
-            // Filter out non-text blocks and combine text blocks
-            let textBlocks = blockContent.filter { $0.type == "text" }
+            // Filter out reasoning blocks so hidden traces never reach summary
+            // parsing or the user-facing summary view.
+            let textBlocks = blockContent.filter {
+                let type = $0.type.lowercased()
+                return type != "thinking" && type != "reasoning" && type != "thought"
+            }
             guard !textBlocks.isEmpty else { return "" }
             return textBlocks.map { $0.text }.joined(separator: "\n")
         }
@@ -240,7 +276,7 @@ struct ChatMessage: Codable {
     /// ```swift
     /// let decoder = JSONDecoder()
     /// decoder.userInfo[ChatMessage.formatKey] = .blocks  // or .string
-    /// let response = try decoder.decode(OpenAIChatCompletionResponse.self, from: data)
+    /// let response = try decoder.decode(ChatCompletionResponse.self, from: data)
     /// ```
     ///
     /// **Testing Note**: To verify content blocks decode correctly from Nebius/Anthropic responses,
@@ -284,13 +320,13 @@ struct ChatMessage: Codable {
 
 // MARK: - Provider Detection
 
-/// Detects the appropriate message format for OpenAI-compatible API providers
+/// Detects the appropriate message format for compatible API providers
 ///
 /// Supports automatic detection based on known provider URLs and manual override
 /// via UserDefaults. Thread-safe through service-level caching at initialization.
 ///
 /// - Supported Formats:
-///   - `.string`: Standard OpenAI format {"content": "text"}
+///   - `.string`: Standard chat-completion format {"content": "text"}
 ///   - `.blocks`: Content blocks format {"content": [{"type": "text", "text": "..."}]}
 ///
 /// - Detection Priority:
@@ -308,13 +344,12 @@ class MessageFormatDetector {
     // Known providers that use content blocks format
     private static let blockFormatProviders = [
         "nebius.com",               // Nebius API (matches *.nebius.com including api.tokenfactory.nebius.com)
-        "anthropic.com",            // Anthropic (if using OpenAI compat)
+        "anthropic.com",            // Anthropic (if using the compatible protocol)
         "fireworks.ai"              // Fireworks AI (some models)
     ]
 
     // Known providers that use simple string format
     private static let stringFormatProviders = [
-        "openai.com",               // Official OpenAI (matches *.openai.com)
         "groq.com",                 // Groq
         "openrouter.ai",            // OpenRouter
         "together.xyz",             // Together AI
@@ -367,8 +402,8 @@ class MessageFormatDetector {
             }
         }
 
-        // Default to string format (most common)
-        AppLog.shared.networking("Unknown provider, defaulting to string format", level: .debug)
+        // Default to string format (most common). An unknown provider is an
+        // expected configuration state, not a diagnostic event.
         return .string
     }
 
@@ -384,7 +419,7 @@ class MessageFormatDetector {
             return true
         }
 
-        // Subdomain match (e.g., "api.openai.com" matches "openai.com")
+        // Subdomain match (e.g., "api.example.com" matches "example.com")
         // Does not apply to IP addresses or "localhost"
         if host.hasSuffix("." + provider) {
             return true
@@ -413,7 +448,7 @@ class MessageFormatDetector {
         AppLog.shared.networking("URL parsing failed, using fallback string matching", level: .error)
 
         // Extract only the host portion before query params (?) and fragments (#)
-        // This prevents matching providers in URLs like: https://example.com?provider=openai.com
+        // This prevents matching providers in URLs like: https://example.com?provider=other.example.com
         let hostPortion: String
         if let queryIndex = baseURL.firstIndex(of: "?") {
             hostPortion = String(baseURL[..<queryIndex])
@@ -483,21 +518,9 @@ class MessageFormatDetector {
         return detectFormatByHost(host)
     }
 
-    /// Check if a base URL should use response_format
-    /// Uses precise URL matching to avoid false positives
-    static func shouldUseResponseFormat(for baseURL: String) -> Bool {
-        guard let url = URL(string: baseURL),
-              let host = url.host?.lowercased() else {
-            return false
-        }
-
-        // Only use response_format with official OpenAI API
-        // Must be exactly "api.openai.com" or a subdomain of "openai.com"
-        return host == "api.openai.com" || host == "openai.com" || host.hasSuffix(".openai.com")
-    }
 }
 
-struct OpenAIChatCompletionResponse: Codable {
+struct ChatCompletionResponse: Codable, Sendable {
     let id: String
     let object: String
     let created: Int
@@ -506,7 +529,7 @@ struct OpenAIChatCompletionResponse: Codable {
     let usage: Usage?
 }
 
-struct Choice: Codable {
+struct Choice: Codable, Sendable {
     let index: Int
     let message: ChatMessage
     let finishReason: String?
@@ -516,23 +539,47 @@ struct Choice: Codable {
         case message
         case finishReason = "finish_reason"
     }
+
+    /// The provider stopped at the output limit rather than at the end of the
+    /// model's answer, so `message.content` is cut off part-way through.
+    var wasTruncatedByTokenLimit: Bool {
+        finishReason == "length" || finishReason == "max_tokens"
+    }
 }
 
-struct Usage: Codable {
+struct Usage: Codable, Sendable {
     let promptTokens: Int
     let completionTokens: Int
     let totalTokens: Int
+    let completionTokensDetails: CompletionTokensDetails?
 
     enum CodingKeys: String, CodingKey {
         case promptTokens = "prompt_tokens"
         case completionTokens = "completion_tokens"
         case totalTokens = "total_tokens"
+        case completionTokensDetails = "completion_tokens_details"
+    }
+
+    /// Tokens the model spent on its reasoning pass, when the provider reports
+    /// them. These count against the same completion budget as the answer.
+    var reasoningTokens: Int? {
+        completionTokensDetails?.reasoningTokens
+    }
+}
+
+/// Optional breakdown of the completion budget. Providers that do not run a
+/// reasoning pass omit this object entirely.
+struct CompletionTokensDetails: Codable, Sendable {
+    let reasoningTokens: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case reasoningTokens = "reasoning_tokens"
     }
 }
 
 // MARK: - Structured Output Support
 
-struct ResponseFormat: Codable {
+struct ResponseFormat: Codable, Sendable {
     let type: String
     let jsonSchema: JSONSchema?
 
@@ -541,7 +588,7 @@ struct ResponseFormat: Codable {
         case jsonSchema = "json_schema"
     }
 
-    static func jsonSchema(name: String, schema: [String: Any], strict: Bool = true) -> ResponseFormat {
+    static func jsonSchema(name: String, schema: [String: JSONSchemaValue], strict: Bool = true) -> ResponseFormat {
         return ResponseFormat(
             type: "json_schema",
             jsonSchema: JSONSchema(name: name, schema: schema, strict: strict)
@@ -551,9 +598,9 @@ struct ResponseFormat: Codable {
     static let json = ResponseFormat(type: "json_object", jsonSchema: nil)
 }
 
-struct JSONSchema: Codable {
+struct JSONSchema: Codable, Sendable {
     let name: String
-    let schema: [String: Any]
+    let schema: [String: JSONSchemaValue]
     let strict: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -562,7 +609,7 @@ struct JSONSchema: Codable {
         case strict
     }
 
-    init(name: String, schema: [String: Any], strict: Bool? = true) {
+    init(name: String, schema: [String: JSONSchemaValue], strict: Bool? = true) {
         self.name = name
         self.schema = schema
         self.strict = strict
@@ -573,13 +620,7 @@ struct JSONSchema: Codable {
         try container.encode(name, forKey: .name)
         try container.encode(strict, forKey: .strict)
 
-        // Encode the schema as a raw JSON object
-        let jsonData = try JSONSerialization.data(withJSONObject: schema, options: [])
-        if let jsonObject = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
-            try container.encode(AnyCodable(jsonObject), forKey: .schema)
-        } else {
-            try container.encode(schema.mapValues { AnyCodable($0) }, forKey: .schema)
-        }
+        try container.encode(schema, forKey: .schema)
     }
 
     init(from decoder: Decoder) throws {
@@ -587,53 +628,107 @@ struct JSONSchema: Codable {
         name = try container.decode(String.self, forKey: .name)
         strict = try container.decodeIfPresent(Bool.self, forKey: .strict)
 
-        let anyCodable = try container.decode(AnyCodable.self, forKey: .schema)
-        schema = anyCodable.value as? [String: Any] ?? [:]
+        // Preserve the previous permissive fallback for malformed or
+        // non-object schema payloads while keeping valid schemas Sendable.
+        schema = (try? container.decode([String: JSONSchemaValue].self, forKey: .schema)) ?? [:]
     }
 }
 
-// Helper for encoding Any types
-struct AnyCodable: Codable {
-    let value: Any
+/// A recursive, Sendable representation for the JSON values used in provider
+/// response schemas. It preserves integer-versus-floating-point numbers and
+/// encodes to the same JSON primitives that the previous Any-based helper used.
+indirect enum JSONSchemaValue: Codable, Equatable, Sendable {
+    case string(String)
+    case integer(Int)
+    case number(Double)
+    case boolean(Bool)
+    case array([JSONSchemaValue])
+    case object([String: JSONSchemaValue])
+    case null
 
-    init(_ value: Any) {
-        self.value = value
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        if container.decodeNil() {
+            self = .null
+        } else if let string = try? container.decode(String.self) {
+            self = .string(string)
+        } else if let boolean = try? container.decode(Bool.self) {
+            self = .boolean(boolean)
+        } else if let integer = try? container.decode(Int.self) {
+            self = .integer(integer)
+        } else if let number = try? container.decode(Double.self) {
+            self = .number(number)
+        } else if let array = try? container.decode([JSONSchemaValue].self) {
+            self = .array(array)
+        } else if let object = try? container.decode([String: JSONSchemaValue].self) {
+            self = .object(object)
+        } else {
+            throw DecodingError.typeMismatch(
+                JSONSchemaValue.self,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Could not decode a JSON schema value"
+                )
+            )
+        }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
 
-        if let intVal = value as? Int {
-            try container.encode(intVal)
-        } else if let stringVal = value as? String {
-            try container.encode(stringVal)
-        } else if let boolVal = value as? Bool {
-            try container.encode(boolVal)
-        } else if let arrayVal = value as? [Any] {
-            try container.encode(arrayVal.map { AnyCodable($0) })
-        } else if let dictVal = value as? [String: Any] {
-            try container.encode(dictVal.mapValues { AnyCodable($0) })
-        } else {
-            throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Invalid type for AnyCodable"))
+        switch self {
+        case .string(let value):
+            try container.encode(value)
+        case .integer(let value):
+            try container.encode(value)
+        case .number(let value):
+            try container.encode(value)
+        case .boolean(let value):
+            try container.encode(value)
+        case .array(let values):
+            try container.encode(values)
+        case .object(let values):
+            try container.encode(values)
+        case .null:
+            try container.encodeNil()
         }
     }
+}
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
+extension JSONSchemaValue: ExpressibleByStringLiteral {
+    init(stringLiteral value: String) {
+        self = .string(value)
+    }
+}
 
-        if let intVal = try? container.decode(Int.self) {
-            value = intVal
-        } else if let stringVal = try? container.decode(String.self) {
-            value = stringVal
-        } else if let boolVal = try? container.decode(Bool.self) {
-            value = boolVal
-        } else if let arrayVal = try? container.decode([AnyCodable].self) {
-            value = arrayVal.map { $0.value }
-        } else if let dictVal = try? container.decode([String: AnyCodable].self) {
-            value = dictVal.mapValues { $0.value }
-        } else {
-            throw DecodingError.typeMismatch(AnyCodable.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Could not decode AnyCodable"))
-        }
+extension JSONSchemaValue: ExpressibleByIntegerLiteral {
+    init(integerLiteral value: Int) {
+        self = .integer(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByFloatLiteral {
+    init(floatLiteral value: Double) {
+        self = .number(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByBooleanLiteral {
+    init(booleanLiteral value: Bool) {
+        self = .boolean(value)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByArrayLiteral {
+    init(arrayLiteral elements: JSONSchemaValue...) {
+        self = .array(elements)
+    }
+}
+
+extension JSONSchemaValue: ExpressibleByDictionaryLiteral {
+    init(dictionaryLiteral elements: (String, JSONSchemaValue)...) {
+        self = .object(Dictionary(uniqueKeysWithValues: elements))
     }
 }
 
@@ -641,7 +736,7 @@ struct AnyCodable: Codable {
 
 extension ResponseFormat {
     static var completeResponseSchema: ResponseFormat {
-        let schema: [String: Any] = [
+        let schema: [String: JSONSchemaValue] = [
             "type": "object",
             "properties": [
                 "summary": [
@@ -706,12 +801,12 @@ extension ResponseFormat {
 
 // MARK: - Models List Response (for /models endpoint)
 
-struct OpenAIModelsListResponse: Codable {
-    let data: [OpenAIModelInfo]
+struct CompatibleModelsResponse: Codable, Sendable {
+    let data: [CompatibleModelInfo]
     let object: String?
 }
 
-struct OpenAIModelInfo: Codable {
+struct CompatibleModelInfo: Codable, Sendable {
     let id: String
     let object: String?
     let created: Int?
@@ -723,4 +818,12 @@ struct OpenAIModelInfo: Codable {
     }
 }
 
-// OpenAIErrorResponse and OpenAIError are defined in OpenAITranscribeService.swift
+struct CompatibleAPIErrorResponse: Codable, Sendable {
+    let error: CompatibleAPIError
+}
+
+struct CompatibleAPIError: Codable, Sendable {
+    let message: String
+    let type: String?
+    let code: String?
+}

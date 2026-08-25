@@ -44,15 +44,394 @@ struct TranscriptionResult {
     let chunkCount: Int
     let success: Bool
     let error: Error?
+    /// Absolute ASR word timings are present only for FluidAudio results.
+    /// The field is optional so every existing engine initializer remains valid.
+    let timedWords: [TimedTranscriptWord]?
+    /// Stable speaker IDs and their default display names after local labeling.
+    let speakerMappings: [String: String]?
+    /// A completed transcript can succeed while local labels are unavailable.
+    let speakerLabelWarning: LocalSpeakerLabelWarning?
+
+    init(
+        fullText: String,
+        segments: [TranscriptSegment],
+        processingTime: TimeInterval,
+        chunkCount: Int,
+        success: Bool,
+        error: Error?,
+        timedWords: [TimedTranscriptWord]? = nil,
+        speakerMappings: [String: String]? = nil,
+        speakerLabelWarning: LocalSpeakerLabelWarning? = nil
+    ) {
+        self.fullText = fullText
+        self.segments = segments
+        self.processingTime = processingTime
+        self.chunkCount = chunkCount
+        self.success = success
+        self.error = error
+        self.timedWords = timedWords
+        self.speakerMappings = speakerMappings
+        self.speakerLabelWarning = speakerLabelWarning
+    }
+
+    func with(
+        timedWords: [TimedTranscriptWord]? = nil,
+        speakerMappings: [String: String]? = nil,
+        speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
+        segments: [TranscriptSegment]? = nil
+    ) -> TranscriptionResult {
+        TranscriptionResult(
+            fullText: fullText,
+            segments: segments ?? self.segments,
+            processingTime: processingTime,
+            chunkCount: chunkCount,
+            success: success,
+            error: error,
+            timedWords: timedWords ?? self.timedWords,
+            speakerMappings: speakerMappings ?? self.speakerMappings,
+            speakerLabelWarning: speakerLabelWarning
+        )
+    }
 }
 
-// MARK: - Transcription Job Info
+extension LocalSpeakerLabelsConfiguration {
+    /// Read the two user choices once at a completed Parakeet job boundary.
+    /// Model readiness, download state, and cache paths are intentionally not
+    /// part of this snapshot.
+    static func currentUserChoice(from defaults: UserDefaults = .standard) -> LocalSpeakerLabelsConfiguration {
+        let enabled = defaults.object(forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled) as? Bool
+            ?? FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled
+        let rawMethod = defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
+        let normalizedMethod = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(rawMethod)
+        let method = LocalDiarizationMethod(rawValue: normalizedMethod) ?? .defaultMethod
+        return LocalSpeakerLabelsConfiguration(isEnabled: enabled, method: method)
+    }
+}
 
-struct TranscriptionJobInfo: Codable {
-    let jobName: String
-    let recordingURL: URL
-    let recordingName: String
-    let startDate: Date
+/// Applies local labels to a completed, unlabeled Parakeet result. This is the
+/// only Package C diarization seam: it checks readiness, invokes one complete
+/// source-file pass, aligns absolute ASR words, and returns the base result
+/// with a structured warning on recoverable label failures.
+struct LocalSpeakerLabelingCoordinator {
+    private let modelManager: any LocalDiarizationModelManaging
+    private let diarizer: any LocalDiarizing
+    private let aligner: SpeakerTranscriptAligner
+
+    init(
+        modelManager: any LocalDiarizationModelManaging = LocalDiarizationManager.shared,
+        diarizer: any LocalDiarizing = LocalDiarizationManager.shared,
+        aligner: SpeakerTranscriptAligner = SpeakerTranscriptAligner()
+    ) {
+        self.modelManager = modelManager
+        self.diarizer = diarizer
+        self.aligner = aligner
+    }
+
+    func apply(
+        to baseResult: TranscriptionResult,
+        configuration: LocalSpeakerLabelsConfiguration,
+        sourceAudioURL: URL,
+        audioDuration: TimeInterval,
+        unloadASRBeforeDiarization: @escaping @Sendable () async -> Void = {}
+    ) async throws -> TranscriptionResult {
+        guard configuration.isEnabled, baseResult.success else {
+            return baseResult
+        }
+        try Task.checkCancellation()
+
+        let baseTextIsEmpty = baseResult.fullText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+        guard let words = baseResult.timedWords,
+              !words.isEmpty || baseTextIsEmpty else {
+            return baseResult.with(speakerLabelWarning: .timingUnavailable)
+        }
+
+        // A non-empty timing collection is not sufficient by itself. Do not
+        // spend the diarizer pass or persist an all-Unknown result when the
+        // SDK did not provide any finite word ranges to align.
+        let hasUsableWordTiming = words.contains { word in
+            guard let startTime = word.startTime,
+                  let endTime = word.endTime else {
+                return false
+            }
+            return startTime.isFinite && endTime.isFinite
+        }
+        guard baseTextIsEmpty || hasUsableWordTiming else {
+            return baseResult.with(speakerLabelWarning: .timingUnavailable)
+        }
+
+        if configuration.method == .experimentalLSEEND,
+           audioDuration > (configuration.method.maximumSupportedDuration ?? .greatestFiniteMagnitude) {
+            return baseResult.with(
+                speakerLabelWarning: .experimentalDurationLimit(
+                    duration: audioDuration,
+                    maximumDuration: configuration.method.maximumSupportedDuration ?? 3_600
+                )
+            )
+        }
+
+        // The caller reaches this point only after the complete Parakeet ASR
+        // result (and any chunk reassembly) exists. Release Parakeet before a
+        // diarizer can be loaded so peak on-device model memory stays bounded.
+        await unloadASRBeforeDiarization()
+        try Task.checkCancellation()
+
+        let status = await modelManager.modelStatus(for: configuration.method)
+        try Task.checkCancellation()
+        guard status.isReady else {
+            return baseResult.with(
+                speakerLabelWarning: .modelNotReady(method: configuration.method)
+            )
+        }
+
+        do {
+            let diarization = try await diarizer.diarize(
+                audioURL: sourceAudioURL,
+                method: configuration.method,
+                audioDuration: audioDuration,
+                progress: { _ in }
+            )
+            try Task.checkCancellation()
+            await modelManager.unloadModel(for: configuration.method)
+
+            let labeling = aligner.align(
+                words: words,
+                intervals: diarization.intervals,
+                audioDuration: diarization.audioDuration ?? audioDuration
+            )
+            try Task.checkCancellation()
+
+            let effectiveDuration = diarization.audioDuration ?? audioDuration
+            let finiteWordRanges = words.compactMap { word -> (TimeInterval, TimeInterval)? in
+                guard let startTime = word.startTime,
+                      let endTime = word.endTime,
+                      startTime.isFinite,
+                      endTime.isFinite else {
+                    return nil
+                }
+                return (min(startTime, endTime), max(startTime, endTime))
+            }
+            let finiteIntervalRanges = diarization.intervals.compactMap { interval -> (TimeInterval, TimeInterval)? in
+                guard interval.startTime.isFinite,
+                      interval.endTime.isFinite else {
+                    return nil
+                }
+                return (min(interval.startTime, interval.endTime), max(interval.startTime, interval.endTime))
+            }
+            let alignedKnownSpeakerCount = Set(
+                labeling.segments
+                    .map(\.speakerID)
+                    .filter { $0 != LocalSpeakerLabeledSegment.unknownSpeakerID }
+            ).count
+            let normalizedBaseText = SpeakerTranscriptAligner.normalizedPlainText(baseResult.fullText)
+            let timedWordText = SpeakerTranscriptAligner.plainText(from: words)
+            let labeledSegmentText = SpeakerTranscriptAligner.joinWordText(
+                labeling.segments.map { (text: $0.text, hasLeadingSpace: $0.hasLeadingSpace) }
+            )
+            let normalizedTimedWordText = SpeakerTranscriptAligner.normalizedPlainText(timedWordText)
+            let normalizedLabeledSegmentText = SpeakerTranscriptAligner.normalizedPlainText(labeledSegmentText)
+            let wordTextMatches = normalizedBaseText == normalizedTimedWordText
+            let segmentTextMatches = normalizedBaseText == normalizedLabeledSegmentText
+            let wordContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                baseResult.fullText,
+                timedWordText
+            )
+            let segmentContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                baseResult.fullText,
+                labeledSegmentText
+            )
+            let timedAndLabeledContentMatches = SpeakerTranscriptAligner.contentEquivalent(
+                timedWordText,
+                labeledSegmentText
+            )
+            // Speaker turns are presentation boundaries, but they must retain
+            // the source word-boundary metadata. Validate both the timed-word
+            // sequence and the segment representation before persisting it.
+            // Decoder-boundary whitespace is formatting, not transcript
+            // content, so allow it when every non-whitespace character still
+            // matches in order.
+            let textMatches = wordContentMatches && segmentContentMatches && timedAndLabeledContentMatches
+            let reconciliation: String
+            if wordTextMatches && segmentTextMatches {
+                reconciliation = "strict"
+            } else if textMatches {
+                reconciliation = "contentOnly"
+            } else {
+                reconciliation = "contentMismatch"
+            }
+            AppLog.shared.backgroundProcessing(
+                "Local speaker labels alignment: words=\(words.count), finiteWordRanges=\(finiteWordRanges.count), "
+                    + "wordRange=\(Self.timeRangeDescription(finiteWordRanges)), "
+                    + "rawIntervals=\(diarization.intervals.count), "
+                    + "rawIntervalRange=\(Self.timeRangeDescription(finiteIntervalRanges)), "
+                    + "normalizedIntervals=\(labeling.normalizedIntervals.count), "
+                    + "duration=\(Self.timeDescription(effectiveDuration)), "
+                    + "alignedSegments=\(labeling.segments.count), knownSpeakers=\(alignedKnownSpeakerCount), "
+                    + "wordTextMatches=\(wordTextMatches), segmentTextMatches=\(segmentTextMatches), "
+                    + "wordContentMatches=\(wordContentMatches), segmentContentMatches=\(segmentContentMatches), "
+                    + "timedAndLabeledContentMatches=\(timedAndLabeledContentMatches), "
+                    + "baseContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(baseResult.fullText)), "
+                    + "timedContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(timedWordText)), "
+                    + "labeledContentCharacters=\(SpeakerTranscriptAligner.contentCharacterCount(labeledSegmentText)), "
+                    + "reconciliation=\(reconciliation)",
+                level: .debug
+            )
+            guard labeling.didApplyLabels else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=alignmentNoUsableIntervals",
+                    level: .debug
+                )
+                return baseResult.with(
+                    speakerLabelWarning: labeling.warning ?? .timingUnavailable
+                )
+            }
+            guard !labeling.segments.isEmpty || baseTextIsEmpty else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=alignmentProducedNoSegments",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+            }
+
+            // A successful alignment must produce at least one visible
+            // speaker. The aligner intentionally uses Unknown for words that
+            // cannot be placed; treating an all-Unknown result as success
+            // would silently save a transcript that looks unlabeled.
+            let knownSpeakerCount = Set(
+                labeling.segments
+                    .map(\.speakerID)
+                    .filter { $0 != LocalSpeakerLabeledSegment.unknownSpeakerID }
+            ).count
+            guard baseTextIsEmpty || knownSpeakerCount > 0 else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=allWordsUnknown",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .timingUnavailable)
+            }
+
+            // One detected speaker is ordinary single-speaker audio, not a
+            // visible diarization result. Keep the original Parakeet
+            // segments so the transcript view does not show "Speaker 1".
+            guard knownSpeakerCount != 1 else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels skipped: reason=singleSpeakerDetected",
+                    level: .debug
+                )
+                return baseResult
+            }
+
+            guard timedAndLabeledContentMatches else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=timedLabelTextMismatch",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
+            }
+
+            var segmentsForPersistence = labeling.segments
+            if baseResult.fullText != timedWordText || baseResult.fullText != labeledSegmentText {
+                guard let reconciled = SpeakerTranscriptAligner.reconcileCanonicalText(
+                    canonicalText: baseResult.fullText,
+                    with: labeling.segments
+                ) else {
+                    AppLog.shared.backgroundProcessing(
+                        "Local speaker labels fallback: reason=alignedTextMismatch",
+                        level: .debug
+                    )
+                    return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
+                }
+                segmentsForPersistence = reconciled.segments
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels canonical reconciliation: outcome=success, "
+                        + "segments=\(segmentsForPersistence.count), "
+                        + "unmatchedCanonicalContentCharacters=\(reconciled.unmatchedCanonicalContentCharacters), "
+                        + "unmatchedTimedContentCharacters=\(reconciled.unmatchedTimedContentCharacters)",
+                    level: .debug
+                )
+            }
+
+            let persistedSegmentText = SpeakerTranscriptAligner.joinWordText(
+                segmentsForPersistence.map { (text: $0.text, hasLeadingSpace: $0.hasLeadingSpace) }
+            )
+            guard SpeakerTranscriptAligner.contentEquivalent(baseResult.fullText, persistedSegmentText) else {
+                AppLog.shared.backgroundProcessing(
+                    "Local speaker labels fallback: reason=canonicalTextVerificationFailed",
+                    level: .debug
+                )
+                return baseResult.with(speakerLabelWarning: .textAlignmentMismatch)
+            }
+
+            let segments = segmentsForPersistence.map { segment in
+                TranscriptSegment(
+                    speaker: segment.speakerID,
+                    text: segment.text,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime,
+                    hasLeadingSpace: segment.hasLeadingSpace
+                )
+            }
+            let speakerMappings = defaultSpeakerMappings(for: segmentsForPersistence)
+            return baseResult.with(
+                speakerMappings: speakerMappings,
+                speakerLabelWarning: nil,
+                segments: segments
+            )
+        } catch is CancellationError {
+            await modelManager.unloadModel(for: configuration.method)
+            throw CancellationError()
+        } catch let error as LocalDiarizationError {
+            await modelManager.unloadModel(for: configuration.method)
+            // The speaker cap is a limit of the chosen method, not a failure, and
+            // the other method has no cap — say so rather than reporting a generic
+            // "no labels" the user cannot act on.
+            if case .unsupportedSpeakerCount(_, let maximum) = error {
+                return baseResult.with(
+                    speakerLabelWarning: .experimentalSpeakerLimit(maximumSpeakers: maximum)
+                )
+            }
+            return baseResult.with(
+                speakerLabelWarning: .diarizationFailed(method: configuration.method)
+            )
+        } catch {
+            await modelManager.unloadModel(for: configuration.method)
+            return baseResult.with(
+                speakerLabelWarning: .diarizationFailed(method: configuration.method)
+            )
+        }
+    }
+
+    private func defaultSpeakerMappings(
+        for segments: [LocalSpeakerLabeledSegment]
+    ) -> [String: String] {
+        var mappings: [String: String] = [:]
+        for speakerID in segments.map(\.speakerID) where speakerID != LocalSpeakerLabeledSegment.unknownSpeakerID {
+            guard mappings[speakerID] == nil else { continue }
+            if speakerID.hasPrefix("speaker_") {
+                mappings[speakerID] = "Speaker \(speakerID.dropFirst("speaker_".count))"
+            } else {
+                mappings[speakerID] = speakerID
+            }
+        }
+        return mappings
+    }
+
+    private static func timeDescription(_ value: TimeInterval) -> String {
+        guard value.isFinite else { return "invalid" }
+        return String(format: "%.3f", value)
+    }
+
+    private static func timeRangeDescription(
+        _ ranges: [(TimeInterval, TimeInterval)]
+    ) -> String {
+        guard let minimum = ranges.map(\.0).min(),
+              let maximum = ranges.map(\.1).max() else {
+            return "empty"
+        }
+        return "\(timeDescription(minimum))...\(timeDescription(maximum))"
+    }
+
 }
 
 // MARK: - Enhanced Transcription Manager
@@ -71,6 +450,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     private var speechRecognizer: SFSpeechRecognizer?
     private var currentTask: SFSpeechRecognitionTask?
     private let chunkingService = AudioFileChunkingService()
+    private let localSpeakerLabelingCoordinator = LocalSpeakerLabelingCoordinator()
     private var backgroundTaskID: PlatformBackgroundTask.ID = .invalid
     private var backgroundTaskStartTime: Date?
     private var backgroundTaskRefreshTimer: Task<Void, Never>?
@@ -90,30 +470,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     private var chunkOverlap: TimeInterval {
         UserDefaults.standard.double(forKey: "chunkOverlap").nonZero ?? 2.0 // 2 second overlap between chunks
-    }
-
-    private var enableAWSTranscribe: Bool {
-        return UserDefaults.standard.bool(forKey: "enableAWSTranscribe")
-    }
-
-    // AWS Configuration
-    private var awsConfig: AWSTranscribeConfig? {
-        guard enableAWSTranscribe else { return nil }
-
-        // Use unified credentials manager instead of separate UserDefaults keys
-        let credentials = AWSCredentialsManager.shared.credentials
-        let bucketName = UserDefaults.standard.string(forKey: "awsBucketName") ?? ""
-
-        guard credentials.isValid && !bucketName.isEmpty else {
-            return nil
-        }
-
-        return AWSTranscribeConfig(
-            region: credentials.region,
-            accessKey: credentials.accessKeyId,
-            secretKey: credentials.secretAccessKey,
-            bucketName: bucketName
-        )
     }
 
     // Whisper Configuration
@@ -141,28 +497,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             serverURL: processedServerURL,
             port: effectivePort,
             whisperProtocol: selectedProtocol
-        )
-
-        return config
-    }
-
-    // OpenAI Configuration
-    private var openAIConfig: OpenAITranscribeConfig? {
-        let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-        let modelString = UserDefaults.standard.string(forKey: "openAIModel") ?? OpenAITranscribeModel.gpt4oMiniTranscribe.rawValue
-        let baseURL = UserDefaults.standard.string(forKey: "openAIBaseURL") ?? "https://api.openai.com/v1"
-
-        guard !apiKey.isEmpty else {
-            AppLog.shared.transcription("OpenAI API key is not configured")
-            return nil
-        }
-
-        let model = OpenAITranscribeModel(rawValue: modelString) ?? .gpt4oMiniTranscribe
-
-        let config = OpenAITranscribeConfig(
-            apiKey: apiKey,
-            model: model,
-            baseURL: baseURL
         )
 
         return config
@@ -226,17 +560,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         return await whisperService.testConnection()
     }
 
-    // Job tracking for async transcriptions
-    private var pendingJobNames: String = ""
-    private var pendingJobs: [TranscriptionJobInfo] = []
-
-    // Background checking for completed transcriptions
-    private var backgroundCheckTimer: Timer?
-    private var isBackgroundChecking = false
-
-    // Callback for when transcriptions complete
-    var onTranscriptionCompleted: ((TranscriptionResult, TranscriptionJobInfo) -> Void)?
-
     // Alert states for user notifications
     @Published var showingWhisperFallbackAlert = false
     @Published var whisperFallbackMessage = ""
@@ -246,13 +569,6 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     override init() {
         super.init()
         setupSpeechRecognizer()
-        // Load pending job names from UserDefaults
-        pendingJobNames = UserDefaults.standard.string(forKey: "pendingTranscriptionJobs") ?? ""
-
-        // Load pending jobs from UserDefaults
-        loadPendingJobs()
-
-        // Don't start background checking on init - let it be controlled by the selected engine
     }
 
     private func setupSpeechRecognizer() {
@@ -271,19 +587,15 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         speechRecognizer?.delegate = self
 
-        if let recognizer = speechRecognizer {
-            AppLog.shared.transcription("Speech recognizer created with locale: \(recognizer.locale.identifier)")
-            // Note: Speech authorization will be requested when user actually tries to use native speech recognition transcription
-        } else {
+        if speechRecognizer == nil {
             AppLog.shared.transcription("Failed to create speech recognizer with any locale", level: .error)
         }
     }
 
     deinit {
-        // Clean up resources when the manager is deallocated
-        currentTask?.cancel()
-        currentTask = nil
-        speechRecognizer = nil
+        // Speech framework objects are main-actor isolated and cannot be
+        // touched from Swift 6's nonisolated deinitializer. Recognition tasks
+        // are cancelled by their owner before releasing this manager.
     }
 
     // MARK: - Background Task Management
@@ -415,7 +727,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     // MARK: - Public Methods
 
-    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil) async throws -> TranscriptionResult {
+    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil, recordingId: UUID) async throws -> TranscriptionResult {
 
         // Check if already transcribing
         guard !isTranscribing else {
@@ -423,9 +735,16 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
-            AppLog.shared.transcription("File not found: \(url.path)", level: .error)
+            AppLog.shared.transcription("Transcription source file is unavailable", level: .error)
             throw TranscriptionError.fileNotFound
         }
+
+        // Snapshot local speaker-label choices at the start of the completed
+        // Parakeet job. Later settings changes cannot switch this job's method.
+        let selectedEngine = engine ?? .fluidAudio // Default fallback
+        let localSpeakerLabelsConfiguration = selectedEngine == .fluidAudio
+            ? LocalSpeakerLabelsConfiguration.currentUserChoice()
+            : nil
 
         // Validate audio file before transcription
         do {
@@ -447,10 +766,7 @@ if durationMinutes > 120 { // 2 hours max
         // Check file duration
         let duration = try await getAudioDuration(url: url)
 
-// Determine transcription engine to use
-        let selectedEngine = engine ?? .fluidAudio // Default fallback
-
-        // Manage background checking based on selected engine
+        // Select the configured transcription engine
         switch selectedEngine {
         case .notConfigured:
             AppLog.shared.transcription("Transcription engine not configured", level: .error)
@@ -458,25 +774,11 @@ if durationMinutes > 120 { // 2 hours max
 
         case .fluidAudio:
             switchToFluidAudioTranscription()
-            return try await transcribeWithFluidAudio(url: url)
-
-        case .awsTranscribe:
-            switchToAWSTranscription()
-
-            // Check if AWS Transcribe is configured
-            guard let config = awsConfig else {
-                AppLog.shared.transcription("AWS Transcribe selected but not configured", level: .error)
-                throw TranscriptionError.awsNotConfigured
-            }
-
-            // AWS Transcribe has a maximum limit of 4 hours
-            let maxAWSDuration: TimeInterval = 4 * 60 * 60 // 4 hours in seconds
-            if duration > maxAWSDuration {
-                AppLog.shared.transcription("File too large for AWS Transcribe: \(duration/3600) hours (max: 4 hours)", level: .error)
-                throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxAWSDuration)
-            }
-
-return try await transcribeWithAWS(url: url, config: config)
+            return try await transcribeWithFluidAudio(
+                url: url,
+                duration: duration,
+                configuration: localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration()
+            )
 
         case .whisper:
             switchToWhisperTranscription()
@@ -484,67 +786,43 @@ return try await transcribeWithAWS(url: url, config: config)
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
                 AppLog.shared.transcription("Whisper not properly configured, falling back to native speech recognition")
-                switchToNativeSpeechTranscription()
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+            return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
             let isWhisperAvailable = await validateWhisperService()
 if isWhisperAvailable {
                 if let config = whisperConfig {
-                    return try await transcribeWithWhisper(url: url, config: config)
+                    return try await transcribeWithWhisper(url: url, config: config, recordingId: recordingId)
                 } else {
-                    switchToNativeSpeechTranscription()
-                    return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                    return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
                 }
             } else {
-                switchToNativeSpeechTranscription()
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
-            }
-
-        case .openAI:
-            switchToNativeSpeechTranscription() // OpenAI doesn't need background checking
-
-            // Validate OpenAI configuration
-if let config = openAIConfig {
-                return try await transcribeWithOpenAI(url: url, config: config)
-            } else {
-                // Ensure speech recognizer is available for fallback
-                guard let recognizer = speechRecognizer, recognizer.isAvailable else {
-                    throw TranscriptionError.speechRecognizerUnavailable
-                }
-
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .mistralAI:
-            switchToNativeSpeechTranscription() // Mistral doesn't need background checking
-
             // Validate Mistral configuration
             if let config = mistralTranscribeConfig {
-                return try await transcribeWithMistral(url: url, config: config)
+                return try await transcribeWithMistral(url: url, config: config, recordingId: recordingId)
             } else {
                 // Ensure speech recognizer is available for fallback
                 guard let recognizer = speechRecognizer, recognizer.isAvailable else {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
-                return try await transcribeWithNativeSpeech(url: url, duration: duration)
+                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
-        case .openAIAPICompatible:
-// These are not implemented yet, fall back to native speech recognition
-            switchToNativeSpeechTranscription()
-            return try await transcribeWithNativeSpeech(url: url, duration: duration)
         }
     }
 
-    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {
         // Ensure transcription state is properly initialized
         await MainActor.run {
             isTranscribing = true
             currentStatus = "Initializing native speech recognition transcription..."
         }
 
-        AppLog.shared.transcription("Starting native speech recognition for file: \(url.lastPathComponent), duration: \(duration)s")
+        AppLog.shared.transcription("Starting native speech recognition, duration: \(duration)s")
 
         // Request speech recognition authorization if needed
         let authStatus = await withCheckedContinuation { continuation in
@@ -595,7 +873,7 @@ if let config = openAIConfig {
             return try await transcribeSingleChunk(url: url)
         } else {
             AppLog.shared.transcription("Using large file transcription (duration: \(duration)s > \(maxChunkDuration)s)")
-            return try await transcribeLargeFile(url: url, duration: duration)
+            return try await transcribeLargeFile(url: url, duration: duration, recordingId: recordingId)
         }
     }
 
@@ -620,61 +898,6 @@ if let config = openAIConfig {
     }
 
     /// Manually check for completed transcriptions
-    func checkForCompletedTranscriptions() async {
-        // Only check if AWS is enabled and configured
-        guard enableAWSTranscribe else {
-            return
-        }
-
-        guard let config = awsConfig else {
-            return
-        }
-
-        let jobNames = getPendingJobNames()
-        guard !jobNames.isEmpty else {
-            return
-        }
-
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-
-                    // Get job info before removing it
-                    let jobInfo = getPendingJobInfo(for: jobName)
-
-                    // Remove from pending jobs
-                    removePendingJob(jobName)
-
-                    // Notify completion
-                    if let jobInfo = jobInfo {
-                        onTranscriptionCompleted?(result, jobInfo)
-                    }
-
-                } else if status.isFailed {
-                    AppLog.shared.transcription("AWS job failed: \(jobName) - \(status.failureReason ?? "Unknown error")", level: .error)
-                    // Remove failed jobs from pending list
-                    removePendingJob(jobName)
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Error checking AWS job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        if stillPendingJobs != jobNames {
-            updatePendingJobNames(stillPendingJobs)
-        }
-    }
-
     // MARK: - Private Methods
 
     private func getAudioDuration(url: URL) async throws -> TimeInterval {
@@ -696,11 +919,12 @@ private func transcribeSingleChunk(url: URL) async throws -> TranscriptionResult
             throw TranscriptionError.speechRecognizerUnavailable
         }
 
-        // Add timeout to prevent infinite CPU usage
-        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
-            // Main transcription task
-            group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
+        // Create both operations on the main actor before entering the task group.
+        // The group only awaits task handles, so Speech framework objects do not
+        // cross into a sending child closure.
+        let recognitionTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+                return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
 
                     let request = SFSpeechURLRecognitionRequest(url: url)
                     request.shouldReportPartialResults = false
@@ -782,32 +1006,41 @@ if transcriptText.isEmpty {
                         }
                     }
                 }
-            }
+        }
 
-// Timeout task
-            group.addTask {
+        let timeoutTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
                 try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
-                await MainActor.run {
-                    self.currentTask?.cancel()
-                    self.currentTask = nil
-                    self.isTranscribing = false
-                    self.currentStatus = "Transcription timed out"
-                }
+                self?.currentTask?.cancel()
+                self?.currentTask = nil
+                self?.isTranscribing = false
+                self?.currentStatus = "Transcription timed out"
                 throw TranscriptionError.timeout
             }
+
+        defer {
+            recognitionTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            group.addTask { try await recognitionTask.value }
+            group.addTask { try await timeoutTask.value }
 
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            recognitionTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }
     }
 
-private func transcribeLargeFile(url: URL, duration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeLargeFile(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {
         let startTime = Date()
         isTranscribing = true
         currentStatus = "Processing large file..."
@@ -860,7 +1093,7 @@ do {
             throw TranscriptionError.fileTooLarge(duration: duration, maxDuration: maxSafeDuration)
         }
 
-        var allSegments: [TranscriptSegment] = []
+        var transcriptChunks: [TranscriptChunk] = []
         var allText: [String] = []
         var currentOffset: TimeInterval = 0
 
@@ -900,10 +1133,28 @@ for (index, chunk) in chunks.enumerated() {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
 
+                let chunkURL = try await extractAudioChunk(
+                    from: url,
+                    startTime: chunk.start,
+                    endTime: chunk.end
+                )
+                defer {
+                    try? FileManager.default.removeItem(at: chunkURL)
+                }
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: chunkURL.path)[.size] as? Int64) ?? 0
+                let audioChunk = AudioChunk(
+                    originalURL: url,
+                    chunkURL: chunkURL,
+                    sequenceNumber: transcriptChunks.count,
+                    startTime: chunk.start,
+                    endTime: chunk.end,
+                    fileSize: fileSize
+                )
+
                 // Add timeout for individual chunk processing
                 let chunkResult = try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
                     group.addTask {
-                        try await self.transcribeChunk(url: url, startTime: chunk.start, endTime: chunk.end)
+                        try await self.transcribeChunkInternal(url: chunkURL, startTime: Date())
                     }
 
                     group.addTask {
@@ -923,17 +1174,12 @@ for (index, chunk) in chunks.enumerated() {
                 if chunkResult.fullText.isEmpty {
                     AppLog.shared.transcription("Chunk \(index + 1) was silent/empty, skipping", level: .debug)
                 } else {
-                    // Adjust segment timestamps
-                    let adjustedSegments = chunkResult.segments.map { segment in
-                        TranscriptSegment(
-                            speaker: segment.speaker,
-                            text: segment.text,
-                            startTime: segment.startTime + currentOffset,
-                            endTime: segment.endTime + currentOffset
-                        )
-                    }
-
-                    allSegments.append(contentsOf: adjustedSegments)
+                    let transcriptChunk = chunkingService.createTranscriptChunk(
+                        from: chunkResult.fullText,
+                        audioChunk: audioChunk,
+                        segments: chunkResult.segments
+                    )
+                    transcriptChunks.append(transcriptChunk)
                     allText.append(chunkResult.fullText)
                 }
 
@@ -1017,32 +1263,28 @@ for (index, chunk) in chunks.enumerated() {
             AppLog.shared.transcription("Transcript contains 'loading' text -- may indicate placeholder text in output")
         }
 
+        guard !transcriptChunks.isEmpty else {
+            throw TranscriptionError.noSpeechDetected
+        }
+
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+        let reassembly = try await chunkingService.reassembleTranscript(
+            from: transcriptChunks,
+            originalURL: url,
+            recordingName: url.deletingPathExtension().lastPathComponent,
+            recordingDate: recordingDate,
+            recordingId: recordingId
+        )
+
         return TranscriptionResult(
-            fullText: fullText,
-            segments: allSegments,
+            fullText: reassembly.transcriptData.plainText,
+            segments: reassembly.transcriptData.segments,
             processingTime: processingTime,
-            chunkCount: chunks.count,
+            chunkCount: transcriptChunks.count,
             success: true,
             error: nil
         )
-    }
-
-    private func transcribeChunk(url: URL, startTime: TimeInterval, endTime: TimeInterval) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Extracting chunk from \(startTime/60) to \(endTime/60) minutes", level: .debug)
-
-        // Create a temporary audio file for the chunk
-        let chunkURL = try await extractAudioChunk(from: url, startTime: startTime, endTime: endTime)
-        AppLog.shared.transcription("Chunk extracted to: \(chunkURL.lastPathComponent)", level: .debug)
-
-        defer {
-            try? FileManager.default.removeItem(at: chunkURL)
-            AppLog.shared.transcription("Cleaned up temporary chunk file", level: .debug)
-        }
-
-        AppLog.shared.transcription("Transcribing chunk", level: .debug)
-        // Use internal method that doesn't manage isTranscribing flag
-        let chunkStartTime = Date()
-        return try await transcribeChunkInternal(url: chunkURL, startTime: chunkStartTime)
     }
 
     /// Internal method for transcribing a chunk without managing the isTranscribing flag
@@ -1054,11 +1296,12 @@ for (index, chunk) in chunks.enumerated() {
             throw TranscriptionError.speechRecognizerUnavailable
         }
 
-        // Add timeout to prevent infinite CPU usage
-        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
-            // Main transcription task
-            group.addTask { @MainActor in
-                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
+        // Create both operations on the main actor before entering the task group.
+        // The group only awaits task handles, so Speech framework objects do not
+        // cross into a sending child closure.
+        let recognitionTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
+            guard let self else { throw CancellationError() }
+                return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptionResult, Error>) in
 
                     let request = SFSpeechURLRecognitionRequest(url: url)
                     request.shouldReportPartialResults = false
@@ -1156,24 +1399,33 @@ for (index, chunk) in chunks.enumerated() {
                         }
                     }
                 }
-            }
+        }
 
-            // Timeout task
-            group.addTask {
+        let timeoutTask = Task<TranscriptionResult, Error> { @MainActor [weak self] in
                 try await Task.sleep(nanoseconds: UInt64(300 * 1_000_000_000)) // 5 minute timeout
-                await MainActor.run {
-                    self.currentTask?.cancel()
-                    self.currentTask = nil
-                }
+                self?.currentTask?.cancel()
+                self?.currentTask = nil
                 throw TranscriptionError.timeout
             }
+
+        defer {
+            recognitionTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: TranscriptionResult.self) { group in
+            group.addTask { try await recognitionTask.value }
+            group.addTask { try await timeoutTask.value }
 
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            recognitionTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }
@@ -1200,7 +1452,7 @@ for (index, chunk) in chunks.enumerated() {
         let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A)
         let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent("chunk_\(UUID().uuidString).m4a")
 
-        AppLog.shared.transcription("Exporting chunk to: \(outputURL.lastPathComponent)", level: .debug)
+        AppLog.shared.transcription("Exporting temporary transcription chunk", level: .debug)
 
         exportSession?.outputURL = outputURL
         exportSession?.outputFileType = .m4a
@@ -1212,41 +1464,48 @@ for (index, chunk) in chunks.enumerated() {
 
         AppLog.shared.transcription("Starting export", level: .debug)
 
-        // Use async/await with timeout and progress monitoring
-        return try await withThrowingTaskGroup(of: URL.self) { group in
-                                            // Export task
-                group.addTask { [weak session] in
-                    // Unwrap session before the continuation to avoid sendability issues
-                    guard let session = session else {
-                        throw TranscriptionError.audioExtractionFailed
-                    }
+        // Create the export and timeout operations on the main actor before
+        // entering the task group. The group only awaits task handles, so the
+        // non-Sendable AVAssetExportSession never crosses a sending closure.
+        let exportTask = Task<URL, Error> { @MainActor [weak session] in
+            guard let session else {
+                throw TranscriptionError.audioExtractionFailed
+            }
 
-                    // Use the modern async/await approach directly
-                    if #available(iOS 18.0, *) {
-                        // Use the new export method for iOS 18+
-                        try await session.export(to: outputURL, as: .m4a)
-                    } else {
-                        // For iOS < 18, use the deprecated but available export method
-                        await session.export()
-                    }
+            if #available(iOS 18.0, *) {
+                try await session.export(to: outputURL, as: .m4a)
+            } else {
+                await session.export()
+            }
 
-                    return outputURL
-                }
+            return outputURL
+        }
 
-            // Timeout task
-            group.addTask { [weak session] in
+        let timeoutTask = Task<URL, Error> { @MainActor [weak session] in
                 try await Task.sleep(nanoseconds: UInt64(120 * 1_000_000_000)) // 2 minute timeout
                 AppLog.shared.transcription("Chunk export timeout reached, cancelling", level: .error)
                 session?.cancelExport()
                 throw TranscriptionError.timeout
             }
 
+        defer {
+            exportTask.cancel()
+            timeoutTask.cancel()
+        }
+
+        return try await withThrowingTaskGroup(of: URL.self) { group in
+            group.addTask { try await exportTask.value }
+            group.addTask { try await timeoutTask.value }
+
             // Return the first completed task (either success or timeout)
             guard let result = try await group.next() else {
                 throw TranscriptionError.timeout
             }
 
-            // Cancel remaining tasks
+            // Cancel the underlying operations before leaving the group. Cancelling
+            // only the child awaiting timeoutTask.value does not cancel timeoutTask.
+            exportTask.cancel()
+            timeoutTask.cancel()
             group.cancelAll()
             return result
         }
@@ -1313,158 +1572,9 @@ for (index, chunk) in chunks.enumerated() {
         return [singleSegment]
     }
 
-    // MARK: - AWS Transcription
-
-private func transcribeWithAWS(url: URL, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
-
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-
-        do {
-// Start the transcription job asynchronously
-            let jobName = try await awsService.startTranscriptionJob(url: url)
-
-            // Add job to pending list for background checking
-            addPendingJob(jobName, recordingURL: url, recordingName: url.lastPathComponent)
-
-            // Start background checking if not already running
-            startBackgroundChecking()
-
-            // Now wait for the job to complete by polling
-            return try await waitForAndRetrieveTranscription(jobName: jobName, awsService: awsService)
-
-        } catch {
-            AppLog.shared.transcription("AWS Transcribe failed: \(error)", level: .error)
-            throw TranscriptionError.awsTranscriptionFailed(error)
-        }
-    }
-
-    /// Wait for a transcription job to complete and retrieve the result
-private func waitForAndRetrieveTranscription(jobName: String, awsService: AWSTranscribeService) async throws -> TranscriptionResult {
-        let maxWaitTime: TimeInterval = 3600 // 1 hour max wait
-        let startTime = Date()
-
-        while Date().timeIntervalSince(startTime) < maxWaitTime {
-            do {
-                let status = try await awsService.checkJobStatus(jobName: jobName)
-
-                switch status.status {
-case .completed:
-                    let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
-
-                    // Remove from pending jobs since it's complete
-                    removePendingJob(jobName)
-
-                    let transcriptionResult = TranscriptionResult(
-                        fullText: awsResult.transcriptText,
-                        segments: awsResult.segments,
-                        processingTime: Date().timeIntervalSince(startTime),
-                        chunkCount: 1,
-                        success: true,
-                        error: nil
-                    )
-
-                    return transcriptionResult
-
-case .failed:
-                    let errorMessage = status.failureReason ?? "Unknown error"
-                    removePendingJob(jobName)
-                    throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -1, userInfo: [NSLocalizedDescriptionKey: errorMessage]))
-
-case .inProgress:
-                    // Wait 30 seconds before checking again
-                    try await Task.sleep(nanoseconds: 30_000_000_000)
-
-default:
-                    try await Task.sleep(nanoseconds: 30_000_000_000)
-                }
-
-            } catch {
-                AppLog.shared.transcription("Error checking job status: \(error), retrying in 30 seconds", level: .error)
-                try await Task.sleep(nanoseconds: 30_000_000_000)
-            }
-        }
-
-// If we get here, the job timed out
-        removePendingJob(jobName)
-        throw TranscriptionError.awsTranscriptionFailed(NSError(domain: "AWSTranscribe", code: -2, userInfo: [NSLocalizedDescriptionKey: "Transcription job timed out after \(Int(maxWaitTime/60)) minutes"]))
-    }
-
-private func removePendingJob(_ jobName: String) {
-        pendingJobs.removeAll { $0.jobName == jobName }
-        savePendingJobs()
-    }
-
-/// Start an async transcription job and return the job name
-    func startAsyncTranscription(url: URL, config: AWSTranscribeConfig) async throws -> String {
-
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        let jobName = try await awsService.startTranscriptionJob(url: url)
-
-        // Track this job for later checking
-        addPendingJob(jobName, recordingURL: url, recordingName: url.lastPathComponent)
-
-return jobName
-    }
-
-    /// Check the status of a transcription job
-    func checkTranscriptionStatus(jobName: String, config: AWSTranscribeConfig) async throws -> AWSTranscribeJobStatus {
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        return try await awsService.checkJobStatus(jobName: jobName)
-    }
-
-    /// Retrieve a completed transcript
-    func retrieveTranscription(jobName: String, config: AWSTranscribeConfig) async throws -> TranscriptionResult {
-        let awsService = AWSTranscribeService(config: config, chunkingService: chunkingService)
-        let awsResult = try await awsService.retrieveTranscript(jobName: jobName)
-
-// Convert AWS result to our TranscriptionResult format
-
-        let transcriptionResult = TranscriptionResult(
-            fullText: awsResult.transcriptText,
-            segments: awsResult.segments,
-            processingTime: awsResult.processingTime,
-            chunkCount: 1,
-            success: awsResult.success,
-            error: awsResult.error
-        )
-
-return transcriptionResult
-    }
-
-    /// Check for any completed transcription jobs and retrieve them
-    func checkForCompletedTranscriptions(config: AWSTranscribeConfig) async -> [TranscriptionResult] {
-        let jobNames = getPendingJobNames()
-        var completedResults: [TranscriptionResult] = []
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-                    completedResults.append(result)
-                } else if status.isFailed {
-                    // Remove failed jobs from pending list
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Error checking job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        updatePendingJobNames(stillPendingJobs)
-
-        return completedResults
-    }
-
     // MARK: - Whisper Transcription
 
-    private func transcribeWithWhisper(url: URL, config: WhisperConfig) async throws -> TranscriptionResult {
+    private func transcribeWithWhisper(url: URL, config: WhisperConfig, recordingId: UUID) async throws -> TranscriptionResult {
         beginBackgroundTask()
         defer { endBackgroundTask() }
 
@@ -1480,11 +1590,15 @@ if status.isCompleted {
             // Get audio duration to determine if we need chunking
             let duration = try await getAudioDuration(url: url)
 
-let result: TranscriptionResult
+            let result: TranscriptionResult
             if duration > maxChunkDuration && enableEnhancedTranscription {
-                result = try await whisperService.transcribeAudioInChunks(url: url, chunkDuration: maxChunkDuration)
+                result = try await whisperService.transcribeAudioInChunks(
+                    url: url,
+                    chunkDuration: maxChunkDuration,
+                    recordingId: recordingId
+                )
             } else {
-                result = try await whisperService.transcribeAudio(url: url)
+                result = try await whisperService.transcribeAudio(url: url, recordingId: recordingId)
             }
 
 return result
@@ -1496,7 +1610,11 @@ return result
 
     // MARK: - FluidAudio (Parakeet) Transcription
 
-    private func transcribeWithFluidAudio(url: URL) async throws -> TranscriptionResult {
+    private func transcribeWithFluidAudio(
+        url: URL,
+        duration: TimeInterval,
+        configuration: LocalSpeakerLabelsConfiguration
+    ) async throws -> TranscriptionResult {
         beginBackgroundTask()
         defer { endBackgroundTask() }
 
@@ -1517,14 +1635,32 @@ return result
         }
 
         do {
-            let result = try await manager.transcribe(audioURL: url)
+            let timedOutput = try await manager.transcribeWithTimingData(audioURL: url)
+            let resultWithTiming = timedOutput.result.with(timedWords: timedOutput.timedWords)
+            let result = try await localSpeakerLabelingCoordinator.apply(
+                to: resultWithTiming,
+                configuration: configuration,
+                sourceAudioURL: url,
+                audioDuration: duration,
+                unloadASRBeforeDiarization: {
+                    await MainActor.run {
+                        FluidAudioManager.shared.unloadModel()
+                    }
+                }
+            )
 
             await MainActor.run {
                 isTranscribing = false
-                currentStatus = "Transcription complete"
+                currentStatus = result.speakerLabelWarning?.userVisibleMessage ?? "Transcription complete"
             }
 
             return result
+        } catch is CancellationError {
+            await MainActor.run {
+                isTranscribing = false
+                currentStatus = "Transcription cancelled"
+            }
+            throw CancellationError()
         } catch {
             await MainActor.run {
                 isTranscribing = false
@@ -1534,112 +1670,9 @@ return result
         }
     }
 
-    // MARK: - OpenAI Transcription
-
-private func transcribeWithOpenAI(url: URL, config: OpenAITranscribeConfig) async throws -> TranscriptionResult {
-
-        let openAIService = OpenAITranscribeService(config: config, chunkingService: chunkingService)
-
-        do {
-// Test connection first
-            try await openAIService.testConnection()
-
-            // OpenAI has a 25MB file size limit, so we don't need chunking for most files
-            // But we should check the file size
-            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            let fileSize = fileAttributes[.size] as? Int64 ?? 0
-            let maxSize: Int64 = 25 * 1024 * 1024 // 25MB
-
-if fileSize > maxSize {
-                return try await transcribeWithChunkedOpenAI(url: url)
-            }
-
-let openAIResult = try await openAIService.transcribeAudioFile(at: url)
-
-            // Convert OpenAI result to our TranscriptionResult format
-            let transcriptionResult = TranscriptionResult(
-                fullText: openAIResult.transcriptText,
-                segments: openAIResult.segments,
-                processingTime: openAIResult.processingTime,
-                chunkCount: 1,
-                success: openAIResult.success,
-                error: openAIResult.error
-            )
-
-return transcriptionResult
-
-        } catch {
-            AppLog.shared.transcription("OpenAI transcription failed: \(error)", level: .error)
-            throw TranscriptionError.openAITranscriptionFailed(error)
-        }
-    }
-
-private func transcribeWithChunkedOpenAI(url: URL) async throws -> TranscriptionResult {
-
-        guard let openAIConfig = openAIConfig else {
-            throw TranscriptionError.openAITranscriptionFailed(TranscriptionError.fileNotFound)
-        }
-
-        do {
-            // Create OpenAI service with config
-            let openAIService = OpenAITranscribeService(config: openAIConfig, chunkingService: chunkingService)
-
-// Use the chunking service to chunk the file
-            let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .openAI)
-            let chunks = chunkingResult.chunks
-
-            var allTranscripts: [String] = []
-            var allSegments: [TranscriptSegment] = []
-            var totalProcessingTime: TimeInterval = 0
-            var chunkIndex = 0
-
-for chunk in chunks {
-                chunkIndex += 1
-
-                let startTime = Date()
-                let openAIResult = try await openAIService.transcribeAudioFile(at: chunk.chunkURL)
-                let processingTime = Date().timeIntervalSince(startTime)
-                totalProcessingTime += processingTime
-
-                // Add the transcript text
-                allTranscripts.append(openAIResult.transcriptText)
-
-                // Adjust segment timestamps to account for chunk start time
-                let adjustedSegments = openAIResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: "Speaker",
-                        text: segment.text,
-                        startTime: segment.startTime + chunk.startTime,
-                        endTime: segment.endTime + chunk.startTime
-                    )
-                }
-                allSegments.append(contentsOf: adjustedSegments)
-
-            }
-
-            // Combine all transcripts
-            let fullTranscript = allTranscripts.joined(separator: " ")
-
-            let transcriptionResult = TranscriptionResult(
-                fullText: fullTranscript,
-                segments: allSegments,
-                processingTime: totalProcessingTime,
-                chunkCount: chunks.count,
-                success: true,
-                error: nil
-            )
-
-return transcriptionResult
-
-        } catch {
-            AppLog.shared.transcription("Chunked OpenAI transcription failed: \(error)", level: .error)
-            throw TranscriptionError.openAITranscriptionFailed(error)
-        }
-    }
-
     // MARK: - Mistral Transcription
 
-    private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig) async throws -> TranscriptionResult {
+    private func transcribeWithMistral(url: URL, config: MistralTranscribeConfig, recordingId: UUID) async throws -> TranscriptionResult {
         let mistralService = MistralTranscribeService(config: config, chunkingService: chunkingService)
 
         do {
@@ -1652,10 +1685,10 @@ return transcriptionResult
             let maxSize: Int64 = 24 * 1024 * 1024 // 24MB conservative limit
 
             if fileSize > maxSize {
-                return try await transcribeWithChunkedMistral(url: url)
+                return try await transcribeWithChunkedMistral(url: url, recordingId: recordingId)
             }
 
-            let mistralResult = try await mistralService.transcribeAudioFile(at: url)
+            let mistralResult = try await mistralService.transcribeAudioFile(at: url, recordingId: recordingId)
 
             // Convert Mistral result to our TranscriptionResult format
             return TranscriptionResult(
@@ -1672,7 +1705,7 @@ return transcriptionResult
         }
     }
 
-    private func transcribeWithChunkedMistral(url: URL) async throws -> TranscriptionResult {
+    private func transcribeWithChunkedMistral(url: URL, recordingId: UUID) async throws -> TranscriptionResult {
         guard let mistralConfig = mistralTranscribeConfig else {
             throw TranscriptionError.mistralTranscriptionFailed(TranscriptionError.engineNotConfigured)
         }
@@ -1684,37 +1717,36 @@ return transcriptionResult
             let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .mistralAI)
             let chunks = chunkingResult.chunks
 
-            var allTranscripts: [String] = []
-            var allSegments: [TranscriptSegment] = []
-            var totalProcessingTime: TimeInterval = 0
+            var transcriptChunks: [TranscriptChunk] = []
 
             for chunk in chunks {
-                let startTime = Date()
-                let mistralResult = try await mistralService.transcribeAudioFile(at: chunk.chunkURL)
-                let processingTime = Date().timeIntervalSince(startTime)
-                totalProcessingTime += processingTime
-
-                allTranscripts.append(mistralResult.transcriptText)
-
-                // Adjust segment timestamps to account for chunk start time
-                let adjustedSegments = mistralResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text,
-                        startTime: segment.startTime + chunk.startTime,
-                        endTime: segment.endTime + chunk.startTime
-                    )
-                }
-                allSegments.append(contentsOf: adjustedSegments)
+                let mistralResult = try await mistralService.transcribeAudioFile(
+                    at: chunk.chunkURL,
+                    recordingId: recordingId
+                )
+                let transcriptChunk = chunkingService.createTranscriptChunk(
+                    from: mistralResult.transcriptText,
+                    audioChunk: chunk,
+                    segments: mistralResult.segments
+                )
+                transcriptChunks.append(transcriptChunk)
             }
 
-            let fullTranscript = allTranscripts.joined(separator: " ")
+            let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+            let reassembly = try await chunkingService.reassembleTranscript(
+                from: transcriptChunks,
+                originalURL: url,
+                recordingName: url.deletingPathExtension().lastPathComponent,
+                recordingDate: recordingDate,
+                recordingId: recordingId
+            )
 
             return TranscriptionResult(
-                fullText: fullTranscript,
-                segments: allSegments,
-                processingTime: totalProcessingTime,
-                chunkCount: chunks.count,
+                fullText: reassembly.transcriptData.plainText,
+                segments: reassembly.transcriptData.segments,
+                processingTime: reassembly.reassemblyTime,
+                chunkCount: transcriptChunks.count,
                 success: true,
                 error: nil
             )
@@ -1724,236 +1756,41 @@ return transcriptionResult
         }
     }
 
-    // MARK: - Job Tracking Helpers
-
-/// Update pending jobs when recording files are renamed
-    func updatePendingJobsForRenamedRecording(from oldURL: URL, to newURL: URL, newName: String) {
-
-        var updatedJobs: [TranscriptionJobInfo] = []
-        var updated = false
-
-for job in pendingJobs {
-            if job.recordingURL == oldURL {
-                let updatedJob = TranscriptionJobInfo(
-                    jobName: job.jobName,
-                    recordingURL: newURL,
-                    recordingName: newName,
-                    startDate: job.startDate
-                )
-                updatedJobs.append(updatedJob)
-                updated = true
-            } else {
-                updatedJobs.append(job)
-            }
-        }
-
-if updated {
-            pendingJobs = updatedJobs
-            savePendingJobs()
-        }
-    }
-
-    private func addPendingJob(_ jobName: String, recordingURL: URL, recordingName: String) {
-        let jobInfo = TranscriptionJobInfo(
-            jobName: jobName,
-            recordingURL: recordingURL,
-            recordingName: recordingName,
-            startDate: Date()
-        )
-
-if !pendingJobs.contains(where: { $0.jobName == jobName }) {
-            pendingJobs.append(jobInfo)
-            savePendingJobs()
-        }
-    }
-
-    private func getPendingJobNames() -> [String] {
-        return pendingJobs.map { $0.jobName }
-    }
-
-    private func getPendingJobInfo(for jobName: String) -> TranscriptionJobInfo? {
-        return pendingJobs.first { $0.jobName == jobName }
-    }
-
-    private func updatePendingJobNames(_ jobNames: [String]) {
-        // Remove jobs that are no longer in the list
-        pendingJobs.removeAll { !jobNames.contains($0.jobName) }
-        savePendingJobs()
-    }
-
-private func loadPendingJobs() {
-        if let data = UserDefaults.standard.data(forKey: "pendingTranscriptionJobInfos"),
-           let jobs = try? JSONDecoder().decode([TranscriptionJobInfo].self, from: data) {
-            pendingJobs = jobs
-        }
-    }
-
-    private func savePendingJobs() {
-        if let data = try? JSONEncoder().encode(pendingJobs) {
-            UserDefaults.standard.set(data, forKey: "pendingTranscriptionJobInfos")
-        }
-    }
-
-    // MARK: - Background Checking
-
-private func startBackgroundChecking() {
-        guard !isBackgroundChecking else { return }
-
-        isBackgroundChecking = true
-
-        // Check every 30 seconds for completed transcriptions
-        backgroundCheckTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.checkForCompletedTranscriptionsInBackground()
-            }
-        }
-    }
-
-private func stopBackgroundChecking() {
-        backgroundCheckTimer?.invalidate()
-        backgroundCheckTimer = nil
-        isBackgroundChecking = false
-    }
-
     // MARK: - Engine Management
 
-func switchToNativeSpeechTranscription() {
-        stopBackgroundChecking()
-
-        // Clear any pending AWS jobs since we're not using AWS anymore
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
-        // Also disable AWS transcription in settings to prevent future background checks
-        UserDefaults.standard.set(false, forKey: "enableAWSTranscribe")
-    }
-
-func switchToAWSTranscription() {
-        if awsConfig != nil {
-            if !isBackgroundChecking {
-                startBackgroundChecking()
-            }
-        }
-    }
-
-func switchToWhisperTranscription() {
-        // Whisper doesn't use background checking like AWS, so we stop any existing background processes
-        stopBackgroundChecking()
-
-        // Clear any pending AWS jobs since we're switching to Whisper
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
+    private func switchToWhisperTranscription() {
         if whisperConfig != nil {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Whisper transcription configured and ready", category: "EnhancedTranscriptionManager")
-            }
+            AppLog.shared.general("Whisper transcription configured and ready")
         } else {
-            AppLogger.shared.warning("Whisper transcription selected but not configured", category: "EnhancedTranscriptionManager")
+            AppLog.shared.general("Whisper transcription selected but not configured", level: .error)
         }
     }
 
-    func switchToFluidAudioTranscription() {
-        stopBackgroundChecking()
-
-        let pendingCount = getPendingJobNames().count
-        if pendingCount > 0 {
-            clearAllPendingJobs()
-        }
-
+    private func switchToFluidAudioTranscription() {
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("FluidAudio (Parakeet) transcription selected", category: "EnhancedTranscriptionManager")
+            AppLogger.shared.verbose(
+                "FluidAudio (Parakeet) transcription selected",
+                category: "EnhancedTranscriptionManager"
+            )
         }
     }
 
-    /// Public method to update transcription engine and manage background processes
+    /// Updates manager state when the user changes the selected transcription engine.
     func updateTranscriptionEngine(_ engine: TranscriptionEngine) {
-        // Only log if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLogger.shared.verbose("Updating transcription engine to: \(engine.rawValue)", category: "EnhancedTranscriptionManager")
+            AppLogger.shared.verbose(
+                "Updating transcription engine to: \(engine.rawValue)",
+                category: "EnhancedTranscriptionManager"
+            )
         }
 
         switch engine {
-        case .notConfigured:
-            // For unconfigured state, default to Apple Transcription which is always available
-            switchToNativeSpeechTranscription()
         case .fluidAudio:
             switchToFluidAudioTranscription()
-        case .awsTranscribe:
-            switchToAWSTranscription()
         case .whisper:
             switchToWhisperTranscription()
-        case .openAI, .openAIAPICompatible, .mistralAI:
-            switchToNativeSpeechTranscription()
-        }
-    }
-
-    private func clearAllPendingJobs() {
-        pendingJobs.removeAll()
-        pendingJobNames = ""
-        UserDefaults.standard.set("", forKey: "pendingTranscriptionJobs")
-        savePendingJobs()
-    }
-
-    private func checkForCompletedTranscriptionsInBackground() async {
-        // Only check if AWS is enabled, configured, AND we have pending jobs
-guard enableAWSTranscribe else {
-            stopBackgroundChecking()
-            clearAllPendingJobs()
-            return
-        }
-
-        guard let config = awsConfig else {
-            stopBackgroundChecking()
-            return
-        }
-
-        let jobNames = getPendingJobNames()
-guard !jobNames.isEmpty else {
-            return
-        }
-
-        var stillPendingJobs: [String] = []
-
-        for jobName in jobNames {
-            do {
-                let status = try await checkTranscriptionStatus(jobName: jobName, config: config)
-
-if status.isCompleted {
-                    let result = try await retrieveTranscription(jobName: jobName, config: config)
-
-                    // Get job info before removing it
-                    let jobInfo = getPendingJobInfo(for: jobName)
-
-                    // Remove from pending jobs
-                    removePendingJob(jobName)
-
-                    // Notify completion
-                    if let jobInfo = jobInfo {
-                        onTranscriptionCompleted?(result, jobInfo)
-                    }
-
-} else if status.isFailed {
-                    // Remove failed jobs from pending list
-                    removePendingJob(jobName)
-                } else {
-                    stillPendingJobs.append(jobName)
-                }
-            } catch {
-                AppLog.shared.transcription("Background check: Error checking job \(jobName): \(error)", level: .error)
-                // Keep job in pending list if we can't check it
-                stillPendingJobs.append(jobName)
-            }
-        }
-
-        // Update pending jobs list
-        if stillPendingJobs != jobNames {
-            updatePendingJobNames(stillPendingJobs)
+        case .notConfigured, .mistralAI:
+            break
         }
     }
 
@@ -2026,11 +1863,8 @@ enum TranscriptionError: LocalizedError {
     case audioExtractionFailed
     case timeout
     case fileTooLarge(duration: TimeInterval, maxDuration: TimeInterval)
-    case awsTranscriptionFailed(Error)
-    case awsNotConfigured
     case whisperConnectionFailed
     case whisperTranscriptionFailed(Error)
-    case openAITranscriptionFailed(Error)
     case fluidAudioNotAvailable
     case fluidAudioNotReady
     case fluidAudioTranscriptionFailed(Error)
@@ -2055,16 +1889,10 @@ enum TranscriptionError: LocalizedError {
             return "Failed to extract audio chunk"
         case .timeout:
             return "Transcription timed out"
-        case .awsTranscriptionFailed(let error):
-            return "AWS Transcribe failed: \(error.localizedDescription)"
-        case .awsNotConfigured:
-            return "AWS Transcribe is not properly configured. Please check your AWS credentials in settings."
         case .whisperConnectionFailed:
             return "Failed to connect to Whisper service"
         case .whisperTranscriptionFailed(let error):
             return "Whisper transcription failed: \(error.localizedDescription)"
-        case .openAITranscriptionFailed(let error):
-            return "OpenAI transcription failed: \(error.localizedDescription)"
         case .fluidAudioNotAvailable:
             return "FluidAudio is not available in this build. Add the FluidAudio Swift package and rebuild."
         case .fluidAudioNotReady:

@@ -15,7 +15,9 @@ extension AudioRecorderViewModel {
 	#if os(macOS)
 	func setupMacInputDeviceMonitoring() {
 		enhancedAudioSessionManager.startInputDeviceMonitoring { [weak self] in
-			self?.scheduleMacInputDeviceRefresh()
+			Task { @MainActor [weak self] in
+				self?.scheduleMacInputDeviceRefresh()
+			}
 		}
 		scheduleMacInputDeviceRefresh()
 	}
@@ -84,8 +86,10 @@ extension AudioRecorderViewModel {
 
 		if !wasAlreadyWaiting {
 			AppLog.shared.audioSession("Mac recording input changed; sealing the current audio segment")
-			macSystemAudioCapture?.setPaused(true)
-			stopRecordingTimer()
+			if !macSystemAudioContinuesWithoutMicrophone {
+				macSystemAudioCapture?.setPaused(true)
+				stopRecordingTimer()
+			}
 			sealNativeMacScratchSegment()
 		}
 
@@ -97,11 +101,15 @@ extension AudioRecorderViewModel {
 		do {
 			try startNativeMacContinuation(at: finalURL)
 			macAwaitingRecoveryBuffer = true
-			pendingMacInputRecovery = (keepPaused: keepPaused, notify: wasAlreadyWaiting)
+			pendingMacInputRecovery = PendingMacInputRecovery(
+				keepPaused: keepPaused,
+				notify: wasAlreadyWaiting,
+				systemAudioContinued: macSystemAudioContinuesWithoutMicrophone
+			)
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
-			discardFailedNativeMacContinuation()
+			discardFailedMacCaptureState()
 			pendingMacInputRecovery = nil
 			macAwaitingRecoveryBuffer = false
 			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
@@ -126,7 +134,11 @@ extension AudioRecorderViewModel {
 	}
 
 	@MainActor
-	func finishNativeMacInputRecovery(keepPaused: Bool, notify: Bool) async {
+	func finishNativeMacInputRecovery(
+		keepPaused: Bool,
+		notify: Bool,
+		systemAudioContinued: Bool
+	) async {
 		microphoneReconnectionTimer?.invalidate()
 		microphoneReconnectionTimer = nil
 		pendingMacInputRecovery = nil
@@ -137,7 +149,9 @@ extension AudioRecorderViewModel {
 		} else {
 			macSystemAudioCapture?.setPaused(false)
 			recordingState = .recording
-			startRecordingTimer()
+			if !systemAudioContinued {
+				startRecordingTimer()
+			}
 		}
 		errorMessage = "Recording continued with the available microphone."
 		AppLog.shared.audioSession("Mac recording resumed on the available input")
@@ -150,30 +164,25 @@ extension AudioRecorderViewModel {
 		}
 	}
 
-	private func discardFailedNativeMacContinuation() {
-		let failedScratchURL = macScratchRecordingURL
-		stopMacEngineRecording()
-		if let failedScratchURL {
-			try? FileManager.default.removeItem(at: failedScratchURL)
-		}
-		macScratchRecordingURL = nil
-	}
-
 	func startNativeMacInputRecoveryMonitoring() {
 		guard microphoneReconnectionTimer == nil else { return }
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
 		microphoneReconnectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
-			Task { @MainActor in
+			guard self != nil else { timer.invalidate(); return }
+			Task { @MainActor [weak self] in
 				guard let self else {
-					timer.invalidate()
 					return
 				}
 				guard case .waitingForMicrophone(let disconnectedAt) = self.recordingState else {
-					timer.invalidate()
+					self.microphoneReconnectionTimer?.invalidate()
 					self.microphoneReconnectionTimer = nil
 					return
 				}
 				guard Date().timeIntervalSince(disconnectedAt) <= self.MICROPHONE_RECONNECTION_TIMEOUT else {
-					timer.invalidate()
+					self.microphoneReconnectionTimer?.invalidate()
 					self.microphoneReconnectionTimer = nil
 					self.errorMessage = "Recording stopped because no microphone was available for 5 minutes."
 					self.stopRecording()
@@ -305,17 +314,21 @@ extension AudioRecorderViewModel {
 	func startMicrophoneReconnectionMonitoring() {
 		microphoneReconnectionTimer?.invalidate()
 
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
 		microphoneReconnectionTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] timer in
-			Task { @MainActor in
-				guard let self = self else {
-					timer.invalidate()
+			guard self != nil else { timer.invalidate(); return }
+			Task { @MainActor [weak self] in
+				guard let self else {
 					return
 				}
 
 				// Check if we're still waiting for microphone
 				guard case .waitingForMicrophone(let disconnectedAt) = self.recordingState else {
 					// State changed, stop monitoring
-					timer.invalidate()
+					self.microphoneReconnectionTimer?.invalidate()
 					self.microphoneReconnectionTimer = nil
 					return
 				}
@@ -323,7 +336,7 @@ extension AudioRecorderViewModel {
 				// Check timeout (5 minutes)
 				let elapsed = Date().timeIntervalSince(disconnectedAt)
 				if elapsed > self.MICROPHONE_RECONNECTION_TIMEOUT {
-					timer.invalidate()
+					self.microphoneReconnectionTimer?.invalidate()
 					self.microphoneReconnectionTimer = nil
 					AppLog.shared.audioSession("Microphone reconnection timeout (5 minutes)")
 					self.handleInterruptedRecording(reason: "Microphone not reconnected within 5 minutes")
@@ -340,7 +353,7 @@ extension AudioRecorderViewModel {
 				})
 
 				if hasMicrophone {
-					timer.invalidate()
+					self.microphoneReconnectionTimer?.invalidate()
 					self.microphoneReconnectionTimer = nil
 					await self.reconnectMicrophoneAndResume()
 				}

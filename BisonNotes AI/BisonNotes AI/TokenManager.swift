@@ -19,9 +19,6 @@ class TokenManager {
     static let maxTokensPerChunk = 2048 // Legacy default for older models
     static let maxTokensForFinalSummary = 4096
 
-    /// GPT-4.1 series context window (leaving 20% buffer for response)
-    static let gpt41ContextWindow = Int(1_047_576 * 0.8) // ~838K tokens for all GPT-4.1 models
-
     /// Google AI Studio (Gemini) context window (leaving 20% buffer for response)
     static let googleAIStudioContextWindow = Int(1_000_000 * 0.8) // ~800K tokens for Gemini models
 
@@ -86,9 +83,7 @@ class TokenManager {
         // Use provided tokenizer or fall back to estimation
         let getTokenCount: (String) -> Int = tokenizer ?? { estimateTokenCount(for: $0) }
 
-        let sentences = text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let sentences = splitIntoSentences(text)
 
         var chunks: [String] = []
         var currentChunk: [String] = []
@@ -141,6 +136,48 @@ class TokenManager {
         return chunks
     }
 
+    /// The sentence split shared by both chunkers, so the async variant below
+    /// tokenizes exactly the units the synchronous algorithm consumes.
+    private static func splitIntoSentences(_ text: String) -> [String] {
+        text.components(separatedBy: CharacterSet(charactersIn: ".!?"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Chunk using an asynchronous tokenizer — the model's own tokenizer lives
+    /// behind an actor, so it cannot be called from the synchronous chunker.
+    ///
+    /// This matters for correctness, not just accuracy: `estimateTokenCount` is a
+    /// whitespace word counter and undercounts real BPE tokens for typical prose,
+    /// so sizing chunks with it produces chunks that overflow the model's context
+    /// window and get silently truncated at inference time.
+    /// - Parameters:
+    ///   - text: The text to chunk
+    ///   - maxTokens: Maximum tokens per chunk (excluding overlap)
+    ///   - overlapTokens: Number of tokens to overlap between chunks
+    ///   - tokenizer: Accurate, possibly-async token counter
+    /// - Returns: Array of text chunks with overlap preserved
+    static func chunkTextWithOverlapAsync(
+        _ text: String,
+        maxTokens: Int,
+        overlapTokens: Int = 100,
+        tokenizer: @Sendable (String) async -> Int
+    ) async -> [String] {
+        // Count each distinct sentence once, then hand the memoized counts to the
+        // synchronous chunker so both paths share a single implementation.
+        var counts: [String: Int] = [:]
+        for sentence in splitIntoSentences(text) where counts[sentence] == nil {
+            counts[sentence] = await tokenizer(sentence)
+        }
+
+        return chunkTextWithOverlap(
+            text,
+            maxTokens: maxTokens,
+            overlapTokens: overlapTokens,
+            tokenizer: { counts[$0] ?? estimateTokenCount(for: $0) }
+        )
+    }
+
     /// Check if text needs chunking
     static func needsChunking(_ text: String, maxTokens: Int = maxTokensPerChunk) -> Bool {
         let tokenCount = estimateTokenCount(for: text)
@@ -172,6 +209,7 @@ class TokenManager {
     }
 
     /// Combine multiple summaries into a cohesive meta-summary using Ollama
+    @MainActor
     static func combineSummaries(
         _ summaries: [String],
         contentType: ContentType,
@@ -190,6 +228,7 @@ class TokenManager {
     }
 
     /// Recursively generate a meta-summary that fits within the model's context window
+    @MainActor
     private static func generateMetaSummary(from text: String, service: OllamaService) async throws -> String {
         let maxTokens = service.maxContextTokens
 

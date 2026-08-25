@@ -94,23 +94,67 @@ enum DuplicateEntryType {
 class DataMigrationManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
-    private var iCloudStorageManager: iCloudStorageManager?
+    private var configurediCloudStorageManager: iCloudStorageManager?
 
     @Published var migrationProgress: Double = 0.0
     @Published var migrationStatus: String = ""
     @Published var isCompleted: Bool = false
 
-    init(persistenceController: PersistenceController = PersistenceController.shared,
+    init(persistenceController: PersistenceController? = nil,
          iCloudStorageManager: iCloudStorageManager? = nil) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
-        self.iCloudStorageManager = iCloudStorageManager
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.context = resolvedPersistenceController.container.viewContext
+        self.configurediCloudStorageManager = iCloudStorageManager
     }
 
     func setCloudSyncManagers(legacy: iCloudStorageManager? = nil) {
         if let legacy = legacy {
-            self.iCloudStorageManager = legacy
+            self.configurediCloudStorageManager = legacy
         }
+    }
+
+    private var cloudDeletionManager: iCloudStorageManager {
+        configurediCloudStorageManager ?? iCloudStorageManager.shared
+    }
+
+    // MARK: - Deletion Markers
+    //
+    // A deletion marker is durable and says the *user* deleted something, so it
+    // travels to every device and outlives the row it describes. Only
+    // clearAllCoreData raises one from this file: the user asked for the store to
+    // be emptied, and without markers the next reconcile would restore it.
+    //
+    // Repair and de-duplication deliberately do not. A local file this device
+    // cannot see is not a deletion, an orphaned row is a local inconsistency, and
+    // CLAUDE.md is explicit that superseded duplicates are pruned "never with a
+    // tombstone, because every device derives the same winner from the same
+    // data". Publishing one from any of those would delete a healthy copy from
+    // every other device over a problem local to this one.
+
+    private func enqueueTranscriptDeletion(_ transcript: TranscriptEntry) {
+        guard let transcriptId = transcript.id else { return }
+        cloudDeletionManager.enqueueTranscriptRemovalFromiCloud(
+            transcriptId: transcriptId,
+            recordingId: transcript.recordingId ?? transcript.recording?.id
+        )
+    }
+
+    private func enqueueSummaryDeletion(_ summary: SummaryEntry) {
+        guard let summaryId = summary.id else { return }
+        cloudDeletionManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            recordingId: summary.recordingId ?? summary.recording?.id
+        )
+    }
+
+    private func enqueueRecordingDeletion(_ recording: RecordingEntry, includingChildren: Bool = true) {
+        guard let recordingId = recording.id else { return }
+        cloudDeletionManager.enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: includingChildren ? [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 } : [],
+            summaryIds: includingChildren ? [recording.summaryId ?? recording.summary?.id].compactMap { $0 } : []
+        )
     }
 
     func performDataMigration() async {
@@ -411,7 +455,7 @@ class DataMigrationManager: ObservableObject {
 
         AppLog.shared.dataMigration("Starting iCloud data recovery")
 
-        if let legacyManager = iCloudStorageManager {
+        if let legacyManager = configurediCloudStorageManager {
             AppLog.shared.dataMigration("Using legacy iCloudStorageManager for recovery")
             do {
                 if !legacyManager.isEnabled {
@@ -493,7 +537,16 @@ class DataMigrationManager: ObservableObject {
     // MARK: - Utility Methods
 
     func clearAllCoreData() async {
+        let recordings = (try? context.fetch(RecordingEntry.fetchRequest())) ?? []
+        let transcripts = (try? context.fetch(TranscriptEntry.fetchRequest())) ?? []
+        let summaries = (try? context.fetch(SummaryEntry.fetchRequest())) ?? []
+
+        // Batch deletes bypass Core Data relationship callbacks, so the tombstones
+        // are raised here rather than through the usual delete paths. They are
+        // raised only once the store is actually empty: queueing first and then
+        // failing the delete would wipe iCloud while the local rows survived.
         let entities = ["RecordingEntry", "TranscriptEntry", "SummaryEntry"]
+        var clearedEveryEntity = true
 
         for entityName in entities {
             let fetchRequest = NSFetchRequest<NSFetchRequestResult>(entityName: entityName)
@@ -503,6 +556,7 @@ class DataMigrationManager: ObservableObject {
                 try context.execute(deleteRequest)
                 AppLog.shared.dataMigration("Cleared all \(entityName) entries")
             } catch {
+                clearedEveryEntity = false
                 AppLog.shared.dataMigration("Error clearing \(entityName): \(error)", level: .error)
             }
         }
@@ -512,7 +566,25 @@ class DataMigrationManager: ObservableObject {
             AppLog.shared.dataMigration("Core Data cleared successfully")
         } catch {
             AppLog.shared.dataMigration("Error saving after clearing Core Data: \(error)", level: .error)
+            context.rollback()
+            return
         }
+
+        guard clearedEveryEntity else {
+            AppLog.shared.dataMigration(
+                "Store only partly cleared; withholding iCloud tombstones so a retry is still possible",
+                level: .error
+            )
+            return
+        }
+
+        recordings.forEach { enqueueRecordingDeletion($0) }
+        transcripts.forEach { enqueueTranscriptDeletion($0) }
+        summaries.forEach { enqueueSummaryDeletion($0) }
+
+        // The batch delete bypassed relationship callbacks, so every attachment
+        // folder is now unreachable.
+        SummaryAttachmentStore.shared.pruneOrphans(against: context)
     }
 
     func debugCoreDataContents() async {
@@ -632,6 +704,11 @@ class DataMigrationManager: ObservableObject {
             // Step 4: Remove entries with missing audio files
             migrationStatus = "Cleaning up missing audio files..."
             results.cleanedMissingFiles = await cleanupMissingAudioFiles(report.missingAudioFiles)
+
+        // One sweep after the repairs, rather than per delete site: cascade
+        // deletes never run our code, so reconciling against the store is the
+        // only way to catch every folder left behind.
+        SummaryAttachmentStore.shared.pruneOrphans(against: context)
             migrationProgress = 0.9
 
             // Step 5: Save changes

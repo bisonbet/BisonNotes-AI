@@ -16,7 +16,7 @@ This is an iOS application built with Xcode. Use standard Xcode commands to buil
 - **Test**: Run unit tests with ⌘+U
 - **Clean**: Clean build folder (⌘+Shift+K)
 
-The project uses Swift Package Manager for dependencies, primarily AWS SDK for iOS and MarkdownUI for content formatting.
+The project uses Swift Package Manager for dependencies, including Textual, FluidAudio, and MLX Swift for content rendering, transcription, and on-device AI.
 
 ## Architecture Overview
 
@@ -38,15 +38,14 @@ The app has **migrated from legacy file-based storage to Core Data-only architec
 3. **AI Processing** → Various AI engines → Core Data
 4. **Background Processing** → `BackgroundProcessingManager` → Core Data
 
+For completed Parakeet recordings, imports, and re-runs, optional **Local Speaker Labels** are a post-ASR enrichment step. `AudioFileChunkingService.reassembleTranscript` remains the single reassembly path: ASR words are reassembled with absolute timing first, then the selected local diarizer runs once against the complete source audio. Labels are off by default and never run during Live Transcription. Offline VBx is Recommended; LS-EEND DIHARD3 is Experimental and supports up to 10 speakers. A failure retains the unlabeled Parakeet transcript and surfaces a warning.
+
 #### AI Integration
 The app supports multiple AI engines:
 - **Apple Intelligence**: Local processing using Apple frameworks
-- **OpenAI**: GPT-4o models for transcription and summarization
 - **Google AI Studio**: Gemini 2.5 models for AI processing
-- **AWS Bedrock**: Claude models (Sonnet 4, Sonnet 4.5, Haiku 4.5) and Llama 4 Maverick
 - **Whisper**: Local Whisper server for transcription
 - **Ollama**: Local AI models for privacy-focused processing
-- **AWS Transcribe**: Cloud-based transcription service
 
 #### Core Managers
 - **EnhancedTranscriptionManager**: Handles all transcription workflows
@@ -68,7 +67,7 @@ BisonNotes AI/
 │   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
 │   └── DataMigrationView.swift
 ├── ViewModels/          # View model layer
-├── OpenAI/             # OpenAI integration
+├── FluidAudio/          # Parakeet plus Local Speaker Labels adapters/settings
 ├── AI Engines/         # Various AI service integrations
 └── Background/         # Background processing
 ```
@@ -88,42 +87,40 @@ The app uses a sophisticated background processing system:
 ### Core Data Usage
 Always use `CoreDataManager` for data operations. Never access Core Data directly in views.
 
+### iCloud Sync Arbitration
+
+`iCloudStorageManager` reconciles in a fixed order: flush queued deletions → apply deletion markers → back up (local → cloud) → restore (cloud → local) → prune superseded duplicates. Four rules decide who wins. All four are pure static functions on `iCloudStorageManager` and are covered by `ICloudBackupRegressionTests` — change them there, not inline in the sync legs.
+
+- **Newest edit wins, in both directions.** The backup leg uploads only when the local content timestamp is at least the cloud record's; the restore leg overwrites a local row only when the cloud timestamp is at least the local one. Compare **content** timestamps only (`lastModified` / `createdAt` / `recordingDate`, `generatedAt`) — never `syncUpdatedAt`, which is rewritten on every save and would make the cloud copy look permanently newer, freezing all uploads. Comparison is `>=` so equal timestamps still propagate other field changes, and when either side has no timestamp both rules fall back to overwriting: an unknown age must never strand an item.
+- **A deletion marker records when the user deleted, not when the marker uploaded.** Queued deletions replay their original `requestedAt`, and the earliest claim wins when a marker already exists, so a marker that reaches CloudKit days later cannot erase newer work elsewhere.
+- **An edit that lands more than `deletionReviveGraceInterval` after a delete beats that delete.** The tombstone is withdrawn and the item uploads again on the same pass. The grace window absorbs cross-device clock skew; a marker with no usable `deletedAt` never revives anything.
+- **Only one transcript and one summary per recording sync.** `backupSourceSelection` uploads just the newest row per recording, and reconcile prunes local rows that a newer row supersedes — but never a row the recording still points at, and never with a tombstone, because every device derives the same winner from the same data. `latestPerRecording` (local) and `resolveLatestRecordsPerRecording` (cloud) must stay in step; if they disagree, devices trade uploads and deletions forever.
+
+Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Database Tools deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
+
 ### AI Engine Integration
 New AI engines should follow the existing pattern:
 1. Create service class (e.g., `NewAIService.swift`)
 2. Add settings view (e.g., `NewAISettingsView.swift`)
 3. Integrate with `EnhancedTranscriptionManager` or appropriate manager
 4. Add engine monitoring and error handling
+5. Size its output budget and detect truncation as described below
 
-#### AWS Bedrock Models
-The app includes comprehensive AWS Bedrock integration (`AWS/AWSBedrockModels.swift`):
-- **Claude 4.5 Haiku**: Default model for fast, efficient processing (Standard tier)
-  - Model ID: `global.anthropic.claude-haiku-4-5-20251001-v1:0` (global cross-region inference profile)
-- **Claude Sonnet 4/4.5**: Premium models for advanced reasoning and analysis
-  - Model IDs: `global.anthropic.claude-sonnet-4-20250514-v1:0`, `global.anthropic.claude-sonnet-4-5-20250929-v1:0`
-- **Llama 4 Maverick**: Meta's economy-tier model with 128K context window
-  - Model ID: `us.meta.llama4-maverick-17b-instruct-v1:0`
+### Reasoning Output Budgets
 
-**Important**:
-- Legacy model migration: `claude35Haiku` automatically migrates to `claude45Haiku`
-- Security: Response validation includes 500KB max length and control character sanitization
-- **Model ID Formats**:
-  - **Cross-Region Inference Profiles**: Claude and Llama models use `us.*`, `global.*`, `eu.*` prefixes for cross-region routing
-  - Cross-region profiles provide ~10% cost savings and higher throughput by routing requests to available regions
+Every provider's output cap covers the model's **reasoning pass and its answer together**. A budget sized for the answer alone gets eaten by thinking, the payload arrives cut off mid-JSON, and the parser reports a malformed structured response — a message about the symptom, not the cause. `SummaryThinkingModelCatalog` owns the rules; `SummaryThinkingTests` covers them. Add new engines there, not with inline token math in the service.
+
+- **Ask for reasoning + answer, never just the answer.** `completionTokenBudget(configured:modelName:engine:baseURL:)` returns the user's configured Max Tokens plus headroom for models that reason, and the configured value unchanged for models that do not. Every request-building site calls it: `max_completion_tokens` (Compatible API), `max_tokens` (Mistral), `maxOutputTokens` (Gemini), `num_predict` (Ollama), `GenerateParameters.maxTokens` (MLX Swift — except when Light thinking is on, where `MLXSwiftEngine` applies its own `thinkingTokenAllowance` for the budget it explicitly requested).
+- **Headroom follows the model, not the Light toggle.** A thinking model reasons whether or not `SummaryThinkingLevel` asked it to, so `emitsReasoningTokens` gates the headroom, and it deliberately matches more names than `profile(...)` does. A cap that is too high costs nothing — providers bill generated tokens, not the cap — while one that is too low truncates the answer. Only `requestOptions` may decide which control *field* to send.
+- **Read the provider's own truncation signal; never infer it from the payload.** `finish_reason` of `length`/`max_tokens` (Compatible API, Mistral), `finishReason` of `MAX_TOKENS` (Gemini), `done_reason` of `length` (Ollama). Each is exposed as `wasTruncatedByTokenLimit` next to its response model.
+- **Retry once with a doubled budget, then fail loudly.** Reasoning length is unpredictable, so a single growth pass (capped at `maximumCompletionTokenBudget`) recovers the common case. What remains truncated throws `SummarizationError.responseTruncated`, which names the limit and the reasoning cost. Truncated content never reaches a parser. `SummaryManager` deliberately skips its blind retry for this error — the engine already grew the budget, so another pass would fail identically.
 
 ### Native macOS Build Notes
 
 Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target supports only iPhone and iPad destinations; the `BisonNotes AI macOS` scheme is the sole Mac product.
 
-- **AWS SDK for Swift accepts compatible 1.x releases from 1.7.46.** `Package.resolved` locks the reviewed checkout. The former exact 1.6.113 pin worked around an Xcode archive collision between native-macOS Smithy plugin host tools and Catalyst products staged into the same `UninstalledProducts/macosx` paths. With no Catalyst destination, that dual-variant collision cannot occur, so the project can consume current AWS service fixes and model updates without automatically crossing into a breaking 2.x release.
-- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** BisonNotes remains Apple Silicon-only because MLX Swift requires Apple Silicon. The vendored llama xcframework still contains its upstream universal macOS slice, but the app does not ship an Intel product.
-- The native target consumes `Frameworks/llama.xcframework/macos-arm64_x86_64` directly. Do not recreate or restore the deleted `ios-arm64-maccatalyst` slice.
-
-#### Remove `link "c++"` from llama modulemaps
-
-Each slice's `Modules/module.modulemap` (e.g. `ios-arm64/llama.framework/Modules/module.modulemap`) ships with a `link "c++"` directive. Another SPM dependency (MLX-Swift) already links libc++, so leaving this in causes a `Ignoring duplicate libraries: '-lc++'` warning at link time. Delete the `link "c++"` line from every slice's modulemap. The framework binary itself records libc++ as a load dependency, so dyld still resolves it at runtime.
-
-If the xcframework is rebuilt or updated from upstream, reapply this removal across all slices.
+- **Keep `EXCLUDED_ARCHS = x86_64` at the project level.** BisonNotes remains Apple Silicon-only because MLX Swift requires Apple Silicon.
+- The native target uses the MLX Swift package for on-device language-model inference. Do not add a vendored llama.cpp framework back to the project.
 
 The historical Catalyst guards in the `bisonbet/textual` fork are no longer required by this app and can be dropped when that separate repository is next rebased.
 
@@ -143,7 +140,7 @@ For AI-generated content display:
 - Use `AITextView` with MarkdownUI for all AI summaries, transcripts, and formatted content
 - MarkdownUI handles headers, lists, bold text, links, and complex formatting automatically
 - Text preprocessing in `AITextView.cleanTextForMarkdown()` removes JSON artifacts and normalizes content
-- Supports all AI engines: OpenAI, Claude (Bedrock), Gemini, Apple Intelligence, etc.
+- Supports all configured AI engines, including Gemini, Apple Intelligence, and compatible APIs.
 
 ## Key Files to Understand
 
@@ -151,10 +148,17 @@ For AI-generated content display:
 - `ContentView.swift`: Main tab interface
 - `Models/CoreDataManager.swift`: Core Data access layer
 - `Models/AppDataCoordinator.swift`: Unified data coordination
+- `iCloudStorageManager.swift`: CloudKit backup, restore, reconcile, and multi-device arbitration
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
+- `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
+- `FluidAudio/LocalDiarizationManager.swift`: Independent VBx/LS-EEND model lifecycle and adapters
+- `FluidAudio/SpeakerTranscriptAligner.swift`: Complete-source speaker timeline alignment
+- `AudioFileChunkingService.swift`: Shared ASR reassembly before post-ASR enrichment
 - `BackgroundProcessingManager.swift`: Background job management
-- `AWS/AWSBedrockModels.swift`: AWS Bedrock model definitions and API handling
-- `FutureAIEngines.swift`: AI engine implementations including AWS Bedrock
+- `FutureAIEngines.swift`: AI engine implementations
+- `Models/SummaryThinkingModelCatalog.swift`: Model thinking capabilities and reasoning output budgets
 - `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
+
+The active supported deployment minimums are iOS 18.5 and native macOS 15. Speaker models are explicitly downloaded over HTTPS, cached for offline use, and kept independent from Parakeet assets; they are never fetched implicitly when a transcription starts. See the user guide and testing regimen for user workflow and release-gate details.

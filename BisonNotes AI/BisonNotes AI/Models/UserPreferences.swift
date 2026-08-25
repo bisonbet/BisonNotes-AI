@@ -8,7 +8,7 @@
 import Foundation
 
 /// Enum for time format preferences
-enum TimeFormat: String, CaseIterable, Identifiable {
+enum TimeFormat: String, CaseIterable, Identifiable, Sendable {
     case twentyFourHour = "24h"
     case twelveHour = "12h"
 
@@ -34,7 +34,8 @@ enum TimeFormat: String, CaseIterable, Identifiable {
 }
 
 /// Manages user preferences for the app
-class UserPreferences: ObservableObject {
+@MainActor
+final class UserPreferences: ObservableObject {
     static let shared = UserPreferences()
 
     @Published var timeFormat: TimeFormat {

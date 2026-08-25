@@ -23,6 +23,7 @@ enum RTFExportError: LocalizedError {
 }
 
 #if canImport(UIKit)
+@MainActor
 final class RTFExportService {
     static let shared = RTFExportService()
 
@@ -444,7 +445,7 @@ final class RTFExportService {
         let details = [
             ("Word Count:", "\(summaryData.wordCount) words"),
             ("Original Length:", "\(summaryData.originalLength) characters"),
-            ("Compression Ratio:", summaryData.formattedCompressionRatio),
+            ("Summary Length:", summaryData.formattedSummaryLength),
             ("Processing Time:", summaryData.formattedProcessingTime)
         ]
 
@@ -563,6 +564,7 @@ final class RTFExportService {
     }
 }
 #else
+@MainActor
 final class RTFExportService {
     static let shared = RTFExportService()
 

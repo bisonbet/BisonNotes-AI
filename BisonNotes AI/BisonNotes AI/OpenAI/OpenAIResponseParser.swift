@@ -1,81 +1,70 @@
 //
-//  OpenAIResponseParser.swift
+//  ChatCompletionResponseParser.swift
 //  Audio Journal
 //
-//  OpenAI response parsing with standardized title cleaning
+//  Chat-completion response parsing with standardized title cleaning
 //
 
 import Foundation
 
-// MARK: - OpenAI Response Parser
+// MARK: - Chat Completion Response Parser
 
-class OpenAIResponseParser {
+enum ChatCompletionResponseParser {
+
+    private struct CompleteResponse: Codable {
+        let summary: String
+        let tasks: [TaskResponse]
+        let reminders: [ReminderResponse]
+        let titles: [TitleResponse]
+
+        struct TaskResponse: Codable {
+            let text: String
+            let priority: String?
+            let category: String?
+            let timeReference: String?
+            let confidence: Double?
+        }
+
+        struct ReminderResponse: Codable {
+            let text: String
+            let urgency: String?
+            let timeReference: String?
+            let confidence: Double?
+        }
+
+        struct TitleResponse: Codable {
+            let text: String
+            let category: String?
+            let confidence: Double?
+        }
+    }
+
+    private struct WrappedResponse: Codable {
+        let json: CompleteResponse
+    }
 
     // MARK: - Complete Response Parsing
 
     static func parseCompleteResponseFromJSON(_ jsonString: String) throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
         let cleanedJSON = extractJSONFromResponse(jsonString)
 
-        guard let data = cleanedJSON.data(using: .utf8) else {
+        guard !cleanedJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            AppLog.shared.networking("Empty JSON response received from compatible API", level: .error)
+            throw SummarizationError.aiServiceUnavailable(service: "Compatible API returned empty response")
+        }
+
+        guard cleanedJSON.data(using: .utf8) != nil else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
         }
 
-        struct CompleteResponse: Codable {
-            let summary: String
-            let tasks: [TaskResponse]
-            let reminders: [ReminderResponse]
-            let titles: [TitleResponse]
-
-            struct TaskResponse: Codable {
-                let text: String
-                let priority: String?
-                let category: String?
-                let timeReference: String?
-                let confidence: Double?
-            }
-
-            struct ReminderResponse: Codable {
-                let text: String
-                let urgency: String?
-                let timeReference: String?
-                let confidence: Double?
-            }
-
-            struct TitleResponse: Codable {
-                let text: String
-                let category: String?
-                let confidence: Double?
-            }
-        }
-
-        // Wrapper structure for providers that wrap JSON in {"json": {...}}
-        struct WrappedResponse: Codable {
-            let json: CompleteResponse
-        }
-
         do {
-            // Extract JSON from markdown code blocks if present
-            let jsonString = extractJSONFromResponse(jsonString)
-            let jsonData = jsonString.data(using: .utf8) ?? data
-
-            // First try to parse as a wrapped response (for providers like AWS Bedrock/Claude)
-            var response: CompleteResponse
-
-            do {
-                let wrapped = try JSONDecoder().decode(WrappedResponse.self, from: jsonData)
-                response = wrapped.json
-                AppLog.shared.networking("Parsed wrapped JSON response", level: .debug)
-            } catch {
-                // If that fails, try direct parsing (standard OpenAI format)
-                response = try JSONDecoder().decode(CompleteResponse.self, from: jsonData)
-                AppLog.shared.networking("Parsed standard JSON response", level: .debug)
-            }
+            let response = try decodeCompleteResponse(from: cleanedJSON)
 
             let tasks = response.tasks.map { taskResponse in
                 TaskItem(
-                    text: RecordingNameGenerator.cleanAIOutput(taskResponse.text),
+                    text: RecordingNameGenerator.cleanAIOutput(normalizeModelText(taskResponse.text)),
                     priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
-                    timeReference: taskResponse.timeReference,
+                    timeReference: taskResponse.timeReference.map(normalizeModelText),
                     category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
                     confidence: taskResponse.confidence ?? 0.8
                 )
@@ -83,12 +72,12 @@ class OpenAIResponseParser {
 
             let reminders = response.reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
-                let cleanedText = RecordingNameGenerator.cleanAIOutput(reminderResponse.text)
+                let cleanedText = RecordingNameGenerator.cleanAIOutput(normalizeModelText(reminderResponse.text))
 
                 // Use smart fallback: if AI didn't provide time reference, extract from reminder text
                 let timeRef: ReminderItem.TimeReference
                 if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
-                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                    timeRef = ReminderItem.TimeReference(originalText: normalizeModelText(aiTimeRef))
                 } else {
                     timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
                 }
@@ -104,7 +93,9 @@ class OpenAIResponseParser {
             let titles = response.titles.map { titleResponse in
                 let category = TitleItem.TitleCategory(rawValue: titleResponse.category?.lowercased() ?? "general") ?? .general
                 // Apply standardized title cleaning
-                let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(titleResponse.text)
+                let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(
+                    normalizeModelText(titleResponse.text)
+                )
                 return TitleItem(
                     text: cleanedTitle,
                     confidence: titleResponse.confidence ?? 0.8,
@@ -112,29 +103,192 @@ class OpenAIResponseParser {
                 )
             }
 
-            return (response.summary, tasks, reminders, titles)
+            return (normalizeModelText(response.summary), tasks, reminders, titles)
         } catch {
             AppLog.shared.networking("JSON parsing error for complete response: \(error)", level: .error)
 
-            // Check if the JSON is empty or malformed
-            if cleanedJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AppLog.shared.networking("Empty JSON response received from OpenAI", level: .error)
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty response")
-            }
-
             if cleanedJSON == "{}" {
-                AppLog.shared.networking("OpenAI returned empty JSON object - check API key and model configuration", level: .error)
-                throw SummarizationError.aiServiceUnavailable(service: "OpenAI returned empty JSON - check API key and model configuration")
+                AppLog.shared.networking("Compatible API returned empty JSON object - check credentials and model configuration", level: .error)
+                throw SummarizationError.aiServiceUnavailable(service: "Compatible API returned empty JSON - check credentials and model configuration")
             }
 
-            // Fallback: try to extract information from plain text
-            let summary = extractSummaryFromPlainText(jsonString)
-            let tasks = extractTasksFromPlainText(jsonString)
-            let reminders = extractRemindersFromPlainText(jsonString)
-            let titles = extractTitlesFromPlainText(jsonString)
-
-            return (summary, tasks, reminders, titles)
+            // Complete responses are a strict structured-output contract. Never
+            // turn malformed JSON into line-based tasks or reminders: doing so
+            // can persist JSON keys and summary text as user data. SummaryManager
+            // owns the bounded retry when this error is thrown.
+            AppLog.shared.networking(
+                "Compatible API returned invalid structured response; discarding it instead of extracting metadata",
+                level: .error
+            )
+            throw SummarizationError.aiServiceUnavailable(
+                service: "Compatible API returned invalid structured response"
+            )
         }
+    }
+
+    /// Decodes the complete structured response and makes one narrow recovery
+    /// attempt for models that emit an invalid backslash escape inside a JSON
+    /// string (for example `\A`). Other malformed JSON remains a hard failure.
+    private static func decodeCompleteResponse(from json: String) throws -> CompleteResponse {
+        guard let data = json.data(using: .utf8) else {
+            throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
+        }
+
+        do {
+            return try decodeCompleteResponsePayload(from: data)
+        } catch {
+            guard let repairedJSON = repairMalformedJSONEscapes(in: json),
+                  let repairedData = repairedJSON.data(using: .utf8) else {
+                throw error
+            }
+
+            AppLog.shared.networking(
+                "Repairing invalid JSON escape sequences in complete response",
+                level: .debug
+            )
+            return try decodeCompleteResponsePayload(from: repairedData)
+        }
+    }
+
+    private static func decodeCompleteResponsePayload(from data: Data) throws -> CompleteResponse {
+        // Some gateways wrap tool-shaped JSON in {"json": {...}} while standard
+        // chat-completion endpoints return the complete object directly.
+        do {
+            let wrapped = try JSONDecoder().decode(WrappedResponse.self, from: data)
+            AppLog.shared.networking("Parsed wrapped JSON response", level: .debug)
+            return wrapped.json
+        } catch {
+            let response = try JSONDecoder().decode(CompleteResponse.self, from: data)
+            AppLog.shared.networking("Parsed standard JSON response", level: .debug)
+            return response
+        }
+    }
+
+    /// Removes only backslashes that are illegal JSON escapes while preserving
+    /// all valid JSON escapes. This lets us recover a usable response from a
+    /// model that emitted `\A` instead of rejecting otherwise complete data.
+    private static func repairMalformedJSONEscapes(in json: String) -> String? {
+        var repaired = String()
+        repaired.reserveCapacity(json.count)
+
+        var inString = false
+        var changed = false
+        var index = json.startIndex
+
+        while index < json.endIndex {
+            let character = json[index]
+
+            if character == "\"" {
+                repaired.append(character)
+                inString.toggle()
+                index = json.index(after: index)
+                continue
+            }
+
+            guard inString, character == "\\" else {
+                repaired.append(character)
+                index = json.index(after: index)
+                continue
+            }
+
+            let nextIndex = json.index(after: index)
+            guard nextIndex < json.endIndex else {
+                changed = true
+                index = nextIndex
+                continue
+            }
+
+            let nextCharacter = json[nextIndex]
+            if isValidJSONEscapeCharacter(nextCharacter) {
+                repaired.append(character)
+                repaired.append(nextCharacter)
+            } else {
+                // The backslash cannot represent a valid JSON escape. Drop
+                // only that invalid marker and retain the model's character.
+                repaired.append(nextCharacter)
+                changed = true
+            }
+            index = json.index(after: nextIndex)
+        }
+
+        return changed ? repaired : nil
+    }
+
+    private static func isValidJSONEscapeCharacter(_ character: Character) -> Bool {
+        switch character {
+        case "\"", "\\", "/", "b", "f", "n", "r", "t", "u":
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Normalizes text that was valid JSON but contained a second layer of
+    /// escaping, which some compatible gateways return for Markdown strings.
+    ///
+    /// `JSONDecoder` has already resolved the real JSON escaping by the time this
+    /// runs, so anything left is literal text the model meant to send. Unescaping
+    /// unconditionally turned a Windows path like `C:\new_folder` into a newline
+    /// and a regex `\t` into a tab, then stripped the surviving backslashes —
+    /// quietly corrupting summaries about anything technical.
+    static func normalizeModelText(_ text: String) -> String {
+        guard looksDoubleEncoded(text) else {
+            return text
+        }
+
+        var normalized = text
+        normalized = normalized.replacingOccurrences(of: "\\n", with: "\n")
+        normalized = normalized.replacingOccurrences(of: "\\r", with: "\n")
+        normalized = normalized.replacingOccurrences(of: "\\t", with: "\t")
+        normalized = normalized.replacingOccurrences(of: "\\\"", with: "\"")
+        return removeInvalidEscapeMarkers(from: normalized)
+    }
+
+    /// A double-encoded payload arrives as one flat run with its line breaks still
+    /// spelled `\n`, so real line breaks anywhere are proof the text already
+    /// decoded correctly and its backslashes are the model's own.
+    ///
+    /// This is a heuristic, and deliberately the conservative one: it can leave a
+    /// genuinely double-encoded single-line string alone, which shows the escape
+    /// sequence to the reader. The alternative failure destroys content.
+    private static func looksDoubleEncoded(_ text: String) -> Bool {
+        guard text.contains("\\n") || text.contains("\\r") else {
+            return false
+        }
+        return !text.contains("\n") && !text.contains("\r\n")
+    }
+
+    private static func removeInvalidEscapeMarkers(from text: String) -> String {
+        var normalized = String()
+        normalized.reserveCapacity(text.count)
+
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            guard character == "\\" else {
+                normalized.append(character)
+                index = text.index(after: index)
+                continue
+            }
+
+            let nextIndex = text.index(after: index)
+            guard nextIndex < text.endIndex else {
+                index = nextIndex
+                continue
+            }
+
+            let nextCharacter = text[nextIndex]
+            if isValidJSONEscapeCharacter(nextCharacter) {
+                normalized.append(character)
+                index = nextIndex
+            } else {
+                // Keep the content but remove a stray model-generated escape
+                // marker such as the `\A` seen in malformed summaries.
+                index = nextIndex
+            }
+        }
+
+        return normalized
     }
 
     // MARK: - Individual Response Parsing
@@ -157,7 +311,9 @@ class OpenAIResponseParser {
             return titles.map { titleResponse in
                 let category = TitleItem.TitleCategory(rawValue: titleResponse.category?.lowercased() ?? "general") ?? .general
                 // Apply standardized title cleaning
-                let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(titleResponse.text)
+                let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(
+                    normalizeModelText(titleResponse.text)
+                )
                 return TitleItem(
                     text: cleanedTitle,
                     confidence: titleResponse.confidence ?? 0.8,
@@ -188,9 +344,9 @@ class OpenAIResponseParser {
             let tasks = try JSONDecoder().decode([TaskResponse].self, from: data)
             return tasks.map { taskResponse in
                 TaskItem(
-                    text: RecordingNameGenerator.cleanAIOutput(taskResponse.text),
+                    text: RecordingNameGenerator.cleanAIOutput(normalizeModelText(taskResponse.text)),
                     priority: TaskItem.Priority(rawValue: taskResponse.priority?.lowercased() ?? "medium") ?? .medium,
-                    timeReference: taskResponse.timeReference,
+                    timeReference: taskResponse.timeReference.map(normalizeModelText),
                     category: TaskItem.TaskCategory(rawValue: taskResponse.category?.lowercased() ?? "general") ?? .general,
                     confidence: taskResponse.confidence ?? 0.8
                 )
@@ -218,12 +374,12 @@ class OpenAIResponseParser {
             let reminders = try JSONDecoder().decode([ReminderResponse].self, from: data)
             return reminders.map { reminderResponse in
                 let urgency = ReminderItem.Urgency(rawValue: reminderResponse.urgency?.lowercased() ?? "later") ?? .later
-                let cleanedText = RecordingNameGenerator.cleanAIOutput(reminderResponse.text)
+                let cleanedText = RecordingNameGenerator.cleanAIOutput(normalizeModelText(reminderResponse.text))
 
                 // Use smart fallback: if AI didn't provide time reference, extract from reminder text
                 let timeRef: ReminderItem.TimeReference
                 if let aiTimeRef = reminderResponse.timeReference, !aiTimeRef.isEmpty && aiTimeRef != "No time specified" {
-                    timeRef = ReminderItem.TimeReference(originalText: aiTimeRef)
+                    timeRef = ReminderItem.TimeReference(originalText: normalizeModelText(aiTimeRef))
                 } else {
                     timeRef = ReminderItem.TimeReference.fromReminderText(cleanedText)
                 }
@@ -240,167 +396,19 @@ class OpenAIResponseParser {
         }
     }
 
-    // MARK: - Plain Text Extraction (Fallback)
-
-    private static func extractSummaryFromPlainText(_ text: String) -> String {
-        // First, try to extract JSON summary field if present
-        if let jsonSummary = extractSummaryFromJSON(text) {
-            return jsonSummary
-        }
-
-        // Try to find a summary in the text
-        let lines = text.components(separatedBy: .newlines)
-        var summaryLines: [String] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty &&
-               !trimmed.lowercased().contains("task") &&
-               !trimmed.lowercased().contains("reminder") &&
-               !trimmed.contains("{") && !trimmed.contains("}") &&
-               !trimmed.contains("[") && !trimmed.contains("]") &&
-               !trimmed.contains("\"summary\"") && // Skip JSON structure lines
-               trimmed.count > 20 {
-                summaryLines.append(trimmed)
-            }
-        }
-
-        let summary = summaryLines.joined(separator: "\n\n")
-
-        // Add basic markdown formatting to the fallback summary
-        if summary.isEmpty {
-            return "## Summary\n\n*Unable to generate summary from the provided content.*"
-        } else {
-            // Add a header and format as markdown
-            let formattedSummary = "## Summary\n\n" + summary
-                .replacingOccurrences(of: ". ", with: ".\n\n• ")
-                .replacingOccurrences(of: "• • ", with: "• ")
-            return formattedSummary
-        }
-    }
-
-    private static func extractTasksFromPlainText(_ text: String) -> [TaskItem] {
-        let lines = text.components(separatedBy: .newlines)
-        var tasks: [TaskItem] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Look for task indicators
-            if trimmed.lowercased().contains("task") ||
-               trimmed.lowercased().contains("todo") ||
-               trimmed.lowercased().contains("action") ||
-               trimmed.lowercased().contains("need to") ||
-               trimmed.lowercased().contains("should") {
-
-                // Clean up the task text
-                let cleanText = trimmed
-                    .replacingOccurrences(of: "Task:", with: "")
-                    .replacingOccurrences(of: "TODO:", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                if !cleanText.isEmpty && cleanText.count > 5 {
-                    tasks.append(TaskItem(
-                        text: cleanText,
-                        priority: .medium,
-                        timeReference: nil,
-                        category: .general,
-                        confidence: 0.6
-                    ))
-                }
-            }
-        }
-
-        return tasks
-    }
-
-    private static func extractRemindersFromPlainText(_ text: String) -> [ReminderItem] {
-        let lines = text.components(separatedBy: .newlines)
-        var reminders: [ReminderItem] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Look for reminder indicators
-            if trimmed.lowercased().contains("reminder") ||
-               trimmed.lowercased().contains("remember") ||
-               trimmed.lowercased().contains("don't forget") ||
-               trimmed.lowercased().contains("appointment") ||
-               trimmed.lowercased().contains("meeting") {
-
-                // Clean up the reminder text
-                let cleanText = trimmed
-                    .replacingOccurrences(of: "Reminder:", with: "")
-                    .replacingOccurrences(of: "Remember:", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                if !cleanText.isEmpty && cleanText.count > 5 {
-                    reminders.append(ReminderItem(
-                        text: cleanText,
-                        timeReference: ReminderItem.TimeReference.fromReminderText(cleanText),
-                        urgency: .later,
-                        confidence: 0.6
-                    ))
-                }
-            }
-        }
-
-        return reminders
-    }
-
-    private static func extractTitlesFromPlainText(_ text: String) -> [TitleItem] {
-        let lines = text.components(separatedBy: .newlines)
-        var titles: [TitleItem] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Look for title indicators
-            if trimmed.lowercased().contains("title") ||
-               trimmed.lowercased().contains("headline") ||
-               trimmed.lowercased().contains("topic") ||
-               trimmed.lowercased().contains("subject") {
-
-                // Clean up the title text
-                let cleanText = trimmed
-                    .replacingOccurrences(of: "Title:", with: "")
-                    .replacingOccurrences(of: "Headline:", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-
-                if !cleanText.isEmpty && cleanText.count > 5 {
-                    // Apply standardized title cleaning
-                    let cleanedTitle = RecordingNameGenerator.cleanStandardizedTitleResponse(cleanText)
-                    if cleanedTitle != "Untitled Conversation" {
-                        titles.append(TitleItem(
-                            text: cleanedTitle,
-                            confidence: 0.6,
-                            category: .general
-                        ))
-                    }
-                }
-            }
-        }
-
-        return titles
-    }
-
     // MARK: - Helper Methods
 
     private static func extractJSONFromResponse(_ response: String) -> String {
         var cleaned = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Step 1: Remove markdown code blocks
-        if cleaned.contains("```json") {
-            if let start = cleaned.range(of: "```json") {
-                cleaned = String(cleaned[start.upperBound...])
-            }
+        // Step 1: Remove markdown code blocks.
+        if let start = cleaned.range(of: "```json", options: .caseInsensitive) {
+            cleaned = String(cleaned[start.upperBound...])
             if let end = cleaned.range(of: "```") {
                 cleaned = String(cleaned[..<end.lowerBound])
             }
-        } else if cleaned.contains("```") {
-            if let start = cleaned.range(of: "```") {
-                cleaned = String(cleaned[start.upperBound...])
-            }
+        } else if let start = cleaned.range(of: "```") {
+            cleaned = String(cleaned[start.upperBound...])
             if let end = cleaned.range(of: "```") {
                 cleaned = String(cleaned[..<end.lowerBound])
             }
@@ -417,24 +425,45 @@ class OpenAIResponseParser {
             }
         }
 
-        // Step 3: Find the matching closing brace/bracket
-        if cleaned.hasPrefix("{") {
-            var braceCount = 0
-            var endIndex = cleaned.startIndex
+        // Step 3: Find the matching closing delimiter while ignoring braces,
+        // brackets, and quotes inside JSON strings.
+        if let firstCharacter = cleaned.first,
+           firstCharacter == "{" || firstCharacter == "[" {
+            var delimiters: [Character] = []
+            var isInsideString = false
+            var index = cleaned.startIndex
+            var endIndex: String.Index?
 
-            for (index, char) in cleaned.enumerated() {
-                if char == "{" {
-                    braceCount += 1
-                } else if char == "}" {
-                    braceCount -= 1
-                    if braceCount == 0 {
-                        endIndex = cleaned.index(cleaned.startIndex, offsetBy: index + 1)
-                        break
+            while index < cleaned.endIndex {
+                let character = cleaned[index]
+
+                if character == "\"" {
+                    let previousIndex = index > cleaned.startIndex
+                        ? cleaned.index(before: index)
+                        : nil
+                    let isEscaped = previousIndex.map { cleaned[$0] == "\\" } ?? false
+                    if !isEscaped {
+                        isInsideString.toggle()
+                    }
+                } else if !isInsideString {
+                    if character == "{" || character == "[" {
+                        delimiters.append(character)
+                    } else if character == "}" || character == "]" {
+                        let expectedOpening: Character = character == "}" ? "{" : "["
+                        if delimiters.last == expectedOpening {
+                            delimiters.removeLast()
+                            if delimiters.isEmpty {
+                                endIndex = cleaned.index(after: index)
+                                break
+                            }
+                        }
                     }
                 }
+
+                index = cleaned.index(after: index)
             }
 
-            if endIndex > cleaned.startIndex {
+            if let endIndex {
                 cleaned = String(cleaned[..<endIndex])
             }
         }
@@ -444,40 +473,4 @@ class OpenAIResponseParser {
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func extractSummaryFromJSON(_ text: String) -> String? {
-        // Try to extract the summary field from JSON
-        let lines = text.components(separatedBy: .newlines)
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Look for "summary": "..." pattern
-            if trimmed.contains("\"summary\"") && trimmed.contains(":") {
-                if let colonIndex = trimmed.firstIndex(of: ":") {
-                    let afterColon = String(trimmed[trimmed.index(after: colonIndex)...])
-                        .trimmingCharacters(in: .whitespaces)
-
-                    // Remove quotes if present
-                    if afterColon.hasPrefix("\"") && afterColon.hasSuffix("\"") {
-                        let startIndex = afterColon.index(after: afterColon.startIndex)
-                        let endIndex = afterColon.index(before: afterColon.endIndex)
-                        return String(afterColon[startIndex..<endIndex])
-                    } else if afterColon.hasPrefix("\"") {
-                        // Handle multi-line summary
-                        let startIndex = afterColon.index(after: afterColon.startIndex)
-                        var summaryContent = String(afterColon[startIndex...])
-
-                        // Find the closing quote
-                        if let endQuoteIndex = summaryContent.firstIndex(of: "\"") {
-                            summaryContent = String(summaryContent[..<endQuoteIndex])
-                        }
-
-                        return summaryContent
-                    }
-                }
-            }
-        }
-
-        return nil
-    }
 }

@@ -9,419 +9,6 @@ import Foundation
 import os.log
 import SwiftUI
 
-// MARK: - AWS Bedrock Engine
-
-class AWSBedrockEngine: SummarizationEngine, ConnectionTestable {
-    var name: String { "AWS Bedrock" }
-    var engineType: String { "AWS Bedrock" }
-    var description: String { "Enterprise-grade AI using Amazon Bedrock foundation models." }
-    let version: String = "1.0"
-    var metadataName: String {
-        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
-        return AWSBedrockModel(rawValue: modelString)?.displayName ?? modelString
-    }
-
-    private var service: AWSBedrockService?
-    private var currentConfig: AWSBedrockConfig?
-
-    var isAvailable: Bool {
-        // Check if AWS Bedrock is enabled in settings
-        let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-        let keyExists = UserDefaults.standard.object(forKey: "enableAWSBedrock") != nil
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Checking enableAWSBedrock setting - Value: \(isEnabled), Key exists: \(keyExists)", category: "AWSBedrockEngine")
-        }
-
-        guard isEnabled else {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                AppLogger.shared.verbose("AWS Bedrock is not enabled in settings", category: "AWSBedrockEngine")
-            }
-            return false
-        }
-
-        // Check credentials using unified credentials manager
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-
-        // Check credentials based on authentication method
-        if useProfile {
-            guard !profileName.isEmpty else {
-                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    AppLogger.shared.verbose("AWS profile name not configured", category: "AWSBedrockEngine")
-                }
-                return false
-            }
-        } else {
-            // Use unified credentials manager instead of separate UserDefaults keys
-            let credentials = AWSCredentialsManager.shared.credentials
-            guard credentials.isValid else {
-                if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-                    AppLogger.shared.verbose("AWS credentials not configured in unified manager", category: "AWSBedrockEngine")
-                }
-                return false
-            }
-        }
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineAvailabilityChecks() {
-            AppLogger.shared.verbose("Basic availability checks passed", category: "AWSBedrockEngine")
-        }
-        return true
-    }
-
-    init() {
-        updateConfiguration()
-    }
-
-    func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        AppLog.shared.networking("AWSBedrockEngine: Starting summary generation")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            AppLog.shared.networking("AWSBedrockEngine: Service is nil", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        AppLog.shared.networking("AWSBedrockEngine: Calling AWS Bedrock service for summary")
-
-        do {
-            return try await service.generateSummary(from: text, contentType: contentType)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Summary generation failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractTasks(from text: String) async throws -> [TaskItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting task extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractTasks(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Task extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractReminders(from text: String) async throws -> [ReminderItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting reminder extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractReminders(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Reminder extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func extractTitles(from text: String) async throws -> [TitleItem] {
-        AppLog.shared.networking("AWSBedrockEngine: Starting title extraction")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.extractTitles(from: text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Title extraction failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func classifyContent(_ text: String) async throws -> ContentType {
-        AppLog.shared.networking("AWSBedrockEngine: Starting content classification")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        do {
-            return try await service.classifyContent(text)
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Content classification failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        AppLog.shared.networking("AWSBedrockEngine: Starting complete processing")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: "AWS Bedrock service not properly configured")
-        }
-
-        // Check if text needs chunking based on token count
-        let tokenCount = TokenManager.getTokenCount(text)
-        AppLog.shared.networking("AWSBedrockEngine: Text token count: \(tokenCount)", level: .debug)
-
-        do {
-            // Use the model's context window for chunking decision
-            let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
-            if TokenManager.needsChunking(text, maxTokens: contextWindow) {
-                AppLog.shared.networking("AWSBedrockEngine: Large transcript detected (\(tokenCount) tokens), using chunked processing", level: .debug)
-                return try await processChunkedText(text, service: service)
-            } else {
-                AppLog.shared.networking("AWSBedrockEngine: Processing single chunk (\(tokenCount) tokens)", level: .debug)
-                return try await service.processComplete(text: text)
-            }
-        } catch {
-            AppLog.shared.networking("AWSBedrockEngine: Complete processing failed: \(error)", level: .error)
-            throw handleAPIError(error)
-        }
-    }
-
-    // MARK: - Configuration Management
-
-    private func updateConfiguration() {
-        // Use unified credentials manager instead of separate UserDefaults keys
-        let credentials = AWSCredentialsManager.shared.credentials
-        let sessionToken = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.awsBedrockSessionToken)
-        let storedModelString = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-        // Migrate legacy model identifiers
-        let modelString = AWSBedrockModel.migrate(rawValue: storedModelString)
-        let temperature = UserDefaults.standard.double(forKey: "awsBedrockTemperature")
-        let maxTokens = UserDefaults.standard.integer(forKey: "awsBedrockMaxTokens")
-        let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-        let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName")
-
-        let model = AWSBedrockModel(rawValue: modelString) ?? .claude45Haiku
-
-        let newConfig = AWSBedrockConfig(
-            region: credentials.region,
-            accessKeyId: credentials.accessKeyId,
-            secretAccessKey: credentials.secretAccessKey,
-            sessionToken: sessionToken,
-            model: model,
-            temperature: temperature > 0 ? temperature : 0.1,
-            maxTokens: maxTokens > 0 ? maxTokens : 4096,
-            timeout: SummarizationTimeouts.current(),
-            useProfile: useProfile,
-            profileName: profileName
-        )
-
-        // Only create a new service if the configuration has actually changed
-        if currentConfig == nil || currentConfig != newConfig {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Updating configuration - Model: \(modelString), Region: \(credentials.region)", category: "AWSBedrockEngine")
-            }
-
-            self.currentConfig = newConfig
-            self.service = AWSBedrockService(config: newConfig)
-
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLogger.shared.verbose("Configuration updated successfully", category: "AWSBedrockEngine")
-            }
-        }
-    }
-
-    // MARK: - Chunked Processing
-
-    private func processChunkedText(_ text: String, service: AWSBedrockService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
-        let startTime = Date()
-
-        // Initialize Ollama service for meta-summary generation
-        let ollamaService = OllamaService()
-        _ = await ollamaService.testConnection()
-
-        // Split text into chunks
-        let contextWindow = currentConfig?.model.contextWindow ?? TokenManager.maxTokensPerChunk
-        let chunks = TokenManager.chunkText(text, maxTokens: contextWindow)
-        AppLog.shared.networking("AWSBedrockEngine: Split text into \(chunks.count) chunks", level: .debug)
-
-        // Process each chunk
-        var allSummaries: [String] = []
-        var allTasks: [TaskItem] = []
-        var allReminders: [ReminderItem] = []
-        var allTitles: [TitleItem] = []
-        var contentType: ContentType = .general
-
-        for (index, chunk) in chunks.enumerated() {
-            AppLog.shared.networking("AWSBedrockEngine: Processing chunk \(index + 1) of \(chunks.count) (\(TokenManager.getTokenCount(chunk)) tokens)", level: .debug)
-
-            do {
-                let chunkResult = try await service.processComplete(text: chunk)
-                allSummaries.append(chunkResult.summary)
-                allTasks.append(contentsOf: chunkResult.tasks)
-                allReminders.append(contentsOf: chunkResult.reminders)
-                allTitles.append(contentsOf: chunkResult.titles)
-
-                // Use the first chunk's content type
-                if index == 0 {
-                    contentType = chunkResult.contentType
-                }
-
-                // Add delay between chunks to avoid rate limiting
-                if index < chunks.count - 1 {
-                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second between chunks
-                }
-
-            } catch {
-                AppLog.shared.networking("AWSBedrockEngine: Failed to process chunk \(index + 1): \(error)", level: .error)
-                throw error
-            }
-        }
-
-        // Combine results using AI-generated meta-summary
-        let combinedSummary = try await TokenManager.combineSummaries(
-            allSummaries,
-            contentType: contentType,
-            service: ollamaService
-        )
-
-        // Deduplicate tasks, reminders, and titles
-        let uniqueTasks = deduplicateTasks(allTasks)
-        let uniqueReminders = deduplicateReminders(allReminders)
-        let uniqueTitles = deduplicateTitles(allTitles)
-
-        let processingTime = Date().timeIntervalSince(startTime)
-        AppLog.shared.networking("AWSBedrockEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
-        AppLog.shared.networking("AWSBedrockEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
-
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
-    }
-
-    private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
-        var uniqueTasks: [TaskItem] = []
-
-        for task in tasks {
-            let isDuplicate = uniqueTasks.contains { existingTask in
-                let similarity = calculateTextSimilarity(task.text, existingTask.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueTasks.append(task)
-            }
-        }
-
-        return Array(uniqueTasks.prefix(15)) // Limit to 15 tasks
-    }
-
-    private func deduplicateReminders(_ reminders: [ReminderItem]) -> [ReminderItem] {
-        var uniqueReminders: [ReminderItem] = []
-
-        for reminder in reminders {
-            let isDuplicate = uniqueReminders.contains { existingReminder in
-                let similarity = calculateTextSimilarity(reminder.text, existingReminder.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueReminders.append(reminder)
-            }
-        }
-
-        return Array(uniqueReminders.prefix(15)) // Limit to 15 reminders
-    }
-
-    private func deduplicateTitles(_ titles: [TitleItem]) -> [TitleItem] {
-        var uniqueTitles: [TitleItem] = []
-
-        for title in titles {
-            let isDuplicate = uniqueTitles.contains { existingTitle in
-                let similarity = calculateTextSimilarity(title.text, existingTitle.text)
-                return similarity > 0.8
-            }
-
-            if !isDuplicate {
-                uniqueTitles.append(title)
-            }
-        }
-
-        return Array(uniqueTitles.prefix(5)) // Limit to 5 titles
-    }
-
-    private func calculateTextSimilarity(_ text1: String, _ text2: String) -> Double {
-        let words1 = Set(text1.lowercased().components(separatedBy: .whitespacesAndNewlines))
-        let words2 = Set(text2.lowercased().components(separatedBy: .whitespacesAndNewlines))
-
-        let intersection = words1.intersection(words2)
-        let union = words1.union(words2)
-
-        return union.isEmpty ? 0.0 : Double(intersection.count) / Double(union.count)
-    }
-
-    // MARK: - Connection Testing
-
-    func testConnection() async -> Bool {
-        AppLog.shared.networking("AWSBedrockEngine: Testing connection")
-
-        updateConfiguration()
-
-        guard let service = service else {
-            AppLog.shared.networking("AWSBedrockEngine: Service is nil - configuration issue", level: .error)
-            return false
-        }
-
-        let connectionResult = await service.testConnection()
-        if connectionResult {
-            AppLog.shared.networking("AWSBedrockEngine: Connection test successful")
-            return true
-        } else {
-            AppLog.shared.networking("AWSBedrockEngine: Connection test failed", level: .error)
-            return false
-        }
-    }
-
-    func loadAvailableModels() async throws -> [AWSBedrockModel] {
-        updateConfiguration()
-        guard let service = service else {
-            throw SummarizationError.aiServiceUnavailable(service: name)
-        }
-
-        return try await service.listAvailableModels()
-    }
-
-    // MARK: - Enhanced Error Handling
-
-    private func handleAPIError(_ error: Error) -> SummarizationError {
-        if let summarizationError = error as? SummarizationError {
-            return summarizationError
-        }
-
-        // Handle specific AWS Bedrock errors
-        let errorString = error.localizedDescription.lowercased()
-
-        if errorString.contains("access denied") || errorString.contains("unauthorized") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock access denied. Please check your credentials and permissions.")
-        } else if errorString.contains("throttling") || errorString.contains("rate limit") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock rate limit exceeded. Please try again later.")
-        } else if errorString.contains("model not found") || errorString.contains("validation") {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock model not available. Please check your model configuration.")
-        } else if errorString.contains("timeout") || errorString.contains("network") {
-            return SummarizationError.processingTimeout
-        } else {
-            return SummarizationError.aiServiceUnavailable(service: "AWS Bedrock error: \(error.localizedDescription)")
-        }
-    }
-}
-
 // MARK: - Local LLM Engine (Ollama)
 
 class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
@@ -430,10 +17,15 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     let description: String = "Privacy-focused local language model processing using Ollama"
     let version: String = "1.0"
     var metadataName: String {
-        return UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        return UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
     }
 
     var isAvailable: Bool {
+        guard AIEngineType.localLLM.isSupportedOnCurrentPlatform else {
+            return false
+        }
+
         // Check if Ollama is enabled in settings
         let isEnabled = UserDefaults.standard.bool(forKey: "enableOllama")
         let keyExists = UserDefaults.standard.object(forKey: "enableOllama") != nil
@@ -453,7 +45,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
 
         // Check if server URL is configured (use defaults if not set)
         _ = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
-        _ = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        _ = UserDefaults.standard.string(forKey: "ollamaModelName") ?? AppSettingsKeys.Defaults.ollamaModelName
 
         // For Ollama to be considered available, we need to have both URL and model
         // But we should also check if this is actually a real Ollama server
@@ -485,7 +77,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         // Initialize with saved configuration
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
@@ -679,7 +272,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         return contentType
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // Update configuration with latest settings
         updateConfiguration()
 
@@ -712,6 +305,15 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
             do {
                 return try await processSingleChunk(text, service: service)
             } catch {
+                // A truncated answer is an output-budget problem, not an input-context
+                // one, and its message names a token limit — the prose match below
+                // would read that as "context exceeded" and replace a clear error
+                // with a far more expensive retry that truncates all over again.
+                if let summarizationError = error as? SummarizationError,
+                   case .responseTruncated = summarizationError {
+                    throw summarizationError
+                }
+
                 // If the server reports a context window issue, retry with chunked processing
                 let errorMessage = error.localizedDescription.lowercased()
                 if errorMessage.contains("context") || errorMessage.contains("token") {
@@ -730,7 +332,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunk(_ text: String, service: OllamaService) async throws -> SummarizationResult {
         AppLog.shared.networking("LocalLLMEngine: Processing single chunk with Ollama using complete processing", level: .debug)
 
         do {
@@ -749,7 +351,7 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         }
     }
 
-    private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunkFallback(_ text: String, service: OllamaService) async throws -> SummarizationResult {
         AppLog.shared.networking("LocalLLMEngine: Using fallback individual processing", level: .debug)
 
         // Process requests sequentially to avoid overwhelming the Ollama server
@@ -792,10 +394,16 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.networking("LocalLLMEngine: Fallback processing completed")
         AppLog.shared.networking("LocalLLMEngine: Result - summary: \(summary.count) chars, tasks: \(tasks.count), reminders: \(reminders.count), titles: \(titles.count)", level: .debug)
 
-        return (summary, tasks, reminders, titles, contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
-    private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: OllamaService, maxTokens: Int) async throws -> SummarizationResult {
         let startTime = Date()
 
         // Split text into chunks
@@ -851,7 +459,13 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         AppLog.shared.networking("LocalLLMEngine: Chunked processing completed in \(String(format: "%.2f", processingTime))s")
         AppLog.shared.networking("LocalLLMEngine: Final results - summary: \(combinedSummary.count) chars, tasks: \(uniqueTasks.count), reminders: \(uniqueReminders.count), titles: \(uniqueTitles.count)", level: .debug)
 
-        return (combinedSummary, uniqueTasks, uniqueReminders, uniqueTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: uniqueTasks,
+            reminders: uniqueReminders,
+            titles: uniqueTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {
@@ -920,7 +534,8 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
     func updateConfiguration() {
         let serverURL = UserDefaults.standard.string(forKey: "ollamaServerURL") ?? "http://localhost"
         let port = UserDefaults.standard.integer(forKey: "ollamaPort")
-        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName") ?? "llama2:7b"
+        let modelName = UserDefaults.standard.string(forKey: "ollamaModelName")
+            ?? AppSettingsKeys.Defaults.ollamaModelName
         let maxTokens = UserDefaults.standard.integer(forKey: "ollamaMaxTokens")
         let temperature = UserDefaults.standard.double(forKey: "ollamaTemperature")
         let contextTokens = UserDefaults.standard.integer(forKey: "ollamaContextTokens")
@@ -1102,7 +717,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     let isAvailable: Bool
     let version = "1.0"
     var metadataName: String {
-        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
+        return UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3.7-flash"
     }
 
     private let service = GoogleAIStudioService()
@@ -1164,7 +779,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         return parseContentTypeFromResponse(response)
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         guard isAvailable else {
             throw SummarizationError.aiServiceUnavailable(service: name)
         }
@@ -1183,6 +798,15 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 return try await processSingleChunk(text)
             }
         } catch {
+            // A truncated answer is an output-budget problem, not an input-context
+            // one, and its message names a token limit — the prose match below
+            // would read that as "context exceeded" and replace a clear error
+            // with a far more expensive retry that truncates all over again.
+            if let summarizationError = error as? SummarizationError,
+               case .responseTruncated = summarizationError {
+                throw summarizationError
+            }
+
             // If the server reports a context window issue, retry with chunked processing
             let errorMessage = error.localizedDescription.lowercased()
             if errorMessage.contains("context") || errorMessage.contains("token") {
@@ -1193,7 +817,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         }
     }
 
-    private func processSingleChunk(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processSingleChunk(_ text: String) async throws -> SummarizationResult {
         // Create a comprehensive prompt for complete processing
         let prompt = createCompleteProcessingPrompt(text: text)
 
@@ -1203,7 +827,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         // Parse the structured response
         let components = parseStructuredResponse(response)
 
-        return (
+        return SummarizationResult(
             summary: components.summary,
             tasks: components.tasks,
             reminders: components.reminders,
@@ -1214,7 +838,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
     // MARK: - Chunked Processing
 
-    private func processChunkedText(_ text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String) async throws -> SummarizationResult {
         let startTime = Date()
 
         AppLog.shared.networking("GoogleAI: Starting chunked processing")
@@ -1252,6 +876,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         // Combine all summaries into a final meta-summary
         let combinedSummary = summaries.joined(separator: "\n\n")
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
         let finalSummary: String
 
         if TokenManager.needsChunking(combinedSummary, maxTokens: TokenManager.googleAIStudioContextWindow) {
@@ -1260,7 +887,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
         } else {
             // Generate a meta-summary from all chunk summaries
             let metaPrompt = """
-            Please create a comprehensive summary by combining these section summaries:
+            Please create a summary by combining these section summaries at the selected detail level.
+
+            \(detailInstructions)
 
             \(combinedSummary)
 
@@ -1287,7 +916,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         AppLog.shared.networking("GoogleAI: Chunked processing completed in \(processingTime)s")
         AppLog.shared.networking("GoogleAI: Final results - tasks: \(deduplicatedTasks.count), reminders: \(deduplicatedReminders.count), titles: \(deduplicatedTitles.count)", level: .debug)
 
-        return (
+        return SummarizationResult(
             summary: finalSummary,
             tasks: deduplicatedTasks,
             reminders: deduplicatedReminders,
@@ -1307,8 +936,14 @@ class GoogleAIStudioEngine: SummarizationEngine {
     // MARK: - Private Helper Methods
 
     private func createSummaryPrompt(text: String, contentType: ContentType) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+
         return """
-        Please provide a comprehensive summary of the following content using proper Markdown formatting:
+        Please provide a summary of the following content using proper Markdown formatting.
+
+        \(detailInstructions)
 
         Use the following Markdown elements as appropriate:
         - **Bold text** for key points and important information
@@ -1325,7 +960,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         Content type: \(contentType.rawValue)
 
-        Focus on the key points and main ideas. Keep the summary clear, informative, and well-structured with proper markdown formatting.
+        Keep the summary clear, informative, and well-structured with proper Markdown formatting.
         """
     }
 
@@ -1458,13 +1093,18 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+
         return """
         Analyze the following transcript and extract comprehensive information:
 
         \(text)
 
         Please provide a structured response with:
-        1. A detailed summary using proper Markdown formatting:
+        1. A summary using proper Markdown formatting at the selected detail level:
+           \(detailInstructions)
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
@@ -1491,7 +1131,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "detailed markdown-formatted summary of the content",
+          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
           "tasks": ["personal task1", "personal task2", "personal task3"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -1506,7 +1146,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         """
     }
 
-    private func parseStructuredResponse(_ response: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func parseStructuredResponse(_ response: String) -> SummarizationResult {
         logger.info("GoogleAIStudioEngine: Parsing structured response")
         logger.info("Response length: \(response.count) characters")
 
@@ -1529,7 +1169,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                 let titles = summaryResponse.titles.map { TitleItem(text: RecordingNameGenerator.cleanStandardizedTitleResponse($0), confidence: 0.8) }
                 let contentType = ContentType(rawValue: summaryResponse.contentType) ?? .general
 
-                return (
+                return SummarizationResult(
                     summary: summaryResponse.summary,
                     tasks: tasks,
                     reminders: reminders,
@@ -1608,29 +1248,30 @@ class GoogleAIStudioEngine: SummarizationEngine {
             }
         }
 
-        return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 }
 
 // MARK: - Engine Factory
 
 class AIEngineFactory {
+    @MainActor
     static func createEngine(type: AIEngineType) -> SummarizationEngine {
         switch type {
-        case .openAI:
-            return OpenAISummarizationEngine()
         case .mistralAI:
             return MistralAIEngine()
-        case .awsBedrock:
-            return AWSBedrockEngine()
         case .openAICompatible:
             return OpenAICompatibleEngine()
         case .localLLM:
             return LocalLLMEngine()
         case .googleAIStudio:
             return GoogleAIStudioEngine()
-        case .onDeviceLLM:
-            return OnDeviceLLMEngine()
         case .mlxSwift:
             return MLXSwiftEngine()
         case .appleNative:
@@ -1638,8 +1279,9 @@ class AIEngineFactory {
         }
     }
 
+    @MainActor
     static func getAvailableEngines() -> [AIEngineType] {
-        return AIEngineType.allCases.filter { type in
+        return AIEngineType.availableCases.filter { type in
             let engine = createEngine(type: type)
             return engine.isAvailable
         }
@@ -1651,13 +1293,10 @@ class AIEngineFactory {
 }
 
 enum AIEngineType: String, CaseIterable {
-    case openAI = "OpenAI"
     case mistralAI = "Mistral AI"
-    case awsBedrock = "AWS Bedrock"
     case openAICompatible = "OpenAI API Compatible"
     case localLLM = "Ollama"
     case googleAIStudio = "Google AI Studio"
-    case onDeviceLLM = "On-Device AI"
     case mlxSwift = "MLX Swift"
     case appleNative = "Apple Native"
 
@@ -1666,41 +1305,59 @@ enum AIEngineType: String, CaseIterable {
     var displayName: String {
         switch self {
         case .mlxSwift: return "On Device AI"
-        case .onDeviceLLM: return "On Device AI (Legacy)"
+        case .openAICompatible: return "Compatible API"
         default: return rawValue
+        }
+    }
+
+    /// Ollama uses a server hosted by the native Mac app. It is intentionally
+    /// not exposed to iPhone, iPad, or other non-native-Mac targets.
+    var isSupportedOnCurrentPlatform: Bool {
+        switch self {
+        case .localLLM:
+#if os(macOS)
+            return true
+#else
+            return false
+#endif
+        default:
+            return true
         }
     }
 
     /// Returns all available engine types based on device capabilities
     static var availableCases: [AIEngineType] {
         return allCases.filter { engineType in
+            guard engineType.isSupportedOnCurrentPlatform else {
+                return false
+            }
+
             switch engineType {
             case .mlxSwift:
                 return DeviceCapabilities.supportsMLX
-            case .onDeviceLLM:
-                return DeviceCapabilities.supportsOnDeviceLLM
             default:
                 return true
             }
         }
     }
 
+    static func preferredOnDeviceMigrationEngine(supportsMLX: Bool) -> AIEngineType? {
+        if supportsMLX {
+            return .mlxSwift
+        }
+        return nil
+    }
+
     var description: String {
         switch self {
-        case .openAI:
-            return "Advanced AI-powered summaries using OpenAI's GPT models"
         case .mistralAI:
             return "Fast, high-quality summaries using Mistral's chat models"
-        case .awsBedrock:
-            return "Cloud-based AI using AWS Bedrock foundation models"
         case .openAICompatible:
-            return "Advanced AI summaries using OpenAI API compatible models"
+            return "Advanced AI summaries using compatible chat-completion APIs"
         case .localLLM:
             return "Privacy-focused local language model processing with Ollama"
         case .googleAIStudio:
             return "Advanced AI-powered summaries using Google's Gemini models"
-        case .onDeviceLLM:
-            return "Privacy-focused on-device AI processing using local AI models"
         case .mlxSwift:
             return "On-device AI processing using MLX Swift and Ternary Bonsai"
         case .appleNative:
@@ -1710,29 +1367,23 @@ enum AIEngineType: String, CaseIterable {
 
     var isComingSoon: Bool {
         switch self {
-        case .localLLM, .openAI, .openAICompatible, .googleAIStudio, .mistralAI, .awsBedrock, .onDeviceLLM, .mlxSwift, .appleNative:
+        case .localLLM, .openAICompatible, .googleAIStudio, .mistralAI, .mlxSwift, .appleNative:
             return false
         }
     }
 
     var requirements: [String] {
         switch self {
-        case .openAI:
-            return ["OpenAI API Key", "Internet Connection", "Usage Credits"]
         case .mistralAI:
             return ["Mistral API Key", "Internet Connection"]
-        case .awsBedrock:
-            return ["AWS Account", "Internet Connection", "API Keys"]
         case .openAICompatible:
-            return ["OpenAI API Compatible Service", "Internet Connection"]
+            return ["Compatible API service", "Internet Connection"]
         case .localLLM:
             return ["Ollama Server", "Local Network", "Model Download"]
         case .googleAIStudio:
             return ["Google AI Studio API Key", "Internet Connection", "Usage Credits"]
-        case .onDeviceLLM:
-            return ["Downloaded LLM Model (~2 GB)", "No Internet Required", "A16+ Chip Recommended"]
         case .mlxSwift:
-            return ["Apple Silicon / 6GB+ RAM", "First-use Model Download (~1.1 GB)", "No Internet Required"]
+            return ["Apple Silicon / 4GB+ RAM", "First-use Model Download (~470 MB+)", "No Internet Required"]
         case .appleNative:
             return ["Apple Intelligence-supported device", "iOS/iPadOS/macOS/visionOS 26+", "No Internet Required"]
         }

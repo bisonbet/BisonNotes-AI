@@ -14,6 +14,39 @@ import Foundation
 @preconcurrency import AVFoundation
 import CoreGraphics
 
+/// Builds the AVAudioEngine tap outside `AudioRecorderViewModel`'s MainActor
+/// isolation. AVAudioEngine invokes this block on its real-time audio queue;
+/// constructing it inside the MainActor-isolated view model causes Swift 6 to
+/// emit a runtime executor precondition before the first statement executes.
+private enum MacInputTapBlockFactory {
+	static func make(
+		file: AVAudioFile,
+		captureHealth: RecordingCaptureHealth,
+		onFirstWrite: @escaping @MainActor @Sendable () -> Void
+	) -> AVAudioNodeTapBlock {
+		{ buffer, _ in
+			do {
+				try file.write(from: buffer)
+				let isFirstWrite = captureHealth.recordSuccessfulWrite(
+					frameCount: Int64(buffer.frameLength)
+				)
+				if isFirstWrite {
+					Task { @MainActor in
+						onFirstWrite()
+					}
+				}
+			} catch {
+				if captureHealth.recordWriteFailure(error.localizedDescription) {
+					AppLog.shared.recording(
+						"Mac microphone file write failed: \(error.localizedDescription)",
+						level: .error
+					)
+				}
+			}
+		}
+	}
+}
+
 private enum MacMeetingAudioCaptureError: LocalizedError {
 	case permissionUnavailable
 
@@ -30,6 +63,7 @@ extension AudioRecorderViewModel {
 	// Keep the worst-case summed level below full scale while favoring nearby speech.
 	private static let microphoneMeetingMixGain: Float = 0.5
 	private static let systemMeetingMixGain: Float = 0.4
+	private static let systemAudioStartupGateTimeout: TimeInterval = 1.5
 
 	@MainActor
 	func setupMacRecording(at url: URL) async {
@@ -39,6 +73,8 @@ extension AudioRecorderViewModel {
 		macAutomaticRecoveryAttempts = 0
 		macAwaitingRecoveryBuffer = false
 		macCaptureHealth.resetSession()
+		cancelMacSystemAudioStartupGate()
+		macMicrophoneStartOffset = 0
 		macSystemAudioCapture = nil
 		macSystemAudioURL = nil
 
@@ -47,9 +83,10 @@ extension AudioRecorderViewModel {
 				let systemAudioURL = Self.macSystemAudioURL(for: url)
 				let capture = MacSystemAudioCapture(outputURL: systemAudioURL)
 				do {
-					try await capture.start()
+					try await capture.start(initiallyPaused: true)
 					macSystemAudioCapture = capture
 					macSystemAudioURL = systemAudioURL
+					beginMacSystemAudioStartupGate()
 				} catch {
 					systemAudioError = error
 					macSystemAudioCapture = nil
@@ -76,6 +113,7 @@ extension AudioRecorderViewModel {
 				errorMessage = "Meeting audio could not be captured: \(systemAudioError.localizedDescription). Recording microphone audio only."
 			}
 		} catch {
+			cancelMacSystemAudioStartupGate()
 			if let capture = macSystemAudioCapture {
 				if let abandonedSystemAudioURL = try? await capture.stop() {
 					try? FileManager.default.removeItem(at: abandonedSystemAudioURL)
@@ -98,7 +136,14 @@ extension AudioRecorderViewModel {
 
 		// Native macOS uses Core Audio directly. AVAudioSession is an iOS API
 		// and the Mac-only fallback must never run here.
-		try startMacEnginePipeline(at: url)
+		do {
+			try startMacEnginePipeline(at: url)
+		} catch {
+			// The pipeline assigns its engine/file/scratch URL before the final start
+			// call. If that call fails, release the partial state before the next retry.
+			discardFailedMacCaptureState()
+			throw error
+		}
 	}
 
 	private func startMacEnginePipeline(
@@ -111,13 +156,18 @@ extension AudioRecorderViewModel {
 		try enhancedAudioSessionManager.configureInputDevice(for: engine)
 		#endif
 		let inputNode = engine.inputNode
+		// Apple documents the input-scope format as the hardware-availability
+		// check. The output format can remain populated while a USB input route
+		// is present but not actually delivering microphone buffers.
+		let hardwareInputFormat = inputNode.inputFormat(forBus: 0)
 		let inputFormat = inputNode.outputFormat(forBus: 0)
 
-		guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+		guard hardwareInputFormat.sampleRate > 0, hardwareInputFormat.channelCount > 0,
+		      inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -1,
-				userInfo: [NSLocalizedDescriptionKey: "Microphone not available — check macOS Sound input settings."]
+				userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
 			)
 		}
 
@@ -143,10 +193,19 @@ extension AudioRecorderViewModel {
 
 		engine.prepare()
 		try engine.start()
+		guard engine.isRunning else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -9,
+				userInfo: [NSLocalizedDescriptionKey: "The microphone engine did not remain running."]
+			)
+		}
 		startMacCaptureHealthMonitoring()
 		AppLog.shared.recording(
 			"Mac microphone engine started; awaiting first buffer " +
-			"(sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
+			"(hardwareSampleRate=\(hardwareInputFormat.sampleRate), " +
+			"hardwareChannels=\(hardwareInputFormat.channelCount), " +
+			"sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
 			"interleaved=\(inputFormat.isInterleaved))"
 		)
 	}
@@ -184,11 +243,14 @@ extension AudioRecorderViewModel {
 	func stopMacEngineRecording(closingFile: Bool = true) {
 		stopMacCaptureHealthMonitoring()
 		let health = macCaptureHealth.snapshot()
-		AppLog.shared.recording(
-			"Mac microphone engine stopping " +
-			"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
-			level: health.totalFramesWritten > 0 ? .info : .error
-		)
+		let hasCaptureState = macAudioEngine != nil || macAudioFile != nil || macScratchRecordingURL != nil
+		if hasCaptureState {
+			AppLog.shared.recording(
+				"Mac microphone engine stopping " +
+				"(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
+				level: health.totalFramesWritten > 0 ? .info : .error
+			)
+		}
 		if let engine = macAudioEngine {
 			engine.inputNode.removeTap(onBus: 0)
 			if engine.isRunning {
@@ -203,6 +265,19 @@ extension AudioRecorderViewModel {
 		if closingFile {
 			macAudioFile = nil
 		}
+	}
+
+	/// Releases the state left behind by a failed pipeline start. The scratch file
+	/// only ever holds a CAF header at this point — no buffer reached the tap — so it
+	/// is deleted rather than kept: leaving the URL set would leak the temp file and
+	/// make the next start believe a capture is still in flight.
+	func discardFailedMacCaptureState() {
+		let failedScratchURL = macScratchRecordingURL
+		stopMacEngineRecording()
+		if let failedScratchURL {
+			try? FileManager.default.removeItem(at: failedScratchURL)
+		}
+		macScratchRecordingURL = nil
 	}
 
 	/// Closes the current PCM segment without discarding it. A replacement input
@@ -241,6 +316,7 @@ extension AudioRecorderViewModel {
 	#endif
 
 	func stopMacSystemAudioCapture() async -> URL? {
+		cancelMacSystemAudioStartupGate()
 		guard let capture = macSystemAudioCapture else {
 			return macSystemAudioURL
 		}
@@ -261,9 +337,75 @@ extension AudioRecorderViewModel {
 		}
 	}
 
+	func beginMacSystemAudioStartupGate() {
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		let sessionID = macSystemAudioStartupGate.begin()
+		AppLog.shared.recording(
+			"Mac system audio startup gate armed for up to " +
+				String(format: "%.1f", Self.systemAudioStartupGateTimeout) + " seconds"
+		)
+		macSystemAudioStartupGateTimeoutTask = Task { @MainActor [weak self] in
+			do {
+				try await Task.sleep(for: .seconds(Self.systemAudioStartupGateTimeout))
+			} catch {
+				return
+			}
+			self?.releaseMacSystemAudioStartupGate(
+				sessionID: sessionID,
+				reason: .safetyTimeout
+			)
+		}
+	}
+
+	@discardableResult
+	func releaseMacSystemAudioStartupGate(
+		sessionID: UUID? = nil,
+		reason: MacSystemAudioStartupGate.ReleaseReason
+	) -> Bool {
+		guard let sessionID = sessionID ?? macSystemAudioStartupGate.activeSessionID,
+		      let release = macSystemAudioStartupGate.release(
+				sessionID: sessionID,
+				reason: reason
+		      ) else { return false }
+
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		macSystemAudioStartupGateTimeoutTask = nil
+		macSystemAudioCapture?.setPaused(false)
+		AppLog.shared.recording(
+			"Mac system audio startup gate released by \(release.reason.rawValue) " +
+				"after \(String(format: "%.3f", release.elapsed)) seconds"
+		)
+
+		if reason == .safetyTimeout {
+			macSystemAudioContinuesWithoutMicrophone = true
+			if isStartingRecording {
+				markRecordingStarted()
+				errorMessage = "Meeting audio recording started while the microphone reconnects."
+			}
+		}
+		return true
+	}
+
+	func cancelMacSystemAudioStartupGate() {
+		macSystemAudioStartupGateTimeoutTask?.cancel()
+		macSystemAudioStartupGateTimeoutTask = nil
+		macSystemAudioStartupGate.cancel()
+		macSystemAudioContinuesWithoutMicrophone = false
+	}
+
 	private func installMacInputTap() {
 		guard let engine = macAudioEngine,
-		      let format = macEngineFormat else { return }
+		      let format = macEngineFormat,
+		      let file = macAudioFile else { return }
+		let captureHealth = macCaptureHealth
+		let handleFirstSuccessfulWrite: @MainActor @Sendable () -> Void = { [weak self] in
+			self?.handleMacFirstSuccessfulWrite()
+		}
+		let tapBlock = MacInputTapBlockFactory.make(
+			file: file,
+			captureHealth: captureHealth,
+			onFirstWrite: handleFirstSuccessfulWrite
+		)
 
 		// The scratch file uses the input node's native PCM format, so the tap
 		// can write each buffer directly without invoking a compressed encoder
@@ -271,28 +413,9 @@ extension AudioRecorderViewModel {
 		engine.inputNode.installTap(
 			onBus: 0,
 			bufferSize: 4096,
-			format: format
-		) { [weak self] buffer, _ in
-			guard let self, let file = self.macAudioFile else { return }
-			do {
-				try file.write(from: buffer)
-				let isFirstWrite = self.macCaptureHealth.recordSuccessfulWrite(
-					frameCount: Int64(buffer.frameLength)
-				)
-				if isFirstWrite {
-					DispatchQueue.main.async { [weak self] in
-						self?.handleMacFirstSuccessfulWrite()
-					}
-				}
-			} catch {
-				if self.macCaptureHealth.recordWriteFailure(error.localizedDescription) {
-					AppLog.shared.recording(
-						"Mac microphone file write failed: \(error.localizedDescription)",
-						level: .error
-					)
-				}
-			}
-		}
+			format: format,
+			block: tapBlock
+		)
 	}
 
 	private static func macScratchURL(for finalURL: URL, segmentIndex: Int? = nil) -> URL {
@@ -444,7 +567,8 @@ extension AudioRecorderViewModel {
 	}
 
 	private func makeRecoveredMicrophoneComposition(
-		from scratchURLs: [URL]
+		from scratchURLs: [URL],
+		insertingAt startTime: CMTime = .zero
 	) async throws -> (AVMutableComposition, CMTime) {
 		let composition = AVMutableComposition()
 		guard let compositionTrack = composition.addMutableTrack(
@@ -458,7 +582,7 @@ extension AudioRecorderViewModel {
 			)
 		}
 
-		var insertionTime = CMTime.zero
+		var insertionTime = startTime
 		for scratchURL in scratchURLs {
 			let asset = AVURLAsset(url: scratchURL)
 			guard let sourceTrack = try await asset.loadTracks(withMediaType: .audio).first else { continue }
@@ -513,16 +637,26 @@ extension AudioRecorderViewModel {
 	) async throws {
 		let fileManager = FileManager.default
 		let systemAsset = AVURLAsset(url: systemAudioURL)
-		let (composition, microphoneDuration) = try await makeRecoveredMicrophoneComposition(
-			from: microphoneScratchURLs
+		let microphoneStartTime = MacAudioMixTiming.microphoneStartTime(
+			for: macMicrophoneStartOffset
 		)
-		guard microphoneDuration.isValid, microphoneDuration.seconds > 0 else {
+		let (composition, microphoneEndTime) = try await makeRecoveredMicrophoneComposition(
+			from: microphoneScratchURLs,
+			insertingAt: microphoneStartTime
+		)
+		guard microphoneEndTime.isValid,
+		      CMTimeCompare(microphoneEndTime, microphoneStartTime) > 0 else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -12,
 				userInfo: [NSLocalizedDescriptionKey: "Microphone recording has no audio duration."]
 			)
 		}
+		let systemDuration = try await systemAsset.load(.duration)
+		let exportDuration = MacAudioMixTiming.exportDuration(
+			microphoneEndTime: microphoneEndTime,
+			systemDuration: systemDuration
+		)
 
 		var mixParameters: [AVAudioMixInputParameters] = composition.tracks(withMediaType: .audio).map { track in
 			let parameter = AVMutableAudioMixInputParameters(track: track)
@@ -534,7 +668,7 @@ extension AudioRecorderViewModel {
 			to: composition,
 			mixParameters: &mixParameters,
 			volume: Self.systemMeetingMixGain,
-			maxDuration: microphoneDuration
+			maxDuration: exportDuration
 		)
 
 		guard !composition.tracks(withMediaType: .audio).isEmpty else {
@@ -556,7 +690,7 @@ extension AudioRecorderViewModel {
 			)
 		}
 		exportSession.audioMix = audioMix
-		exportSession.timeRange = CMTimeRange(start: .zero, duration: microphoneDuration)
+		exportSession.timeRange = CMTimeRange(start: .zero, duration: exportDuration)
 
 		let tempURL = fileManager.temporaryDirectory
 			.appendingPathComponent("mac_meeting_mix_\(UUID().uuidString).m4a")

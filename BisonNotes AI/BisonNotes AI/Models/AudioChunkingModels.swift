@@ -44,9 +44,21 @@ struct TranscriptChunk: Identifiable, Codable {
     let startTime: TimeInterval
     let endTime: TimeInterval
     let processingTime: TimeInterval?
+    /// Chunk-local Parakeet word timings. These remain ephemeral until the
+    /// existing reassembly path offsets them to the complete source timeline.
+    let timedWords: [TimedTranscriptWord]?
     let createdAt: Date
 
-    init(chunkId: UUID, sequenceNumber: Int, transcript: String, segments: [TranscriptSegment], startTime: TimeInterval, endTime: TimeInterval, processingTime: TimeInterval? = nil) {
+    init(
+        chunkId: UUID,
+        sequenceNumber: Int,
+        transcript: String,
+        segments: [TranscriptSegment],
+        startTime: TimeInterval,
+        endTime: TimeInterval,
+        processingTime: TimeInterval? = nil,
+        timedWords: [TimedTranscriptWord]? = nil
+    ) {
         self.id = UUID()
         self.chunkId = chunkId
         self.sequenceNumber = sequenceNumber
@@ -55,6 +67,7 @@ struct TranscriptChunk: Identifiable, Codable {
         self.startTime = startTime
         self.endTime = endTime
         self.processingTime = processingTime
+        self.timedWords = timedWords
         self.createdAt = Date()
     }
 }
@@ -66,9 +79,7 @@ enum ChunkingStrategy {
     case duration(maxSeconds: TimeInterval)
     case combined(maxBytes: Int64, maxSeconds: TimeInterval)
 
-    static let openAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds (21.67 minutes)
     static let whisper = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
-    static let aws = ChunkingStrategy.duration(maxSeconds: 2 * 60 * 60) // 2 hours
     static let onDeviceAI = ChunkingStrategy.duration(maxSeconds: 10 * 60) // 10 minutes
     static let mistralAI = ChunkingStrategy.combined(maxBytes: 24 * 1024 * 1024, maxSeconds: 1300) // 24MB and 1300 seconds
 
@@ -104,18 +115,12 @@ struct ChunkingConfig {
         switch engine {
         case .notConfigured:
             return ChunkingConfig(strategy: .whisper) // Default fallback for unconfigured state
-        case .openAI:
-            return ChunkingConfig(strategy: .openAI)
         case .whisper:
             return ChunkingConfig(strategy: .whisper)
-        case .awsTranscribe:
-            return ChunkingConfig(strategy: .aws)
         case .fluidAudio:
             return ChunkingConfig(strategy: .onDeviceAI)
         case .mistralAI:
             return ChunkingConfig(strategy: .mistralAI)
-        case .openAIAPICompatible:
-            return ChunkingConfig(strategy: .openAI) // Default to OpenAI limits
         }
     }
 }
@@ -145,6 +150,9 @@ struct ReassemblyResult {
     let totalSegments: Int
     let reassemblyTime: TimeInterval
     let chunks: [TranscriptChunk]
+    /// One absolute, sorted, clamped, overlap-deduplicated word collection
+    /// produced by `reassembleTranscript`. Nil means no chunk carried timing.
+    let timedWords: [TimedTranscriptWord]?
 }
 
 // MARK: - Audio File Info
@@ -158,8 +166,7 @@ struct AudioFileInfo {
     let channels: Int
 
     static func create(from url: URL) async throws -> AudioFileInfo {
-        AppLog.shared.chunking("AudioFileInfo.create - Analyzing file: \(url.lastPathComponent)", level: .debug)
-        AppLog.shared.chunking("AudioFileInfo.create - Full path: \(url.path)", level: .debug)
+        AppLog.shared.chunking("AudioFileInfo.create - Analyzing audio source", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
 
         let asset = AVURLAsset(url: url)

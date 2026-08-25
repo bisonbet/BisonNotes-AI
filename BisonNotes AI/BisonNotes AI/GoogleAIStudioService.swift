@@ -7,53 +7,106 @@
 
 import Foundation
 import os.log
-import SwiftUI
 
 // MARK: - Google AI Studio Service
 
-class GoogleAIStudioService: ObservableObject {
+actor GoogleAIStudioService {
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "GoogleAIStudio")
 
-    @AppStorage("googleAIStudioModel") private var selectedModel: String = "gemini-3-flash-preview"
-    @AppStorage("googleAIStudioTemperature") private var temperature: Double = 0.1
-    @AppStorage("googleAIStudioMaxTokens") private var maxTokens: Int = 8192
-    @AppStorage("enableGoogleAIStudio") private var enableGoogleAIStudio: Bool = false
-
     private let baseURL = "https://generativelanguage.googleapis.com/v1beta"
-    private var apiKey: String {
-        KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
+
+    private struct Configuration: Sendable {
+        let selectedModel: String
+        let temperature: Double
+        let maxTokens: Int
+        let enabled: Bool
+        let apiKey: String
+
+        /// Gemini spends part of `maxOutputTokens` on its thinking pass, so a
+        /// budget sized for the answer alone comes back cut off mid-JSON.
+        var outputTokenBudget: Int {
+            SummaryThinkingModelCatalog.completionTokenBudget(
+                configured: maxTokens,
+                modelName: selectedModel,
+                engine: .googleAIStudio
+            )
+        }
+    }
+
+    private func configuration() -> Configuration {
+        Configuration(
+            selectedModel: UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3.7-flash",
+            temperature: UserDefaults.standard.object(forKey: "googleAIStudioTemperature") == nil
+                ? 0.1
+                : UserDefaults.standard.double(forKey: "googleAIStudioTemperature"),
+            maxTokens: UserDefaults.standard.integer(forKey: "googleAIStudioMaxTokens") > 0
+                ? UserDefaults.standard.integer(forKey: "googleAIStudioMaxTokens")
+                : 8192,
+            enabled: UserDefaults.standard.bool(forKey: "enableGoogleAIStudio"),
+            apiKey: KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
+        )
+    }
+
+    private func thinkingOptions(for modelName: String) -> SummaryThinkingRequestOptions {
+        SummaryThinkingModelCatalog.requestOptions(
+            modelName: modelName,
+            engine: .googleAIStudio
+        )
+    }
+
+    private func geminiThinkingConfig(for modelName: String) -> ThinkingConfig? {
+        let options = thinkingOptions(for: modelName)
+        guard options.thinkingLevel != nil || options.thinkingBudget != nil else {
+            return nil
+        }
+        return ThinkingConfig(
+            thinkingLevel: options.thinkingLevel,
+            thinkingBudget: options.thinkingBudget
+        )
     }
 
     // MARK: - API Response Models
 
-    struct GeminiRequest: Codable {
+    struct GeminiRequest: Codable, Sendable {
         let contents: [Content]
         let generationConfig: GenerationConfig
     }
 
-    struct Content: Codable {
+    struct Content: Codable, Sendable {
         let parts: [Part]
     }
 
-    struct Part: Codable {
+    struct Part: Codable, Sendable {
         let text: String
+        let thought: Bool?
+
+        init(text: String, thought: Bool? = nil) {
+            self.text = text
+            self.thought = thought
+        }
     }
 
-    struct GenerationConfig: Codable {
+    struct GenerationConfig: Codable, Sendable {
         let responseMimeType: String
         let responseSchema: Schema
         let temperature: Double?
         let maxOutputTokens: Int?
+        let thinkingConfig: ThinkingConfig?
     }
 
-    struct Schema: Codable {
+    struct ThinkingConfig: Codable, Sendable {
+        let thinkingLevel: String?
+        let thinkingBudget: Int?
+    }
+
+    struct Schema: Codable, Sendable {
         let type: String
         let properties: [String: SchemaProperty]
         let required: [String]
         let propertyOrdering: [String]
     }
 
-    struct SchemaProperty: Codable {
+    struct SchemaProperty: Codable, Sendable {
         let type: String
         let description: String?
         let maxItems: Int?
@@ -65,15 +118,22 @@ class GoogleAIStudioService: ObservableObject {
         }
     }
 
-    struct GeminiResponse: Codable {
+    struct GeminiResponse: Codable, Sendable {
         let candidates: [Candidate]
     }
 
-    struct Candidate: Codable {
+    struct Candidate: Codable, Sendable {
         let content: Content
+        let finishReason: String?
+
+        /// Gemini stopped at `maxOutputTokens` rather than at the end of its
+        /// answer, so the JSON payload is cut off part-way through.
+        var wasTruncatedByTokenLimit: Bool {
+            finishReason == "MAX_TOKENS"
+        }
     }
 
-    struct SummaryResponse: Codable {
+    struct SummaryResponse: Codable, Sendable {
         let summary: String
         let tasks: [String]
         let reminders: [String]
@@ -94,18 +154,19 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Configuration
 
     func updateConfiguration() {
+        let configuration = configuration()
         logger.info("GoogleAIStudioService: Updating configuration")
-        logger.info("API Key: \(self.apiKey.isEmpty ? "Not set" : "Set")")
-        logger.info("Model: \(self.selectedModel)")
-        logger.info("Temperature: \(self.temperature)")
-        logger.info("Max Tokens: \(self.maxTokens)")
-        logger.info("Enabled: \(self.enableGoogleAIStudio)")
+        logger.info("API Key: \(configuration.apiKey.isEmpty ? "Not set" : "Set")")
+        logger.info("Model: \(configuration.selectedModel)")
+        logger.info("Temperature: \(configuration.temperature)")
+        logger.info("Max Tokens: \(configuration.maxTokens)")
+        logger.info("Enabled: \(configuration.enabled)")
     }
 
     // MARK: - Connection Testing
 
     func testConnection() async -> Bool {
-        guard !apiKey.isEmpty else {
+        guard !configuration().apiKey.isEmpty else {
             logger.error("GoogleAIStudioService: API key not set")
             return false
         }
@@ -125,21 +186,16 @@ class GoogleAIStudioService: ObservableObject {
     // MARK: - Content Generation
 
     func generateContent(prompt: String, useStructuredOutput: Bool = true) async throws -> String {
-        guard !apiKey.isEmpty else {
+        let configuration = configuration()
+        guard !configuration.apiKey.isEmpty else {
             throw SummarizationError.aiServiceUnavailable(service: "Google AI Studio")
         }
 
-        let url = URL(string: "\(baseURL)/models/\(selectedModel):generateContent")!
+        let url = URL(string: "\(baseURL)/models/\(configuration.selectedModel):generateContent")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
-
-        if useStructuredOutput {
-            request.httpBody = try createStructuredRequest(prompt: prompt)
-        } else {
-            request.httpBody = try createSimpleRequest(prompt: prompt)
-        }
+        request.setValue(configuration.apiKey, forHTTPHeaderField: "x-goog-api-key")
 
         // Create a URLSession with timeout configuration
         let config = URLSessionConfiguration.default
@@ -149,24 +205,42 @@ class GoogleAIStudioService: ObservableObject {
         config.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: config)
 
-        let (data, response): (Data, URLResponse)
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            if (error as? URLError)?.code == .timedOut {
-                throw SummarizationError.processingTimeout
+        var attemptedBudget = configuration.outputTokenBudget
+        request.httpBody = try createRequestBody(
+            prompt: prompt,
+            configuration: configuration,
+            useStructuredOutput: useStructuredOutput,
+            maxOutputTokens: attemptedBudget
+        )
+        var data = try await performRequest(request, using: session)
+
+        if responseWasTruncated(data) {
+            let grownBudget = min(
+                attemptedBudget * 2,
+                SummaryThinkingModelCatalog.maximumCompletionTokenBudget
+            )
+
+            if grownBudget > attemptedBudget {
+                logger.error(
+                    "Google AI Studio stopped at the \(attemptedBudget)-token output limit; retrying once with \(grownBudget)"
+                )
+                attemptedBudget = grownBudget
+                request.httpBody = try createRequestBody(
+                    prompt: prompt,
+                    configuration: configuration,
+                    useStructuredOutput: useStructuredOutput,
+                    maxOutputTokens: attemptedBudget
+                )
+                data = try await performRequest(request, using: session)
             }
-            throw error
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"]))
-        }
-
-        if httpResponse.statusCode != 200 {
-            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-            logger.error("GoogleAIStudioService: API error - \(httpResponse.statusCode): \(errorMessage)")
-            throw SummarizationError.networkError(underlying: NSError(domain: "GoogleAIStudio", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(errorMessage)"]))
+        guard !responseWasTruncated(data) else {
+            throw SummarizationError.responseTruncated(
+                service: "Google AI Studio (\(configuration.selectedModel))",
+                tokenLimit: attemptedBudget,
+                reasoningTokens: nil
+            )
         }
 
         if useStructuredOutput {
@@ -178,14 +252,82 @@ class GoogleAIStudioService: ObservableObject {
 
     // MARK: - Request Creation
 
-    private func createStructuredRequest(prompt: String) throws -> Data {
+    private func createRequestBody(
+        prompt: String,
+        configuration: Configuration,
+        useStructuredOutput: Bool,
+        maxOutputTokens: Int
+    ) throws -> Data {
+        if useStructuredOutput {
+            return try createStructuredRequest(
+                prompt: prompt,
+                configuration: configuration,
+                maxOutputTokens: maxOutputTokens
+            )
+        }
+        return try createSimpleRequest(
+            prompt: prompt,
+            configuration: configuration,
+            maxOutputTokens: maxOutputTokens
+        )
+    }
+
+    private func performRequest(_ request: URLRequest, using session: URLSession) async throws -> Data {
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            if (error as? URLError)?.code == .timedOut {
+                throw SummarizationError.processingTimeout
+            }
+            throw error
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw SummarizationError.networkError(
+                underlying: NSError(
+                    domain: "GoogleAIStudio",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "Invalid response"]
+                )
+            )
+        }
+
+        if httpResponse.statusCode != 200 {
+            let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
+            logger.error("GoogleAIStudioService: API error - \(httpResponse.statusCode): \(errorMessage)")
+            throw SummarizationError.networkError(
+                underlying: NSError(
+                    domain: "GoogleAIStudio",
+                    code: httpResponse.statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(httpResponse.statusCode): \(errorMessage)"]
+                )
+            )
+        }
+
+        return data
+    }
+
+    private func responseWasTruncated(_ data: Data) -> Bool {
+        guard let response = try? JSONDecoder().decode(GeminiResponse.self, from: data),
+              let candidate = response.candidates.first else {
+            return false
+        }
+        return candidate.wasTruncatedByTokenLimit
+    }
+
+    private func createStructuredRequest(
+        prompt: String,
+        configuration: Configuration,
+        maxOutputTokens: Int
+    ) throws -> Data {
         // Create schema manually as JSON to avoid recursive struct issues
         let schemaDict: [String: Any] = [
             "type": "object",
             "properties": [
                 "summary": [
                     "type": "string",
-                    "description": "A concise summary of the main content"
+                    "description": SummaryDetailLevel.current.schemaDescription
                 ],
                 "tasks": [
                     "type": "array",
@@ -220,7 +362,24 @@ class GoogleAIStudioService: ObservableObject {
             "propertyOrdering": ["summary", "tasks", "reminders", "titles", "contentType"]
         ]
 
-        // Create a custom GenerationConfig that accepts JSON data
+        // Create a custom GenerationConfig that accepts JSON data.
+        var generationConfig: [String: Any] = [
+            "responseMimeType": "application/json",
+            "responseSchema": schemaDict,
+            "temperature": configuration.temperature,
+            "maxOutputTokens": maxOutputTokens
+        ]
+        if let thinkingConfig = geminiThinkingConfig(for: configuration.selectedModel) {
+            var thinkingConfigDict: [String: Any] = [:]
+            if let thinkingLevel = thinkingConfig.thinkingLevel {
+                thinkingConfigDict["thinkingLevel"] = thinkingLevel
+            }
+            if let thinkingBudget = thinkingConfig.thinkingBudget {
+                thinkingConfigDict["thinkingBudget"] = thinkingBudget
+            }
+            generationConfig["thinkingConfig"] = thinkingConfigDict
+        }
+
         let requestDict: [String: Any] = [
             "contents": [
                 [
@@ -231,18 +390,17 @@ class GoogleAIStudioService: ObservableObject {
                     ]
                 ]
             ],
-            "generationConfig": [
-                "responseMimeType": "application/json",
-                "responseSchema": schemaDict,
-                "temperature": temperature,
-                "maxOutputTokens": maxTokens
-            ]
+            "generationConfig": generationConfig
         ]
 
         return try JSONSerialization.data(withJSONObject: requestDict)
     }
 
-    private func createSimpleRequest(prompt: String) throws -> Data {
+    private func createSimpleRequest(
+        prompt: String,
+        configuration: Configuration,
+        maxOutputTokens: Int
+    ) throws -> Data {
         let request = GeminiRequest(
             contents: [Content(parts: [Part(text: prompt)])],
             generationConfig: GenerationConfig(
@@ -253,8 +411,9 @@ class GoogleAIStudioService: ObservableObject {
                     required: [],
                     propertyOrdering: []
                 ),
-                temperature: temperature,
-                maxOutputTokens: maxTokens
+                temperature: configuration.temperature,
+                maxOutputTokens: maxOutputTokens,
+                thinkingConfig: geminiThinkingConfig(for: configuration.selectedModel)
             )
         )
 
@@ -262,13 +421,16 @@ class GoogleAIStudioService: ObservableObject {
     }
 
     private func createStructuredPrompt(_ text: String) -> String {
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions()
+
         return """
         Analyze the following text and extract key information in a structured format:
 
         \(text)
 
         Please provide:
-        1. A comprehensive summary using proper Markdown formatting (aim for 15-20% of the original transcript length):
+        1. A summary using proper Markdown formatting at the selected detail level:
+           \(detailInstructions)
            - Use **bold** for key points and important information
            - Use *italic* for emphasis
            - Use ## headers for main sections
@@ -276,8 +438,7 @@ class GoogleAIStudioService: ObservableObject {
            - Use • bullet points for lists
            - Use 1. numbered lists for sequential items
            - Use > blockquotes for important quotes or statements
-           - Focus on capturing all important details, context, and nuances
-           - Include key points, main ideas, specific details, and overall themes
+           - Include only information supported by the source text
 
         2. Personal and relevant actionable tasks — extract ONLY if the speaker mentions THEIR OWN action items:
            - "I need to call John" → YES
@@ -303,7 +464,7 @@ class GoogleAIStudioService: ObservableObject {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "detailed markdown-formatted summary of the content",
+          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
           "tasks": ["personal task1", "personal task2"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -314,7 +475,7 @@ class GoogleAIStudioService: ObservableObject {
         - Return ONLY personal, relevant content for tasks and reminders
         - If no personal tasks exist, use an empty array: "tasks": []
         - If no personal reminders exist, use an empty array: "reminders": []
-        \(ComedyMode.current.promptModifier ?? "")
+        \(ComedyMode.current.structuredPromptModifier ?? "")
         """
     }
 
@@ -324,51 +485,58 @@ class GoogleAIStudioService: ObservableObject {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
 
         guard let candidate = response.candidates.first,
-              let textPart = candidate.content.parts.first else {
+              let textPart = candidate.content.parts.last(where: { $0.thought != true }) else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
 
-        logger.info("GoogleAIStudioService: Raw response length: \(textPart.text.count) characters")
+        let cleanedText = SummaryThinkingResponseCleaner.stripDelimitedThinking(from: textPart.text)
+        logger.info("GoogleAIStudioService: Raw response length: \(cleanedText.count) characters")
 
         // Try to parse as JSON first
-        if let jsonData = textPart.text.data(using: .utf8) {
+        if let jsonData = cleanedText.data(using: .utf8) {
             do {
                 let summaryResponse = try JSONDecoder().decode(SummaryResponse.self, from: jsonData)
                 logger.info("GoogleAIStudioService: Successfully parsed JSON response")
                 return formatStructuredResponse(summaryResponse)
             } catch {
                 logger.warning("GoogleAIStudioService: Failed to parse JSON response: \(error)")
-                logger.warning("GoogleAIStudioService: Raw response length: \(textPart.text.count) chars, starts with valid JSON: \(textPart.text.hasPrefix("{"))")
+                logger.warning("GoogleAIStudioService: Raw response length: \(cleanedText.count) chars, starts with valid JSON: \(cleanedText.hasPrefix("{"))")
 
-                // Check if the response is truncated
-                if textPart.text.contains("\"summary\"") && !textPart.text.hasSuffix("}") {
+                // Prefer the provider's own signal; fall back to the shape of
+                // the payload for responses that omit a finish reason.
+                if candidate.wasTruncatedByTokenLimit
+                    || (cleanedText.contains("\"summary\"") && !cleanedText.hasSuffix("}")) {
                     logger.error("GoogleAIStudioService: Response appears to be truncated")
 
                     // Try to extract partial information from truncated JSON
-                    if let partialResponse = extractPartialResponse(from: textPart.text) {
+                    if let partialResponse = extractPartialResponse(from: cleanedText) {
                         logger.info("GoogleAIStudioService: Successfully extracted partial response")
                         return formatStructuredResponse(partialResponse)
                     }
 
-                    throw SummarizationError.processingFailed(reason: "Response was truncated by API")
+                    throw SummarizationError.responseTruncated(
+                        service: "Google AI Studio (\(configuration().selectedModel))",
+                        tokenLimit: configuration().outputTokenBudget,
+                        reasoningTokens: nil
+                    )
                 }
 
-                return textPart.text
+                return cleanedText
             }
         }
 
-        return textPart.text
+        return cleanedText
     }
 
     private func parseSimpleResponse(data: Data) throws -> String {
         let response = try JSONDecoder().decode(GeminiResponse.self, from: data)
 
         guard let candidate = response.candidates.first,
-              let textPart = candidate.content.parts.first else {
+              let textPart = candidate.content.parts.last(where: { $0.thought != true }) else {
             throw SummarizationError.processingFailed(reason: "No response content")
         }
 
-        return textPart.text
+        return SummaryThinkingResponseCleaner.stripDelimitedThinking(from: textPart.text)
     }
 
     private func formatStructuredResponse(_ response: SummaryResponse) -> String {
@@ -604,8 +772,8 @@ class GoogleAIStudioService: ObservableObject {
     func loadAvailableModels() async throws -> [String] {
         // Return only the specific Gemini models
         return [
-            "gemini-3-flash-preview",
-            "gemini-3.1-flash-lite-preview"
+            "gemini-3.7-flash",
+            "gemini-3.5-flash-lite"
         ]
     }
 }

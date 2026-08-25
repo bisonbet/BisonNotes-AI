@@ -1,6 +1,7 @@
 <!-- BisonNotes AI - Complete User Guide -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
+<!-- This is the current v2.3 full guide; keep the existing /bisonnotes-ai/ page on v2.2 until shipped v2.2 builds no longer depend on it. -->
 
 <style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
 
@@ -10,7 +11,7 @@
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.2</span>
+  <span class="bn-ver">v2.3</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -33,7 +34,9 @@
         <li><a href="#bn-combine">Combining Recordings</a></li>
       </ul>
     </li>
-    <li><a href="#bn-ai">AI Engine Configuration</a></li>
+    <li><a href="#bn-ai">AI Engine Configuration</a>
+      <ul><li><a href="#bn-ollama">Ollama on Mac</a></li></ul>
+    </li>
     <li><a href="#bn-transcription">Transcription Configuration</a></li>
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
@@ -48,10 +51,10 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.2                                             -->
+<!-- WHAT'S NEW IN V2.3                                           -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.2:</strong>
+  <strong>What&rsquo;s new in v2.3:</strong>
   <ul>
     <li><strong>Native Mac app.</strong> BisonNotes now runs as a native macOS app with Mac windows, dedicated Settings, standard File/Edit commands and shortcuts, native export and sharing, persistent archive access, and continuity with the data used by the previous Catalyst build.</li>
     <li><strong>Mac Share extension and recording widget.</strong> Import supported audio or transcript files from the macOS Share menu, or use a small or medium desktop widget to open BisonNotes and start recording.</li>
@@ -59,6 +62,9 @@
     <li><strong>Guided meeting-audio permission.</strong> Record Meeting Audio explains the Screen &amp; System Audio Recording requirement and the quit-and-reopen step. With Live Transcription enabled, the finalized combined recording is queued for transcription.</li>
     <li><strong>Larger local Mac model.</strong> Macs with at least 16 GB RAM can select Ternary Bonsai 27B for local MLX processing.</li>
     <li><strong>More reliable on-device transcription setup.</strong> Parakeet reuses complete cached models, clears stale missing-file state, and waits for model preparation before transcription begins.</li>
+    <li><strong>Opt-in local speaker labels.</strong> Completed Parakeet recordings, imports, and transcript re-runs can be labeled locally after transcription. Offline VBx is recommended; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. Failed labeling keeps the complete unlabeled transcript.</li>
+    <li><strong>Shared summary controls.</strong> Brief, Balanced, and Detailed settings apply across the active engines. Off or Light thinking is sent only when the selected model exposes a supported control, and reasoning output is kept out of visible summaries and structured metadata.</li>
+    <li><strong>Provider migration.</strong> AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are no longer shipped. Existing selections migrate to supported replacements; Ollama is available only on native macOS, while external llama.cpp servers remain usable through Compatible API.</li>
     <li><strong>Clean local-AI output.</strong> Thinking-capable MLX models keep their reasoning internal; partial reasoning traces and preambles are removed before summaries, tasks, reminders, and suggested titles are shown.</li>
     <li><strong>Durable summary deletion.</strong> Deleting only a summary now queues removal of its live and backup iCloud records so an offline deletion can finish the next time iCloud is available.</li>
     <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
@@ -86,7 +92,7 @@
       <ul>
         <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
         <li><strong>On Device AI:</strong> Private, on-device processing. No data leaves your device. Uses MLX Swift for summaries on 4GB+ devices and Parakeet for transcription. Models download once, then run locally.</li>
-        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes OpenAI, Google AI Studio, AWS Bedrock, Mistral AI, OpenAI Compatible, Ollama. If you already have an AI provider configured, your existing settings are preserved.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, Mistral AI, Compatible API, and Ollama on native macOS. If you already have an AI provider configured, your existing settings are preserved.</li>
       </ul>
     </div>
     <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
@@ -178,8 +184,8 @@
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
 
-<h3 id="bn-mac">Native Mac App (v2.2)</h3>
-<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.2 Mac build upgrades the app instead of creating a separate empty library.</p>
+<h3 id="bn-mac">Native Mac App (v2.3)</h3>
+<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.3 release upgrades the app instead of creating a separate empty library.</p>
 <ul>
   <li><strong>Mac-native workspace</strong> &mdash; Summaries, transcripts, players, library views, location details, and processing views can use movable and resizable windows. Settings opens in its own Mac Settings window.</li>
   <li><strong>Commands and shortcuts</strong> &mdash; Standard File and Edit menus provide import, export, navigation, and editing commands where available.</li>
@@ -194,6 +200,7 @@
   <li><strong>Mac Share extension</strong> &mdash; Send supported audio and transcript files to BisonNotes from the macOS Share menu. The Mac and iOS extensions use the same protected, authorized import handoff.</li>
   <li><strong>Desktop recording widget</strong> &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center, then select Record to open the app and begin a new audio note.</li>
   <li><strong>Focused player</strong> &mdash; The Mac app keeps one recording player window and reuses it when you open a different recording, avoiding conflicting playback controls.</li>
+  <li><strong>Unsaved-edit protection</strong> &mdash; Closing an edited transcript asks for confirmation instead of silently discarding changes.</li>
   <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. Macs with 16 GB or more RAM can select Ternary Bonsai 27B (~8.5 GB).</li>
   <li><strong>Archive and export</strong> &mdash; Security-scoped archive locations survive relaunch, and native Mac RTF/PDF export and AppKit sharing are available.</li>
 </ul>
@@ -312,6 +319,7 @@
 <!-- ============================================================ -->
 <!-- AI ENGINE CONFIGURATION                                       -->
 <!-- ============================================================ -->
+<span id="bn23-ai"></span>
 <h2 id="bn-ai">AI Engine Configuration</h2>
 
 <div class="bn-info"><strong>Overview:</strong> BisonNotes AI supports multiple AI engines for transcription and summarization. Each has different capabilities, requirements, and pricing.</div>
@@ -326,10 +334,9 @@
 
     <h4>Requirements</h4>
     <ul>
-      <li><strong>Transcription:</strong> iOS 17.0+, 4GB+ RAM. Uses Parakeet (default) for on-device transcription.</li>
+      <li><strong>Transcription:</strong> iOS 18.5+ or native macOS 15+, with a Parakeet model download. No additional Local Speaker Labels RAM/device guarantee is published without measured evidence.</li>
       <li><strong>AI Summary (MLX Swift):</strong> 4GB+ RAM. Uses Ternary Bonsai models scaled to your device.</li>
-      <li><strong>Legacy AI Summary (llama.cpp):</strong> 6GB+ RAM. Available as On Device AI (Legacy).</li>
-      <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Legacy llama.cpp models are about 1.3 GB to 4.5 GB; Parakeet transcription downloads separately.</li>
+      <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Parakeet transcription downloads separately.</li>
     </ul>
 
     <h4>MLX Models (by RAM)</h4>
@@ -340,68 +347,15 @@
       <li><strong>Native macOS, 16GB+:</strong> Ternary Bonsai 27B (~8.5 GB) — Laptop-class reasoning available only in the native Mac app</li>
     </ul>
 
-    <h4>Legacy llama.cpp Models (6GB+)</h4>
-    <ul>
-      <li><strong>8GB+:</strong> Gemma 3n E4B (4.5 GB) — Best overall quality</li>
-      <li><strong>6GB+:</strong> Gemma 3n E2B (3.0 GB) — Good quality, smaller size</li>
-      <li><strong>6GB+:</strong> Granite Micro (2.1 GB) — Very fast processing</li>
-      <li><strong>8GB+:</strong> Granite (4.3 GB) — Reliable and accurate</li>
-      <li><strong>6GB+:</strong> Ministral (2.1 GB) — Best for tasks/reminders</li>
-      <li><strong>6GB+:</strong> Qwen3.5 2B (1.3 GB) — Thinking mode, summary only</li>
-      <li><strong>8GB+:</strong> Qwen3.5 4B (2.7 GB) — Thinking mode, excellent detail</li>
-    </ul>
-
-    <div class="bn-info"><strong>v2.0 migration:</strong> Existing users on the removed LFM 2.5 model or legacy llama.cpp on sub-6GB devices are moved to MLX 1.7B when possible. Devices below 4GB fall back to Mistral AI.</div>
+    <div class="bn-info"><strong>Migration:</strong> Existing installations with a legacy llama.cpp selection are moved to the closest MLX model tier. Known legacy GGUF files and legacy settings are removed to reclaim storage. Stale selections on devices below 4GB use the Mistral AI fallback because MLX requires 4GB+ RAM.</div>
 
     <p><strong>Best for:</strong> Privacy-conscious users, offline use, and local summaries without sending transcript text to a cloud provider.</p>
   </div>
 </details>
 
-<!-- OpenAI -->
-<details>
-  <summary>2. OpenAI — Cloud AI</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-cloud">Cloud</span>
-    <span class="bn-badge bn-b-paid">Pay-per-use</span>
-    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Privacy:</strong> Data sent to OpenAI &bull; <strong>Internet:</strong> Required</p>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li>Get API key at <a href="https://platform.openai.com" target="_blank" rel="noopener">platform.openai.com</a></li>
-      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI</li>
-      <li>Enter your API key, select model, test connection.</li>
-    </ol>
-
-    <h4>Summarization Models</h4>
-    <div class="bn-tw">
-      <table>
-        <thead><tr><th>Model</th><th>Best For</th><th>Tier</th></tr></thead>
-        <tbody>
-          <tr><td><strong>GPT-4.1 Mini</strong></td><td>Balanced performance (Default)</td><td>Standard</td></tr>
-          <tr><td><strong>GPT-5 Mini</strong></td><td>Next-gen reasoning</td><td>Premium</td></tr>
-          <tr><td><strong>GPT-5.4 Mini</strong></td><td>Latest GPT-5 Mini — improved reasoning</td><td>Premium</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h4>Transcription Models</h4>
-    <div class="bn-tw">
-      <table>
-        <thead><tr><th>Model</th><th>Notes</th></tr></thead>
-        <tbody>
-          <tr><td><strong>GPT-4o Transcribe</strong></td><td>Most robust. Supports streaming.</td></tr>
-          <tr><td><strong>GPT-4o Mini Transcribe</strong></td><td>Cheapest/fastest. Streaming. Recommended.</td></tr>
-          <tr><td><strong>Whisper-1</strong></td><td>Legacy Whisper V2. No streaming.</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p><strong>Best for:</strong> High-quality results, advanced features</p>
-  </div>
-</details>
-
 <!-- Google AI Studio -->
 <details>
-  <summary>3. Google AI Studio — Gemini Models</summary>
+  <summary>2. Google AI Studio — Gemini Models</summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
     <span class="bn-badge bn-b-free">Free tier</span>
@@ -416,20 +370,20 @@
 
     <h4>Available Models</h4>
     <ul>
-      <li><strong>Gemini 3 Flash Preview</strong> (Default) — Fast and efficient</li>
-      <li><strong>Gemini 3.1 Flash Lite Preview</strong> — Lightweight variant for quick processing</li>
+      <li><strong>Gemini 3.7 Flash</strong> (Default) — Fast and efficient</li>
+      <li><strong>Gemini 3.5 Flash Lite</strong> — Lightweight variant for quick processing</li>
     </ul>
     <p><strong>Best for:</strong> Balanced performance and cost, with free tier for getting started</p>
   </div>
 </details>
 
-<!-- OpenAI API Compatible -->
+<!-- Compatible API -->
 <details>
-  <summary>4. OpenAI API Compatible — LiteLLM, llama.cpp, Groq, etc.</summary>
+  <summary>3. Compatible API — LiteLLM, llama.cpp, Groq, etc.</summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud/Local</span>
     <span class="bn-badge bn-b-free">Flexible</span>
-    <p><strong>Type:</strong> OpenAI-compatible endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
+    <p><strong>Type:</strong> Compatible chat-completion endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
 
     <div class="bn-info"><strong>Note:</strong> This is a single engine option that works with multiple providers. You don't select them as separate engines — just change the base URL and API key.</div>
 
@@ -439,12 +393,12 @@
       <li><strong>llama.cpp</strong> — Base URL: <code>http://localhost:8080</code>. API key: "no-key" or empty.</li>
       <li><strong>Groq</strong> — Base URL: <code>https://api.groq.com/v1</code>. API key from <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></li>
       <li><strong>Nebius</strong> — Your Nebius endpoint URL</li>
-      <li><strong>Custom</strong> — Any OpenAI-compatible endpoint</li>
+      <li><strong>Custom</strong> — Any compatible chat-completion endpoint</li>
     </ul>
 
     <h4>Setup</h4>
     <ol class="bn-sl">
-      <li>Go to Setup &rarr; AI Settings &rarr; OpenAI API Compatible</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Compatible API</li>
       <li>Enter API key and base URL for your provider.</li>
       <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
       <li>Test the connection.</li>
@@ -458,7 +412,7 @@
 
 <!-- Mistral AI -->
 <details>
-  <summary>5. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
+  <summary>4. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
   <div class="dd">
     <span class="bn-badge bn-b-cloud">Cloud</span>
     <span class="bn-badge bn-b-free">Free Tier Available</span>
@@ -486,6 +440,8 @@
     <ul>
       <li><strong>Mistral Large (25.12)</strong> — Most capable, 128K context (Premium)</li>
       <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard) &mdash; <em>default after guided setup</em></li>
+      <li><strong>Mistral Small 4 (26.03)</strong> — Efficient hybrid instruct/reasoning model with a controllable light reasoning pass (Standard)</li>
+      <li><strong>Mistral Medium 3.5</strong> — Current medium model with adjustable reasoning effort and a 128K app context cap (Standard)</li>
       <li><strong>Magistral Medium (25.09)</strong> — Economy, 40K context</li>
     </ul>
 
@@ -508,35 +464,9 @@
   </div>
 </details>
 
-<!-- AWS Bedrock -->
-<details>
-  <summary>6. AWS Bedrock — Enterprise Claude AI</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-cloud">Cloud</span>
-    <span class="bn-badge bn-b-paid">Pay-per-use</span>
-    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Pay-per-use &bull; <strong>Internet:</strong> Required</p>
-
-    <h4>Available Models</h4>
-    <ul>
-      <li><strong>Claude 4.5 Haiku</strong> (Default) — Fast, efficient (Standard tier)</li>
-      <li><strong>Claude Sonnet 4.5</strong> — Advanced reasoning and analysis (Premium tier)</li>
-      <li><strong>Llama 4 Maverick 17B</strong> — Meta's latest, enhanced reasoning (Economy tier)</li>
-    </ul>
-
-    <h4>Setup</h4>
-    <ol class="bn-sl">
-      <li>Create an AWS account and enable Bedrock service.</li>
-      <li>Create IAM user with Bedrock permissions and generate access keys.</li>
-      <li>Go to Setup &rarr; AI Settings &rarr; AWS Bedrock.</li>
-      <li>Enter AWS credentials, select region and model, test connection.</li>
-    </ol>
-    <p><strong>Best for:</strong> Enterprise features and compliance</p>
-  </div>
-</details>
-
 <!-- Apple Native -->
 <details>
-  <summary>7. Apple Native — Apple Intelligence</summary>
+  <summary>5. Apple Native — Apple Intelligence</summary>
   <div class="dd">
     <span class="bn-badge bn-b-free">Free</span>
     <span class="bn-badge bn-b-local">On-Device</span>
@@ -568,50 +498,37 @@
 </details>
 
 <!-- Ollama -->
-<details>
-  <summary>8. Ollama — Local LLM Server</summary>
+<details id="bn-ollama">
+  <summary>6. Ollama — Local LLM Server (native Mac only)</summary>
   <div class="dd">
     <span class="bn-badge bn-b-local">Local</span>
     <span class="bn-badge bn-b-free">Free</span>
-    <p><strong>Type:</strong> Local server &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Not required</p>
+    <p><strong>Type:</strong> Local server on the native Mac app &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Required for installation and model downloads only</p>
 
-    <h4>Setup</h4>
+    <div class="bn-info"><strong>Mac only:</strong> Ollama is available in BisonNotes only on native macOS. It is not offered as an iPhone or iPad engine. BisonNotes connects to Ollama running on the same Mac through the loopback address <code>http://localhost:11434</code>.</div>
+    <div class="bn-info"><strong>Existing iPhone/iPad users:</strong> If an older version saved Ollama as your engine, BisonNotes automatically switches to the best available on-device engine when you next launch the app. If the device cannot run an on-device model, it uses another configured fallback.</div>
+
+    <h4>Install Ollama on your Mac</h4>
     <ol class="bn-sl">
-      <li>Install <a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a> on your machine.</li>
-      <li>Download models:
-        <pre><code>ollama pull qwen3:30b
-ollama pull gpt-oss:20b
-ollama pull mistral-small3.2</code></pre>
+      <li>Open the official <a href="https://ollama.com/download/mac" target="_blank" rel="noopener">Ollama for macOS download</a> page. The current macOS app requires macOS 14 Sonoma or later.</li>
+      <li>Open the downloaded disk image, drag <strong>Ollama</strong> to <strong>Applications</strong>, and launch it.</li>
+      <li>Open Terminal and download at least one model, for example:
+        <pre><code>ollama pull llama3.2</code></pre>
+        You can choose another model from the <a href="https://ollama.com/library" target="_blank" rel="noopener">Ollama model library</a>; larger models need more memory and storage.
       </li>
-      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
-      <li>Set server URL and port (default: <code>http://localhost:11434</code>).</li>
-      <li>Tap refresh to scan for models, select one, test connection.</li>
+      <li>Leave Ollama running. If you use the command line instead of the Mac app, <code>ollama serve</code> starts the local server.</li>
     </ol>
 
-    <div class="bn-info"><strong>Tips:</strong> Use your server's IP for network access (e.g., <code>http://192.168.1.100:11434</code>). Larger models = better results but more RAM.</div>
-    <p><strong>Best for:</strong> Privacy, customizable models, offline use</p>
-  </div>
-</details>
-
-<!-- On Device AI Legacy -->
-<details>
-  <summary>9. On Device AI (Legacy) &mdash; llama.cpp Local Models</summary>
-  <div class="dd">
-    <span class="bn-badge bn-b-local">On-Device</span>
-    <span class="bn-badge bn-b-free">Free</span>
-    <p><strong>Type:</strong> On-device llama.cpp &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Only for initial GGUF model download</p>
-
-    <div class="bn-info"><strong>Legacy option:</strong> In v2.0, the main On Device AI option uses MLX Swift. The original llama.cpp engine remains available as On Device AI (Legacy) for 6GB+ devices that already prefer those GGUF models.</div>
-
-    <h4>Setup</h4>
+    <h4>Connect BisonNotes to Ollama</h4>
     <ol class="bn-sl">
-      <li>Go to Setup &rarr; Additional Settings &rarr; AI Engines.</li>
-      <li>Choose <strong>On Device AI (Legacy)</strong> if it is available on your device.</li>
-      <li>Download one of the listed GGUF models.</li>
-      <li>Optional: turn on experimental summary models to show Qwen or Granite H models that match your RAM tier.</li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
+      <li>On the native Mac app, leave Server URL as <code>http://localhost</code> and Port as <code>11434</code>. BisonNotes seeds these values when you choose Ollama unless you already configured a custom server.</li>
+      <li>Choose <strong>Test Connection</strong>; once connected, the available model list loads. Select the model you downloaded, then save/dismiss Ollama Settings.</li>
+      <li>Select Ollama in the Engine Library and generate a summary from a transcript.</li>
     </ol>
 
-    <p><strong>Best for:</strong> Users who already downloaded llama.cpp models or want a different local model lineup than the default MLX Swift path.</p>
+    <div class="bn-info"><strong>Troubleshooting:</strong> If the connection test fails, open Ollama from Applications and try again. You can verify the local API in Terminal with <code>curl http://localhost:11434/api/tags</code>. The default loopback connection keeps transcript text on the Mac.</div>
+    <p><strong>Best for:</strong> Privacy, customizable models, offline use</p>
   </div>
 </details>
 
@@ -632,11 +549,8 @@ ollama pull mistral-small3.2</code></pre>
 <h3>Available Engines</h3>
 <ul>
   <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
-  <li><strong>OpenAI</strong> — GPT-4o Transcribe, GPT-4o Mini Transcribe, or Whisper-1.</li>
   <li><strong>Mistral AI</strong> — Voxtral Mini with optional speaker diarization. Free tier available; $0.003/min on paid tiers.</li>
   <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
-  <li><strong>AWS Transcribe</strong> — Cloud service for long audio files.</li>
-  <li><strong>OpenAI API Compatible</strong> — Any compatible transcription endpoint.</li>
 </ul>
 
 <h3>Transcription Engine Comparison</h3>
@@ -644,11 +558,8 @@ ollama pull mistral-small3.2</code></pre>
   <table>
     <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
     <tbody>
-      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>No</td><td>Free (Default)</td></tr>
-      <tr><td><strong>OpenAI GPT-4o</strong></td><td>Cloud</td><td>No</td><td>Per token</td></tr>
-      <tr><td><strong>OpenAI Whisper</strong></td><td>Cloud</td><td>No</td><td>Per minute</td></tr>
+      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>Optional Local Speaker Labels after completed audio</td><td>Free (Default)</td></tr>
       <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
-      <tr><td><strong>AWS Transcribe</strong></td><td>Cloud</td><td>Yes</td><td>Per minute</td></tr>
       <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
     </tbody>
   </table>
@@ -665,11 +576,23 @@ ollama pull mistral-small3.2</code></pre>
       <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
       <li><strong>Choose a model:</strong> Parakeet v2 is English-only with stronger long-form English recall. Parakeet v3 supports multilingual transcription across 25 European languages.</li>
       <li><strong>Download the model:</strong> Tap "Download" to get the selected Parakeet model. Progress now shows checking, downloading, preparing, and ready states.</li>
-      <li><strong>Requirements:</strong> iOS 17.0+, model download required.</li>
+      <li><strong>Requirements:</strong> iOS 18.5+ or native macOS 15+, model download required.</li>
     </ol>
 
     <div class="bn-info"><strong>Migration note:</strong> WhisperKit was removed in v1.8. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
     <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
+
+    <h4>Local Speaker Labels (Optional)</h4>
+    <p>Local Speaker Labels are opt-in and off by default. They run only after a completed Parakeet recording, imported audio file, or transcript re-run. They run once against the complete source audio after Parakeet ASR and reassembly; they never run during Live Transcription or in real time.</p>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> In On Device settings, turn on <strong>Local Speaker Labels</strong>. Enabling the toggle does not download a model.</li>
+      <li><strong>Choose a method:</strong> <strong>Offline VBx — Recommended</strong> estimates the number of speakers without an app-side two- or three-speaker cap. <strong>LS-EEND — Experimental</strong> uses the DIHARD3 500 ms model and supports up to 10 speakers; labels may be over-segmented or less stable, and LS-EEND is limited to complete files up to one hour.</li>
+      <li><strong>Prepare explicitly:</strong> Tap <strong>Download Speaker Model</strong> for the selected method. This is the initial HTTPS download; cached use works offline afterward, audio stays on the device, and no API key is required.</li>
+      <li><strong>Manage models:</strong> Parakeet, Offline VBx, and LS-EEND have independent readiness, cached files, unload, and delete state. Deleting a speaker model does not delete Parakeet or the other speaker model. Switching methods preserves caches and does not silently prepare a model.</li>
+      <li><strong>Rename speakers:</strong> Open the completed transcript, use its existing speaker controls to rename a speaker, and save. The saved mapping is used by speaker-aware transcript and summary views.</li>
+    </ol>
+    <div class="bn-warn"><strong>Fallback:</strong> If the selected model is missing, LS-EEND exceeds one hour, or timing/alignment/diarization fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a visible warning. It does not silently switch methods or upload audio.</div>
+    <div class="bn-info"><strong>Measured limits:</strong> This guide does not publish model sizes, RAM/device guarantees, performance, or accuracy. Those claims require the opt-in model/accuracy gate in the regression regimen.</div>
   </div>
 </details>
 
@@ -678,30 +601,10 @@ ollama pull mistral-small3.2</code></pre>
   <summary>Whisper (Local Server) Setup</summary>
   <div class="dd">
     <ol class="bn-sl">
-      <li><strong>Install Whisper Server:</strong>
-        <pre><code># Using Docker (recommended)
-docker run -d -p 9000:9000 \
-  -e ASR_MODEL=base \
-  -e ASR_ENGINE=openai_whisper \
-  onerahmet/openai-whisper-asr-webservice:latest</code></pre>
-      </li>
+      <li><strong>Install a Whisper-compatible server:</strong> Run your preferred local server on port 9000, then configure its REST API or Wyoming endpoint below.</li>
       <li><strong>Configure:</strong> Setup &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
     </ol>
     <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
-  </div>
-</details>
-
-<!-- AWS Transcribe -->
-<details>
-  <summary>AWS Transcribe Setup</summary>
-  <div class="dd">
-    <ol class="bn-sl">
-      <li>Create an AWS account and enable Transcribe service.</li>
-      <li>Create IAM user with <code>transcribe:StartTranscriptionJob</code> and <code>transcribe:GetTranscriptionJob</code> permissions.</li>
-      <li>Setup &rarr; Transcription Settings &rarr; AWS Transcribe.</li>
-      <li>Enter access key, secret key, region, language. Test connection.</li>
-    </ol>
-    <div class="bn-info"><strong>Tip:</strong> Choose a region close to you for better performance.</div>
   </div>
 </details>
 
@@ -808,7 +711,7 @@ docker run -d -p 9000:9000 \
     <h4>Additional Settings</h4>
     <p>Full control over all options.</p>
     <ul>
-      <li>All AI engines, including On Device AI (MLX Swift), On Device AI (Legacy), cloud providers, Ollama, and Apple Native</li>
+      <li>All current AI engines, including On Device AI (MLX Swift), cloud providers, Ollama on native macOS, and Apple Native</li>
       <li>All transcription engines</li>
       <li>Microphone selection</li>
       <li>Preferences, iCloud, background processing, diagnostics, and experimental model toggles</li>
@@ -829,14 +732,16 @@ docker run -d -p 9000:9000 \
 
 <h3>AI Settings</h3>
 <ul>
-  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, OpenAI-compatible, Ollama, Apple Native, and AWS Bedrock engines</li>
-  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, comedy mode tone, etc.</li>
+  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama on native macOS, and Apple Native engines</li>
+  <li><strong>Summary Detail</strong> &mdash; Choose Brief, Balanced, or Detailed narrative output; tasks, reminders, titles, and content type remain factual metadata.</li>
+  <li><strong>Summary Thinking</strong> &mdash; Choose Off or Light. Light is applied only when the selected model has a known safe thinking control; reasoning text is not shown in the final summary.</li>
+  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, and supported model-specific controls.</li>
   <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
   <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
 </ul>
 
 <h3>Comedy Mode</h3>
-<p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick a style (e.g.&nbsp;<em>snarky</em>), and supported engines will rewrite summaries in that voice. Disable it to return to the standard, neutral summary style.</p>
+<p>On native macOS, Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick <em>Snarky</em> or <em>Funny</em>, and supported engines will rewrite only the narrative summary in that voice. Tasks, reminders, titles, and facts remain grounded in the transcript. Disable it to return to the standard, neutral summary style.</p>
 
 <!-- ============================================================ -->
 <!-- ACCESSIBILITY                                                 -->
@@ -901,10 +806,9 @@ docker run -d -p 9000:9000 \
 
 <h3>How credentials are stored</h3>
 <ul>
-  <li><strong>Keychain-backed storage</strong> &mdash; OpenAI keys, Mistral keys, Google AI keys, AWS access keys/secret keys/session tokens, OpenAI-Compatible keys, and Whisper auth tokens all live in the iOS Keychain.</li>
+  <li><strong>Keychain-backed storage</strong> &mdash; Compatible API keys, Mistral keys, Google AI keys, and Whisper auth tokens all live in the iOS Keychain.</li>
   <li><strong>Automatic migration</strong> &mdash; Existing values stored in legacy locations are migrated into the Keychain on first launch of v1.11 and then removed from their old locations.</li>
-  <li><strong>Process environment is cleared</strong> &mdash; Any inherited <code>AWS_*</code> environment variables are scrubbed at launch so AWS SDKs only use the credentials you configured in-app.</li>
-  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys, AWS credentials) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
+  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
 </ul>
 
 <h3>File protection</h3>
@@ -918,11 +822,11 @@ docker run -d -p 9000:9000 \
 </ul>
 
 <h3>Endpoint safety</h3>
-<p>User-configurable AI services (OpenAI, OpenAI-Compatible, Ollama, Whisper) are checked against an endpoint policy:</p>
+<p>User-configurable AI services (compatible API, Ollama on native macOS, and Whisper) are checked against an endpoint policy:</p>
 <ul>
   <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
   <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>
-  <li>HTTPS / WSS public endpoints (Groq, Nebius, OpenAI, etc.) work as expected.</li>
+  <li>HTTPS / WSS public endpoints (Groq, Nebius, and similar providers) work as expected.</li>
 </ul>
 <div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public address while you set it up &mdash; it does not weaken transport security for any other engine.</div>
 
@@ -1006,7 +910,6 @@ docker run -d -p 9000:9000 \
       <li><strong>On Device AI Handling</strong> &mdash; Local AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
       <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
       <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically detects and removes duplicate summaries; manual cleanup available in Database Tools</li>
-      <li><strong>Explicit credential resolvers</strong> (v1.11) &mdash; Background AWS jobs always pull fresh credentials from the Keychain so stale process-environment values can&rsquo;t leak in</li>
       <li><strong>Temporary audio cleanup</strong> (v2.1) &mdash; Conservative startup cleanup removes stale scratch, merge, and chunk files left by failed or interrupted audio workflows without touching active recordings.</li>
     </ul>
   </div>
@@ -1017,7 +920,7 @@ docker run -d -p 9000:9000 \
   <div class="dd">
     <ul>
       <li><strong>Import/Export</strong> &mdash; M4A, MP3, WAV, CAF, AIFF, AIF, plus transcript documents such as TXT, MD, VTT, SRT, PDF, DOC, and DOCX</li>
-      <li><strong>Import From Link</strong> (v2.2) &mdash; Import direct HTTPS links for audio/video files and transcript documents; YouTube links can import public captions or fall back to pasted transcript text when captions are blocked</li>
+      <li><strong>Import From Link</strong> (v2.3) &mdash; Import direct HTTPS links for audio/video files and transcript documents; YouTube links can import public captions or fall back to pasted transcript text when captions are blocked</li>
       <li><strong>Audio Export</strong> (v1.8) &mdash; Share any recording as an audio file via the iOS share sheet</li>
       <li><strong>Clean Audio Export</strong> (v1.10) &mdash; Exports use a clean, user-friendly filename derived from the recording title</li>
       <li><strong>Audio Archive</strong> &mdash; Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>
@@ -1038,7 +941,7 @@ docker run -d -p 9000:9000 \
   <summary>Recording Widgets, Watch Complications &amp; Control Center</summary>
   <div class="dd">
     <ul>
-      <li><strong>Mac Recording Widget</strong> (v2.2) &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center and select Record to open the app and start a new audio note.</li>
+      <li><strong>Mac Recording Widget</strong> (v2.3) &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center and select Record to open the app and start a new audio note.</li>
       <li><strong>Apple Watch Complications</strong> (v1.9) &mdash; Surface live recording state on watch faces. Tap the complication to open the watch app.</li>
       <li><strong>Control Center Recording Widget</strong> (iOS 18+) &mdash; Add the BisonNotes recording control to Control Center to start/stop recordings without opening the app.</li>
       <li><strong>Watch App</strong> (v2.0) &mdash; Full standalone recording on Apple Watch with one large tap target: tap to record, tap to stop, and use mute to pause/resume the same file.</li>
@@ -1079,7 +982,7 @@ docker run -d -p 9000:9000 \
       <li><strong>Keep on This Device</strong> &mdash; Mark an individual recording from its recording row or audio player to exclude that recording, transcript, and summary from BisonNotes iCloud sync and backup. When enabled, BisonNotes skips future app-managed iCloud sync/backup for that item and removes known app-created iCloud records when iCloud is available.</li>
       <li><strong>Deleted item cleanup</strong> &mdash; Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records. Other devices apply that marker before uploading so deleted items are not silently re-created. Active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.</li>
       <li><strong>Summary-only cleanup</strong> &mdash; Deleting a summary while keeping its recording/transcript queues removal of the summary&rsquo;s live record, backup record, and content-index reference. If iCloud is unavailable, BisonNotes retries the queued removal later.</li>
-      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys and AWS credentials are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
+      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
       <li>Prompted after generating your first summary</li>
     </ul>
   </div>
@@ -1151,10 +1054,7 @@ docker run -d -p 9000:9000 \
   <div class="bn-gc">
     <h4>Cloud Services</h4>
     <ul>
-      <li><a href="https://platform.openai.com/docs" target="_blank" rel="noopener">OpenAI Docs</a></li>
       <li><a href="https://ai.google.dev" target="_blank" rel="noopener">Google AI</a></li>
-      <li><a href="https://docs.aws.amazon.com/bedrock" target="_blank" rel="noopener">AWS Bedrock</a></li>
-      <li><a href="https://docs.aws.amazon.com/transcribe" target="_blank" rel="noopener">AWS Transcribe</a></li>
       <li><a href="https://docs.mistral.ai" target="_blank" rel="noopener">Mistral AI</a></li>
     </ul>
   </div>
@@ -1162,7 +1062,7 @@ docker run -d -p 9000:9000 \
     <h4>Local / Self-Hosted</h4>
     <ul>
       <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a></li>
-      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">llama.cpp</a></li>
+      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">External llama.cpp-compatible server</a></li>
       <li><a href="https://llama-cpp-python.readthedocs.io/en/latest/server/" target="_blank" rel="noopener">llama-cpp-python</a></li>
       <li><a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a></li>
       <li><a href="https://groq.com" target="_blank" rel="noopener">Groq</a></li>

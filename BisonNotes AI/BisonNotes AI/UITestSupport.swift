@@ -14,6 +14,9 @@ enum BisonNotesUITestSupport {
     static let seedSampleRecordingArgument = "--seed-sample-recording"
     static let disableCloudServicesArgument = "--disable-cloud-services"
     static let showFirstSetupArgument = "--show-first-setup"
+    static let corruptLocalSpeakerMethodArgument = "--ui-test-corrupt-local-speaker-method"
+    static let localSpeakerPreparingArgument = "--ui-test-local-speaker-model-preparing"
+    static let localSpeakerPreparationErrorArgument = "--ui-test-local-speaker-model-prepare-error"
 
     private static let preparedFlagKey = "BisonNotesUITestSupportPreparedThisLaunch"
     private static let sampleRecordingName = "UI Test Recording"
@@ -21,6 +24,28 @@ enum BisonNotesUITestSupport {
 
     static var isUITesting: Bool {
         ProcessInfo.processInfo.arguments.contains(uiTestingArgument)
+    }
+
+    static var usesLocalSpeakerModelStatusOverride: Bool {
+        isUITesting
+    }
+
+    static var shouldFailLocalSpeakerModelPreparation: Bool {
+        ProcessInfo.processInfo.arguments.contains(localSpeakerPreparationErrorArgument)
+    }
+
+    static func localSpeakerModelStatusOverride(
+        for method: LocalDiarizationMethod
+    ) -> LocalDiarizationModelStatus? {
+        guard usesLocalSpeakerModelStatusOverride else { return nil }
+
+        let isPreparingOfflineVBx = ProcessInfo.processInfo.arguments.contains(
+            localSpeakerPreparingArgument
+        ) && method == .offlineVBx
+        return LocalDiarizationModelStatus(
+            method: method,
+            state: isPreparingOfflineVBx ? .preparing : .downloadRequired
+        )
     }
 
     static func configureProcessDefaults() {
@@ -33,6 +58,21 @@ enum BisonNotesUITestSupport {
         defaults.set(true, forKey: "hasAskedLocationPermission")
         defaults.set(TranscriptionEngine.fluidAudio.rawValue, forKey: "selectedTranscriptionEngine")
         defaults.set(AIEngineType.mlxSwift.rawValue, forKey: "SelectedAIEngine")
+        defaults.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled,
+            forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled
+        )
+        defaults.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue,
+            forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        )
+        if ProcessInfo.processInfo.arguments.contains(corruptLocalSpeakerMethodArgument) {
+            defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
+            defaults.set(
+                "invalid-ui-test-method",
+                forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+            )
+        }
         defaults.set(false, forKey: "showAppleIntelligenceMigrationAlert")
         defaults.set(false, forKey: "showParakeetMigrationSettings")
         defaults.set(false, forKey: "showWhisperKitSwitchedToParakeet")

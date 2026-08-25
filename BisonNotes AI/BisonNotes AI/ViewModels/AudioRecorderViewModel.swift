@@ -15,6 +15,7 @@ import UserNotifications
 import CallKit
 #endif
 
+@MainActor
 class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Published Properties
@@ -52,6 +53,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var interruptionObserver: NSObjectProtocol?
 	var routeChangeObserver: NSObjectProtocol?
 	var willEnterForegroundObserver: NSObjectProtocol?
+	var didEnterBackgroundObserver: NSObjectProtocol?
+	var checkForUnprocessedRecordingsObserver: NSObjectProtocol?
+	private var notificationObserversConfigured = false
 	let preferredInputDefaultsKey = "PreferredAudioInputUID"
 
 	// Live transcription service (used when live transcription setting is enabled)
@@ -98,6 +102,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var macScratchSegmentURLs: [URL] = []
 	var macSystemAudioCapture: MacSystemAudioCapture?
 	var macSystemAudioURL: URL?
+	var macSystemAudioStartupGate = MacSystemAudioStartupGate()
+	var macSystemAudioStartupGateTimeoutTask: Task<Void, Never>?
+	var macSystemAudioContinuesWithoutMicrophone = false
+	var macMicrophoneStartOffset: TimeInterval = 0
 	var isFinalizingMacRecording = false
 	let macCaptureHealth = RecordingCaptureHealth()
 	var macCaptureHealthTimer: Timer?
@@ -106,7 +114,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	#if os(macOS)
 	var macInputDeviceChangeTask: Task<Void, Never>?
 	var isRecoveringMacInput = false
-	var pendingMacInputRecovery: (keepPaused: Bool, notify: Bool)?
+	struct PendingMacInputRecovery {
+		let keepPaused: Bool
+		let notify: Bool
+		let systemAudioContinued: Bool
+	}
+	var pendingMacInputRecovery: PendingMacInputRecovery?
 	#endif
 	#endif
 	let checkpointInterval: TimeInterval = 30.0 // Try to checkpoint every 30 seconds
@@ -231,12 +244,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	/// Initialize the view model asynchronously to ensure proper setup
 	func initialize() async {
-		// Ensure we're on the main actor for UI updates
-		await MainActor.run {
-			// Initialize any required components
-			setupNotificationObservers()
-		}
-
 		// Initialize location manager only if tracking is enabled
 		await MainActor.run {
 			if isLocationTrackingEnabled {
@@ -244,9 +251,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			}
 		}
 
-		// Don't configure audio session immediately - wait until user starts recording
-		// This prevents interference with other audio apps on app launch
-		AppLog.shared.recording("AudioRecorderViewModel initialized without configuring audio session")
+		// Don't configure audio session immediately - wait until user starts recording.
+		// This prevents interference with other audio apps on app launch.
 	}
 
 	static let macSystemAudioCaptureEnabledKey = "MacSystemAudioCaptureEnabled"
@@ -257,29 +263,27 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	deinit {
-		#if os(macOS)
-		macCaptureHealthTimer?.invalidate()
-		#endif
+		// Timer properties are MainActor-isolated and cannot be reached from this
+		// nonisolated deinitializer, and Timer.invalidate() must run on the thread
+		// that installed the timer — which a deinit cannot guarantee either. So
+		// releasing the owner does NOT stop a scheduled timer: the run loop holds
+		// it until it is invalidated. Each repeating timer's block instead checks
+		// for a released owner and invalidates itself on its own run loop.
 		#if os(macOS)
 		macInputDeviceChangeTask?.cancel()
-		enhancedAudioSessionManager.stopInputDeviceMonitoring()
 		#endif
 
-		// Remove observers synchronously since deinit cannot be async
-		if let observer = interruptionObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = routeChangeObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = willEnterForegroundObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
+		// NotificationCenter block observers capture the view model weakly, so
+		// they cannot keep this instance alive after deinitialization. The
+		// MainActor-isolated token cleanup remains available to the live owner.
 	}
 
 	// MARK: - Notification Observers
 
 	func setupNotificationObservers() {
+		guard !notificationObserversConfigured else { return }
+		notificationObserversConfigured = true
+
 		#if os(iOS)
 		// AVAudioSession interruption/route notifications use Mach ports that don't
 		// exist on Mac — registering for them floods the log with "cannot add handler".
@@ -404,24 +408,26 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		// Add observer for app backgrounding
-		NotificationCenter.default.addObserver(
+		didEnterBackgroundObserver = NotificationCenter.default.addObserver(
 			forName: PlatformLifecycle.didEnterBackgroundNotification,
 			object: nil,
 			queue: .main
 		) { [weak self] _ in
-			guard let self = self else { return }
-			self.appIsBackgrounding = true
-			// Start a background task as a safety net while recording in the background.
-			// UIBackgroundModes:audio keeps the app alive for active audio, but this gives
-			// extra time for recovery if the recorder is interrupted (e.g., declined call).
-			if self.isRecording {
-				self.beginBackgroundTask()
-				self.startBackgroundTimeMonitoring()
+			Task { @MainActor [weak self] in
+				guard let self else { return }
+				self.appIsBackgrounding = true
+				// Start a background task as a safety net while recording in the background.
+				// UIBackgroundModes:audio keeps the app alive for active audio, but this gives
+				// extra time for recovery if the recorder is interrupted (e.g., declined call).
+				if self.isRecording {
+					self.beginBackgroundTask()
+					self.startBackgroundTimeMonitoring()
+				}
 			}
 		}
 
 		// Listen for BackgroundProcessingManager's request to check for unprocessed recordings
-		NotificationCenter.default.addObserver(
+		checkForUnprocessedRecordingsObserver = NotificationCenter.default.addObserver(
 			forName: NSNotification.Name("CheckForUnprocessedRecordings"),
 			object: nil,
 			queue: .main
@@ -434,15 +440,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func removeNotificationObservers() {
-		if let observer = interruptionObserver {
+		let observers = [
+			interruptionObserver,
+			routeChangeObserver,
+			willEnterForegroundObserver,
+			didEnterBackgroundObserver,
+			checkForUnprocessedRecordingsObserver
+		]
+		observers.compactMap { $0 }.forEach { observer in
 			NotificationCenter.default.removeObserver(observer)
 		}
-		if let observer = routeChangeObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
-		if let observer = willEnterForegroundObserver {
-			NotificationCenter.default.removeObserver(observer)
-		}
+
+		interruptionObserver = nil
+		routeChangeObserver = nil
+		willEnterForegroundObserver = nil
+		didEnterBackgroundObserver = nil
+		checkForUnprocessedRecordingsObserver = nil
+		notificationObserversConfigured = false
 	}
 
 	// MARK: - Call Observer Setup (Phase 1)
@@ -487,26 +501,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
-			DispatchQueue.main.async {
-				guard let self = self else { return }
+			Task { @MainActor [weak self] in
+				guard let self else { return }
 				if granted {
 					AppLog.shared.recording("startRecording: microphone permission granted")
-					Task {
+					Task { @MainActor [weak self] in
+						guard let self else { return }
 						do {
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
-							await MainActor.run {
-								self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
-								self.finishRecordingStartup()
-							}
+							self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
+							self.finishRecordingStartup()
 							return
 						}
-						await MainActor.run {
-							self.setupRecording()
-						}
+						self.setupRecording()
 					}
 				} else {
 					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
@@ -601,24 +612,21 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
-			DispatchQueue.main.async {
-				guard let self = self else { return }
+			Task { @MainActor [weak self] in
+				guard let self else { return }
 				if granted {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission granted")
-					Task {
+					Task { @MainActor [weak self] in
+						guard let self else { return }
 						do {
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
-							await MainActor.run {
-								self.finishRecordingStartup()
-							}
+							self.finishRecordingStartup()
 							return
 						}
-						await MainActor.run {
-							self.setupRecording()
-						}
+						self.setupRecording()
 					}
 				} else {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
@@ -935,19 +943,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				self.isUsingLiveTranscription = false
 				self.liveTranscriptionService = nil
 				self.errorMessage = "Live transcription unavailable: \(error.localizedDescription). Starting standard recording."
-				// Fall back to standard recording
-				let selectedQuality = AudioQuality.whisperOptimized
-				let settings = selectedQuality.settings
-				do {
-					self.audioRecorder = try AVAudioRecorder(url: url, settings: settings)
-					self.audioRecorder?.delegate = self
-					self.audioRecorder?.isMeteringEnabled = true
-					self.audioRecorder?.record()
-					self.markRecordingStarted()
-				} catch {
-					self.finishRecordingStartup()
-					self.errorMessage = "Failed to start recording: \(error.localizedDescription)"
-				}
+
+				// Keep the diagnostic and fallback action tied to the same selected backend.
+				// Native macOS must never re-enter the unreliable AVAudioRecorder path.
+				let fallbackBackend = Self.liveTranscriptionFallbackBackend
+				AppLog.shared.recording("Live transcription failed; starting \(fallbackBackend) fallback", level: .error)
+				await self.startFallbackRecordingAfterLiveTranscriptionFailure(
+					at: url, backend: fallbackBackend)
 			}
 		}
 	}
@@ -955,9 +957,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Timer Management
 
 	func startRecordingTimer() {
-		recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-			DispatchQueue.main.async {
-				guard let self = self else { return }
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
+		recordingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+			guard self != nil else { timer.invalidate(); return }
+			Task { @MainActor [weak self] in
+				guard let self else { return }
 				// Failsafe: if the underlying AVAudioRecorder stopped, try to resume before giving up.
 				// This also runs during backgrounding — a declined call can stop the recorder
 				// while the app is in the background, and we need to detect that.
@@ -985,7 +992,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 						} else if let stoppedTime = self.recorderStoppedUnexpectedlyTime, Date().timeIntervalSince(stoppedTime) >= 5.0 {
 							AppLog.shared.recording("No interruption notification received after 5s - attempting to resume recording")
 							self.recorderStoppedUnexpectedlyTime = nil
-							Task { @MainActor in
+							Task { @MainActor [weak self] in
+								guard let self else { return }
 								await self.attemptResumeAfterUnexpectedStop()
 							}
 							return
@@ -1010,7 +1018,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 				// Phase 3: Check recording limits every 10 seconds (reduces overhead)
 				if Int(self.recordingTime) % 10 == 0 {
-					Task { @MainActor in
+					Task { @MainActor [weak self] in
+						guard let self else { return }
 						await self.checkRecordingLimitsAndWarnings()
 					}
 				}
@@ -1026,9 +1035,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func startPlayingTimer() {
 		stopPlayingTimer() // Ensure no duplicate timers
 
-		playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-			DispatchQueue.main.async {
-				guard let self = self, let player = self.audioPlayer, self.isPlaying else {
+		// The run loop retains a scheduled timer until it is invalidated, so a
+		// dropped property does not stop it. The nonisolated deinit cannot
+		// invalidate it either (invalidate() must run on the installing thread),
+		// so the block self-invalidates on its own run loop once the owner is gone.
+		playingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+			guard self != nil else { timer.invalidate(); return }
+			Task { @MainActor [weak self] in
+				guard let self, let player = self.audioPlayer, self.isPlaying else {
 					return
 				}
 				let newTime = player.currentTime

@@ -39,19 +39,58 @@ struct EngineAvailabilityStatus {
     }
 }
 
+struct LegacySummaryMigrationReport: Equatable, Sendable {
+    let decodedCount: Int
+    let migratedCount: Int
+    let preservedExistingCount: Int
+    let unresolvedCount: Int
+    let failedCount: Int
+    let didComplete: Bool
+    let didRemoveLegacyData: Bool
+
+    init(
+        decodedCount: Int,
+        migratedCount: Int,
+        preservedExistingCount: Int = 0,
+        unresolvedCount: Int,
+        failedCount: Int,
+        didComplete: Bool,
+        didRemoveLegacyData: Bool = false
+    ) {
+        self.decodedCount = decodedCount
+        self.migratedCount = migratedCount
+        self.preservedExistingCount = preservedExistingCount
+        self.unresolvedCount = unresolvedCount
+        self.failedCount = failedCount
+        self.didComplete = didComplete
+        self.didRemoveLegacyData = didRemoveLegacyData
+    }
+}
+
+@MainActor
+func extractTasksAndRemindersFromCompleteResult(
+    using engine: SummarizationEngine,
+    text: String
+) async throws -> (tasks: [TaskItem], reminders: [ReminderItem]) {
+    let result = try await engine.processComplete(text: text)
+    return (tasks: result.tasks, reminders: result.reminders)
+}
+
 @MainActor
 class SummaryManager: ObservableObject {
     // MARK: - Shared Instance
     static let shared = SummaryManager()
 
-    @Published var enhancedSummaries: [EnhancedSummaryData] = []
-
-    private let enhancedSummariesKey = "SavedEnhancedSummaries"
+    static let legacySummariesKey = "SavedEnhancedSummaries"
+    static let legacyMigrationVersionKey = "SavedEnhancedSummariesMigrationVersion"
+    static let legacyMigrationVersion = 1
 
     // MARK: - Enhanced Summarization Integration
 
     private var currentEngine: SummarizationEngine?
     private var availableEngines: [String: SummarizationEngine] = [:]
+    private weak var appCoordinator: AppDataCoordinator?
+    private lazy var fallbackCoreDataManager = CoreDataManager()
     // Task and Reminder Extractors for enhanced processing
     private let taskExtractor = TaskExtractor()
     private let reminderExtractor = ReminderExtractor()
@@ -60,7 +99,7 @@ class SummaryManager: ObservableObject {
     // MARK: - Background Task Management
 
     /// Background task ID for keeping summarization alive when the app is backgrounded.
-    /// Cloud AI calls (OpenAI, Bedrock, Gemini) use network requests that iOS will
+    /// Cloud AI calls (Gemini, Mistral, and compatible APIs) use network requests that iOS will
     /// terminate after ~30s without a background task.
     private var summaryBackgroundTaskID: PlatformBackgroundTask.ID = .invalid
 
@@ -75,140 +114,214 @@ class SummaryManager: ObservableObject {
     private let iCloudManager = iCloudStorageManager.shared
 
     private init() {
-        loadEnhancedSummariesLegacy()
         initializeEngines()
     }
 
-    /// Internal legacy loading for init compatibility
-    private func loadEnhancedSummariesLegacy() {
-        guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else {
-            return
+    func configure(with coordinator: AppDataCoordinator) {
+        appCoordinator = coordinator
+    }
+
+    func getAuthoritativeSummaryData() -> [EnhancedSummaryData] {
+        authoritativeCoreDataManager.getAllSummaryData()
+    }
+
+    private var authoritativeCoreDataManager: CoreDataManager {
+        appCoordinator?.coreDataManager ?? fallbackCoreDataManager
+    }
+
+    @discardableResult
+    private func persistSummaryIfPossible(_ summary: EnhancedSummaryData) -> EnhancedSummaryData? {
+        let coreDataManager = authoritativeCoreDataManager
+        guard let recordingId = summary.recordingId ?? coreDataManager.getRecording(url: summary.recordingURL)?.id else {
+            AppLog.shared.summarization(
+                "Cannot persist summary \(summary.id): no matching Core Data recording",
+                level: .error
+            )
+            return nil
         }
+
         do {
-            let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
-            enhancedSummaries = legacySummaries
-            if !legacySummaries.isEmpty {
-                AppLog.shared.summarization("Loaded \(legacySummaries.count) legacy summaries from UserDefaults during init")
-            }
+            try coreDataManager.upsertSummary(
+                summary,
+                for: recordingId,
+                transcriptId: summary.transcriptId
+            )
+            return coreDataManager.getSummaryData(for: recordingId)
         } catch {
-            AppLog.shared.summarization("Failed to load legacy enhanced summaries during init: \(error)", level: .error)
+            AppLog.shared.summarization("Failed to persist summary \(summary.id): \(error)", level: .error)
+            return nil
         }
+    }
+
+    @discardableResult
+    func migrateLegacySummaries(from data: Data, using coordinator: AppDataCoordinator) -> LegacySummaryMigrationReport {
+        let legacySummaries: [EnhancedSummaryData]
+        do {
+            legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
+        } catch {
+            AppLog.shared.summarization("Failed to decode legacy enhanced summaries: \(error)", level: .error)
+            return LegacySummaryMigrationReport(
+                decodedCount: 0,
+                migratedCount: 0,
+                unresolvedCount: 0,
+                failedCount: 1,
+                didComplete: false
+            )
+        }
+
+        guard !legacySummaries.isEmpty else {
+            return LegacySummaryMigrationReport(
+                decodedCount: 0,
+                migratedCount: 0,
+                unresolvedCount: 0,
+                failedCount: 0,
+                didComplete: true
+            )
+        }
+
+        var migratedCount = 0
+        var preservedExistingCount = 0
+        var unresolvedCount = 0
+        var failedCount = 0
+
+        for legacySummary in legacySummaries {
+            let recording: RecordingEntry?
+            if let recordingId = legacySummary.recordingId {
+                // A supplied UUID is authoritative. Do not silently map a stale UUID to a
+                // different recording just because their filenames happen to match.
+                recording = coordinator.getRecording(id: recordingId)
+            } else {
+                // URL matching is only a compatibility path for older records without UUIDs.
+                recording = coordinator.getRecording(url: legacySummary.recordingURL)
+            }
+
+            guard let recording, let recordingId = recording.id else {
+                unresolvedCount += 1
+                AppLog.shared.summarization(
+                    "Retaining legacy summary \(legacySummary.id.uuidString): no matching recording",
+                    level: .error
+                )
+                continue
+            }
+
+            if let existingSummary = coordinator.getSummary(for: recordingId),
+               let existingSummaryId = existingSummary.id,
+               existingSummaryId != legacySummary.id
+                || (existingSummary.generatedAt ?? .distantPast) > legacySummary.generatedAt {
+                preservedExistingCount += 1
+                AppLog.shared.summarization(
+                    "Preserving existing Core Data summary for recording \(recordingId.uuidString) during legacy migration",
+                    level: .debug
+                )
+                continue
+            }
+
+            do {
+                let transcriptId = legacySummary.transcriptId ?? recording.transcriptId
+                try coordinator.coreDataManager.upsertSummary(
+                    legacySummary,
+                    for: recordingId,
+                    transcriptId: transcriptId
+                )
+                migratedCount += 1
+
+            } catch {
+                failedCount += 1
+                AppLog.shared.summarization(
+                    "Failed to migrate legacy summary \(legacySummary.id.uuidString): \(error)",
+                    level: .error
+                )
+            }
+        }
+
+        return LegacySummaryMigrationReport(
+            decodedCount: legacySummaries.count,
+            migratedCount: migratedCount,
+            preservedExistingCount: preservedExistingCount,
+            unresolvedCount: unresolvedCount,
+            failedCount: failedCount,
+            didComplete: unresolvedCount == 0 && failedCount == 0
+        )
+    }
+
+    @discardableResult
+    func migrateLegacySummariesIfNeeded(
+        using coordinator: AppDataCoordinator,
+        defaults: UserDefaults = .standard
+    ) -> LegacySummaryMigrationReport {
+        let hasLegacyData = defaults.data(forKey: Self.legacySummariesKey) != nil
+        if defaults.integer(forKey: Self.legacyMigrationVersionKey) >= Self.legacyMigrationVersion,
+           !hasLegacyData {
+            return LegacySummaryMigrationReport(
+                decodedCount: 0,
+                migratedCount: 0,
+                unresolvedCount: 0,
+                failedCount: 0,
+                didComplete: true
+            )
+        }
+
+        guard let data = defaults.data(forKey: Self.legacySummariesKey) else {
+            defaults.set(Self.legacyMigrationVersion, forKey: Self.legacyMigrationVersionKey)
+            return LegacySummaryMigrationReport(
+                decodedCount: 0,
+                migratedCount: 0,
+                unresolvedCount: 0,
+                failedCount: 0,
+                didComplete: true
+            )
+        }
+
+        let report = migrateLegacySummaries(from: data, using: coordinator)
+        guard report.didComplete else {
+            // Keep both the legacy payload and the marker unset so a later launch can retry
+            // unresolved or failed items without duplicating summaries already upserted.
+            return report
+        }
+
+        // Delete the payload first. If the process stops before the marker is written, the next
+        // launch sees no payload and safely records completion instead of losing data.
+        defaults.removeObject(forKey: Self.legacySummariesKey)
+        defaults.set(Self.legacyMigrationVersion, forKey: Self.legacyMigrationVersionKey)
+
+        return LegacySummaryMigrationReport(
+            decodedCount: report.decodedCount,
+            migratedCount: report.migratedCount,
+            preservedExistingCount: report.preservedExistingCount,
+            unresolvedCount: report.unresolvedCount,
+            failedCount: report.failedCount,
+            didComplete: true,
+            didRemoveLegacyData: true
+        )
     }
 
     // MARK: - Enhanced Summary Methods
 
     /// DEPRECATED: Use AppDataCoordinator.addSummary() for proper Core Data persistence
-    @available(*, deprecated, message: "Use AppDataCoordinator.addSummary() for Core Data persistence. This method only updates UI state.")
+    @available(*, deprecated, message: "Use AppDataCoordinator.addSummary() for Core Data persistence.")
     func saveEnhancedSummary(_ summary: EnhancedSummaryData) {
-        DispatchQueue.main.async {
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("saveEnhancedSummary() is deprecated - updating UI only", level: .debug)
-            }
-
-            // Remove any existing enhanced summary for this recording
-            self.enhancedSummaries.removeAll { $0.recordingURL == summary.recordingURL }
-            self.enhancedSummaries.append(summary)
-            // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
-
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Enhanced summary saved. Total summaries: \(self.enhancedSummaries.count)", level: .debug)
-            }
-
-            // Force a UI update
-            self.objectWillChange.send()
-
-            // Sync to iCloud if enabled
-            Task {
-                do {
-                    try await self.iCloudManager.syncSummary(summary)
-                } catch {
-                    AppLog.shared.summarization("Failed to sync summary to iCloud: \(error)", level: .error)
-                }
-            }
-
-            // Verify the save operation
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                // Only log if verbose logging is enabled
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Can find summary: \(self.hasSummary(for: summary.recordingURL))", level: .debug)
-                }
+        guard let persistedSummary = persistSummaryIfPossible(summary) else {
+            return
+        }
+        Task {
+            do {
+                try await iCloudManager.syncSummary(persistedSummary)
+            } catch {
+                AppLog.shared.summarization("Failed to sync summary to iCloud: \(error)", level: .error)
             }
         }
     }
 
     func updateEnhancedSummary(_ summary: EnhancedSummaryData) {
-        DispatchQueue.main.async {
-            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == summary.recordingURL }) {
-                self.enhancedSummaries[index] = summary
-                // NOTE: Removed saveEnhancedSummariesToDisk() - Core Data is now the source of truth
-            } else {
-                // Only update UI state, not persistence
-                self.enhancedSummaries.append(summary)
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Added summary to UI state", level: .debug)
-                }
-            }
-        }
+        _ = persistSummaryIfPossible(summary)
     }
 
     func getEnhancedSummary(for recordingURL: URL) -> EnhancedSummaryData? {
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLog.shared.summarization("Looking for enhanced summary with file: \(recordingURL.lastPathComponent)", level: .debug)
-            AppLog.shared.summarization("Total enhanced summaries: \(enhancedSummaries.count)", level: .debug)
+        guard let recording = authoritativeCoreDataManager.getRecording(url: recordingURL),
+              let recordingId = recording.id else {
+            return nil
         }
-
-        let targetFilename = recordingURL.lastPathComponent
-        let targetName = recordingURL.deletingPathExtension().lastPathComponent
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLog.shared.summarization("Looking for filename: \(targetFilename)", level: .debug)
-            AppLog.shared.summarization("Looking for name: \(targetName)", level: .debug)
-        }
-
-        for (index, summary) in enhancedSummaries.enumerated() {
-            let summaryFilename = summary.recordingURL.lastPathComponent
-            let summaryName = summary.recordingURL.deletingPathExtension().lastPathComponent
-
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Checking enhanced summary \(index)", level: .debug)
-            }
-
-            // Try multiple comparison methods
-            let exactMatch = summary.recordingURL == recordingURL
-            let pathMatch = summary.recordingURL.path == recordingURL.path
-            let filenameMatch = summaryFilename == targetFilename
-            let nameMatch = summaryName == targetName
-            let recordingNameMatch = summary.recordingName == targetName
-
-            // Only log if verbose logging is enabled
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Exact match: \(exactMatch)", level: .debug)
-                AppLog.shared.summarization("Path match: \(pathMatch)", level: .debug)
-                AppLog.shared.summarization("Filename match: \(filenameMatch)", level: .debug)
-                AppLog.shared.summarization("Name match: \(nameMatch)", level: .debug)
-                AppLog.shared.summarization("Recording name match: \(recordingNameMatch)", level: .debug)
-            }
-
-            // Match if any of these conditions are true
-            if exactMatch || pathMatch || filenameMatch || nameMatch || recordingNameMatch {
-                // Only log if verbose logging is enabled
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Found matching enhanced summary", level: .debug)
-                }
-                return summary
-            }
-        }
-
-        // Only log if verbose logging is enabled
-        if PerformanceOptimizer.shouldLogEngineInitialization() {
-            AppLog.shared.summarization("No matching enhanced summary found", level: .debug)
-        }
-        return nil
+        return authoritativeCoreDataManager.getSummaryData(for: recordingId)
     }
 
     func hasEnhancedSummary(for recordingURL: URL) -> Bool {
@@ -227,23 +340,38 @@ class SummaryManager: ObservableObject {
     }
 
     func deleteSummary(for recordingURL: URL) {
-        DispatchQueue.main.async {
-            // Find the enhanced summary to get its ID for iCloud deletion
-            let enhancedSummary = self.enhancedSummaries.first { $0.recordingURL == recordingURL }
+        guard let summary = getEnhancedSummary(for: recordingURL) else {
+            return
+        }
 
-            self.enhancedSummaries.removeAll { $0.recordingURL == recordingURL }
-            // NOTE: Core Data is now the source of truth for persistence
-
-            // Delete from iCloud if there was an enhanced summary
-            if let summary = enhancedSummary {
-                Task {
-                    do {
-                        try await self.iCloudManager.deleteSummaryFromiCloud(summary.id)
-                    } catch {
-                        AppLog.shared.summarization("Failed to delete summary from iCloud: \(error)", level: .error)
-                    }
+        if let appCoordinator {
+            Task { @MainActor in
+                do {
+                    try await appCoordinator.deleteSummary(id: summary.id)
+                } catch {
+                    AppLog.shared.summarization("Failed to delete summary: \(error)", level: .error)
                 }
             }
+            return
+        }
+
+        // Keep the fallback manager safe for callers created before the app coordinator.
+        iCloudManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summary.id,
+            recordingId: summary.recordingId
+        )
+        do {
+            try authoritativeCoreDataManager.deleteSummary(id: summary.id)
+            Task {
+                do {
+                    try await self.iCloudManager.removeSummaryContentFromiCloud(summaryId: summary.id)
+                } catch {
+                    AppLog.shared.summarization("Failed to delete summary from iCloud: \(error)", level: .error)
+                }
+            }
+        } catch {
+            iCloudManager.clearPendingSummaryRemoval(summaryId: summary.id)
+            AppLog.shared.summarization("Failed to delete summary from Core Data: \(error)", level: .error)
         }
     }
 
@@ -261,13 +389,29 @@ class SummaryManager: ObservableObject {
 
     func clearAllSummaries() {
         AppLog.shared.summarization("Clearing all summaries...")
-
-        let enhancedCount = enhancedSummaries.count
-
-        DispatchQueue.main.async {
-            self.enhancedSummaries.removeAll()
-            AppLog.shared.summarization("Cleared \(enhancedCount) summaries")
+        let summaries = getAuthoritativeSummaryData()
+        if let appCoordinator {
+            Task { @MainActor in
+                for summary in summaries {
+                    do {
+                        try await appCoordinator.deleteSummary(id: summary.id)
+                    } catch {
+                        AppLog.shared.summarization("Failed to clear summary \(summary.id): \(error)", level: .error)
+                    }
+                }
+            }
+        } else {
+            for summary in summaries {
+                iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: summary.id, recordingId: summary.recordingId)
+                do {
+                    try authoritativeCoreDataManager.deleteSummary(id: summary.id)
+                } catch {
+                    iCloudManager.clearPendingSummaryRemoval(summaryId: summary.id)
+                    AppLog.shared.summarization("Failed to clear summary \(summary.id): \(error)", level: .error)
+                }
+            }
         }
+        AppLog.shared.summarization("Cleared \(summaries.count) summaries")
     }
 
     func showUnsupportedDeviceAlert() {
@@ -311,9 +455,6 @@ class SummaryManager: ObservableObject {
             // Don't set any engine as current during initialization - wait for UserDefaults restoration
         }
 
-        // Log only essential initialization summary
-        AppLog.shared.summarization("Engine initialization complete - \(successfullyInitialized)/\(allEngineTypes.count) engines initialized")
-
         // Only log detailed engine lists if verbose logging is enabled
         if PerformanceOptimizer.shouldLogEngineInitialization() {
             AppLog.shared.summarization("Available engines: \(getAvailableEnginesOnly())", level: .debug)
@@ -328,7 +469,6 @@ class SummaryManager: ObservableObject {
            savedEngine.isAvailable {
             // User has a saved preference and the engine is available
             currentEngine = savedEngine
-            AppLog.shared.summarization("Restored previously selected engine: \(savedEngine.name)")
         } else if let savedEngineName = savedEngineName,
                   let savedEngine = availableEngines[savedEngineName],
                   !savedEngine.isAvailable {
@@ -342,13 +482,13 @@ class SummaryManager: ObservableObject {
             // No saved preference, try to set MLX (the new on-device default)
             if let defaultEngine = availableEngines[AIEngineType.mlxSwift.rawValue], defaultEngine.isAvailable {
                 currentEngine = defaultEngine
-                UserDefaults.standard.set(defaultEngine.name, forKey: "SelectedAIEngine")
+                UserDefaults.standard.set(defaultEngine.engineType, forKey: "SelectedAIEngine")
                 AppLog.shared.summarization("No saved preference, set MLX as default engine")
             } else {
                 // Try to find any available engine
                 if let anyAvailableEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = anyAvailableEngine
-                    UserDefaults.standard.set(anyAvailableEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(anyAvailableEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("On-Device AI not available, using '\(anyAvailableEngine.name)' as default")
                 } else {
                     // Last resort: set to None
@@ -365,11 +505,54 @@ class SummaryManager: ObservableObject {
                 if let fallbackEngine = availableEngines.values.first(where: { $0.isAvailable && $0.name != "None" }) {
                     currentEngine = fallbackEngine
                     AppLog.shared.summarization("Set \(fallbackEngine.name) as fallback engine")
+
+                    if Self.shouldPersistFallbackSelection(
+                        savedEngineName: engineName,
+                        knownEngineNames: Set(availableEngines.keys),
+                        removedProviderMigrationCompleted: UserDefaults.standard.bool(
+                            forKey: AppSettingsKeys.removedProviderSelectionsMigrated
+                        )
+                    ) {
+                        UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
+                        AppLog.shared.summarization(
+                            "Replaced unrecognized engine selection '\(engineName)' with '\(fallbackEngine.name)'"
+                        )
+                    }
                 }
             }
         }
 
-        AppLog.shared.summarization("Current active engine: \(getCurrentEngineName())")
+        AppLog.shared.summarization(
+            "AI engines ready: \(successfullyInitialized)/\(allEngineTypes.count) initialized; " +
+            "active engine: \(getCurrentEngineName())"
+        )
+    }
+
+    /// Whether a persisted engine selection should be rewritten to the engine
+    /// actually in use.
+    ///
+    /// A name the app still recognizes is left alone even when that engine is
+    /// temporarily unavailable — it is the user's preference and can become
+    /// valid again once the server is reachable or the key is entered. A name
+    /// no build recognizes never will: it names a removed provider, usually
+    /// arriving by way of an iCloud settings restore from an older build. Left
+    /// in place it strands every reader that keys off the raw string, because
+    /// their `?? default` never fires for a non-nil value.
+    ///
+    /// The exception is timing. This registry is built on first access to
+    /// `SummaryManager.shared`, which can happen before the launch migrations
+    /// run, and until they have run an unrecognized name may still be a removed
+    /// provider they can map to a successor — "OpenAI" becomes Compatible API
+    /// with its credentials intact. Overwriting it first would destroy the only
+    /// evidence of what the user had. So the rewrite waits for them.
+    nonisolated static func shouldPersistFallbackSelection(
+        savedEngineName: String?,
+        knownEngineNames: Set<String>,
+        removedProviderMigrationCompleted: Bool
+    ) -> Bool {
+        guard let savedEngineName, savedEngineName != "None" else { return false }
+        guard !knownEngineNames.contains(savedEngineName) else { return false }
+        return removedProviderMigrationCompleted
     }
 
     func setEngine(_ engineName: String) {
@@ -451,7 +634,7 @@ class SummaryManager: ObservableObject {
         availableEngines[engineType.rawValue] = updatedEngine
 
         // If this was the current engine, update the reference
-        if currentEngine?.name == engineName {
+        if currentEngine?.engineType == engineName {
             currentEngine = updatedEngine
             AppLog.shared.summarization("Updated current engine configuration for '\(engineName)'", level: .debug)
         }
@@ -580,7 +763,7 @@ class SummaryManager: ObservableObject {
         let selectedEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
 
         // If current engine doesn't match the selected engine, update it
-        if currentEngine?.name != selectedEngineName {
+        if currentEngine?.engineType != selectedEngineName {
             if let selectedEngine = availableEngines[selectedEngineName], selectedEngine.isAvailable {
                 currentEngine = selectedEngine
                 AppLog.shared.summarization("Synced current engine to '\(selectedEngineName)' from settings", level: .debug)
@@ -695,7 +878,7 @@ class SummaryManager: ObservableObject {
         }
 
         // For engines that support connection testing, perform additional checks
-        if engineName.contains("OpenAI") || engineName.contains("Ollama") {
+        if engineName.contains("Compatible") || engineName.contains("Ollama") {
             // Try to perform a connection test if the engine supports it
             if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                 let isConnected = await testableEngine.testConnection()
@@ -747,7 +930,7 @@ class SummaryManager: ObservableObject {
 
         // Update current engine if needed
         if let currentEngine = currentEngine {
-            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.name })
+            let currentEngineType = AIEngineType.allCases.first(where: { $0.rawValue == currentEngine.engineType })
             let currentEngineInstance = AIEngineFactory.createEngine(type: currentEngineType ?? .mlxSwift)
 
             if !currentEngineInstance.isAvailable {
@@ -756,7 +939,7 @@ class SummaryManager: ObservableObject {
                 // Try to find an available fallback engine
                 if let fallbackEngine = availableEngines.values.first {
                     self.currentEngine = fallbackEngine
-                    UserDefaults.standard.set(fallbackEngine.name, forKey: "SelectedAIEngine")
+                    UserDefaults.standard.set(fallbackEngine.engineType, forKey: "SelectedAIEngine")
                     AppLog.shared.summarization("Switched to fallback engine '\(fallbackEngine.name)'", level: .debug)
                 }
             }
@@ -786,7 +969,7 @@ class SummaryManager: ObservableObject {
             AppLog.shared.summarization("Testing connection for '\(engineName)'", level: .debug)
 
             // Only test connections for engines that support it
-            if engineName.contains("OpenAI") || engineName.contains("Ollama") || engineName.contains("Google") {
+            if engineName.contains("Compatible") || engineName.contains("Ollama") || engineName.contains("Google") {
                 if let testableEngine = engine as? (any SummarizationEngine & ConnectionTestable) {
                     let isConnected = await testableEngine.testConnection()
                     if isConnected {
@@ -825,7 +1008,7 @@ class SummaryManager: ObservableObject {
                 isComingSoon: engineType.isComingSoon,
                 requirements: engineType.requirements,
                 version: engine.version,
-                isCurrentEngine: currentEngine?.name == engineName
+                isCurrentEngine: currentEngine?.engineType == engineName
             )
 
             statusMap[engineName] = status
@@ -862,7 +1045,7 @@ class SummaryManager: ObservableObject {
         }
 
         // Check if current engine is still available
-        let availability = await checkEngineAvailability(currentEngine.name)
+        let availability = await checkEngineAvailability(currentEngine.engineType)
 
         if !availability.isAvailable {
             AppLog.shared.summarization("Current engine '\(currentEngine.name)' is no longer available", level: .default)
@@ -951,6 +1134,10 @@ class SummaryManager: ObservableObject {
         // Sync engine from settings before logging to avoid "No current engine set" warning
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
+        AppLog.shared.summarization(
+            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), comedy=\(ComedyMode.current.rawValue)",
+            level: .debug
+        )
 
         let startTime = Date()
 
@@ -977,19 +1164,6 @@ class SummaryManager: ObservableObject {
                 processingTime: Date().timeIntervalSince(startTime)
             )
 
-            // Update UI state on the main thread
-            await MainActor.run {
-                // Only update UI state - Core Data persistence should be handled by caller
-                if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == shortTranscriptSummary.recordingURL }) {
-                    self.enhancedSummaries[index] = shortTranscriptSummary
-                } else {
-                    self.enhancedSummaries.append(shortTranscriptSummary)
-                }
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Updated UI state for short transcript summary", level: .debug)
-                }
-            }
-
             AppLog.shared.summarization("Short transcript summary created and saved")
             return shortTranscriptSummary
         }
@@ -1002,7 +1176,7 @@ class SummaryManager: ObservableObject {
             throw validationError
         }
 
-        // Begin a background task so cloud AI calls (OpenAI, Bedrock, Gemini, etc.)
+        // Begin a background task so cloud AI calls (Gemini, Mistral, etc.)
         // can complete even if the user backgrounds the app during summarization.
         beginSummaryBackgroundTask()
         defer { endSummaryBackgroundTask() }
@@ -1025,7 +1199,7 @@ class SummaryManager: ObservableObject {
 
         AppLog.shared.summarization("Using engine: \(engine.name)")
 
-        var result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+        var result: SummarizationResult
         do {
             // Use the AI engine to process the complete text
             result = try await engine.processComplete(text: text)
@@ -1036,6 +1210,11 @@ class SummaryManager: ObservableObject {
             }
             // Don't retry content safety blocks — they'll just fail again
             if let sumError = error as? SummarizationError, case .contentSafetyBlock = sumError {
+                throw sumError
+            }
+            // Truncation is deterministic and the engine already retried with a
+            // larger output budget; another pass would fail the same way.
+            if let sumError = error as? SummarizationError, case .responseTruncated = sumError {
                 throw sumError
             }
             // Check for guardrail violations that weren't caught at the engine level
@@ -1121,19 +1300,6 @@ class SummaryManager: ObservableObject {
             handleError(SummarizationError.processingFailed(reason: "Summary quality below threshold"), context: "Summary Quality", recordingName: recordingName)
         }
 
-        // Update UI state on the main thread
-        await MainActor.run {
-            // Only update UI state - Core Data persistence should be handled by caller
-            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == enhancedSummary.recordingURL }) {
-                self.enhancedSummaries[index] = enhancedSummary
-            } else {
-                self.enhancedSummaries.append(enhancedSummary)
-            }
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Updated UI state for enhanced summary", level: .debug)
-            }
-        }
-
         // Update the recording name if we generated a better one
         if finalRecordingName != recordingName {
             try await updateRecordingNameWithAI(
@@ -1166,7 +1332,9 @@ class SummaryManager: ObservableObject {
         summaryBackgroundTaskID = PlatformBackgroundTask.begin(name: "AISummarization") { [weak self] in
             // Expiration handler — iOS is about to kill us
             AppLog.shared.summarization("Background task expiring for summarization", level: .default)
-            self?.endSummaryBackgroundTask()
+            Task { @MainActor [weak self] in
+                self?.endSummaryBackgroundTask()
+            }
         }
         if summaryBackgroundTaskID != .invalid {
             let remaining = PlatformBackgroundTask.remainingTime
@@ -1214,19 +1382,6 @@ class SummaryManager: ObservableObject {
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
-
-            // Update UI state on the main thread
-            await MainActor.run {
-                // Only update UI state - Core Data persistence should be handled by caller
-                if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == shortTranscriptSummary.recordingURL }) {
-                    self.enhancedSummaries[index] = shortTranscriptSummary
-                } else {
-                    self.enhancedSummaries.append(shortTranscriptSummary)
-                }
-                if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLog.shared.summarization("Updated UI state for short transcript summary", level: .debug)
-                }
-            }
 
             AppLog.shared.summarization("Short transcript summary created and saved")
             return shortTranscriptSummary
@@ -1280,19 +1435,6 @@ class SummaryManager: ObservableObject {
         if qualityReport.qualityLevel == SummaryQualityLevel.unacceptable {
             AppLog.shared.summarization("Basic summary quality is unacceptable", level: .default)
             handleError(SummarizationError.processingFailed(reason: "Basic summary quality below threshold"), context: "Basic Summary Quality", recordingName: recordingName)
-        }
-
-        // Update UI state on the main thread
-        await MainActor.run {
-            // Only update UI state - Core Data persistence should be handled by caller
-            if let index = self.enhancedSummaries.firstIndex(where: { $0.recordingURL == enhancedSummary.recordingURL }) {
-                self.enhancedSummaries[index] = enhancedSummary
-            } else {
-                self.enhancedSummaries.append(enhancedSummary)
-            }
-            if PerformanceOptimizer.shouldLogEngineInitialization() {
-                AppLog.shared.summarization("Updated UI state for basic enhanced summary", level: .debug)
-            }
         }
 
         // Update the recording name if we generated a better one
@@ -1367,7 +1509,7 @@ class SummaryManager: ObservableObject {
         // Select top sentences based on boosted importance score
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         if topSentences.isEmpty {
@@ -1486,26 +1628,32 @@ class SummaryManager: ObservableObject {
     func extractTasksAndRemindersFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem]) {
         AppLog.shared.summarization("Extracting tasks and reminders from text", level: .debug)
 
-        async let tasks = extractTasksFromText(text)
-        async let reminders = extractRemindersFromText(text)
+        if let engine = currentEngine {
+            do {
+                let result = try await extractTasksAndRemindersFromCompleteResult(
+                    using: engine,
+                    text: text
+                )
+                AppLog.shared.summarization(
+                    "Extracted \(result.tasks.count) tasks and \(result.reminders.count) reminders",
+                    level: .debug
+                )
+                return result
+            } catch {
+                AppLog.shared.summarization(
+                    "Complete task and reminder extraction failed, using fallback extractors: \(error)",
+                    level: .debug
+                )
+            }
+        }
 
-        let (taskResults, reminderResults) = try await (tasks, reminders)
-
-        AppLog.shared.summarization("Extracted \(taskResults.count) tasks and \(reminderResults.count) reminders", level: .debug)
-        return (taskResults, reminderResults)
-    }
-
-    func extractTasksRemindersAndTitlesFromText(_ text: String) async throws -> (tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem]) {
-        AppLog.shared.summarization("Extracting tasks, reminders, and titles from text", level: .debug)
-
-        async let tasks = extractTasksFromText(text)
-        async let reminders = extractRemindersFromText(text)
-        async let titles = extractTitlesFromText(text)
-
-        let (taskResults, reminderResults, titleResults) = try await (tasks, reminders, titles)
-
-        AppLog.shared.summarization("Extracted \(taskResults.count) tasks, \(reminderResults.count) reminders, and \(titleResults.count) titles", level: .debug)
-        return (taskResults, reminderResults, titleResults)
+        let tasks = taskExtractor.extractTasks(from: text)
+        let reminders = reminderExtractor.extractReminders(from: text)
+        AppLog.shared.summarization(
+            "Fallback extracted \(tasks.count) tasks and \(reminders.count) reminders",
+            level: .debug
+        )
+        return (tasks, reminders)
     }
 
     // MARK: - Content Type Influenced Processing
@@ -1583,7 +1731,7 @@ class SummaryManager: ObservableObject {
 
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         let bulletPoints = topSentences.map { sentence in
@@ -1640,7 +1788,7 @@ class SummaryManager: ObservableObject {
 
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(4)
+            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
             .map { $0.sentence }
 
         let bulletPoints = topSentences.map { sentence in
@@ -1654,13 +1802,19 @@ class SummaryManager: ObservableObject {
     // MARK: - Batch Processing
 
     func regenerateAllSummaries() async {
-        let recordingsToProcess = enhancedSummaries.map { ($0.recordingURL, $0.recordingName, $0.recordingDate) }
+        let recordingsToProcess = getAuthoritativeSummaryData().map { ($0.recordingURL, $0.recordingName, $0.recordingDate) }
 
         for (url, name, date) in recordingsToProcess {
             // Load transcript for this recording
             if let transcriptText = loadTranscriptText(for: url) {
                 do {
-                    _ = try await generateEnhancedSummary(from: transcriptText, for: url, recordingName: name, recordingDate: date)
+                    let regeneratedSummary = try await generateEnhancedSummary(
+                        from: transcriptText,
+                        for: url,
+                        recordingName: name,
+                        recordingDate: date
+                    )
+                    _ = persistSummaryIfPossible(regeneratedSummary)
                     AppLog.shared.summarization("Regenerated summary for: \(name)")
                 } catch {
                     AppLog.shared.summarization("Failed to regenerate summary for \(name): \(error)", level: .error)
@@ -1822,12 +1976,7 @@ class SummaryManager: ObservableObject {
                 processingTime: Date().timeIntervalSince(Date())
             )
 
-            // Only update UI state - Core Data persistence should be handled by caller
-            if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == combinedEnhancedSummary.recordingURL }) {
-                enhancedSummaries[index] = combinedEnhancedSummary
-            } else {
-                enhancedSummaries.append(combinedEnhancedSummary)
-            }
+            _ = persistSummaryIfPossible(combinedEnhancedSummary)
             clearCurrentError()
         }
     }
@@ -1895,12 +2044,7 @@ class SummaryManager: ObservableObject {
             processingTime: 0
         )
 
-        // Only update UI state - Core Data persistence should be handled by caller
-        if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == manualSummary.recordingURL }) {
-            enhancedSummaries[index] = manualSummary
-        } else {
-            enhancedSummaries.append(manualSummary)
-        }
+        _ = persistSummaryIfPossible(manualSummary)
         clearCurrentError()
     }
 
@@ -1955,29 +2099,6 @@ class SummaryManager: ObservableObject {
                 AppLog.shared.summarization("No coordinator provided, skipping Core Data update", level: .default)
             }
 
-            // Update the enhanced summary with the new name
-            if let existingSummary = getEnhancedSummary(for: recordingURL) {
-                let updatedSummary = EnhancedSummaryData(
-                    recordingURL: recordingURL,
-                    recordingName: newName,
-                    recordingDate: existingSummary.recordingDate,
-                    summary: existingSummary.summary,
-                    tasks: existingSummary.tasks,
-                    reminders: existingSummary.reminders,
-                    contentType: existingSummary.contentType,
-                    aiEngine: existingSummary.aiEngine,
-            aiModel: existingSummary.aiModel,
-                    originalLength: existingSummary.originalLength,
-                    processingTime: existingSummary.processingTime
-                )
-                // Only update UI state - Core Data persistence should be handled by caller
-                if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == updatedSummary.recordingURL }) {
-                    enhancedSummaries[index] = updatedSummary
-                } else {
-                    enhancedSummaries.append(updatedSummary)
-                }
-                AppLog.shared.summarization("Updated enhanced summary UI state with new name", level: .debug)
-            }
         } else {
             AppLog.shared.summarization("Keeping original name '\(oldName)' (no meaningful improvement found)", level: .debug)
         }
@@ -2001,30 +2122,6 @@ class SummaryManager: ObservableObject {
 
         AppLog.shared.summarization("Recording name updated using Core Data workflow", level: .debug)
 
-        // Update the enhanced summary with the new name
-        if let existingSummary = getEnhancedSummary(for: recordingURL) {
-            let updatedSummary = EnhancedSummaryData(
-                recordingURL: recordingURL,
-                recordingName: newName,
-                recordingDate: existingSummary.recordingDate,
-                summary: existingSummary.summary,
-                tasks: existingSummary.tasks,
-                reminders: existingSummary.reminders,
-                contentType: existingSummary.contentType,
-                aiEngine: existingSummary.aiEngine,
-            aiModel: existingSummary.aiModel,
-                originalLength: existingSummary.originalLength,
-                processingTime: existingSummary.processingTime
-            )
-            // Only update UI state - Core Data persistence should be handled by caller
-            if let index = enhancedSummaries.firstIndex(where: { $0.recordingURL == updatedSummary.recordingURL }) {
-                enhancedSummaries[index] = updatedSummary
-            } else {
-                enhancedSummaries.append(updatedSummary)
-            }
-            AppLog.shared.summarization("Updated enhanced summary UI state with new name", level: .debug)
-        }
-
         // Notify UI to refresh recordings list
         await MainActor.run {
             NotificationCenter.default.post(
@@ -2035,23 +2132,6 @@ class SummaryManager: ObservableObject {
                     "newName": newName,
                     "oldURL": recordingURL,
                     "newURL": recordingURL // The URL will be updated by the workflow manager
-                ]
-            )
-        }
-    }
-
-    private func updatePendingTranscriptionJobs(from oldURL: URL, to newURL: URL, newName: String) async {
-        // Update any pending transcription jobs with the new URL and name
-        // For now, we'll use a notification approach, but this could be improved
-        // by injecting the transcription manager as a dependency
-        await MainActor.run {
-            NotificationCenter.default.post(
-                name: NSNotification.Name("UpdatePendingTranscriptionJobs"),
-                object: nil,
-                userInfo: [
-                    "oldURL": oldURL,
-                    "newURL": newURL,
-                    "newName": newName
                 ]
             )
         }
@@ -2082,13 +2162,14 @@ class SummaryManager: ObservableObject {
     }
 
     func getSummaryStatistics() -> SummaryStatistics {
-        let totalSummaries = enhancedSummaries.count
-        let averageConfidence = enhancedSummaries.isEmpty ? 0.0 : enhancedSummaries.map { $0.confidence }.reduce(0, +) / Double(totalSummaries)
-        let averageCompressionRatio = enhancedSummaries.isEmpty ? 0.0 : enhancedSummaries.map { $0.compressionRatio }.reduce(0, +) / Double(totalSummaries)
-        let totalTasks = enhancedSummaries.reduce(0) { $0 + $1.tasks.count }
-        let totalReminders = enhancedSummaries.reduce(0) { $0 + $1.reminders.count }
+        let summaries = getAuthoritativeSummaryData()
+        let totalSummaries = summaries.count
+        let averageConfidence = summaries.isEmpty ? 0.0 : summaries.map { $0.confidence }.reduce(0, +) / Double(totalSummaries)
+        let averageCompressionRatio = summaries.isEmpty ? 0.0 : summaries.map { $0.compressionRatio }.reduce(0, +) / Double(totalSummaries)
+        let totalTasks = summaries.reduce(0) { $0 + $1.tasks.count }
+        let totalReminders = summaries.reduce(0) { $0 + $1.reminders.count }
 
-        let engineUsage = Dictionary(grouping: enhancedSummaries, by: { $0.aiModel })
+        let engineUsage = Dictionary(grouping: summaries, by: { $0.aiModel })
             .mapValues { $0.count }
 
         return SummaryStatistics(
@@ -2101,29 +2182,4 @@ class SummaryManager: ObservableObject {
         )
     }
 
-    // MARK: - Persistence
-
-    /// DEPRECATED: UserDefaults storage is legacy - Core Data is now the source of truth
-    @available(*, deprecated, message: "Core Data is now the source of truth for summary persistence")
-    private func saveEnhancedSummariesToDisk() {
-        // This method is deprecated and should not be used
-        // Core Data handles all persistence now
-        AppLog.shared.summarization("saveEnhancedSummariesToDisk() called - this is deprecated, use Core Data instead", level: .default)
-    }
-
-    /// DEPRECATED: UserDefaults loading is legacy - Core Data loads summaries now
-    @available(*, deprecated, message: "Core Data is now the source of truth for summary loading")
-    private func loadEnhancedSummaries() {
-        // This method is deprecated - summaries should be loaded from Core Data
-        // Keep for potential one-time migration only
-        guard let data = UserDefaults.standard.data(forKey: enhancedSummariesKey) else {
-            return
-        }
-        do {
-            let legacySummaries = try JSONDecoder().decode([EnhancedSummaryData].self, from: data)
-            AppLog.shared.summarization("Found \(legacySummaries.count) legacy summaries in UserDefaults - consider migrating to Core Data", level: .default)
-        } catch {
-            AppLog.shared.summarization("Failed to load legacy enhanced summaries: \(error)", level: .error)
-        }
-    }
 }

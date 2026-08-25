@@ -23,9 +23,9 @@ struct WhisperSettingsView: View {
     @State private var testResult: String?
     @State private var isTesting = false
     /// Built lazily, only when the user taps "Test Connection" — never in `init`. This view
-    /// lives inside eagerly-evaluated `.navigationDestination` builders, so constructing a live
-    /// WhisperService (and its Wyoming TCP client) in `init` caused repeated init/deinit churn
-    /// and stray connection attempts on every re-render of the parent settings screen.
+    /// is embedded in settings detail builders, so constructing a live WhisperService (and its
+    /// Wyoming TCP client) in `init` caused repeated init/deinit churn and stray connection
+    /// attempts on every re-render of the parent settings screen.
     @State private var whisperService: WhisperService?
 
     /// Build a WhisperService from the current settings. Mirrors the previous `init` logic:
@@ -49,7 +49,7 @@ struct WhisperSettingsView: View {
             Form {
                 Section(header: Text("Whisper Service")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Whisper provides high-quality transcription using OpenAI's Whisper model via REST API. This service runs on your local server for privacy and performance.")
+                        Text("Whisper provides high-quality transcription through a local REST or Wyoming service. The server runs on your own device or network for privacy and performance.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -319,7 +319,7 @@ struct WhisperSettingsView: View {
                     } else {
                         Link("Whisper REST API Documentation", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
                     }
-                    Link("Whisper Model Information", destination: URL(string: "https://openai.com/research/whisper")!)
+                    Link("Whisper Model Information", destination: URL(string: "https://github.com/guillaumekln/faster-whisper")!)
                 }
             }
             .nativeMacSettingsFormStyle()
@@ -327,6 +327,7 @@ struct WhisperSettingsView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Whisper Settings")
             .navigationBarTitleDisplayMode(.inline)
+#if !os(macOS)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
@@ -334,6 +335,7 @@ struct WhisperSettingsView: View {
                     }
                 }
             }
+#endif
         }
     }
 

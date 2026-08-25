@@ -18,6 +18,10 @@ final class TranscriptionStarter: ObservableObject {
     @Published private(set) var queuedCleanupRecordings: [RecordingEntry] = []
     /// The recording currently undergoing audio cleanup, if any.
     @Published private(set) var activeCleaningRecordingId: UUID?
+    /// The most recent non-fatal local speaker-label warning from the direct
+    /// fallback path. The transcript itself is still persisted through the
+    /// existing Core Data save call below.
+    @Published private(set) var lastTranscriptionWarning: LocalSpeakerLabelWarning?
 
     private var isProcessingCleanupQueue: Bool = false
     private let backgroundProcessingManager = BackgroundProcessingManager.shared
@@ -33,6 +37,10 @@ final class TranscriptionStarter: ObservableObject {
 
     func isQueuedForCleanup(_ recordingId: UUID) -> Bool {
         queuedCleanupRecordings.contains { $0.id == recordingId }
+    }
+
+    func clearLastTranscriptionWarning() {
+        lastTranscriptionWarning = nil
     }
 
     /// True when the recording has a queued or processing transcription job in the background manager.
@@ -107,7 +115,7 @@ final class TranscriptionStarter: ObservableObject {
             }
             do {
                 let tempCleanedURL = try await AudioCleanupService.shared.cleanAudio(at: recordingURL)
-                AppLog.shared.transcription("Cleaned audio created at temp location: \(tempCleanedURL.lastPathComponent)", level: .debug)
+                AppLog.shared.transcription("Cleaned audio created at a temporary location", level: .debug)
 
                 // Copy cleaned file into Documents so ProcessingJob can resolve it.
                 guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -137,6 +145,7 @@ final class TranscriptionStarter: ObservableObject {
                                               sourceAudioURL: URL?,
                                               appCoordinator: AppDataCoordinator) {
         Task { @MainActor in
+            lastTranscriptionWarning = nil
             let selectedEngine = TranscriptionEngine(
                 rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue
             ) ?? .fluidAudio
@@ -168,21 +177,42 @@ final class TranscriptionStarter: ObservableObject {
                         return
                     }
 
-                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(at: transcriptionURL, using: selectedEngine)
+                    guard let recordingId = recording.id else {
+                        throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptionURL)
+                    }
+                    let result = try await enhancedTranscriptionManager.transcribeAudioFile(
+                        at: transcriptionURL,
+                        using: selectedEngine,
+                        recordingId: recordingId
+                    )
+                    try Task.checkCancellation()
+                    lastTranscriptionWarning = result.speakerLabelWarning
+                    if let warning = result.speakerLabelWarning {
+                        AppLog.shared.transcription(
+                            "Direct transcription completed without local speaker labels: "
+                                + warning.userVisibleMessage,
+                            level: .info
+                        )
+                        await backgroundProcessingManager.sendNotification(
+                            title: "Transcription Complete",
+                            body: warning.userVisibleMessage
+                        )
+                    }
                     AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
                         let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
                         let transcriptData = TranscriptData(
+                            recordingId: recordingId,
                             recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
-                            segments: result.segments
+                            segments: result.segments,
+                            speakerMappings: result.speakerMappings ?? [:],
+                            engine: selectedEngine,
+                            processingTime: result.processingTime
                         )
-                        guard let recordingId = transcriptData.recordingId else {
-                            AppLog.shared.transcription("Transcript data missing recording ID", level: .error)
-                            return
-                        }
+                        try Task.checkCancellation()
                         let transcriptId = appCoordinator.addTranscript(
                             for: recordingId,
                             segments: transcriptData.segments,
@@ -210,7 +240,7 @@ final class TranscriptionStarter: ObservableObject {
                 // Clean up source audio on fallback-path failure (no BG manager to do it).
                 if let cleanupURL = sourceAudioURL, cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
                     try? FileManager.default.removeItem(at: cleanupURL)
-                    AppLog.shared.transcription("Cleaned up source audio file after fallback: \(cleanupURL.lastPathComponent)", level: .debug)
+                    AppLog.shared.transcription("Cleaned up temporary source audio after fallback", level: .debug)
                 }
             }
         }

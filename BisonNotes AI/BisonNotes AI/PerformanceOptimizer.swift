@@ -99,7 +99,6 @@ class PerformanceOptimizer: ObservableObject {
     @Published var optimizationLevel: OptimizationLevel = .balanced
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "Performance")
-    private let processingQueue = DispatchQueue(label: "com.audiojournal.processing", qos: .userInitiated)
     private let cacheQueue = DispatchQueue(label: "com.audiojournal.cache", qos: .utility)
     private let streamingQueue = DispatchQueue(label: "com.audiojournal.streaming", qos: .utility)
 
@@ -384,7 +383,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Enhanced Chunked Processing with Streaming
 
-    func processLargeTranscriptWithStreaming(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processLargeTranscriptWithStreaming(_ text: String, using engine: SummarizationEngine) async throws -> SummarizationResult {
 
         let startTime = Date()
         processingStartTime = startTime
@@ -458,7 +457,13 @@ class PerformanceOptimizer: ObservableObject {
 
         let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
 
-        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
+        let result = SummarizationResult(
+            summary: finalSummary,
+            tasks: finalTasks,
+            reminders: finalReminders,
+            titles: finalTitles,
+            contentType: finalContentType
+        )
         cacheResult(key: cacheKey, result: result, cost: text.count)
 
         return result
@@ -466,22 +471,16 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Background Processing with Battery Optimization
 
-    func processInBackgroundWithBatteryOptimization<T>(_ operation: @escaping () async throws -> T) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            let queue = batteryInfo.shouldOptimizeForBattery ?
-                DispatchQueue(label: "com.audiojournal.processing.battery", qos: .utility) :
-                processingQueue
+    func processInBackgroundWithBatteryOptimization<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let priority: TaskPriority = batteryInfo.shouldOptimizeForBattery ? .utility : .userInitiated
+        let task = Task.detached(priority: priority, operation: operation)
 
-            queue.async {
-                Task {
-                    do {
-                        let result = try await operation()
-                        continuation.resume(returning: result)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -519,7 +518,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Chunked Processing
 
-    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processLargeTranscript(_ text: String, using engine: SummarizationEngine) async throws -> SummarizationResult {
 
         let startTime = Date()
         processingStartTime = startTime
@@ -604,7 +603,13 @@ class PerformanceOptimizer: ObservableObject {
 
         let finalTitles = deduplicateAndLimitTitles(allTitles, limit: 15)
 
-        let result = (summary: finalSummary, tasks: finalTasks, reminders: finalReminders, titles: finalTitles, contentType: finalContentType)
+        let result = SummarizationResult(
+            summary: finalSummary,
+            tasks: finalTasks,
+            reminders: finalReminders,
+            titles: finalTitles,
+            contentType: finalContentType
+        )
         cacheResult(key: cacheKey, result: result, cost: text.count)
 
         return result
@@ -612,18 +617,15 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Background Processing
 
-    func processInBackground<T>(_ operation: @escaping () async throws -> T) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            processingQueue.async {
-                Task {
-                    do {
-                        let result = try await operation()
-                        continuation.resume(returning: result)
-                    } catch {
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
+    func processInBackground<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let task = Task.detached(priority: .userInitiated, operation: operation)
+
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
         }
     }
 
@@ -632,7 +634,6 @@ class PerformanceOptimizer: ObservableObject {
     func clearCaches() {
         summaryCache.removeAllObjects()
         processingCache.removeAllObjects()
-        logger.info("Cleared all caches to free memory")
     }
 
     // MARK: - Progress Tracking
@@ -643,7 +644,7 @@ class PerformanceOptimizer: ObservableObject {
 
     // MARK: - Private Helper Methods
 
-    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkWithRetry(_ chunk: String, using engine: SummarizationEngine, retryCount: Int) async throws -> SummarizationResult {
 
         var lastError: Error?
 
@@ -767,11 +768,11 @@ class PerformanceOptimizer: ObservableObject {
         return "\(engine)_\(textHash)"
     }
 
-    private func getCachedResult(key: String) -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)? {
+    private func getCachedResult(key: String) -> SummarizationResult? {
         return summaryCache.object(forKey: NSString(string: key))?.result
     }
 
-    private func cacheResult(key: String, result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), cost: Int) {
+    private func cacheResult(key: String, result: SummarizationResult, cost: Int) {
         let cachedResult = CachedSummaryResult(result: result, timestamp: Date())
         summaryCache.setObject(cachedResult, forKey: NSString(string: key), cost: cost)
     }
@@ -784,11 +785,6 @@ class PerformanceOptimizer: ObservableObject {
                 await self?.updateMemoryUsage()
             }
         }
-    }
-
-    private func stopMemoryMonitoring() {
-        memoryMonitorTimer?.invalidate()
-        memoryMonitorTimer = nil
     }
 
     private func updateMemoryUsage() async {
@@ -938,10 +934,10 @@ struct PerformanceMetrics {
 }
 
 class CachedSummaryResult: NSObject {
-    let result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType)
+    let result: SummarizationResult
     let timestamp: Date
 
-    init(result: (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType), timestamp: Date) {
+    init(result: SummarizationResult, timestamp: Date) {
         self.result = result
         self.timestamp = timestamp
         super.init()
@@ -1092,13 +1088,29 @@ struct PerformanceMonitorView: View {
             .navigationTitle("Performance Monitor")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if os(macOS)
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close", role: .cancel) {
+                        isPresented = false
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("bisonnotes.performance-monitor.close")
+                }
+#else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         isPresented = false
                     }
                 }
+#endif
             }
         }
+#if os(macOS)
+        .nativeMacPresentationContext(.modalSheet)
+        .onExitCommand {
+            isPresented = false
+        }
+#endif
     }
 }
 

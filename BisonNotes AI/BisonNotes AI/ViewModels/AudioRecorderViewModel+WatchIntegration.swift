@@ -15,7 +15,6 @@ extension AudioRecorderViewModel {
 	@MainActor
 	func setupWatchSyncHandler() {
 		let watchManager = WatchConnectivityManager.shared
-		AppLog.shared.watchConnectivity("Setting up watch sync handler in AudioRecorderViewModel")
 
 		watchManager.onWatchSyncRecordingReceived = { [weak self] audioData, syncRequest in
 			AppLog.shared.watchConnectivity("Received watch sync callback for recording: \(syncRequest.recordingId)")
@@ -24,8 +23,7 @@ extension AudioRecorderViewModel {
 			}
 		}
 
-		// Also set up the completion callback here since BisonNotesAIApp setup might not be working
-		AppLog.shared.watchConnectivity("Setting up onWatchRecordingSyncCompleted callback")
+		// Also set up the completion callback here since BisonNotesAIApp setup might not be working.
 		watchManager.onWatchRecordingSyncCompleted = { recordingId, success in
 			AppLog.shared.watchConnectivity("onWatchRecordingSyncCompleted called for: \(recordingId), success: \(success)")
 
@@ -41,20 +39,7 @@ extension AudioRecorderViewModel {
 			}
 		}
 
-		AppLog.shared.watchConnectivity("AudioRecorderViewModel connected to WatchConnectivityManager sync handler")
-
-		// Verify the callbacks were set
-		if watchManager.onWatchSyncRecordingReceived != nil {
-			AppLog.shared.watchConnectivity("Callback verification: onWatchSyncRecordingReceived is set", level: .debug)
-		} else {
-			AppLog.shared.watchConnectivity("Callback verification: onWatchSyncRecordingReceived is nil", level: .error)
-		}
-
-		if watchManager.onWatchRecordingSyncCompleted != nil {
-			AppLog.shared.watchConnectivity("Callback verification: onWatchRecordingSyncCompleted is set", level: .debug)
-		} else {
-			AppLog.shared.watchConnectivity("Callback verification: onWatchRecordingSyncCompleted is nil", level: .error)
-		}
+		AppLog.shared.watchConnectivity("Watch sync handlers configured", level: .debug)
 	}
 
 	/// Handle synchronized recording received from watch
@@ -87,7 +72,7 @@ extension AudioRecorderViewModel {
 					.replacingOccurrences(of: ".m4a", with: "")
 				let cleanDisplayName = "Audio Recording \(displayName)"
 
-				let recordingId = await appCoordinator.addWatchRecording(
+					let recordingId = appCoordinator.addWatchRecording(
 					url: permanentURL,
 					name: cleanDisplayName,
 					date: syncRequest.createdAt,

@@ -34,8 +34,16 @@ final class AppleNativeEngine: SummarizationEngine {
         let chunks = chunkText(text)
 
         if chunks.count == 1 {
+            let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+                forSourceWordCount: wordCount(of: text)
+            )
             let prompt = """
-            Summarize the following transcript in 4-7 concise bullet points. Keep factual details, decisions, action owners, and deadlines if present. Transcript:\n\n\(chunks[0])
+            Summarize the following transcript at the selected detail level. Use clear bullets or short sections as appropriate. Keep factual details, decisions, action owners, and deadlines if present.
+
+            \(detailInstructions)
+
+            Transcript:
+            \(chunks[0])
             """
             return try await askModelWithFallback(prompt)
         }
@@ -47,9 +55,14 @@ final class AppleNativeEngine: SummarizationEngine {
         )
         var chunkSummaries: [String] = []
         for (index, chunk) in chunks.enumerated() {
+            let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+                forSourceWordCount: wordCount(of: chunk)
+            )
             let chunkPrompt = """
             This is part \(index + 1) of \(chunks.count) of a longer transcript. \
-            Summarize this section in 2-4 concise bullet points covering key facts, decisions, and action items:
+            Summarize this section at the selected detail level, covering key facts, decisions, and action items.
+
+            \(detailInstructions)
 
             \(chunk)
             """
@@ -60,11 +73,16 @@ final class AppleNativeEngine: SummarizationEngine {
         let combined = chunkSummaries.enumerated()
             .map { "Part \($0.offset + 1):\n\($0.element)" }
             .joined(separator: "\n\n")
+        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            forSourceWordCount: wordCount(of: text)
+        )
 
         let finalPrompt = """
         The following are summaries of sequential sections of a transcript. \
-        Combine them into a single cohesive summary of 4-7 bullet points, \
-        preserving all key decisions, action items, and deadlines:
+        Combine them into a single cohesive summary at the selected detail level, \
+        preserving all key decisions, action items, and deadlines.
+
+        \(detailInstructions)
 
         \(combined)
         """
@@ -122,7 +140,7 @@ final class AppleNativeEngine: SummarizationEngine {
         return .general
     }
 
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         // Run all extractions concurrently to minimise total latency.
         async let summaryResult = generateSummary(from: text, contentType: .general)
         async let tasksResult = extractTasks(from: text)
@@ -135,7 +153,13 @@ final class AppleNativeEngine: SummarizationEngine {
         let contentType = try await contentTypeResult
 
         let titles = [TitleItem(text: summaryTitle(from: summary), confidence: 0.7, category: .general)]
-        return (summary: summary, tasks: tasks, reminders: reminders, titles: titles, contentType: contentType)
+        return SummarizationResult(
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType
+        )
     }
 
     // MARK: - Private helpers
@@ -285,5 +309,9 @@ final class AppleNativeEngine: SummarizationEngine {
             guard !titleText.isEmpty else { return nil }
             return TitleItem(text: titleText, confidence: 0.8, category: .general)
         }
+    }
+
+    private func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
     }
 }

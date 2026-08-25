@@ -111,6 +111,7 @@ enum AccessibilitySupport {
         isOn ? "On" : "Off"
     }
 
+    @MainActor
     static func announce(_ message: String) {
         #if canImport(UIKit)
         UIAccessibility.post(notification: .announcement, argument: message)

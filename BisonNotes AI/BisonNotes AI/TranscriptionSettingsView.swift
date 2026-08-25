@@ -8,54 +8,35 @@
 import SwiftUI
 
 struct TranscriptionSettingsView: View {
-    @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     @AppStorage("enableLiveTranscription") private var enableLiveTranscription: Bool = false
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.fluidAudio.rawValue
 
     @StateObject private var fluidAudioManager = FluidAudioManager.shared
 
-    @State private var showingAWSSettings = false
     @State private var showingWhisperSettings = false
     @State private var showingFluidAudioSettings = false
-    @State private var showingOpenAISettings = false
     @State private var showingMistralTranscribeSettings = false
+#if os(macOS)
+    @State private var macSelectedEngineRawValue: String?
+#endif
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Group {
+#if os(macOS)
+            settingsContent
+#else
             settingsContent
                 .navigationTitle("Transcription Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
-                    #endif
                 }
-            #if os(macOS)
-            .navigationDestination(isPresented: $showingAWSSettings) {
-                AWSSettingsView()
-            }
-            .navigationDestination(isPresented: $showingWhisperSettings) {
-                WhisperSettingsView()
-            }
-            .navigationDestination(isPresented: $showingFluidAudioSettings) {
-                FluidAudioSettingsView()
-            }
-            .navigationDestination(isPresented: $showingOpenAISettings) {
-                OpenAISettingsView()
-            }
-            .navigationDestination(isPresented: $showingMistralTranscribeSettings) {
-                MistralTranscribeSettingsView()
-            }
-            #else
-            .sheet(isPresented: $showingAWSSettings) {
-                AWSSettingsView()
-            }
             .sheet(isPresented: $showingWhisperSettings) {
                 WhisperSettingsView()
             }
@@ -64,23 +45,27 @@ struct TranscriptionSettingsView: View {
                     FluidAudioSettingsView()
                 }
             }
-            .sheet(isPresented: $showingOpenAISettings) {
-                OpenAISettingsView()
-            }
             .sheet(isPresented: $showingMistralTranscribeSettings) {
                 MistralTranscribeSettingsView()
             }
-            #endif
-            .onChange(of: selectedTranscriptionEngine) { _, newValue in
-                handleEngineSelection(newValue)
-            }
+#endif
+        }
+        .onChange(of: selectedTranscriptionEngine) { _, newValue in
+            handleEngineSelection(newValue)
+#if os(macOS)
+            macSelectedEngineRawValue = newValue
+#endif
         }
         .platformSettingsNavigation()
     }
 
     @ViewBuilder
     private var settingsContent: some View {
+#if os(macOS)
+        macSettingsContent
+#else
         modernSettingsContent
+#endif
     }
 
     private var modernSettingsContent: some View {
@@ -127,14 +112,7 @@ struct TranscriptionSettingsView: View {
                 )
             }
             .onChange(of: enableLiveTranscription) { _, enabled in
-                if enabled {
-                    Task {
-                        let granted = await LiveTranscriptionService.requestPermission()
-                        if !granted {
-                            await MainActor.run { enableLiveTranscription = false }
-                        }
-                    }
-                }
+                liveTranscriptionChanged(enabled)
             }
 
             if enableLiveTranscription {
@@ -170,21 +148,10 @@ struct TranscriptionSettingsView: View {
 
             modernEngineGroupHeader("Cloud (Higher Accuracy)", systemImage: "cloud", tint: .blue)
             modernEngineOptionRow(
-                engine: .awsTranscribe,
-                title: "AWS Transcribe",
-                subtitle: "Enterprise, speaker diarization, expensive"
-            )
-            modernEngineOptionRow(
                 engine: .mistralAI,
                 title: "Mistral AI",
                 subtitle: "Enterprise, speaker diarization, cheap"
             )
-            modernEngineOptionRow(
-                engine: .openAI,
-                title: "OpenAI Whisper",
-                subtitle: "Requires API key"
-            )
-
             Divider()
 
             modernEngineGroupHeader("Local Server", systemImage: "server.rack", tint: .green)
@@ -216,7 +183,7 @@ struct TranscriptionSettingsView: View {
                     Button(action: {
                         openSettings(for: selectedEngine)
                     }) {
-                        Label("Configure", systemImage: "gear")
+                        Label(configurationButtonTitle(for: selectedEngine), systemImage: "gear")
                             .font(.caption.weight(.semibold))
                     }
                     .buttonStyle(.borderedProminent)
@@ -268,6 +235,7 @@ struct TranscriptionSettingsView: View {
                 Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
                     .font(.subheadline.weight(.semibold))
             }
+            .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptionResetButton)
         }
     }
 
@@ -276,217 +244,206 @@ struct TranscriptionSettingsView: View {
 
         if engine == .fluidAudio {
             UserDefaults.standard.set(true, forKey: FluidAudioModelInfo.SettingsKeys.enableFluidAudio)
+#if !os(macOS)
             if !fluidAudioManager.isModelReady {
                 showingFluidAudioSettings = true
             }
+#endif
         }
     }
 
-    // MARK: - Live Transcription Section
+    private func liveTranscriptionChanged(_ enabled: Bool) {
+        guard enabled else { return }
 
-    private var liveTranscriptionSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Image(systemName: "waveform")
-                        .font(.title2)
-                        .foregroundColor(.orange)
-                        .frame(width: 32)
+        Task {
+            let granted = await LiveTranscriptionService.requestPermission()
+            if !granted {
+                await MainActor.run { enableLiveTranscription = false }
+            }
+        }
+    }
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Live Transcription")
-                            .font(.headline)
-                        Text("Real-time text as you record")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
+}
 
-                    Spacer()
+#if os(macOS)
+private extension TranscriptionSettingsView {
+    private var macSettingsContent: some View {
+        HSplitView {
+            macEngineList
+                .frame(minWidth: 210, idealWidth: 235, maxWidth: 260)
 
-                    Toggle("", isOn: $enableLiveTranscription)
-                        .labelsHidden()
-                        .onChange(of: enableLiveTranscription) { _, enabled in
-                            if enabled {
-                                Task {
-                                    let granted = await LiveTranscriptionService.requestPermission()
-                                    if !granted {
-                                        await MainActor.run { enableLiveTranscription = false }
-                                    }
-                                }
-                            }
-                        }
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                macTranscriptionOptions
 
-                if enableLiveTranscription {
-                    HStack(spacing: 8) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.caption)
-                        Text("Uses Apple Speech Recognition (on-device)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.leading, 40)
+                Divider()
+
+                macSelectedEngineDetail
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(minWidth: 500)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .frame(minHeight: 560)
+        .background(Color(.systemGroupedBackground))
+        .onAppear {
+            synchronizeMacEngineSelection()
+        }
+        .onChange(of: macSelectedEngineRawValue) { _, newValue in
+            guard let newValue,
+                  TranscriptionEngine(rawValue: newValue) != nil,
+                  selectedTranscriptionEngine != newValue else { return }
+            selectedTranscriptionEngine = newValue
+        }
+    }
+
+    private var macEngineList: some View {
+        List(selection: $macSelectedEngineRawValue) {
+            Section("Transcription Engines") {
+                ForEach(macSelectableEngines, id: \.rawValue) { engine in
+                    macEngineRow(for: engine)
                 }
             }
-            .padding(.vertical, 4)
-        } header: {
-            Text("During Recording")
-        } footer: {
-            Text("Live transcription shows text instantly while you speak. Uses Apple's on-device speech recognition for privacy.")
+
+            Section {
+                Button(role: .destructive) {
+                    resetToDefaults()
+                } label: {
+                    Label("Reset to Defaults", systemImage: "arrow.counterclockwise")
+                }
+                .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptionResetButton)
+            }
         }
+        .listStyle(.sidebar)
+        .accessibilityLabel("Transcription engines")
     }
 
-    // MARK: - File Transcription Section
+    private var macSelectableEngines: [TranscriptionEngine] {
+        var engines: [TranscriptionEngine] = [.fluidAudio, .mistralAI, .whisper]
+        if TranscriptionEngine(rawValue: selectedTranscriptionEngine) == .notConfigured {
+            engines.insert(.notConfigured, at: 0)
+        }
+        return engines
+    }
 
-    private var fileTranscriptionSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Select the engine used for imported files, re-runs, and post-recording transcription.")
+    private var macSelectedEngine: TranscriptionEngine {
+        let rawValue = macSelectedEngineRawValue ?? selectedTranscriptionEngine
+        return TranscriptionEngine(rawValue: rawValue) ?? .fluidAudio
+    }
+
+    private func macEngineRow(for engine: TranscriptionEngine) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: transcriptionIcon(for: engine))
+                .foregroundStyle(engineColor(for: engine))
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(macEngineTitle(for: engine))
+                    .font(.body.weight(.medium))
+                Text(macEngineSubtitle(for: engine))
                     .font(.caption)
-                    .foregroundColor(.secondary)
-
-                // On-Device Options
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("On-Device (Private)", systemImage: "iphone")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.indigo)
-
-                    engineOptionRow(
-                        engine: .fluidAudio,
-                        title: "Parakeet",
-                        subtitle: "Fast, accurate, works offline",
-                        isRecommended: true
-                    )
-                }
-
-                Divider()
-
-                // Cloud Options
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Cloud (Higher Accuracy)", systemImage: "cloud")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.blue)
-
-                    engineOptionRow(
-                        engine: .awsTranscribe,
-                        title: "AWS Transcribe",
-                        subtitle: "Enterprise, speaker diarization, expensive"
-                    )
-
-                    engineOptionRow(
-                        engine: .mistralAI,
-                        title: "Mistral AI",
-                        subtitle: "Enterprise, speaker diarization, cheap"
-                    )
-
-                    engineOptionRow(
-                        engine: .openAI,
-                        title: "OpenAI Whisper",
-                        subtitle: "Requires API key"
-                    )
-                }
-
-                Divider()
-
-                // Local Server Options
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("Local Server", systemImage: "server.rack")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
-
-                    engineOptionRow(
-                        engine: .whisper,
-                        title: "Whisper Server",
-                        subtitle: "Self-hosted on your network"
-                    )
-                }
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .padding(.vertical, 4)
-        } header: {
-            Text("For Files & Re-runs")
-        } footer: {
-            if enableLiveTranscription {
-                Text("This engine is also used when live transcription isn't available (imports, re-runs).")
-            }
-        }
-    }
 
-    private func engineOptionRow(
-        engine: TranscriptionEngine,
-        title: String,
-        subtitle: String,
-        isRecommended: Bool = false,
-        isDeprecated: Bool = false
-    ) -> some View {
-        Button(action: {
-            selectedTranscriptionEngine = engine.rawValue
-        }) {
-            HStack(spacing: 12) {
-                // Selection indicator
-                Image(systemName: selectedTranscriptionEngine == engine.rawValue ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(selectedTranscriptionEngine == engine.rawValue ? engineColor(for: engine) : .gray)
-                    .font(.title3)
+            Spacer(minLength: 4)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.body)
-                            .foregroundColor(isDeprecated ? .secondary : .primary)
-
-                        if isRecommended {
-                            Text("Best")
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green.opacity(0.2))
-                                .foregroundColor(.green)
-                                .cornerRadius(4)
-                        }
-
-                        if isDeprecated {
-                            Text("Legacy")
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.2))
-                                .foregroundColor(.orange)
-                                .cornerRadius(4)
-                        }
-                    }
-
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                // Status indicator
-                if engine.isAvailable {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                        .font(.caption)
-                } else {
-                    Text("Setup")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-            }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(selectedTranscriptionEngine == engine.rawValue ? engineColor(for: engine).opacity(0.1) : Color.clear)
+            Label(
+                engine.isAvailable ? "Ready" : "Needs Setup",
+                systemImage: engine.isAvailable
+                    ? "checkmark.circle.fill"
+                    : "exclamationmark.circle.fill"
             )
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(engine.isAvailable ? .green : .orange)
         }
-        .buttonStyle(PlainButtonStyle())
+        .contentShape(Rectangle())
+        .tag(engine.rawValue)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(macEngineTitle(for: engine))
+        .accessibilityValue(engine.isAvailable ? "Ready" : "Needs Setup")
     }
+
+    private var macTranscriptionOptions: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Transcription")
+                .font(.title2.weight(.semibold))
+
+            Toggle(isOn: $enableLiveTranscription) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Live Transcription")
+                        .font(.headline)
+                    Text("Real-time text as you record using Apple Speech Recognition.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .onChange(of: enableLiveTranscription) { _, enabled in
+                liveTranscriptionChanged(enabled)
+            }
+
+            Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var macSelectedEngineDetail: some View {
+        switch macSelectedEngine {
+        case .fluidAudio:
+            FluidAudioSettingsView()
+        case .mistralAI:
+            MistralTranscribeSettingsView()
+        case .whisper:
+            WhisperSettingsView()
+        case .notConfigured:
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Choose a transcription engine")
+                    .font(.title2.weight(.semibold))
+                Text("Select an engine from the list to configure transcription.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(28)
+        }
+    }
+
+    private func synchronizeMacEngineSelection() {
+        let selectedRawValue = TranscriptionEngine(rawValue: selectedTranscriptionEngine)?.rawValue
+            ?? TranscriptionEngine.fluidAudio.rawValue
+        macSelectedEngineRawValue = selectedRawValue
+    }
+
+    private func macEngineTitle(for engine: TranscriptionEngine) -> String {
+        switch engine {
+        case .notConfigured:
+            return "Not Configured"
+        case .fluidAudio:
+            return "Parakeet"
+        case .whisper:
+            return "Whisper Server"
+        case .mistralAI:
+            return "Mistral AI"
+        }
+    }
+
+    private func macEngineSubtitle(for engine: TranscriptionEngine) -> String {
+        switch engine {
+        case .notConfigured:
+            return "Choose an engine to get started"
+        case .fluidAudio:
+            return "Private, on-device"
+        case .whisper:
+            return "Self-hosted server"
+        case .mistralAI:
+            return "Cloud with diarization"
+        }
+    }
+}
+#endif
+
+private extension TranscriptionSettingsView {
 
     private func modernEngineGroupHeader(_ title: String, systemImage: String, tint: Color) -> some View {
         Label(title, systemImage: systemImage)
@@ -564,50 +521,9 @@ struct TranscriptionSettingsView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Selected Engine Configuration
+}
 
-    private var selectedEngineConfigurationSection: some View {
-        if let selectedEngine = TranscriptionEngine(rawValue: selectedTranscriptionEngine),
-           selectedEngine.requiresConfiguration {
-
-            return AnyView(
-                Section(header: Text("Configuration")) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("\(selectedEngine.rawValue) Settings")
-                                    .font(.body)
-                                Text(configurationHint(for: selectedEngine))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-
-                            Button(action: {
-                                openSettings(for: selectedEngine)
-                            }) {
-                                HStack {
-                                    Image(systemName: "gear")
-                                    Text("Configure")
-                                }
-                                .font(.caption)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(engineColor(for: selectedEngine))
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
-                            }
-                        }
-
-                        engineStatusView(for: selectedEngine)
-                    }
-                    .padding(.vertical, 8)
-                }
-            )
-        } else {
-            return AnyView(EmptyView())
-        }
-    }
+private extension TranscriptionSettingsView {
 
     private func openSettings(for engine: TranscriptionEngine) {
         switch engine {
@@ -615,16 +531,10 @@ struct TranscriptionSettingsView: View {
             break
         case .fluidAudio:
             showingFluidAudioSettings = true
-        case .awsTranscribe:
-            showingAWSSettings = true
         case .whisper:
             showingWhisperSettings = true
-        case .openAI:
-            showingOpenAISettings = true
         case .mistralAI:
             showingMistralTranscribeSettings = true
-        case .openAIAPICompatible:
-            break
         }
     }
 
@@ -632,10 +542,6 @@ struct TranscriptionSettingsView: View {
         switch engine {
         case .fluidAudio:
             return fluidAudioManager.isModelReady ? "Model downloaded and ready" : "Download required (~250-350 MB)"
-        case .openAI:
-            return "Requires OpenAI API key"
-        case .awsTranscribe:
-            return "Requires AWS credentials"
         case .mistralAI:
             return "Requires Mistral API key"
         case .whisper:
@@ -645,64 +551,21 @@ struct TranscriptionSettingsView: View {
         }
     }
 
+    private func configurationButtonTitle(for engine: TranscriptionEngine) -> String {
+        engine == .fluidAudio ? "Configure On Device" : "Configure"
+    }
+
     private func engineColor(for engine: TranscriptionEngine) -> Color {
         switch engine {
         case .notConfigured:
             return .gray
         case .fluidAudio:
             return .indigo
-        case .awsTranscribe:
-            return .orange
         case .whisper:
             return .green
-        case .openAI:
-            return .blue
         case .mistralAI:
             return .purple
-        case .openAIAPICompatible:
-            return .gray
         }
-    }
-
-    private func engineStatusView(for engine: TranscriptionEngine) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Status:")
-                    .font(.body)
-                    .foregroundColor(.secondary)
-                Spacer()
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(engine.isAvailable ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(engine.isAvailable ? "Ready" : "Needs Setup")
-                        .font(.caption)
-                        .foregroundColor(engine.isAvailable ? .green : .red)
-                }
-            }
-
-            if engine == .fluidAudio {
-                HStack {
-                    Text("Privacy:")
-                        .font(.body)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    HStack(spacing: 4) {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.caption)
-                        Text("On-Device Only")
-                    }
-                    .font(.caption)
-                    .foregroundColor(.green)
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(engineColor(for: engine).opacity(0.1))
-        )
     }
 
     private func modernEngineStatusView(for engine: TranscriptionEngine) -> some View {
@@ -740,68 +603,40 @@ struct TranscriptionSettingsView: View {
             return "circle"
         case .fluidAudio:
             return "iphone"
-        case .awsTranscribe:
-            return "shippingbox"
         case .whisper:
             return "server.rack"
-        case .openAI:
-            return "sparkles"
         case .mistralAI:
             return "wind"
-        case .openAIAPICompatible:
-            return "link"
-        }
-    }
-
-    private var displayOptionsSection: some View {
-        Section {
-            Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
-
-            Text("Display real-time transcription progress.")
-                .font(.caption)
-                .foregroundColor(.secondary)
-        } header: {
-            Text("Display Options")
-        }
-    }
-
-    private var tipsSection: some View {
-        Section {
-            TipRow(
-                icon: "bolt.fill",
-                title: "Best for speed",
-                description: "Parakeet offers the fastest on-device transcription."
-            )
-
-            TipRow(
-                icon: "lock.shield.fill",
-                title: "Privacy first",
-                description: "On-device engines never send audio to external servers."
-            )
-
-            TipRow(
-                icon: "waveform.badge.plus",
-                title: "Live + File",
-                description: "Enable live transcription AND set a file engine for full coverage."
-            )
-        } header: {
-            Text("Tips")
-        }
-    }
-
-    private var resetSection: some View {
-        Section {
-            Button("Reset to Defaults") {
-                resetToDefaults()
-            }
-            .foregroundColor(.red)
         }
     }
 
     private func resetToDefaults() {
+        let previousMethodRaw = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(
+            UserDefaults.standard.string(
+                forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+            ) ?? FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue
+        )
+        let previousMethod = LocalDiarizationMethod(rawValue: previousMethodRaw) ?? .offlineVBx
+
         showTranscriptionProgress = true
         enableLiveTranscription = false
         selectedTranscriptionEngine = TranscriptionEngine.fluidAudio.rawValue
+        UserDefaults.standard.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled,
+            forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled
+        )
+        UserDefaults.standard.set(
+            FluidAudioModelInfo.LocalSpeakerLabels.defaultMethodRawValue,
+            forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        )
+
+        Task {
+            #if DEBUG
+            guard !BisonNotesUITestSupport.usesLocalSpeakerModelStatusOverride else { return }
+            #endif
+            await LocalDiarizationManager.shared.cancelModelPreparation(for: previousMethod)
+            await LocalDiarizationManager.shared.unloadModel(for: previousMethod)
+        }
     }
 }
 
@@ -932,6 +767,5 @@ private struct TranscriptionInlineStatus: View {
 struct TranscriptionSettingsView_Previews: PreviewProvider {
     static var previews: some View {
         TranscriptionSettingsView()
-            .environmentObject(AudioRecorderViewModel())
     }
 }

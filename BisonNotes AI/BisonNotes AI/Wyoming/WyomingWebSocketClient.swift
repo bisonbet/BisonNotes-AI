@@ -20,7 +20,10 @@ class WyomingWebSocketClient: ObservableObject {
     private var urlSession: URLSession?
     private let serverURL: URL
     private var messageHandlers: [WyomingMessageType: (WyomingMessage) -> Void] = [:]
-    private var connectionContinuation: CheckedContinuation<Void, Error>?
+    /// Kept outside actor isolation so the nonisolated deinit can fail a
+    /// still-pending connect instead of leaving its task suspended forever.
+    private let connectionContinuation = WyomingConnectionContinuation()
+    private var connectionCancellationRequested = false
 
     // MARK: - Initialization
 
@@ -33,6 +36,9 @@ class WyomingWebSocketClient: ObservableObject {
         // Cancel WebSocket task synchronously
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+
+        // A connect suspended at deallocation would otherwise never resume.
+        connectionContinuation.finish(.failure(WyomingError.connectionFailed))
     }
 
     // MARK: - Connection Management
@@ -48,95 +54,96 @@ class WyomingWebSocketClient: ObservableObject {
     func connect() async throws {
         guard !isConnected else { return }
 
+        connectionCancellationRequested = false
+
         AppLog.shared.transcription("Connecting to Wyoming WebSocket server: \(serverURL)", level: .debug)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            connectionContinuation = continuation
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                guard !connectionCancellationRequested else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
 
-            guard let session = urlSession else {
-                AppLog.shared.transcription("No URL session available", level: .error)
-                continuation.resume(throwing: WyomingError.connectionFailed)
-                return
-            }
+                connectionContinuation.store(continuation)
 
-            // Create WebSocket connection
-            webSocketTask = session.webSocketTask(with: serverURL)
-            webSocketTask?.resume()
+                guard let session = urlSession else {
+                    AppLog.shared.transcription("No URL session available", level: .error)
+                    finishConnection(.failure(WyomingError.connectionFailed))
+                    return
+                }
 
-            // Start listening for messages
-            startListening()
+                // Create WebSocket connection
+                webSocketTask = session.webSocketTask(with: serverURL)
+                webSocketTask?.resume()
 
-            // Give the WebSocket time to connect
-            Task {
-                do {
-                    // Wait for connection to establish
-                    try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                // Start listening for messages
+                startListening()
 
-                    AppLog.shared.transcription("Testing if WebSocket connection is established", level: .debug)
+                // Give the WebSocket time to connect
+                Task { @MainActor [weak self] in
+                    do {
+                        // Wait for connection to establish
+                        try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
 
-                    // Check if we're still connected before sending message
-                    if let task = self.webSocketTask, task.state == .running {
+                        guard let self,
+                              let task = self.webSocketTask,
+                              task.state == .running else {
+                            throw WyomingError.connectionFailed
+                        }
+
+                        AppLog.shared.transcription("Testing if WebSocket connection is established", level: .debug)
                         AppLog.shared.transcription("WebSocket task is running", level: .debug)
+                        self.isConnected = true
+                        self.connectionError = nil
+                        AppLog.shared.transcription("WebSocket connection established")
+                        self.finishConnection(.success(()))
 
-                        // First, just test the connection without sending a message
-                        await MainActor.run {
-                            self.isConnected = true
-                            self.connectionError = nil
-                            AppLog.shared.transcription("WebSocket connection established")
-                        }
-
-                        // Clear continuation first to prevent double resumption
-                        await MainActor.run {
-                            self.connectionContinuation = nil
-                        }
-
-                        // Resume immediately since WebSocket is connected
-                        continuation.resume()
-
-                        // Now try to send describe message (but don't wait for it in connection test)
-                        Task {
+                        // Send describe without making connection establishment
+                        // depend on the server's response.
+                        Task { @MainActor [weak self] in
                             do {
                                 AppLog.shared.transcription("Sending describe message", level: .debug)
-                                try await self.sendMessage(WyomingMessageFactory.createDescribeMessage())
+                                try await self?.sendMessage(WyomingMessageFactory.createDescribeMessage())
                                 AppLog.shared.transcription("Describe message sent successfully", level: .debug)
                             } catch {
                                 AppLog.shared.transcription("Failed to send describe message: \(error)", level: .error)
                             }
                         }
-
-                    } else {
-                        AppLog.shared.transcription("WebSocket task is not running", level: .error)
-                        throw WyomingError.connectionFailed
-                    }
-
-                } catch {
-                    AppLog.shared.transcription("Wyoming WebSocket connection failed: \(error)", level: .error)
-                    await MainActor.run {
-                        self.isConnected = false
-                        self.connectionError = error.localizedDescription
-
-                        // Only resume if we still have the continuation
-                        // (it might have been resumed by handleConnectionError)
-                        if self.connectionContinuation != nil {
-                            self.connectionContinuation = nil
-                            continuation.resume(throwing: error)
-                        }
+                    } catch {
+                        AppLog.shared.transcription("Wyoming WebSocket connection failed: \(error)", level: .error)
+                        self?.handleConnectionError(error)
                     }
                 }
             }
+        } onCancel: { [weak self] in
+            Task { @MainActor in
+                self?.cancelPendingConnection()
+            }
         }
+    }
+
+    private func cancelPendingConnection() {
+        connectionCancellationRequested = true
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        isConnected = false
+        finishConnection(.failure(CancellationError()))
+    }
+
+    private func finishConnection(_ result: Result<Void, Error>) {
+        connectionContinuation.finish(result)
     }
 
     func disconnect() {
         AppLog.shared.transcription("Disconnecting from Wyoming WebSocket server", level: .debug)
 
+        connectionCancellationRequested = true
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
-
-        Task { @MainActor in
-            isConnected = false
-            connectionError = nil
-        }
+        finishConnection(.failure(WyomingError.connectionFailed))
+        isConnected = false
+        connectionError = nil
     }
 
     // MARK: - Message Handling
@@ -200,11 +207,8 @@ class WyomingWebSocketClient: ObservableObject {
         isConnected = false
         connectionError = error.localizedDescription
 
-        // If we have a pending connection continuation, fail it (but only once)
-        if let continuation = connectionContinuation {
-            connectionContinuation = nil // Clear it first to prevent double resumption
-            continuation.resume(throwing: error)
-        }
+        // If we have a pending connection continuation, fail it (but only once).
+        finishConnection(.failure(error))
     }
 
     // MARK: - Message Sending

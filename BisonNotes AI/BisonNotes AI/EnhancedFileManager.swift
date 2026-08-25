@@ -3,25 +3,75 @@ import SwiftUI
 
 // MARK: - File Relationships Model
 
-struct FileRelationships: Codable, Identifiable {
+struct FileRelationships: Codable, Identifiable, Sendable {
     let id: UUID
     let recordingURL: URL?
     let recordingName: String
     let recordingDate: Date
     let transcriptExists: Bool
     let summaryExists: Bool
-    let iCloudSynced: Bool
+    /// Indicates that this item is eligible for iCloud sync, not that a cloud
+    /// record has been confirmed. Cloud record existence requires an async
+    /// CloudKit lookup and is intentionally not represented here.
+    let iCloudSyncEligible: Bool
     let lastUpdated: Date
 
-    init(recordingURL: URL?, recordingName: String, recordingDate: Date, transcriptExists: Bool = false, summaryExists: Bool = false, iCloudSynced: Bool = false) {
+    init(
+        recordingURL: URL?,
+        recordingName: String,
+        recordingDate: Date,
+        transcriptExists: Bool = false,
+        summaryExists: Bool = false,
+        iCloudSyncEligible: Bool = false
+    ) {
         self.id = UUID()
         self.recordingURL = recordingURL
         self.recordingName = recordingName
         self.recordingDate = recordingDate
         self.transcriptExists = transcriptExists
         self.summaryExists = summaryExists
-        self.iCloudSynced = iCloudSynced
+        self.iCloudSyncEligible = iCloudSyncEligible
         self.lastUpdated = Date()
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case recordingURL
+        case recordingName
+        case recordingDate
+        case transcriptExists
+        case summaryExists
+        case iCloudSyncEligible
+        case legacyICloudSynced = "iCloudSynced"
+        case lastUpdated
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        recordingURL = try container.decodeIfPresent(URL.self, forKey: .recordingURL)
+        recordingName = try container.decode(String.self, forKey: .recordingName)
+        recordingDate = try container.decode(Date.self, forKey: .recordingDate)
+        transcriptExists = try container.decode(Bool.self, forKey: .transcriptExists)
+        summaryExists = try container.decode(Bool.self, forKey: .summaryExists)
+        if let eligible = try container.decodeIfPresent(Bool.self, forKey: .iCloudSyncEligible) {
+            iCloudSyncEligible = eligible
+        } else {
+            iCloudSyncEligible = try container.decodeIfPresent(Bool.self, forKey: .legacyICloudSynced) ?? false
+        }
+        lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encodeIfPresent(recordingURL, forKey: .recordingURL)
+        try container.encode(recordingName, forKey: .recordingName)
+        try container.encode(recordingDate, forKey: .recordingDate)
+        try container.encode(transcriptExists, forKey: .transcriptExists)
+        try container.encode(summaryExists, forKey: .summaryExists)
+        try container.encode(iCloudSyncEligible, forKey: .iCloudSyncEligible)
+        try container.encode(lastUpdated, forKey: .lastUpdated)
     }
 
     var hasRecording: Bool {
@@ -110,7 +160,8 @@ enum FileAvailabilityStatus: String, CaseIterable {
 
 // MARK: - Enhanced File Manager
 
-class EnhancedFileManager: ObservableObject {
+@MainActor
+final class EnhancedFileManager: ObservableObject {
     static let shared = EnhancedFileManager()
 
     @Published var fileRelationships: [URL: FileRelationships] = [:]
@@ -197,11 +248,19 @@ class EnhancedFileManager: ObservableObject {
             return appCoordinator.getSummary(for: recordingId) != nil
         }
 
-        // Check iCloud sync status (placeholder for now)
-        let iCloudSynced = false // TODO: Implement actual iCloud sync check
+        let recordingMetadata = await MainActor.run { () -> (date: Date?, iCloudSyncEligible: Bool)? in
+            guard let appCoordinator,
+                  let recording = appCoordinator.getRecording(url: normalizedURL) else {
+                return nil
+            }
+            let iCloudSyncEligible = SummaryManager.shared.getiCloudManager().isEnabled
+                && !recording.isCloudSyncDisabled
+            return (recording.recordingDate, iCloudSyncEligible)
+        }
 
         let recordingName = normalizedURL.deletingPathExtension().lastPathComponent
-        let recordingDate = getRecordingDate(for: normalizedURL)
+        let recordingDate = recordingMetadata?.date ?? getRecordingDate(for: normalizedURL)
+        let iCloudSyncEligible = recordingMetadata?.iCloudSyncEligible ?? false
 
         // Only create relationships if we have some data to work with
         // or if the recording actually exists
@@ -212,7 +271,7 @@ class EnhancedFileManager: ObservableObject {
                 recordingDate: recordingDate,
                 transcriptExists: transcriptExists,
                 summaryExists: summaryExists,
-                iCloudSynced: iCloudSynced
+                iCloudSyncEligible: iCloudSyncEligible
             )
 
             await updateFileRelationships(for: normalizedURL, relationships: relationships)
@@ -308,7 +367,7 @@ class EnhancedFileManager: ObservableObject {
 
             // Add URLs from coordinator (but only if they actually exist)
             if let coordinator = appCoordinator {
-                let recordings = await coordinator.getAllRecordingsWithData()
+                let recordings = coordinator.getAllRecordingsWithData()
                 for recordingData in recordings {
                     if let urlString = recordingData.recording.recordingURL,
                        let url = URL(string: urlString) {
@@ -341,7 +400,7 @@ class EnhancedFileManager: ObservableObject {
 
         // Get the recording ID from the coordinator
         guard let appCoordinator = appCoordinator,
-              let recordingEntry = await appCoordinator.getRecording(url: normalizedURL),
+              let recordingEntry = appCoordinator.getRecording(url: normalizedURL),
               let recordingId = recordingEntry.id else {
             throw FileManagementError.relationshipNotFound
         }
@@ -386,13 +445,19 @@ class EnhancedFileManager: ObservableObject {
             // Preserve summary: remove audio + transcript, keep the recording entry to anchor the summary in UI
 
             // Delete transcript if present
-            if let transcript = await appCoordinator.coreDataManager.getTranscript(for: recordingId) {
-                await appCoordinator.coreDataManager.deleteTranscript(id: transcript.id)
+            if let transcript = appCoordinator.coreDataManager.getTranscript(for: recordingId) {
+                guard let transcriptId = transcript.id else {
+                    throw FileManagementError.deletionFailed("Transcript persistence is missing its identifier")
+                }
+                try await appCoordinator.deleteTranscript(id: transcriptId)
+                guard appCoordinator.coreDataManager.getTranscript(for: recordingId) == nil else {
+                    throw FileManagementError.deletionFailed("Transcript persistence still contains the deleted entry")
+                }
                 AppLog.shared.fileManagement("Deleted transcript for recording")
             }
 
             // Keep summary linked to the recording; ensure IDs/relationships are consistent
-            if let summary = await appCoordinator.coreDataManager.getSummary(for: recordingId) {
+            if let summary = appCoordinator.coreDataManager.getSummary(for: recordingId) {
                 summary.recording = recordingEntry
                 summary.recordingId = recordingId
                 summary.transcript = nil
@@ -405,10 +470,11 @@ class EnhancedFileManager: ObservableObject {
 
             // Persist changes
             do {
-                try await appCoordinator.coreDataManager.saveContext()
+                try appCoordinator.coreDataManager.saveContext()
                 AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript)")
             } catch {
                 AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
+                throw FileManagementError.persistenceError(error.localizedDescription)
             }
 
             // Update relationships to reflect that only summary remains
@@ -418,12 +484,15 @@ class EnhancedFileManager: ObservableObject {
                 recordingDate: relationships.recordingDate,
                 transcriptExists: false,
                 summaryExists: true,
-                iCloudSynced: relationships.iCloudSynced
+                iCloudSyncEligible: relationships.iCloudSyncEligible
             )
             await updateFileRelationships(for: normalizedURL, relationships: updatedRelationships)
         } else {
             // Delete everything (recording, transcript, and summary)
-            await appCoordinator.deleteRecording(id: recordingId)
+            appCoordinator.deleteRecording(id: recordingId)
+            guard appCoordinator.getRecording(id: recordingId) == nil else {
+                throw FileManagementError.deletionFailed("Recording persistence still contains the deleted entry")
+            }
             AppLog.shared.fileManagement("Deleted recording, transcript, and summary")
 
             // Remove the relationship entirely
@@ -434,71 +503,6 @@ class EnhancedFileManager: ObservableObject {
         }
 
         AppLog.shared.fileManagement("Recording deletion completed")
-    }
-
-    func deleteSummary(for url: URL) async throws {
-        let normalizedURL = normalizeURL(url)
-        guard let relationships = fileRelationships[normalizedURL] else {
-            throw FileManagementError.relationshipNotFound
-        }
-
-        if relationships.summaryExists {
-            // This will now be handled by the coordinator
-            // let manager = await summaryManager
-            // await MainActor.run { manager.deleteSummary(for: url) }
-            AppLog.shared.fileManagement("Deleted summary for recording")
-        }
-
-        // Update relationships
-        if relationships.hasRecording || relationships.transcriptExists {
-            let updatedRelationships = FileRelationships(
-                recordingURL: relationships.recordingURL,
-                recordingName: relationships.recordingName,
-                recordingDate: relationships.recordingDate,
-                transcriptExists: relationships.transcriptExists,
-                summaryExists: false,
-                iCloudSynced: relationships.iCloudSynced
-            )
-            await updateFileRelationships(for: normalizedURL, relationships: updatedRelationships)
-        } else {
-            // Remove the relationship entirely if nothing else exists
-            await MainActor.run {
-                _ = fileRelationships.removeValue(forKey: normalizedURL)
-                saveFileRelationships()
-            }
-        }
-    }
-
-    func deleteTranscript(for url: URL) async throws {
-        let normalizedURL = normalizeURL(url)
-        guard let relationships = fileRelationships[normalizedURL] else {
-            throw FileManagementError.relationshipNotFound
-        }
-
-        if relationships.transcriptExists {
-            // This will now be handled by the coordinator
-            // transcriptManager.deleteTranscript(for: url)
-            AppLog.shared.fileManagement("Deleted transcript for recording")
-        }
-
-        // Update relationships
-        if relationships.hasRecording || relationships.summaryExists {
-            let updatedRelationships = FileRelationships(
-                recordingURL: relationships.recordingURL,
-                recordingName: relationships.recordingName,
-                recordingDate: relationships.recordingDate,
-                transcriptExists: false,
-                summaryExists: relationships.summaryExists,
-                iCloudSynced: relationships.iCloudSynced
-            )
-            await updateFileRelationships(for: normalizedURL, relationships: updatedRelationships)
-        } else {
-            // Remove the relationship entirely if nothing else exists
-            await MainActor.run {
-                _ = fileRelationships.removeValue(forKey: normalizedURL)
-                saveFileRelationships()
-            }
-        }
     }
 
     // MARK: - Query Methods

@@ -11,7 +11,15 @@ import MapKit
 struct LocationDetailView: View {
     let locationData: LocationData
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.nativeMacPresentationContext) private var presentationContext
     @State private var region: MKCoordinateRegion
+
+    private var isNativeMacModelessWindow: Bool {
+        if case .modelessWindow = presentationContext {
+            return true
+        }
+        return false
+    }
 
     init(locationData: LocationData) {
         self.locationData = locationData
@@ -59,39 +67,8 @@ struct LocationDetailView: View {
                         .padding()
                         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                        // Action buttons
-                        VStack(spacing: 12) {
-                            Button(action: {
-                                openInMaps()
-                            }) {
-                                HStack {
-                                    Image(systemName: "map")
-                                        .font(.body)
-                                    Text("Open in Maps")
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
-
-                            Button(action: {
-                                copyCoordinates()
-                            }) {
-                                HStack {
-                                    Image(systemName: "doc.on.doc")
-                                        .font(.body)
-                                    Text("Copy Coordinates")
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                }
-                                .foregroundColor(.accentColor)
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            }
+                        if !isNativeMacModelessWindow {
+                            locationActionButtons
                         }
                     }
                     .padding()
@@ -102,12 +79,74 @@ struct LocationDetailView: View {
             .navigationTitle("Location")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                #if os(macOS)
+                if isNativeMacModelessWindow {
+                    ToolbarItemGroup(placement: .secondaryAction) {
+                        Button {
+                            openInMaps()
+                        } label: {
+                            Label("Open in Maps", systemImage: "map")
+                        }
+                        .help("Open in Maps")
+
+                        Button {
+                            copyCoordinates()
+                        } label: {
+                            Label("Copy Coordinates", systemImage: "doc.on.doc")
+                        }
+                        .help("Copy Coordinates")
+                    }
+                }
+
+                if !isNativeMacModelessWindow {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") {
+                            dismiss()
+                        }
+                    }
+                }
+                #else
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         dismiss()
                     }
                 }
+                #endif
             }
+        }
+    }
+
+    private var locationActionButtons: some View {
+        VStack(spacing: 12) {
+            Button(action: openInMaps) {
+                HStack {
+                    Image(systemName: "map")
+                        .font(.body)
+                    Text("Open in Maps")
+                        .font(.body)
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .accessibilityLabel("Open in Maps")
+
+            Button(action: copyCoordinates) {
+                HStack {
+                    Image(systemName: "doc.on.doc")
+                        .font(.body)
+                    Text("Copy Coordinates")
+                        .font(.body)
+                        .fontWeight(.medium)
+                }
+                .foregroundColor(.accentColor)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .accessibilityLabel("Copy Coordinates")
         }
     }
 

@@ -194,14 +194,14 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     /// Process text and extract all available information in a single call
     ///
     /// - Parameter text: The transcript text to process
-    /// - Returns: A tuple containing summary, tasks (max 15), reminders (max 15), titles (max 5), and detected content type
+    /// - Returns: A named result containing summary, tasks (max 15), reminders (max 15), titles (max 5), and detected content type
     /// - Throws: `SummarizationError` if the API call fails or service is unavailable
     ///
     /// **Performance:**
     /// - Uses chunked processing for large transcripts (>context window)
     /// - Implements hash-based deduplication for extracted items
     /// - Applies configurable rate limiting between chunks based on model tier
-    func processComplete(text: String) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    func processComplete(text: String) async throws -> SummarizationResult {
         updateConfiguration()
 
         guard let service = service else {
@@ -316,7 +316,7 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
     ///   - contextWindow: Maximum tokens per chunk (model-specific)
     /// - Returns: Combined results from all chunks with deduplicated items
     /// - Throws: `SummarizationError` if all chunks fail or no successful results are obtained
-    private func processChunkedText(_ text: String, service: MistralAISummarizationService, contextWindow: Int) async throws -> (summary: String, tasks: [TaskItem], reminders: [ReminderItem], titles: [TitleItem], contentType: ContentType) {
+    private func processChunkedText(_ text: String, service: MistralAISummarizationService, contextWindow: Int) async throws -> SummarizationResult {
         let startTime = Date()
 
         let chunks = TokenManager.chunkText(text, maxTokens: contextWindow)
@@ -386,7 +386,13 @@ class MistralAIEngine: SummarizationEngine, ConnectionTestable {
         let processingTime = Date().timeIntervalSince(startTime)
         logger.info("Mistral AI chunked processing completed in \(processingTime)s")
 
-        return (combinedSummary, deduplicatedTasks, deduplicatedReminders, deduplicatedTitles, contentType)
+        return SummarizationResult(
+            summary: combinedSummary,
+            tasks: deduplicatedTasks,
+            reminders: deduplicatedReminders,
+            titles: deduplicatedTitles,
+            contentType: contentType
+        )
     }
 
     private func deduplicateTasks(_ tasks: [TaskItem]) -> [TaskItem] {

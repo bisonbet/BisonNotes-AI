@@ -9,6 +9,7 @@ import Foundation
 import AVFoundation
 import os.log
 
+@MainActor
 class RecordingCombiner {
     static let shared = RecordingCombiner()
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "RecordingCombiner")

@@ -8,9 +8,9 @@
 import SwiftUI
 
 struct OllamaSettingsView: View {
-    @AppStorage("ollamaServerURL") private var serverURL: String = "http://localhost"
-    @AppStorage("ollamaPort") private var port: Int = 11434
-    @AppStorage("ollamaModelName") private var selectedModel: String = "gpt-oss:20b"
+    @AppStorage("ollamaServerURL") private var serverURL: String = AppSettingsKeys.Defaults.ollamaServerURL
+    @AppStorage("ollamaPort") private var port: Int = AppSettingsKeys.Defaults.ollamaPort
+    @AppStorage("ollamaModelName") private var selectedModel: String = AppSettingsKeys.Defaults.ollamaModelName
     @AppStorage("ollamaMaxTokens") private var maxTokens: Int = 2048
     @AppStorage("ollamaTemperature") private var temperature: Double = 0.1
     /// Maximum context window the selected model supports
@@ -52,6 +52,7 @@ struct OllamaSettingsView: View {
             .navigationTitle("Ollama Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+#if !os(macOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Done") {
                         // Force refresh engine availability when settings are dismissed
@@ -60,15 +61,25 @@ struct OllamaSettingsView: View {
                         dismiss()
                     }
                 }
+#endif
             }
             .onAppear {
+#if os(macOS)
+                AppSettingsKeys.applyOllamaMacDefaultsIfNeeded()
+#endif
                 loadModelsIfConnected()
             }
             .onChange(of: serverURL) {
                 resetConnection()
+#if os(macOS)
+                onConfigurationChanged?()
+#endif
             }
             .onChange(of: port) {
                 resetConnection()
+#if os(macOS)
+                onConfigurationChanged?()
+#endif
             }
             .onChange(of: selectedModel) {
                 onConfigurationChanged?()
@@ -82,6 +93,11 @@ struct OllamaSettingsView: View {
             .onChange(of: temperature) {
                 onConfigurationChanged?()
             }
+#if os(macOS)
+            .onChange(of: allowInsecurePublicEndpoints) {
+                onConfigurationChanged?()
+            }
+#endif
             .alert("Error", isPresented: $showingError) {
                 Button("OK") { }
             } message: {
@@ -106,7 +122,7 @@ struct OllamaSettingsView: View {
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
 
-                        Text("Connect to your local Ollama server for privacy-focused AI processing")
+                        Text("Connect to Ollama running locally on this Mac for private AI processing")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -147,7 +163,7 @@ struct OllamaSettingsView: View {
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
 
-            Text("Enter the URL of your Ollama server (e.g., http://localhost)")
+            Text("For Ollama on this Mac, leave this as http://localhost")
                 .font(.caption)
                 .foregroundColor(.secondary)
 
@@ -223,7 +239,7 @@ struct OllamaSettingsView: View {
                     Text("No models found on server")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("Install a model using: ollama pull gpt-oss:20b")
+                    Text("Install a model using: ollama pull llama3.2")
                         .font(.caption.monospaced())
                         .foregroundColor(.orange)
                 }
@@ -312,24 +328,34 @@ struct OllamaSettingsView: View {
     }
 
     private var helpSection: some View {
-        Section(header: Text("Help")) {
+        Section(header: Text("Install Ollama on this Mac")) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Getting Started")
                     .font(.headline)
 
-                Text("1. Install Ollama from https://ollama.ai")
+                Text("1. Download Ollama for macOS and move it to Applications.")
                     .font(.caption)
-                Text("2. Pull a model: ollama pull gpt-oss:20b")
+                Text("2. Open Ollama so its local server is running.")
+                    .font(.caption)
+                Text("3. Pull a model: ollama pull llama3.2")
                     .font(.caption.monospaced())
-                Text("3. Start the server: ollama serve")
+                Text("4. Leave Server URL as http://localhost and Port as 11434.")
                     .font(.caption)
-                Text("4. Configure the connection above")
+                Text("5. Test the connection, then select a downloaded model.")
                     .font(.caption)
             }
             .padding(.vertical, 4)
 
-            Link("Ollama Documentation", destination: URL(string: "https://ollama.ai/docs")!)
-            Link("Available Models", destination: URL(string: "https://ollama.ai/library")!)
+            Text(
+                "BisonNotes connects to Ollama at http://localhost:11434. "
+                    + "It does not install software automatically; use the official installer below."
+            )
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Link("Download Ollama for macOS", destination: URL(string: "https://ollama.com/download/mac")!)
+            Link("Ollama Quickstart", destination: URL(string: "https://docs.ollama.com/quickstart")!)
+            Link("Available Models", destination: URL(string: "https://ollama.com/library")!)
         }
     }
 

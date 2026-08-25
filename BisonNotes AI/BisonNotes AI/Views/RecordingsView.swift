@@ -207,9 +207,7 @@ struct RecordingsView: View {
                         Spacer()
 
                         Button(action: {
-                            if let url = URL(string: "https://www.bisonnetworking.com/bisonnotes-ai/") {
-                                openURL(url)
-                            }
+                            openURL(BisonNotesDocumentation.releaseGuideURL)
                         }) {
                             Image(systemName: "questionmark.circle")
                                 .font(.title3)
@@ -342,12 +340,14 @@ struct RecordingsView: View {
                     transcriptImportManager: transcriptImportManager
                 )
                 .nativeMacModalSizing(width: 700, height: 620)
+                .nativeMacPresentationContext(.modalSheet)
             }
             // Video import hidden — feature not yet ready for users
+#if !os(macOS)
             .sheet(isPresented: $showingBackgroundProcessing) {
                 BackgroundProcessingView()
-                    .nativeMacModalSizing(width: 760, height: 680)
             }
+#endif
             .alert("Audio Import Results", isPresented: $importManager.showingImportAlert) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -393,11 +393,12 @@ struct RecordingsView: View {
                 Text(recorderErrorMessage)
             }
         }
+#if !os(macOS)
         .sheet(isPresented: $showingRecordingsList) {
             RecordingsListView()
                 .environmentObject(recorderVM)
-                .nativeMacModalSizing(width: 900, height: 720)
         }
+#endif
     }
 
     private var recordingStatusPanel: some View {

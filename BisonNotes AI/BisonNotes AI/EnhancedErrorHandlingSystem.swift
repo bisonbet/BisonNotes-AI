@@ -290,7 +290,7 @@ enum EnhancedAppError: LocalizedError, Identifiable {
         } else if let systemError = error as? SystemError {
             return .system(systemError)
         } else {
-            return .system(.unknown(underlying: error, context: context))
+            return .system(.unknown(underlying: error.localizedDescription, context: context))
         }
     }
 }
@@ -405,6 +405,8 @@ private func getBackgroundProcessingSeverity(_ error: BackgroundProcessingError)
     case .fileNotFound:
         return .high
     case .invalidAudioFormat:
+        return .high
+    case .recordingIdentityUnavailable:
         return .high
     }
 }
@@ -787,6 +789,22 @@ extension EnhancedErrorHandler {
                     description: "Record a new audio file with correct format",
                     action: { /* Implementation would open recorder */ },
                     priority: .high
+                )
+            ]
+
+        case .recordingIdentityUnavailable:
+            return [
+                EnhancedRecoveryAction(
+                    title: "Re-import Recording",
+                    description: "Re-import the audio so it can be linked to its saved recording",
+                    action: { /* Implementation would re-import */ },
+                    priority: .high
+                ),
+                EnhancedRecoveryAction(
+                    title: "Try Again",
+                    description: "Retry processing after the recording has been saved",
+                    action: { /* Implementation would retry */ },
+                    priority: .medium
                 )
             ]
         }

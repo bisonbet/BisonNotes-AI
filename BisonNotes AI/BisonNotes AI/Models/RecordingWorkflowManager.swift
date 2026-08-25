@@ -17,9 +17,10 @@ class RecordingWorkflowManager: ObservableObject {
     private let context: NSManagedObjectContext
     private var appCoordinator: AppDataCoordinator?
 
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
+    init(persistenceController: PersistenceController? = nil) {
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.context = resolvedPersistenceController.container.viewContext
         self.appCoordinator = nil // Will be set later to avoid circular dependency
     }
 
@@ -312,6 +313,14 @@ class RecordingWorkflowManager: ObservableObject {
                 var deletedCount = 0
                 for oldSummary in existingSummaries {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
+                    if let oldSummaryId = oldSummary.id {
+                        // Replacing a summary is still a deletion from the sync graph. Keep a
+                        // durable tombstone so another device cannot restore the superseded row.
+                        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
+                            summaryId: oldSummaryId,
+                            recordingId: recordingId
+                        )
+                    }
                     // Clean up any remaining supplemental folders that were not migrated
                     if let oldUUID = oldSummary.id, oldUUID != existingSummaries.first?.id {
                         try? SummaryAttachmentStore.shared.deleteAll(for: oldUUID)

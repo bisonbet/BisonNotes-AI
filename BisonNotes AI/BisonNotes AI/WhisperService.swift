@@ -15,6 +15,7 @@ enum WhisperError: Error, LocalizedError {
     case serverError(String)
     case audioProcessingFailed(String)
     case invalidResponse(String)
+    case recordingIdentityRequired
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +27,8 @@ enum WhisperError: Error, LocalizedError {
             return "Audio processing failed: \(message)"
         case .invalidResponse(let message):
             return "Invalid response: \(message)"
+        case .recordingIdentityRequired:
+            return "A recording ID is required for chunked transcription."
         }
     }
 }
@@ -272,14 +275,17 @@ class WhisperService: ObservableObject {
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
 
         if needsChunking {
-                return try await transcribeWithChunking(url: url, recordingId: recordingId)
+            guard let recordingId else {
+                throw WhisperError.recordingIdentityRequired
+            }
+            return try await transcribeWithChunking(url: url, recordingId: recordingId)
         } else {
             AppLog.shared.transcription("Using single file transcription path")
-            return try await performSingleTranscription(url: url)
+            return try await performSingleTranscription(url: url, recordingId: recordingId)
         }
     }
 
-    private func transcribeWithChunking(url: URL, recordingId: UUID?) async throws -> TranscriptionResult {
+    private func transcribeWithChunking(url: URL, recordingId: UUID) async throws -> TranscriptionResult {
         await MainActor.run {
             self.isTranscribing = true
             self.currentStatus = "Chunking audio file..."
@@ -294,7 +300,7 @@ class WhisperService: ObservableObject {
                 self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
                 self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
             }
-            let result = try await performSingleTranscription(url: audioChunk.chunkURL)
+            let result = try await performSingleTranscription(url: audioChunk.chunkURL, recordingId: recordingId)
             // Wrap result in TranscriptChunk
             let transcriptChunk = TranscriptChunk(
                 chunkId: audioChunk.id,
@@ -316,7 +322,7 @@ class WhisperService: ObservableObject {
             originalURL: url,
             recordingName: url.deletingPathExtension().lastPathComponent,
             recordingDate: creationDate,
-            recordingId: recordingId ?? UUID() // Use provided recordingId or fallback to new UUID
+            recordingId: recordingId
         )
         // Clean up chunk files
         try await chunkingService.cleanupChunks(chunks)
@@ -338,7 +344,7 @@ class WhisperService: ObservableObject {
 
     // MARK: - Single File Transcription
 
-    private func performSingleTranscription(url: URL) async throws -> TranscriptionResult {
+    private func performSingleTranscription(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
         AppLog.shared.transcription("Starting single file transcription for: \(url.lastPathComponent)")
         AppLog.shared.transcription("Protocol: \(config.whisperProtocol.rawValue)", level: .debug)
 
@@ -347,7 +353,7 @@ class WhisperService: ObservableObject {
         case .rest:
             return try await performRESTTranscription(url: url)
         case .wyoming:
-            return try await performWyomingTranscription(url: url)
+            return try await performWyomingTranscription(url: url, recordingId: recordingId)
         }
     }
 
@@ -535,6 +541,7 @@ class WhisperService: ObservableObject {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
+        let requestForTimeout = request
 
         AppLog.shared.transcription("Request body size: \(body.count) bytes", level: .debug)
 
@@ -550,7 +557,7 @@ class WhisperService: ObservableObject {
             seconds: 1800,
             timeoutError: WhisperError.serverError("Transcription request timed out after 30 minutes")
         ) { [self] in
-            let result = try await session.data(for: request)
+            let result = try await session.data(for: requestForTimeout)
             let requestDuration = Date().timeIntervalSince(requestStartTime)
 
             if requestDuration < 10 && duration > 300 {
@@ -667,7 +674,7 @@ class WhisperService: ObservableObject {
         return result
     }
 
-    private func performWyomingTranscription(url: URL) async throws -> TranscriptionResult {
+    private func performWyomingTranscription(url: URL, recordingId: UUID?) async throws -> TranscriptionResult {
         AppLog.shared.transcription("Starting Wyoming protocol transcription for: \(url.lastPathComponent)")
 
         guard let wyomingClient = wyomingClient else {
@@ -675,7 +682,7 @@ class WhisperService: ObservableObject {
         }
 
         // Delegate to Wyoming client
-        return try await wyomingClient.transcribeAudio(url: url)
+        return try await wyomingClient.transcribeAudio(url: url, recordingId: recordingId)
     }
 
     // MARK: - Chunked Transcription (for large files)
@@ -684,6 +691,9 @@ class WhisperService: ObservableObject {
         // Check if chunking is needed for Whisper (2 hour limit)
         let needsChunking = try await chunkingService.shouldChunkFile(url, for: .whisper)
         if needsChunking {
+            guard let recordingId else {
+                throw WhisperError.recordingIdentityRequired
+            }
             await MainActor.run {
                 self.isTranscribing = true
                 self.currentStatus = "Chunking audio file..."
@@ -698,7 +708,7 @@ class WhisperService: ObservableObject {
                     self.currentStatus = "Transcribing chunk \(chunkIndex + 1) of \(chunks.count)..."
                     self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
                 }
-                let result = try await performSingleTranscription(url: audioChunk.chunkURL)
+                let result = try await performSingleTranscription(url: audioChunk.chunkURL, recordingId: recordingId)
                 // Wrap result in TranscriptChunk
                 let transcriptChunk = TranscriptChunk(
                     chunkId: audioChunk.id,
@@ -720,7 +730,7 @@ class WhisperService: ObservableObject {
                 originalURL: url,
                 recordingName: url.deletingPathExtension().lastPathComponent,
                 recordingDate: creationDate,
-                recordingId: recordingId ?? UUID() // TODO: Get actual recording ID from Core Data
+                recordingId: recordingId
             )
             // Clean up chunk files
             try await chunkingService.cleanupChunks(chunks)
@@ -782,13 +792,14 @@ class WhisperService: ObservableObject {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         request.httpBody = body
+        let requestForTimeout = request
 
         // Send request with timeout
         let (data, response) = try await withTimeout(
             seconds: 60,
             timeoutError: WhisperError.serverError("Language detection timed out after 60 seconds")
         ) { [self] in
-            try await session.data(for: request)
+            try await session.data(for: requestForTimeout)
         }
 
         guard let httpResponse = response as? HTTPURLResponse else {

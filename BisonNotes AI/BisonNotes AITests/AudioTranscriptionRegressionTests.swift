@@ -21,6 +21,19 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         tempDirectory = nil
     }
 
+    func testRemovedTranscriptionEngineJobWaitsForConfiguredReplacement() throws {
+        let payload = """
+        {"type":"transcription","engine":"OpenAI"}
+        """.data(using: .utf8)!
+
+        let jobType = try JSONDecoder().decode(JobType.self, from: payload)
+
+        guard case .transcription(let engine) = jobType else {
+            return XCTFail("Expected a transcription job")
+        }
+        XCTAssertEqual(engine, .notConfigured)
+    }
+
     func testValidShortAudioFixtureProducesAudioFileInfo() async throws {
         let audioURL = tempDirectory.appendingPathComponent("valid-short.caf")
         try createSilentAudioFixture(at: audioURL, duration: 1.0)
@@ -72,13 +85,153 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             originalURL: originalURL,
             recordingName: "Chunked Recording",
             recordingDate: Date(),
-            recordingId: recordingId
+            recordingId: recordingId,
+            engine: .fluidAudio
         )
 
         XCTAssertEqual(result.transcriptData.recordingId, recordingId)
         XCTAssertEqual(result.transcriptData.segments.map(\.text), ["first", "second"])
         XCTAssertEqual(result.transcriptData.segments.map(\.startTime), [0, 10])
         XCTAssertEqual(result.totalSegments, 2)
+        XCTAssertEqual(result.transcriptData.engine, .fluidAudio)
+    }
+
+    @MainActor
+    func testSingleChunkReassemblyPreservesFluidAudioEngineMetadata() async throws {
+        let service = AudioFileChunkingService()
+        let recordingId = UUID()
+        let originalURL = tempDirectory.appendingPathComponent("single.m4a")
+        let chunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 0,
+            transcript: "single chunk",
+            segments: [
+                TranscriptSegment(speaker: "", text: "single chunk", startTime: 0, endTime: 1)
+            ],
+            startTime: 0,
+            endTime: 1,
+            timedWords: [
+                TimedTranscriptWord(text: "single", startTime: 0, endTime: 0.4, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "chunk", startTime: 0.5, endTime: 1)
+            ]
+        )
+
+        let result = try await service.reassembleTranscript(
+            from: [chunk],
+            originalURL: originalURL,
+            recordingName: "Single Chunk",
+            recordingDate: Date(),
+            recordingId: recordingId,
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(result.transcriptData.engine, .fluidAudio)
+        XCTAssertEqual(result.transcriptData.plainText, "single chunk")
+        XCTAssertEqual(result.timedWords?.map(\.text), ["single", "chunk"])
+    }
+
+    @MainActor
+    func testReassemblyKeepsMalformedTimedWordsInSourceOrder() async throws {
+        let service = AudioFileChunkingService()
+        let recordingId = UUID()
+        let originalURL = tempDirectory.appendingPathComponent("malformed-timing.m4a")
+        let firstChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 0,
+            transcript: "missing first",
+            segments: [TranscriptSegment(speaker: "", text: "missing first", startTime: 0, endTime: 1)],
+            startTime: 0,
+            endTime: 1,
+            timedWords: [
+                TimedTranscriptWord(text: "missing", startTime: nil, endTime: nil, hasLeadingSpace: false),
+                TimedTranscriptWord(text: "first", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+        let secondChunk = TranscriptChunk(
+            chunkId: UUID(),
+            sequenceNumber: 1,
+            transcript: "second",
+            segments: [TranscriptSegment(speaker: "", text: "second", startTime: 0, endTime: 1)],
+            startTime: 1,
+            endTime: 2,
+            timedWords: [
+                TimedTranscriptWord(text: "second", startTime: 0.2, endTime: 0.4)
+            ]
+        )
+
+        let result = try await service.reassembleTranscript(
+            from: [secondChunk, firstChunk],
+            originalURL: originalURL,
+            recordingName: "Malformed Timing",
+            recordingDate: Date(),
+            recordingId: recordingId,
+            engine: .fluidAudio
+        )
+
+        XCTAssertEqual(result.timedWords?.map(\.text), ["missing", "first", "second"])
+    }
+
+    @MainActor
+    func testMissingRecordingIdentityFailsBeforeTranscriptPersistence() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: persistence)
+        let audioURL = tempDirectory.appendingPathComponent("missing-identity.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = coordinator.addRecording(
+            url: audioURL,
+            name: "Missing Identity",
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
+
+        let transcriptData = TranscriptData(
+            recordingURL: audioURL,
+            recordingName: "Missing Identity",
+            recordingDate: Date(),
+            segments: [TranscriptSegment(speaker: "Speaker", text: "Unsaved transcript", startTime: 0, endTime: 1)]
+        )
+
+        XCTAssertThrowsError(try persistBackgroundTranscript(transcriptData, using: coordinator)) { error in
+            guard case .recordingIdentityUnavailable(let failedURL) = error as? BackgroundProcessingError else {
+                return XCTFail("Expected a typed recording identity error")
+            }
+            XCTAssertEqual(failedURL, audioURL)
+        }
+        XCTAssertNil(coordinator.getTranscriptData(for: recordingId))
+    }
+
+    @MainActor
+    func testBackgroundTranscriptPersistenceReturnsSavedIdentity() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: persistence)
+        let audioURL = tempDirectory.appendingPathComponent("persisted-transcript.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = coordinator.addRecording(
+            url: audioURL,
+            name: "Persisted Transcript",
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
+        let transcriptData = TranscriptData(
+            recordingId: recordingId,
+            recordingURL: audioURL,
+            recordingName: "Persisted Transcript",
+            recordingDate: Date(),
+            segments: [TranscriptSegment(speaker: "Speaker", text: "Persist this transcript", startTime: 0, endTime: 1)],
+            engine: .fluidAudio,
+            processingTime: 0.5,
+            confidence: 0.9
+        )
+
+        let transcriptId = try persistBackgroundTranscript(transcriptData, using: coordinator)
+
+        XCTAssertEqual(coordinator.getTranscript(for: recordingId)?.id, transcriptId)
+        XCTAssertEqual(coordinator.getTranscriptData(for: recordingId)?.recordingId, recordingId)
+        XCTAssertEqual(coordinator.getTranscriptData(for: recordingId)?.plainText, "Persist this transcript")
     }
 
     @MainActor
@@ -102,7 +255,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         defer { manager.activeJobs = oldJobs }
 
         let queuedJob = ProcessingJob(
-            type: .transcription(engine: .openAI),
+            type: .transcription(engine: .fluidAudio),
             recordingURL: audioURL,
             recordingName: "Active Job"
         ).withStatus(.queued)

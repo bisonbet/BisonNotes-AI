@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 import UniformTypeIdentifiers
 
@@ -8,6 +9,10 @@ struct SummarySupplementalData: Codable, Sendable {
     static let empty = SummarySupplementalData(userNotes: nil, attachments: [])
 }
 
+/// Serializes the synchronous attachment/file operations on the main actor so
+/// the shared encoder, decoder, and file-system mutations cannot race. The
+/// public API remains synchronous to preserve existing UI call sites.
+@MainActor
 final class SummaryAttachmentStore {
     static let shared = SummaryAttachmentStore()
 
@@ -105,6 +110,78 @@ final class SummaryAttachmentStore {
         }
         try fileManager.moveItem(at: oldDir, to: newDir)
         AppFileProtection.applyRecursively(to: newDir)
+    }
+
+    /// Attachment folders whose summary no longer exists.
+    ///
+    /// Several paths remove a summary row without touching its files — Core Data
+    /// cascade deletes when a recording goes, and the batch delete behind "clear
+    /// all data" bypasses relationship callbacks entirely — so the folders
+    /// accumulate unreachable. Reconciling against the store catches all of them
+    /// at once, including any path added later.
+    ///
+    /// Only directories named as a UUID are considered, so nothing else living
+    /// under the root is ever a candidate.
+    func orphanedSummaryIds(knownSummaryIds: Set<UUID>) -> [UUID] {
+        let root = rootDirectory()
+        guard fileManager.fileExists(atPath: root.path) else { return [] }
+
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return contents.compactMap { url in
+            guard let summaryId = UUID(uuidString: url.lastPathComponent) else { return nil }
+            guard !knownSummaryIds.contains(summaryId) else { return nil }
+            return summaryId
+        }
+    }
+
+    /// Reconciles the attachment folders against a Core Data context and removes
+    /// the ones whose summary is gone. Returns nil when the store could not be
+    /// read, which callers must not treat as "no summaries exist".
+    @discardableResult
+    func pruneOrphans(against context: NSManagedObjectContext) -> Int? {
+        let request: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        guard let summaries = try? context.fetch(request) else {
+            AppLog.shared.coreData(
+                "Skipped orphaned attachment cleanup: summaries could not be read",
+                level: .error
+            )
+            return nil
+        }
+
+        let removed = deleteOrphaned(knownSummaryIds: Set(summaries.compactMap { $0.id }))
+        if removed > 0 {
+            AppLog.shared.coreData("Removed \(removed) orphaned summary attachment folder(s)")
+        }
+        return removed
+    }
+
+    /// Removes the folders `orphanedSummaryIds` reported. Returns how many went.
+    ///
+    /// `knownSummaryIds` must come from a *successful* read of the store. Passing
+    /// an empty set because a fetch failed would delete every attachment the user
+    /// has, so the caller owns that guarantee and this deliberately does not
+    /// second-guess an empty set — a genuinely empty store has no attachments to
+    /// keep.
+    @discardableResult
+    func deleteOrphaned(knownSummaryIds: Set<UUID>) -> Int {
+        var removed = 0
+        for summaryId in orphanedSummaryIds(knownSummaryIds: knownSummaryIds) {
+            do {
+                try deleteAll(for: summaryId)
+                removed += 1
+            } catch {
+                AppLog.shared.coreData(
+                    "Could not remove orphaned attachments for \(summaryId.uuidString): \(error)",
+                    level: .error
+                )
+            }
+        }
+        return removed
     }
 
     func fileURL(for attachment: SummaryAttachment, summaryId: UUID) -> URL {

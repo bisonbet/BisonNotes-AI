@@ -10,6 +10,11 @@ import Combine
 
 /// A centralized location for UserDefaults keys to prevent typos and improve maintainability.
 struct AppSettingsKeys {
+    /// Set once the launch pass that maps removed providers to their successors
+    /// has run. Read by the engine registry, which is built on first access to
+    /// SummaryManager and must not rewrite a selection that pass can still map.
+    static let removedProviderSelectionsMigrated = "removedProviderSelectionsMigrated_v2.3"
+
     static let ollamaServerURL = "ollamaServerURL"
     static let ollamaPort = "ollamaPort"
     static let ollamaModelName = "ollamaModelName"
@@ -20,6 +25,29 @@ struct AppSettingsKeys {
         static let ollamaPort = 11434
         static let ollamaModelName = "llama3.2"
     }
+
+#if os(macOS)
+    /// Seeds the native Mac Ollama connection with its local server defaults.
+    /// Existing custom values are preserved so selecting Ollama never overwrites
+    /// a server the user intentionally configured.
+    static func applyOllamaMacDefaultsIfNeeded(to defaults: UserDefaults = .standard) {
+        let savedServerURL = defaults.string(forKey: ollamaServerURL)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if savedServerURL?.isEmpty != false {
+            defaults.set(Defaults.ollamaServerURL, forKey: ollamaServerURL)
+        }
+
+        if defaults.integer(forKey: ollamaPort) <= 0 {
+            defaults.set(Defaults.ollamaPort, forKey: ollamaPort)
+        }
+
+        let savedModelName = defaults.string(forKey: ollamaModelName)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if savedModelName?.isEmpty != false {
+            defaults.set(Defaults.ollamaModelName, forKey: ollamaModelName)
+        }
+    }
+#endif
 }
 
 /// A dedicated view model to manage the state and logic for the AISettingsView.
@@ -57,7 +85,18 @@ final class AISettingsViewModel: ObservableObject {
     }
 
     /// Moves the engine selection logic into the view model.
-    func selectEngine(_ engineType: AIEngineType, recorderVM: AudioRecorderViewModel) {
+    func selectEngine(_ engineType: AIEngineType) {
+        guard engineType.isSupportedOnCurrentPlatform else {
+            AppLog.shared.general("Ignored unsupported AI engine selection: \(engineType.rawValue)")
+            return
+        }
+
+#if os(macOS)
+        if engineType == .localLLM {
+            AppSettingsKeys.applyOllamaMacDefaultsIfNeeded()
+        }
+#endif
+
         let oldEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let newEngine = engineType.rawValue
 
@@ -73,27 +112,21 @@ final class AISettingsViewModel: ObservableObject {
         switch engineType {
         case .openAICompatible:
             UserDefaults.standard.set(true, forKey: "enableOpenAICompatible")
-            AppLog.shared.general("Auto-enabled OpenAI Compatible engine")
+            AppLog.shared.general("Auto-enabled Compatible API engine")
         case .localLLM:
             UserDefaults.standard.set(true, forKey: "enableOllama")
             AppLog.shared.general("Auto-enabled Ollama engine")
         case .googleAIStudio:
             UserDefaults.standard.set(true, forKey: "enableGoogleAIStudio")
             AppLog.shared.general("Auto-enabled Google AI Studio engine")
-        case .awsBedrock:
-            UserDefaults.standard.set(true, forKey: "enableAWSBedrock")
-            AppLog.shared.general("Auto-enabled AWS Bedrock engine")
         case .mistralAI:
             UserDefaults.standard.set(true, forKey: "enableMistralAI")
             AppLog.shared.general("Auto-enabled Mistral AI engine")
-        case .openAI:
-            UserDefaults.standard.set(true, forKey: "enableOpenAI")
-            AppLog.shared.general("Auto-enabled OpenAI engine")
-        case .onDeviceLLM:
-            UserDefaults.standard.set(true, forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            AppLog.shared.general("Auto-enabled On-Device AI engine")
         case .mlxSwift:
             UserDefaults.standard.set(true, forKey: MLXSwiftSettingsKeys.enabled)
+            // Make sure the stored model fits this device before the engine
+            // first tries to load it.
+            MLXSwiftSettingsKeys.normalizeStoredModelId(ramGB: DeviceCapabilities.totalRAMInGB)
             AppLog.shared.general("Auto-enabled MLX Swift engine")
         case .appleNative:
             AppLog.shared.general("Selected Apple Native engine")
@@ -104,22 +137,21 @@ final class AISettingsViewModel: ObservableObject {
     }
 }
 
+@MainActor
 struct AISettingsView: View {
     @StateObject private var viewModel: AISettingsViewModel
-    @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var errorHandler = ErrorHandler()
     @AppStorage(SummarizationTimeouts.storageKey) private var summarizationTimeout: Double = SummarizationTimeouts.defaultTimeout
-    @AppStorage(OnDeviceLLMModelInfo.SettingsKeys.enableExperimentalModels) private var enableExperimentalModels = false
-
+    @AppStorage(SummaryDetailLevel.storageKey)
+    private var summaryDetailRawValue: Int = SummaryDetailLevel.defaultLevel.rawValue
+    @AppStorage(SummaryThinkingLevel.storageKey)
+    private var summaryThinkingRawValue: Int = SummaryThinkingLevel.defaultLevel.rawValue
     @Environment(\.dismiss) private var dismiss
     @State private var showingOllamaSettings = false
-    @State private var showingOpenAISettings = false
     @State private var showingOpenAICompatibleSettings = false
     @State private var showingGoogleAIStudioSettings = false
     @State private var showingMistralAISettings = false
-    @State private var showingAWSBedrockSettings = false
-    @State private var showingOnDeviceLLMSettings = false
     @State private var showingMLXSwiftSettings = false
     @State private var showingMistralOnboarding = false
     @State private var engineStatuses: [String: EngineAvailabilityStatus] = [:]
@@ -127,6 +159,11 @@ struct AISettingsView: View {
     @State private var showingRegenerateConfirmation = false
     @State private var showOnDeviceEngines = true
     @State private var showCloudEngines = true
+#if os(macOS)
+    @State private var selectedMacEngineRawValue: String?
+
+    private static let macOverviewSelection = "__ai_settings_overview__"
+#endif
 
     init() {
         // Initialize with a placeholder coordinator - will be replaced by environment
@@ -137,20 +174,32 @@ struct AISettingsView: View {
         // Note: AudioRecorderViewModel doesn't have selectedAIEngine property
         // Use the actual current engine from UserDefaults
         let currentEngineName = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
-        return AIEngineType.allCases.first { $0.rawValue == currentEngineName }
+        return AIEngineType.allCases.first {
+            $0.rawValue == currentEngineName && $0.isSupportedOnCurrentPlatform
+        }
+    }
+
+    private var selectedSummaryDetailLevel: SummaryDetailLevel {
+        SummaryDetailLevel(rawValue: summaryDetailRawValue) ?? SummaryDetailLevel.defaultLevel
+    }
+
+    private var selectedSummaryThinkingLevel: SummaryThinkingLevel {
+        SummaryThinkingLevel(rawValue: summaryThinkingRawValue) ?? SummaryThinkingLevel.defaultLevel
+    }
+
+    private var currentSummaryThinkingProfile: SummaryThinkingProfile {
+        SummaryThinkingModelCatalog.currentProfile()
     }
 
     private func refreshEngineStatuses() {
-        Task {
-            await MainActor.run {
-                isRefreshingStatus = true
-            }
+        Task { @MainActor in
+            isRefreshingStatus = true
 
             var statuses: [String: EngineAvailabilityStatus] = [:]
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
 
             // Check each engine type
-            for engineType in AIEngineType.allCases {
+            for engineType in AIEngineType.allCases where engineType.isSupportedOnCurrentPlatform {
                 let isCurrent = engineType.rawValue == currentEngine
                 let isAvailable = checkEngineAvailability(engineType)
 
@@ -167,18 +216,13 @@ struct AISettingsView: View {
                 statuses[engineType.rawValue] = status
             }
 
-            await MainActor.run {
-                engineStatuses = statuses
-                isRefreshingStatus = false
-            }
+            engineStatuses = statuses
+            isRefreshingStatus = false
         }
     }
 
     private func checkEngineAvailability(_ engineType: AIEngineType) -> Bool {
         switch engineType {
-        case .openAI:
-            let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAIAPIKey) ?? ""
-            return !apiKey.isEmpty
         case .openAICompatible:
             let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.openAICompatibleAPIKey) ?? ""
             return !apiKey.isEmpty
@@ -193,22 +237,6 @@ struct AISettingsView: View {
             let apiKey = KeychainSecretStore.shared.string(forKey: KeychainSecretStore.googleAIStudioAPIKey) ?? ""
             let isEnabled = UserDefaults.standard.bool(forKey: "enableGoogleAIStudio")
             return !apiKey.isEmpty && isEnabled
-        case .awsBedrock:
-            let useProfile = UserDefaults.standard.bool(forKey: "awsBedrockUseProfile")
-            let profileName = UserDefaults.standard.string(forKey: "awsBedrockProfileName") ?? ""
-            let isEnabled = UserDefaults.standard.bool(forKey: "enableAWSBedrock")
-
-            if useProfile {
-                return !profileName.isEmpty && isEnabled
-            } else {
-                // Use unified credentials manager instead of separate UserDefaults keys
-                let credentials = AWSCredentialsManager.shared.credentials
-                return credentials.isValid && isEnabled
-            }
-        case .onDeviceLLM:
-            let isEnabled = UserDefaults.standard.bool(forKey: OnDeviceLLMModelInfo.SettingsKeys.enableOnDeviceLLM)
-            let isModelReady = OnDeviceLLMDownloadManager.shared.isModelReady
-            return isEnabled && isModelReady
         case .mlxSwift:
             let isEnabled = UserDefaults.standard.bool(forKey: MLXSwiftSettingsKeys.enabled)
             #if targetEnvironment(simulator)
@@ -223,9 +251,6 @@ struct AISettingsView: View {
 
     private func getEngineVersion(_ engineType: AIEngineType) -> String {
         switch engineType {
-        case .openAI:
-            let modelString = UserDefaults.standard.string(forKey: "openAISummarizationModel") ?? OpenAISummarizationModel.gpt41Mini.rawValue
-            return OpenAISummarizationModel(rawValue: modelString)?.displayName ?? modelString
         case .openAICompatible:
             return "API Compatible"
         case .mistralAI:
@@ -235,18 +260,8 @@ struct AISettingsView: View {
             let modelName = UserDefaults.standard.string(forKey: AppSettingsKeys.ollamaModelName) ?? AppSettingsKeys.Defaults.ollamaModelName
             return modelName
         case .googleAIStudio:
-            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3-flash-preview"
+            let model = UserDefaults.standard.string(forKey: "googleAIStudioModel") ?? "gemini-3.7-flash"
             return model
-        case .awsBedrock:
-            let storedModelName = UserDefaults.standard.string(forKey: "awsBedrockModel") ?? AWSBedrockModel.claude45Haiku.rawValue
-            // Migrate legacy model identifiers
-            let modelName = AWSBedrockModel.migrate(rawValue: storedModelName)
-            if let model = AWSBedrockModel(rawValue: modelName) {
-                return model.displayName
-            }
-            return "Claude 4.5 Haiku"
-        case .onDeviceLLM:
-            return OnDeviceLLMModelInfo.selectedModel.displayName
         case .mlxSwift:
             let model = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId) ?? MLXSwiftSettingsKeys.defaultModelId
             return model.components(separatedBy: "/").last ?? model
@@ -257,18 +272,20 @@ struct AISettingsView: View {
 
     var body: some View {
         Group {
+#if os(macOS)
+            macSettingsContent
+#else
             settingsContent
                 .navigationTitle("AI Settings")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    #if !os(macOS)
                     ToolbarItem(placement: .navigationBarTrailing) {
                         Button("Done") {
                             dismiss()
                         }
                     }
-                    #endif
                 }
+#endif
         }
         .platformSettingsNavigation()
         .alert("Regeneration Complete", isPresented: $viewModel.regenerationManager.showingRegenerationAlert) {
@@ -289,7 +306,7 @@ struct AISettingsView: View {
             summarizationTimeout = SummarizationTimeouts.clamp(
                 summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
             )
-            // Align regeneration manager with the user's currently selected engine instead of forcing OpenAI
+            // Align regeneration manager with the user's currently selected engine.
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
@@ -302,87 +319,266 @@ struct AISettingsView: View {
         } message: {
             Text(errorHandler.currentError?.localizedDescription ?? "An unknown error occurred.")
         }
-        #if os(macOS)
-        .navigationDestination(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView(onConfigurationChanged: {
-                self.refreshEngineStatuses()
-            })
-        }
-        .navigationDestination(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingOpenAICompatibleSettings) {
-            OpenAICompatibleSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingGoogleAIStudioSettings) {
-            GoogleAIStudioSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingMistralAISettings) {
-            MistralAISettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
-        .navigationDestination(isPresented: $showingAWSBedrockSettings) {
-            AWSBedrockSettingsView()
-        }
-        .navigationDestination(isPresented: $showingOnDeviceLLMSettings) {
-            OnDeviceLLMSettingsView()
-        }
-        .navigationDestination(isPresented: $showingMLXSwiftSettings) {
-            MLXSwiftSettingsView()
-        }
-        #else
-        .sheet(isPresented: $showingOllamaSettings) {
-            OllamaSettingsView(onConfigurationChanged: {
-                self.refreshEngineStatuses()
-            })
-        }
-        .sheet(isPresented: $showingOpenAISettings) {
-            OpenAISummarizationSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
-            })
-        }
+#if !os(macOS)
         .sheet(isPresented: $showingOpenAICompatibleSettings) {
             OpenAICompatibleSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingGoogleAIStudioSettings) {
             GoogleAIStudioSettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
         }
         .sheet(isPresented: $showingMistralAISettings) {
             MistralAISettingsView(onConfigurationChanged: {
-                Task { refreshEngineStatuses() }
+                Task { @MainActor in refreshEngineStatuses() }
             })
-        }
-        .sheet(isPresented: $showingAWSBedrockSettings) {
-            AWSBedrockSettingsView()
-        }
-        .sheet(isPresented: $showingOnDeviceLLMSettings) {
-            NavigationStack {
-                OnDeviceLLMSettingsView()
-            }
         }
         .sheet(isPresented: $showingMLXSwiftSettings) {
             NavigationStack {
                 MLXSwiftSettingsView()
             }
         }
-        #endif
+#endif
+#if os(macOS)
+        .sheet(isPresented: $showingMistralOnboarding) {
+            MistralOnboardingView(onSetupComplete: {
+                refreshEngineStatuses()
+            })
+            .nativeMacModalSizing(width: 760, height: 700)
+        }
+#else
         .platformFullScreenCover(isPresented: $showingMistralOnboarding) {
             MistralOnboardingView(onSetupComplete: {
                 refreshEngineStatuses()
             })
         }
+#endif
     }
+
+#if os(macOS)
+    private var macSettingsContent: some View {
+        HSplitView {
+            List(selection: $selectedMacEngineRawValue) {
+                Section("Summary") {
+                    Label("Summary & Management", systemImage: "slider.horizontal.3")
+                        .tag(Self.macOverviewSelection)
+                }
+
+                Section("AI Engines") {
+                    ForEach(AIEngineType.availableCases, id: \.rawValue) { engine in
+                        macEngineListRow(for: engine)
+                            .tag(engine.rawValue)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(minWidth: 210, idealWidth: 240, maxWidth: 280)
+
+            macEngineDetail
+                .frame(minWidth: 480)
+        }
+        .onAppear {
+            guard selectedMacEngineRawValue == nil else { return }
+            selectedMacEngineRawValue = currentEngineType?.rawValue
+                ?? Self.macOverviewSelection
+        }
+        // Sidebar selection only browses a provider's configuration. Switching
+        // the engine the app actually summarizes with is an explicit action in
+        // the detail pane, so opening a pane to check a key cannot silently
+        // repoint summarization at an unconfigured engine.
+        .onChange(of: selectedMacEngineRawValue) { _, newValue in
+            guard let newValue,
+                  newValue != Self.macOverviewSelection,
+                  AIEngineType.availableCases.contains(where: { $0.rawValue == newValue }) else {
+                return
+            }
+
+            refreshEngineStatuses()
+        }
+    }
+
+    @ViewBuilder
+    private var macEngineDetail: some View {
+        if selectedMacEngineRawValue == Self.macOverviewSelection || selectedMacEngineRawValue == nil {
+            macOverviewDetail
+        } else if let rawValue = selectedMacEngineRawValue,
+                  let engine = AIEngineType.availableCases.first(where: { $0.rawValue == rawValue }) {
+            macProviderDetail(for: engine)
+        } else {
+            macOverviewDetail
+        }
+    }
+
+    private var macOverviewDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                modernHeader
+                modernCurrentEngineSection
+                modernTimeoutSection
+                modernSummaryDetailSection
+                modernSummaryThinkingSection
+                modernSummaryManagementSection
+            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    @ViewBuilder
+    private func macEngineListRow(for engine: AIEngineType) -> some View {
+        let status = engineStatuses[engine.rawValue]
+        let isSelectedEngine = selectedEngineName == engine.rawValue
+
+        HStack(spacing: 10) {
+            Image(systemName: iconName(for: engine))
+                .foregroundColor(engineColor(for: engine))
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(engine.displayName)
+                    .font(.subheadline.weight(.medium))
+                Text(shortDescription(for: engine))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            if isSelectedEngine {
+                Label("Selected", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                engineBadge(for: engine, status: status)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityValue(isSelectedEngine ? "Selected" : (status?.isAvailable == true ? "Ready" : "Needs setup"))
+    }
+
+    private func macProviderDetail(for engine: AIEngineType) -> some View {
+        VStack(spacing: 0) {
+            macEngineActivationBar(for: engine)
+
+            Divider()
+
+            macProviderConfiguration(for: engine)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func macEngineActivationBar(for engine: AIEngineType) -> some View {
+        let isActiveEngine = selectedEngineName == engine.rawValue
+
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(engine.displayName)
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+
+                Text(
+                    isActiveEngine
+                        ? "BisonNotes uses this engine for summaries."
+                        : "Editing these settings does not change the engine BisonNotes uses."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 12)
+
+            if isActiveEngine {
+                Label("Current Engine", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.green)
+                    .accessibilityLabel("Current engine")
+            } else {
+                Button("Use This Engine") {
+                    viewModel.selectEngine(engine)
+                    refreshEngineStatuses()
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("bisonnotes.ai-settings.use-engine")
+                .accessibilityHint("Makes \(engine.displayName) the engine used for summaries.")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.windowBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func macProviderConfiguration(for engine: AIEngineType) -> some View {
+        switch engine {
+        case .openAICompatible:
+            OpenAICompatibleSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .localLLM:
+            OllamaSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .googleAIStudio:
+            GoogleAIStudioSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .mistralAI:
+            MistralAISettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .mlxSwift:
+            MLXSwiftSettingsView(onConfigurationChanged: {
+                Task { @MainActor in refreshEngineStatuses() }
+            })
+        case .appleNative:
+            macAppleNativeDetail
+        }
+    }
+
+    private var macAppleNativeDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                AISettingsCard(
+                    title: "Apple Native",
+                    systemImage: iconName(for: .appleNative),
+                    tint: engineColor(for: .appleNative)
+                ) {
+                    Text(AIEngineType.appleNative.description)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+
+                    Label(
+                        AppleNativeEngine.modelAvailable
+                            ? "Foundation Models are available on this Mac."
+                            : "Foundation Models are not available on this Mac.",
+                        systemImage: AppleNativeEngine.modelAvailable ? "checkmark.circle" : "exclamationmark.triangle"
+                    )
+                    .foregroundColor(AppleNativeEngine.modelAvailable ? .green : .orange)
+
+                    Text(
+                        "Apple Native is configured through the system intelligence settings. "
+                            + "Summary detail, thinking, timeout, and regeneration controls are available "
+                            + "under Summary & Management."
+                    )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: 760)
+            .frame(maxWidth: .infinity, alignment: .top)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+#endif
 
     @ViewBuilder
     private var settingsContent: some View {
@@ -396,6 +592,8 @@ struct AISettingsView: View {
                 modernCurrentEngineSection
                 modernEngineLibrarySection
                 modernTimeoutSection
+                modernSummaryDetailSection
+                modernSummaryThinkingSection
                 modernSummaryManagementSection
             }
             .padding(.horizontal, 20)
@@ -453,6 +651,7 @@ struct AISettingsView: View {
                         AIInfoRow(title: "Needs", value: requirement)
                     }
 
+                    #if !os(macOS)
                     if currentEngine != .appleNative {
                         Button {
                             openSettings(for: currentEngine)
@@ -464,6 +663,7 @@ struct AISettingsView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(engineColor(for: currentEngine))
                     }
+                    #endif
                 }
             }
         }
@@ -491,7 +691,7 @@ struct AISettingsView: View {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
-        let isUnlimitedEngine = currentEngineType == .onDeviceLLM || currentEngineType == .appleNative
+        let isUnlimitedEngine = currentEngineType == .mlxSwift || currentEngineType == .appleNative
 
         return AISettingsCard(title: "Request Timeout", systemImage: "timer", tint: .orange) {
             if isUnlimitedEngine {
@@ -516,6 +716,134 @@ struct AISettingsView: View {
                 }
                 .font(.caption)
             }
+        }
+    }
+
+    private var modernSummaryDetailSection: some View {
+        let selectedLevel = selectedSummaryDetailLevel
+
+        return AISettingsCard(title: "Summary Detail", systemImage: "text.alignleft", tint: .indigo) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choose how much description, context, and supporting data AI summaries should include.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Slider(
+                    value: Binding(
+                        get: { Double(selectedLevel.rawValue) },
+                        set: { newValue in
+                            summaryDetailRawValue = SummaryDetailLevel(
+                                rawValue: Int(newValue.rounded())
+                            )?.rawValue ?? SummaryDetailLevel.defaultLevel.rawValue
+                        }
+                    ),
+                    in: 0...2,
+                    step: 1
+                )
+                .accessibilityLabel("Summary detail")
+                .accessibilityValue(selectedLevel.displayName)
+                .accessibilityHint(
+                    "Brief keeps key points only. Balanced includes useful context. "
+                        + "Detailed includes more supporting information."
+                )
+
+                HStack {
+                    ForEach(SummaryDetailLevel.allCases) { level in
+                        Text(level.displayName)
+                            .font(.caption.weight(level == selectedLevel ? .semibold : .regular))
+                            .foregroundColor(level == selectedLevel ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedLevel.displayName)
+                        .font(.headline)
+                    Text(selectedLevel.userDescription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Text(
+                    "This affects the narrative summary for every AI engine. Tasks, reminders, titles, "
+                        + "and content type remain grounded in transcript facts."
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private var modernSummaryThinkingSection: some View {
+        let selectedLevel = selectedSummaryThinkingLevel
+        let profile = currentSummaryThinkingProfile
+        let modelName = profile.modelName.isEmpty ? "the selected model" : profile.modelName
+
+        return AISettingsCard(title: "Summary Thinking", systemImage: "brain", tint: .teal) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Use a short reasoning pass for models that expose a safe thinking control.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Slider(
+                    value: Binding(
+                        get: { Double(selectedLevel.rawValue) },
+                        set: { newValue in
+                            summaryThinkingRawValue = SummaryThinkingLevel(
+                                rawValue: Int(newValue.rounded())
+                            )?.rawValue ?? SummaryThinkingLevel.defaultLevel.rawValue
+                        }
+                    ),
+                    in: 0...1,
+                    step: 1
+                )
+                .accessibilityLabel("Summary thinking")
+                .accessibilityValue(selectedLevel.displayName)
+                .accessibilityHint("Off sends no thinking override. Light requests a short reasoning pass when supported.")
+
+                HStack {
+                    ForEach(SummaryThinkingLevel.allCases) { level in
+                        Text(level.displayName)
+                            .font(.caption.weight(level == selectedLevel ? .semibold : .regular))
+                            .foregroundColor(level == selectedLevel ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedLevel.displayName)
+                        .font(.headline)
+                    Text(selectedLevel.userDescription)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                thinkingCapabilityMessage(for: profile.support, modelName: modelName)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thinkingCapabilityMessage(
+        for support: SummaryThinkingSupport,
+        modelName: String
+    ) -> some View {
+        switch support {
+        case .unsupported:
+            Label(
+                "Ignored for \(modelName); no supported thinking control was found.",
+                systemImage: "info.circle"
+            )
+        case .thinkingOnly:
+            Label(
+                "\(modelName) controls thinking itself. BisonNotes will not add a heavier or unsupported override.",
+                systemImage: "checkmark.circle"
+            )
+        case .controllable:
+            Label(
+                "Light is available for \(modelName). Thinking traces are not included in the summary.",
+                systemImage: "checkmark.circle"
+            )
         }
     }
 
@@ -555,7 +883,7 @@ private extension AISettingsView {
         let tint = engineColor(for: engine)
 
         return Button {
-            viewModel.selectEngine(engine, recorderVM: recorderVM)
+            viewModel.selectEngine(engine)
             refreshEngineStatuses()
         } label: {
             HStack(spacing: 14) {
@@ -595,7 +923,7 @@ private extension AISettingsView {
         let effectiveTimeout = SummarizationTimeouts.clamp(
             summarizationTimeout > 0 ? summarizationTimeout : SummarizationTimeouts.defaultTimeout
         )
-        let isUnlimitedEngine = currentEngineType == .onDeviceLLM || currentEngineType == .appleNative
+        let isUnlimitedEngine = currentEngineType == .mlxSwift || currentEngineType == .appleNative
 
         return Section("Request Timeout") {
             if isUnlimitedEngine {
@@ -715,9 +1043,9 @@ private extension AISettingsView {
         AIEngineType.availableCases.filter { engine in
             switch category {
             case .onDevice:
-                return [.onDeviceLLM, .mlxSwift, .appleNative].contains(engine)
+                return [.mlxSwift, .appleNative].contains(engine)
             case .cloud:
-                return [.openAI, .googleAIStudio, .mistralAI, .awsBedrock, .openAICompatible].contains(engine)
+                return [.googleAIStudio, .mistralAI, .openAICompatible].contains(engine)
             case .selfHosted:
                 return engine == .localLLM
             }
@@ -729,7 +1057,7 @@ private extension AISettingsView {
         let isSelected = selectedEngineName == engine.rawValue
 
         return Button {
-            viewModel.selectEngine(engine, recorderVM: recorderVM)
+            viewModel.selectEngine(engine)
             refreshEngineStatuses()
         } label: {
             HStack(spacing: 10) {
@@ -751,13 +1079,10 @@ private extension AISettingsView {
 
     func shortDescription(for engine: AIEngineType) -> String {
         switch engine {
-        case .onDeviceLLM: return "Private, no internet after download"
         case .mlxSwift: return "On-device MLX summaries"
         case .appleNative: return "Apple Foundation Models, fully on-device"
-        case .openAI: return "High quality summaries"
         case .googleAIStudio: return "Gemini model support"
         case .mistralAI: return "Fast cloud summaries"
-        case .awsBedrock: return "Enterprise model routing"
         case .openAICompatible: return "Works with compatible APIs"
         case .localLLM: return "Use your local Ollama server"
         }
@@ -765,12 +1090,14 @@ private extension AISettingsView {
 
     func openSettings(for engine: AIEngineType) {
         switch engine {
-        case .openAI:
-            showingOpenAISettings = true
         case .openAICompatible:
             showingOpenAICompatibleSettings = true
         case .localLLM:
+#if os(macOS)
             showingOllamaSettings = true
+#else
+            break
+#endif
         case .googleAIStudio:
             showingGoogleAIStudioSettings = true
         case .mistralAI:
@@ -780,11 +1107,6 @@ private extension AISettingsView {
             } else {
                 showingMistralAISettings = true
             }
-        case .awsBedrock:
-            showingAWSBedrockSettings = true
-        case .onDeviceLLM:
-            guard DeviceCapabilities.supportsOnDeviceLLM else { return }
-            showingOnDeviceLLMSettings = true
         case .mlxSwift:
             guard DeviceCapabilities.supportsMLX else { return }
             showingMLXSwiftSettings = true
@@ -795,16 +1117,13 @@ private extension AISettingsView {
 
     func iconName(for engine: AIEngineType) -> String {
         switch engine {
-        case .onDeviceLLM: return "iphone.gen3"
         case .mlxSwift: return "cpu"
         case .appleNative:
             // apple.intelligence requires iOS 18.1+
             if #available(iOS 18.1, *) { return "apple.intelligence" }
             return "brain"
-        case .openAI: return "sparkles"
         case .googleAIStudio: return "globe"
         case .mistralAI: return "wind"
-        case .awsBedrock: return "shippingbox"
         case .openAICompatible: return "link"
         case .localLLM: return "server.rack"
         }
@@ -838,13 +1157,10 @@ private extension AISettingsView {
 
     func engineColor(for engine: AIEngineType) -> Color {
         switch engine {
-        case .onDeviceLLM: return .indigo
         case .mlxSwift: return .orange
         case .appleNative: return .mint
-        case .openAI: return .blue
         case .googleAIStudio: return .purple
         case .mistralAI: return .orange
-        case .awsBedrock: return .brown
         case .openAICompatible: return .green
         case .localLLM: return .teal
         }

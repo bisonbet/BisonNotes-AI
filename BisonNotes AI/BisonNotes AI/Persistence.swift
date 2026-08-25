@@ -8,6 +8,10 @@
 import CoreData
 
 struct PersistenceController {
+    /// Core Data's container and view context are confined to the main actor.
+    /// The shared controller is only used to construct the main-actor data
+    /// managers; it is not a Sendable value that may cross actor boundaries.
+    @MainActor
     static let shared = PersistenceController()
 
     @MainActor
@@ -16,10 +20,6 @@ struct PersistenceController {
         let viewContext = result.container.viewContext
         // Note: Core Data entities are RecordingEntry, SummaryEntry, and TranscriptEntry
         // This preview code is not used in the actual app
-        // for _ in 0..<10 {
-        //     let newItem = Item(context: viewContext)
-        //     newItem.timestamp = Date()
-        // }
         do {
             try viewContext.save()
         } catch {

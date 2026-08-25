@@ -21,13 +21,20 @@ class AppDataCoordinator: ObservableObject {
     private var lastAutomaticiCloudReconcileDate: Date?
     private let automaticiCloudReconcileMinInterval: TimeInterval = 300
 
-    init(persistenceController: PersistenceController = PersistenceController.shared) {
+    init(persistenceController: PersistenceController? = nil) {
+        let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         // Initialize Core Data system
-        self.coreDataManager = CoreDataManager(persistenceController: persistenceController)
-        self.workflowManager = RecordingWorkflowManager(persistenceController: persistenceController)
+        self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
+        self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
+
+        // SummaryManager initializes its engine registry during first access.
+        // Migrate the Mac-only Ollama selection before that access so an older
+        // iPhone/iPad install cannot restore an unsupported engine into memory.
+        BisonNotesAIApp.migrateIOSOllamaSelection()
 
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
+        SummaryManager.shared.configure(with: self)
 
         Task {
             await initializeSystem()
@@ -37,6 +44,16 @@ class AppDataCoordinator: ObservableObject {
     private func initializeSystem() async {
         // Core Data system initialization
         isInitialized = true
+
+        let migrationReport = SummaryManager.shared.migrateLegacySummariesIfNeeded(using: self)
+        if migrationReport.decodedCount > 0 || migrationReport.failedCount > 0 || migrationReport.unresolvedCount > 0 {
+            let message = "Legacy summary migration: decoded=\(migrationReport.decodedCount), migrated=\(migrationReport.migratedCount), preserved=\(migrationReport.preservedExistingCount), unresolved=\(migrationReport.unresolvedCount), failed=\(migrationReport.failedCount)"
+            if migrationReport.didComplete {
+                AppLog.shared.coreData(message, level: .debug)
+            } else {
+                AppLog.shared.coreData(message, level: .error)
+            }
+        }
     }
 
     // MARK: - Public Interface
@@ -147,6 +164,29 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getAllSummaries()
     }
 
+    func getAllSummaryData() -> [EnhancedSummaryData] {
+        return coreDataManager.getAllSummaryData()
+    }
+
+    @discardableResult
+    func upsertSummary(
+        _ summary: EnhancedSummaryData,
+        for recordingId: UUID? = nil,
+        transcriptId: UUID? = nil,
+        identityPolicy: SummaryUpsertIdentityPolicy = .preserveExisting
+    ) throws -> UUID {
+        let resolvedRecordingId = recordingId ?? summary.recordingId ?? coreDataManager.getRecording(url: summary.recordingURL)?.id
+        guard let resolvedRecordingId else {
+            throw SummaryUpsertError.recordingIdentityUnavailable
+        }
+        return try coreDataManager.upsertSummary(
+            summary,
+            for: resolvedRecordingId,
+            transcriptId: transcriptId,
+            identityPolicy: identityPolicy
+        )
+    }
+
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
         return coreDataManager.getCompleteRecordingData(id: id)
     }
@@ -163,12 +203,22 @@ class AppDataCoordinator: ObservableObject {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let summaryIds = coreDataManager.getSummary(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let iCloudManager = SummaryManager.shared.getiCloudManager()
+        // Persist the deletion intent first so a crash after the local save
+        // still tells other devices. Withdraw it if the local delete rolls back.
         iCloudManager.enqueueRecordingDeletionForiCloud(
             recordingId: id,
             transcriptIds: transcriptIds,
             summaryIds: summaryIds
         )
-        coreDataManager.deleteRecording(id: id)
+        do {
+            try coreDataManager.deleteRecording(id: id)
+        } catch {
+            // Covers the not-found case too: nothing was deleted here, so the
+            // marker queued a moment ago must not go on to delete it elsewhere.
+            iCloudManager.clearPendingRecordingDeletion(recordingId: id)
+            AppLog.shared.coreData("Failed to delete recording \(id); withdrew the iCloud deletion marker: \(error)", level: .error)
+            return
+        }
 
         Task {
             do {
@@ -179,17 +229,66 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
+    /// Deletes only a transcript. The recording, audio, and any summary remain, while
+    /// the transcript's cloud tombstone is retained until iCloud accepts it.
+    func deleteTranscript(id: UUID) async throws {
+        let transcript = coreDataManager.getTranscript(id: id)
+        let recordingId = transcript?.recordingId ?? transcript?.recording?.id
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        iCloudManager.enqueueTranscriptRemovalFromiCloud(
+            transcriptId: id,
+            recordingId: recordingId
+        )
+
+        do {
+            try coreDataManager.deleteTranscript(id: id)
+            guard coreDataManager.getTranscript(id: id) == nil else {
+                // Nothing was deleted — the row was not there. Withdraw the marker
+                // rather than tombstoning something this device never saw.
+                iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
+                return
+            }
+        } catch {
+            iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
+            throw error
+        }
+
+        do {
+            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+        } catch {
+            AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
+        }
+        objectWillChange.send()
+    }
+
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
+        let summary = coreDataManager.getSummary(id: id)
+        let recordingId = summary?.recordingId
+            ?? summary?.recording?.id
+            ?? coreDataManager.getRecording(forSummaryId: id)?.id
 
-        // Clean up supplemental data (notes + attachment files) before removing the Core Data entry.
-        try? SummaryAttachmentStore.shared.deleteAll(for: id)
+        // Attachment files are removed by deleteSummary once its save commits.
+        // Doing it here destroyed the user's notes even when the delete below
+        // threw and the marker was withdrawn.
 
-        // Delete locally first so a crash/kill before this point never leaves a durable
-        // iCloud-removal marker for a summary that's still present on disk.
-        try coreDataManager.deleteSummary(id: id)
+        // Persist the deletion intent before the local delete. This closes the crash window
+        // where a device could remove its local summary and never tell the other devices.
+        iCloudManager.enqueueSummaryRemovalFromiCloud(
+            summaryId: id,
+            recordingId: recordingId
+        )
 
-        iCloudManager.enqueueSummaryRemovalFromiCloud(summaryId: id)
+        do {
+            try coreDataManager.deleteSummary(id: id)
+            guard coreDataManager.getSummary(id: id) == nil else {
+                iCloudManager.clearPendingSummaryRemoval(summaryId: id)
+                return
+            }
+        } catch {
+            iCloudManager.clearPendingSummaryRemoval(summaryId: id)
+            throw error
+        }
 
         do {
             try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)

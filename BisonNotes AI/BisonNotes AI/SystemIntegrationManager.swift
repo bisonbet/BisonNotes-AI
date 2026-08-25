@@ -14,14 +14,25 @@ import UIKit
 
 // MARK: - System Integration Manager
 
-@MainActor
-class SystemIntegrationManager: NSObject, ObservableObject {
+enum SystemIntegrationDestination: Equatable {
+    case reminders
+    case calendar
+    case googleCalendar
+}
 
-    @Published var isAuthorized = false
-    @Published var authorizationStatus: EKAuthorizationStatus = .notDetermined
-    @Published var isProcessing = false
+struct CalendarEventDraft: Identifiable {
+    let id = UUID()
+    let eventStore: EKEventStore
+    let event: EKEvent
+}
+
+@MainActor
+final class SystemIntegrationManager: NSObject, ObservableObject {
+
+    @Published private(set) var calendarAuthorizationStatus: EKAuthorizationStatus = .notDetermined
+    @Published private(set) var reminderAuthorizationStatus: EKAuthorizationStatus = .notDetermined
+    @Published private(set) var isProcessing = false
     @Published var lastError: String?
-    @Published var showingError = false
 
     private let eventStore = EKEventStore()
 
@@ -39,39 +50,70 @@ class SystemIntegrationManager: NSObject, ObservableObject {
     // MARK: - Authorization
 
     func checkAuthorizationStatus() {
-        authorizationStatus = EKEventStore.authorizationStatus(for: .event)
-        isAuthorized = authorizationStatus == .fullAccess
+        calendarAuthorizationStatus = EKEventStore.authorizationStatus(for: .event)
+        reminderAuthorizationStatus = EKEventStore.authorizationStatus(for: .reminder)
     }
 
-    func requestAccess() async -> Bool {
+    private var hasCalendarWriteAccess: Bool {
+        calendarAuthorizationStatus == .fullAccess || calendarAuthorizationStatus == .writeOnly
+    }
+
+    private var hasReminderAccess: Bool {
+        reminderAuthorizationStatus == .fullAccess
+    }
+
+    func requestCalendarAccess() async -> Bool {
+        checkAuthorizationStatus()
+
+        if hasCalendarWriteAccess {
+            return true
+        }
+
+        guard calendarAuthorizationStatus == .notDetermined else {
+            setError("Calendar access is unavailable. Enable calendar access for BisonNotes in Settings and try again.")
+            return false
+        }
+
         do {
-            let granted = try await eventStore.requestFullAccessToEvents()
-            await MainActor.run {
-                self.isAuthorized = granted
-                self.authorizationStatus = granted ? .fullAccess : .denied
+            let granted = try await eventStore.requestWriteOnlyAccessToEvents()
+            checkAuthorizationStatus()
+
+            guard granted && hasCalendarWriteAccess else {
+                setError("Calendar access is required to create an event.")
+                return false
             }
+
             return granted
         } catch {
-            await MainActor.run {
-                self.lastError = "Failed to request calendar access: \(error.localizedDescription)"
-                self.showingError = true
-            }
+            setError("Failed to request calendar access: \(error.localizedDescription)")
             return false
         }
     }
 
     func requestReminderAccess() async -> Bool {
+        checkAuthorizationStatus()
+
+        if hasReminderAccess {
+            return true
+        }
+
+        guard reminderAuthorizationStatus == .notDetermined else {
+            setError("Reminders access is unavailable. Enable reminders access for BisonNotes in Settings and try again.")
+            return false
+        }
+
         do {
             let granted = try await eventStore.requestFullAccessToReminders()
-            await MainActor.run {
-                self.isAuthorized = granted
+            checkAuthorizationStatus()
+
+            guard granted && hasReminderAccess else {
+                setError("Reminders access is required to create a reminder.")
+                return false
             }
+
             return granted
         } catch {
-            await MainActor.run {
-                self.lastError = "Failed to request reminder access: \(error.localizedDescription)"
-                self.showingError = true
-            }
+            setError("Failed to request reminder access: \(error.localizedDescription)")
             return false
         }
     }
@@ -79,21 +121,22 @@ class SystemIntegrationManager: NSObject, ObservableObject {
     // MARK: - Task Integration
 
     func addTaskToReminders(_ task: TaskItem, recordingName: String) async -> Bool {
-        if !isAuthorized {
-            if !(await requestReminderAccess()) {
-                return false
-            }
+        guard await requestReminderAccess() else {
+            return false
         }
 
-        await MainActor.run {
-            isProcessing = true
-        }
+        isProcessing = true
+        defer { isProcessing = false }
 
         let reminder = EKReminder(eventStore: eventStore)
         reminder.title = task.text
-        			reminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
+        reminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         reminder.priority = task.priority.ekPriority
-        reminder.calendar = eventStore.defaultCalendarForNewReminders()
+        guard let calendar = eventStore.defaultCalendarForNewReminders() else {
+            setError("No writable Reminders list is available. Add or enable a Reminders list and try again.")
+            return false
+        }
+        reminder.calendar = calendar
 
         // Set due date if available
         if let timeRef = task.timeReference, let dueDate = parseDateFromTimeReference(timeRef) {
@@ -105,38 +148,15 @@ class SystemIntegrationManager: NSObject, ObservableObject {
 
         do {
             try eventStore.save(reminder, commit: true)
-
-            await MainActor.run {
-                isProcessing = false
-            }
             return true
 
         } catch {
-            await MainActor.run {
-                isProcessing = false
-                lastError = "Failed to add reminder: \(error.localizedDescription)"
-                showingError = true
-            }
+            setError("Failed to add reminder: \(error.localizedDescription)")
             return false
         }
     }
 
-    func addTaskToCalendar(_ task: TaskItem, recordingName: String) async -> Bool {
-        if !isAuthorized {
-            if !(await requestAccess()) {
-                return false
-            }
-        }
-
-        await MainActor.run {
-            isProcessing = true
-        }
-
-        let event = EKEvent(eventStore: eventStore)
-        event.title = task.text
-        event.notes = "Created from BisonNotes AI recording: \(recordingName)"
-        event.calendar = eventStore.defaultCalendarForNewEvents
-
+    func prepareTaskCalendarEvent(_ task: TaskItem, recordingName: String) async -> CalendarEventDraft? {
         // Set start and end times
         let now = Date()
         var startDate = now
@@ -147,49 +167,34 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             endDate = Calendar.current.date(byAdding: .hour, value: 1, to: dueDate) ?? dueDate
         }
 
-        event.startDate = startDate
-        event.endDate = endDate
-
-        // Set alarm
-        let alarm = EKAlarm(relativeOffset: -900) // 15 minutes before
-        event.addAlarm(alarm)
-
-        do {
-            try eventStore.save(event, span: .thisEvent, commit: true)
-
-            await MainActor.run {
-                isProcessing = false
-            }
-            return true
-
-        } catch {
-            await MainActor.run {
-                isProcessing = false
-                lastError = "Failed to add calendar event: \(error.localizedDescription)"
-                showingError = true
-            }
-            return false
-        }
+        return await prepareCalendarEvent(
+            title: task.text,
+            recordingName: recordingName,
+            startDate: startDate,
+            endDate: endDate,
+            alarmOffset: -900
+        )
     }
 
     // MARK: - Reminder Integration
 
     func addReminderToReminders(_ reminder: ReminderItem, recordingName: String) async -> Bool {
-        if !isAuthorized {
-            if !(await requestReminderAccess()) {
-                return false
-            }
+        guard await requestReminderAccess() else {
+            return false
         }
 
-        await MainActor.run {
-            isProcessing = true
-        }
+        isProcessing = true
+        defer { isProcessing = false }
 
         let ekReminder = EKReminder(eventStore: eventStore)
         ekReminder.title = reminder.text
         ekReminder.notes = "Created from BisonNotes AI recording: \(recordingName)"
         ekReminder.priority = reminder.urgency.ekPriority
-        ekReminder.calendar = eventStore.defaultCalendarForNewReminders()
+        guard let calendar = eventStore.defaultCalendarForNewReminders() else {
+            setError("No writable Reminders list is available. Add or enable a Reminders list and try again.")
+            return false
+        }
+        ekReminder.calendar = calendar
 
         // Set due date if available
         if let dueDate = reminder.timeReference.parsedDate {
@@ -206,38 +211,15 @@ class SystemIntegrationManager: NSObject, ObservableObject {
 
         do {
             try eventStore.save(ekReminder, commit: true)
-
-            await MainActor.run {
-                isProcessing = false
-            }
             return true
 
         } catch {
-            await MainActor.run {
-                isProcessing = false
-                lastError = "Failed to add reminder: \(error.localizedDescription)"
-                showingError = true
-            }
+            setError("Failed to add reminder: \(error.localizedDescription)")
             return false
         }
     }
 
-    func addReminderToCalendar(_ reminder: ReminderItem, recordingName: String) async -> Bool {
-        if !isAuthorized {
-            if !(await requestAccess()) {
-                return false
-            }
-        }
-
-        await MainActor.run {
-            isProcessing = true
-        }
-
-        let event = EKEvent(eventStore: eventStore)
-        event.title = reminder.text
-        event.notes = "Created from BisonNotes AI recording: \(recordingName)"
-        event.calendar = eventStore.defaultCalendarForNewEvents
-
+    func prepareReminderCalendarEvent(_ reminder: ReminderItem, recordingName: String) async -> CalendarEventDraft? {
         // Set start and end times
         let now = Date()
         var startDate = now
@@ -253,9 +235,6 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             }
         }
 
-        event.startDate = startDate
-        event.endDate = endDate
-
         // Set alarm based on urgency
         let alarmOffset: TimeInterval
         switch reminder.urgency {
@@ -269,25 +248,49 @@ class SystemIntegrationManager: NSObject, ObservableObject {
             alarmOffset = -86400 // 1 day before
         }
 
-        let alarm = EKAlarm(relativeOffset: alarmOffset)
-        event.addAlarm(alarm)
+        return await prepareCalendarEvent(
+            title: reminder.text,
+            recordingName: recordingName,
+            startDate: startDate,
+            endDate: endDate,
+            alarmOffset: alarmOffset
+        )
+    }
 
-        do {
-            try eventStore.save(event, span: .thisEvent, commit: true)
+    // MARK: - Calendar Event Preparation
 
-            await MainActor.run {
-                isProcessing = false
-            }
-            return true
-
-        } catch {
-            await MainActor.run {
-                isProcessing = false
-                lastError = "Failed to add calendar event: \(error.localizedDescription)"
-                showingError = true
-            }
-            return false
+    private func prepareCalendarEvent(
+        title: String,
+        recordingName: String,
+        startDate: Date,
+        endDate: Date,
+        alarmOffset: TimeInterval
+    ) async -> CalendarEventDraft? {
+        guard await requestCalendarAccess() else {
+            return nil
         }
+
+        isProcessing = true
+        defer { isProcessing = false }
+
+        guard let calendar = eventStore.defaultCalendarForNewEvents else {
+            setError("No writable calendar is available. Add or enable a calendar and try again.")
+            return nil
+        }
+
+        let event = EKEvent(eventStore: eventStore)
+        event.title = title
+        event.notes = "Created from BisonNotes AI recording: \(recordingName)"
+        event.calendar = calendar
+        event.startDate = startDate
+        event.endDate = endDate
+        event.addAlarm(EKAlarm(relativeOffset: alarmOffset))
+
+        return CalendarEventDraft(eventStore: eventStore, event: event)
+    }
+
+    private func setError(_ message: String) {
+        lastError = message
     }
 
     // MARK: - Google Calendar Integration
@@ -345,8 +348,7 @@ class SystemIntegrationManager: NSObject, ObservableObject {
         ]
 
         guard let url = components.url else {
-            lastError = "Failed to build Google Calendar URL."
-            showingError = true
+            setError("Failed to build Google Calendar URL.")
             return
         }
 

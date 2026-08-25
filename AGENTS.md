@@ -42,10 +42,12 @@ swiftlint lint                    # Full lint with all details
 swiftlint lint --reporter summary # Summary table only
 ```
 
-SwiftLint runs with default rules. `BisonNotes AI/BisonNotes AI/.swiftlint.yml`
-declares a committed baseline (`SwiftLintBaseline.json`) that is meant to
+SwiftLint uses the committed configuration at `BisonNotes AI/BisonNotes AI/.swiftlint.yml`,
+which declares a committed baseline (`SwiftLintBaseline.json`) that is meant to
 suppress the ~2,600 pre-existing violations (mostly `line_length` and body/type
-length rules) so only newly introduced violations surface.
+length rules) so only newly introduced violations surface. Existing baseline
+violations remain recorded there; report current summary counts honestly and do
+not treat a zero exit as proof of zero violations.
 
 **Baseline portability caveat:** the committed `SwiftLintBaseline.json` was
 generated on macOS and stores absolute file URLs (`file:///Users/champ/...`).
@@ -66,6 +68,15 @@ Do not commit a Linux-generated baseline over the macOS one: per-platform rule
 behavior can differ slightly, so the maintainer's macOS-generated baseline is
 the source of truth for the committed file.
 
+### Repository security owner actions
+
+- Repository owners should review GitHub Secret Scanning and Push Protection in repository settings and enable them as appropriate. This file does not claim either feature is enabled.
+- Do not add third-party scanning actions or configuration without explicit approval and official-source verification.
+
+### End-of-session handoff
+
+Before handoff, inspect modified files for newly unused declarations, stale commented-out implementation, duplicate helpers, placeholder behavior, and accidentally introduced secrets. Remove code only after call-site verification. Run `git diff --check` and relevant lint/tests, and report anything intentionally retained.
+
 ### Running Swift syntax checks
 
 ```bash
@@ -83,4 +94,4 @@ See `README.md` (Build and Test section) and `CLAUDE.md` (Architecture Overview)
 - Watch app: `BisonNotes AI/BisonNotes AI Watch App/`
 - Unit tests: `BisonNotes AI/BisonNotes AITests/`
 - UI tests: `BisonNotes AI/BisonNotes AIUITests/`
-- Pre-compiled framework: `Frameworks/llama.xcframework/`
+- MLX Swift language-model package: linked through Xcode-managed Swift Package Manager dependencies

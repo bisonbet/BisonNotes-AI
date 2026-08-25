@@ -58,7 +58,9 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
         app.navigateToSection("Summaries")
         XCTAssertTrue(app.buttons["View Summary for UI Test Recording"].waitForExistence(timeout: 8))
         app.buttons["View Summary for UI Test Recording"].tap()
-        XCTAssertTrue(app.collectionViews["bisonnotes.summary.detail"].waitForExistence(timeout: 8))
+        XCTAssertTrue(
+            app.descendants(matching: .any)["bisonnotes.summary.detail"].waitForExistence(timeout: 8)
+        )
         try performAccessibilityAudit(named: "Summary detail", app: app)
     }
 
@@ -86,14 +88,40 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
     }
 
     @MainActor
-    private func launchSeededApp() -> XCUIApplication {
+    func testOnDeviceSpeakerLabelsAccessibilityAuditAtAccessibilityTextSize() throws {
+        let app = launchSeededApp(extraArguments: [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
+        ])
+        app.navigateToSection("Setup")
+        app.buttons["bisonnotes.setup.additional-settings"].tap()
+
+        let settingsScroll = app.scrollViews["bisonnotes.settings.scroll"]
+        XCTAssertTrue(settingsScroll.waitForExistence(timeout: 8))
+        let transcription = app.buttons.matching(identifier: "Transcription").firstMatch
+        XCTAssertTrue(transcription.waitForExistence(timeout: 8))
+        transcription.tap()
+
+        let configure = app.reachableButton(named: "Configure On Device")
+        configure.tap()
+
+        _ = app.reachableElement("bisonnotes.settings.local-speaker-labels.section")
+        let toggle = app.reachableElement("bisonnotes.settings.local-speaker-labels.toggle")
+        toggle.setSwitch(on: true)
+        _ = app.reachableElement("bisonnotes.settings.local-speaker-labels.prepare-model")
+
+        try performAccessibilityAudit(named: "On Device Speaker Labels", app: app)
+    }
+
+    @MainActor
+    private func launchSeededApp(extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "--ui-testing",
             "--reset-test-data",
             "--seed-sample-recording",
             "--disable-cloud-services"
-        ]
+        ] + extraArguments
         app.launch()
         XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
         return app
@@ -216,6 +244,50 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 ("Contrast failed", "Location Services"),
                 ("Contrast failed", "Capture location data with recordings"),
                 ("Dynamic Type font sizes are partially unsupported", "Done")
+            ],
+            "On Device Speaker Labels": [
+                ("Contrast failed", "Done"),
+                ("Contrast failed", "Parakeet Model Not Downloaded"),
+                (
+                    "Contrast failed",
+                    "bisonnotes.settings.local-speaker-labels.model-status.parakeet"
+                ),
+                ("Contrast failed", "Download / Prepare Parakeet Model"),
+                (
+                    "Contrast failed",
+                    "Download the Parakeet model before using on-device transcription."
+                ),
+                ("Dynamic Type font sizes are partially unsupported", "Offline VBx"),
+                ("Dynamic Type font sizes are partially unsupported", "LS-EEND"),
+                ("Dynamic Type font sizes are partially unsupported", "Recommended"),
+                ("Dynamic Type font sizes are partially unsupported", "Experimental"),
+                ("Dynamic Type font sizes are partially unsupported", "speaker count estimated"),
+                ("Dynamic Type font sizes are partially unsupported", "up to 10 speakers"),
+                ("Dynamic Type font sizes are partially unsupported", "Speaker labeling method"),
+                ("Dynamic Type font sizes are partially unsupported", "Local Speaker Labels"),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "Speaker Labels (After Recording)"
+                ),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "Speaker labels apply only after completed Parakeet recordings, imports, and re-runs. They do not affect Live Transcription. Audio stays local after the explicit one-time model download."
+                ),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "Recommended for normal use. Offline VBx estimates the number of speakers and does not impose a two- or three-speaker cap."
+                ),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "Offline VBx: Download Required"
+                ),
+                ("Dynamic Type font sizes are partially unsupported", "Download Speaker Model"),
+                (
+                    "Dynamic Type font sizes are partially unsupported",
+                    "Audio remains on this device. Speaker labels run only after completed Parakeet work and do not change your other transcription engines."
+                ),
+                ("Dynamic Type font sizes are partially unsupported", "Done"),
+                ("Dynamic Type font sizes are unsupported", "(null)")
             ]
         ]
 
@@ -226,5 +298,92 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 : "Element:\"\(exception.element)\""
             return description.contains(issueToken) && description.contains(elementToken)
         }
+    }
+}
+
+@MainActor
+extension XCUIApplication {
+    func reachableButton(
+        named name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let matches = buttons.matching(identifier: name)
+        let button = matches.firstMatch
+
+        XCTAssertTrue(button.waitForExistence(timeout: 8), "Missing button \(name).", file: file, line: line)
+        XCTAssertEqual(matches.count, 1, "Expected one button \(name).", file: file, line: line)
+        return button
+    }
+
+    func reachableElement(
+        _ identifier: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
+        let matches = descendants(matching: .any).matching(identifier: identifier)
+        let element = matches.firstMatch
+
+        _ = element.waitForExistence(timeout: 5)
+
+        func resolvedElement() -> XCUIElement? {
+            let count = matches.count
+            if count > 1 {
+                XCTFail(
+                    "Expected one UI element \(identifier), found \(count).",
+                    file: file,
+                    line: line
+                )
+                return element
+            }
+            guard count == 1, element.exists, element.isHittable else { return nil }
+            return element
+        }
+
+        if let resolved = resolvedElement() {
+            return resolved
+        }
+        for _ in 0..<10 {
+            swipeUp()
+            if let resolved = resolvedElement() {
+                return resolved
+            }
+        }
+        for _ in 0..<10 {
+            swipeDown()
+            if let resolved = resolvedElement() {
+                return resolved
+            }
+        }
+
+        XCTAssertEqual(matches.count, 1, "Expected one UI element \(identifier).", file: file, line: line)
+        XCTAssertTrue(element.exists, "Missing UI element \(identifier).", file: file, line: line)
+        XCTAssertTrue(element.isHittable, "UI element \(identifier) is not reachable.", file: file, line: line)
+        return element
+    }
+}
+
+@MainActor
+extension XCUIElement {
+    func setSwitch(
+        on enabled: Bool,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let expectedValue = enabled ? "1" : "0"
+        guard value as? String != expectedValue else { return }
+
+        coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let valueChanged = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", expectedValue),
+            object: self
+        )
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [valueChanged], timeout: 5),
+            .completed,
+            "Switch did not change to \(expectedValue).",
+            file: file,
+            line: line
+        )
     }
 }

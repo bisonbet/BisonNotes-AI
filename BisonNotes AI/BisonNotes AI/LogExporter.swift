@@ -153,18 +153,19 @@ struct LogExporter {
 /// Falls back to UIActivityViewController if Mail is not configured.
 class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
 
-    static let shared = LogEmailPresenter()
+    @MainActor static let shared = LogEmailPresenter()
 
-    private var onDismiss: (() -> Void)?
-    private var onPresented: (() -> Void)?
+    @MainActor private static var onDismiss: (() -> Void)?
+    @MainActor private static var onPresented: (() -> Void)?
 
+    @MainActor
     func presentLogEmail(
         logFileURL: URL,
         onPresented: @escaping () -> Void = {},
         onDismiss: @escaping () -> Void
     ) {
-        self.onPresented = onPresented
-        self.onDismiss = onDismiss
+        Self.onPresented = onPresented
+        Self.onDismiss = onDismiss
 
         guard let rootVC = Self.topViewController() else {
             // No root VC — signal failure via onDismiss only so the call site
@@ -189,9 +190,9 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
                 mail.addAttachmentData(data, mimeType: "text/plain", fileName: logFileURL.lastPathComponent)
             }
 
-            rootVC.present(mail, animated: true) { [weak self] in
-                self?.onPresented?()
-                self?.onPresented = nil
+            rootVC.present(mail, animated: true) {
+                Self.onPresented?()
+                Self.onPresented = nil
             }
         } else {
             // Mail not configured — fall back to share sheet
@@ -199,21 +200,28 @@ class LogEmailPresenter: NSObject, MFMailComposeViewControllerDelegate {
             activityVC.completionWithItemsHandler = { _, _, _, _ in
                 onDismiss()
             }
-            rootVC.present(activityVC, animated: true) { [weak self] in
-                self?.onPresented?()
-                self?.onPresented = nil
+            rootVC.present(activityVC, animated: true) {
+                Self.onPresented?()
+                Self.onPresented = nil
             }
         }
     }
 
-    func mailComposeController(_ controller: MFMailComposeViewController, didFinishWith result: MFMailComposeResult, error: Error?) {
-        controller.dismiss(animated: true) {
-            self.onDismiss?()
-            self.onDismiss = nil
-            self.onPresented = nil
+    nonisolated func mailComposeController(
+        _ controller: MFMailComposeViewController,
+        didFinishWith result: MFMailComposeResult,
+        error: Error?
+    ) {
+        Task { @MainActor in
+            controller.dismiss(animated: true) {
+                LogEmailPresenter.onDismiss?()
+                LogEmailPresenter.onDismiss = nil
+                LogEmailPresenter.onPresented = nil
+            }
         }
     }
 
+    @MainActor
     private static func topViewController() -> UIViewController? {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })

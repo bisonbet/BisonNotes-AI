@@ -107,11 +107,11 @@ struct FileRelationshipSummary: View {
 
                 Spacer()
 
-                if relationships.iCloudSynced {
+                if relationships.iCloudSyncEligible {
                     Image(systemName: "icloud.fill")
                         .font(.caption)
                         .foregroundColor(.blue)
-                        .help("Synced to iCloud")
+                        .help("Eligible for iCloud sync")
                 }
             }
 
@@ -203,7 +203,7 @@ struct FileAvailabilityIndicator_Previews: PreviewProvider {
                 recordingDate: Date(),
                 transcriptExists: true,
                 summaryExists: true,
-                iCloudSynced: true
+                iCloudSyncEligible: true
             )
 
             FileRelationshipSummary(relationships: sampleRelationships, showDetails: true)
@@ -214,7 +214,7 @@ struct FileAvailabilityIndicator_Previews: PreviewProvider {
                 recordingDate: Date(),
                 transcriptExists: false,
                 summaryExists: true,
-                iCloudSynced: false
+                iCloudSyncEligible: false
             )
 
             FileRelationshipSummary(relationships: orphanedRelationships, showDetails: true)

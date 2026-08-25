@@ -24,6 +24,7 @@ class WyomingWhisperClient: ObservableObject {
 
     private let tcpClient: WyomingTCPClient
     private let config: WhisperConfig
+    private let chunkingService: AudioFileChunkingService
     private var currentTranscription: CheckedContinuation<TranscriptionResult, Error>?
     private var transcriptionResult = ""
     private var serverInfo: WyomingInfoData?
@@ -36,6 +37,7 @@ class WyomingWhisperClient: ObservableObject {
 
     init(config: WhisperConfig) {
         self.config = config
+        self.chunkingService = AudioFileChunkingService()
 
         // Extract host from server URL
         let host = Self.extractHost(from: config.serverURL)
@@ -257,6 +259,9 @@ class WyomingWhisperClient: ObservableObject {
 
         if duration > maxChunkDuration {
             AppLog.shared.transcription("Audio duration (\(Int(duration))s) exceeds \(Int(maxChunkDuration))s, using chunked transcription")
+            guard let recordingId else {
+                throw WyomingError.recordingIdentityRequired
+            }
             return try await transcribeAudioWithChunking(url: url, recordingId: recordingId, maxChunkDuration: maxChunkDuration)
         } else {
             AppLog.shared.transcription("Audio duration (\(Int(duration))s) is within limits, using standard transcription")
@@ -542,7 +547,7 @@ class WyomingWhisperClient: ObservableObject {
         return CMTimeGetSeconds(duration)
     }
 
-    private func transcribeAudioWithChunking(url: URL, recordingId: UUID?, maxChunkDuration: TimeInterval) async throws -> TranscriptionResult {
+    private func transcribeAudioWithChunking(url: URL, recordingId: UUID, maxChunkDuration: TimeInterval) async throws -> TranscriptionResult {
         AppLog.shared.transcription("Starting chunked Wyoming transcription for: \(url.lastPathComponent)")
 
         // Start background task for long-running transcription (only if we should manage background tasks)
@@ -581,8 +586,7 @@ class WyomingWhisperClient: ObservableObject {
             try? FileManager.default.removeItem(at: tempDir)
         }
 
-        var allSegments: [TranscriptSegment] = []
-        var totalProcessingTime: TimeInterval = 0
+        var transcriptChunks: [TranscriptChunk] = []
         let startTime = Date()
 
         // Process each chunk
@@ -624,20 +628,17 @@ class WyomingWhisperClient: ObservableObject {
 
                 let chunkResult = try await transcribeAudioStandard(url: chunkURL, recordingId: recordingId)
 
-                // Adjust timestamps to account for chunk offset
-                let adjustedSegments = chunkResult.segments.map { segment in
-                    TranscriptSegment(
-                        speaker: segment.speaker,
-                        text: segment.text,
-                        startTime: segment.startTime + chunkStartTime,
-                        endTime: segment.endTime + chunkStartTime
-                    )
-                }
+                transcriptChunks.append(TranscriptChunk(
+                    chunkId: UUID(),
+                    sequenceNumber: transcriptChunks.count,
+                    transcript: chunkResult.fullText,
+                    segments: chunkResult.segments,
+                    startTime: chunkStartTime,
+                    endTime: chunkEndTime,
+                    processingTime: chunkResult.processingTime
+                ))
 
-                allSegments.append(contentsOf: adjustedSegments)
-                totalProcessingTime += chunkResult.processingTime
-
-                AppLog.shared.transcription("Chunk \(chunkIndex + 1) completed: \(adjustedSegments.count) segments")
+                AppLog.shared.transcription("Chunk \(chunkIndex + 1) completed: \(chunkResult.segments.count) segments")
 
             } catch {
                 AppLog.shared.transcription("Failed to transcribe chunk \(chunkIndex + 1): \(error)", level: .error)
@@ -674,19 +675,17 @@ class WyomingWhisperClient: ObservableObject {
                         do {
                             let retryResult = try await transcribeAudioStandard(url: chunkURL, recordingId: recordingId)
 
-                            let adjustedSegments = retryResult.segments.map { segment in
-                                TranscriptSegment(
-                                    speaker: segment.speaker,
-                                    text: segment.text,
-                                    startTime: segment.startTime + chunkStartTime,
-                                    endTime: segment.endTime + chunkStartTime
-                                )
-                            }
+                            transcriptChunks.append(TranscriptChunk(
+                                chunkId: UUID(),
+                                sequenceNumber: transcriptChunks.count,
+                                transcript: retryResult.fullText,
+                                segments: retryResult.segments,
+                                startTime: chunkStartTime,
+                                endTime: chunkEndTime,
+                                processingTime: retryResult.processingTime
+                            ))
 
-                            allSegments.append(contentsOf: adjustedSegments)
-                            totalProcessingTime += retryResult.processingTime
-
-                            AppLog.shared.transcription("Chunk \(chunkIndex + 1) completed on retry: \(adjustedSegments.count) segments")
+                            AppLog.shared.transcription("Chunk \(chunkIndex + 1) completed on retry: \(retryResult.segments.count) segments")
                         } catch {
                             AppLog.shared.transcription("Retry also failed for chunk \(chunkIndex + 1): \(error)", level: .error)
                             // Continue with next chunk - don't fail entire transcription for one chunk
@@ -716,9 +715,17 @@ class WyomingWhisperClient: ObservableObject {
         AppLog.shared.transcription("Disconnecting after chunked transcription completion", level: .debug)
         tcpClient.disconnect()
 
-        // Merge segments and create final result
-        let mergedSegments = mergeAdjacentSegments(allSegments)
-        let fullText = mergedSegments.map { $0.text }.joined(separator: " ")
+        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let recordingDate = (fileAttributes[.creationDate] as? Date) ?? Date()
+        let reassembly = try await chunkingService.reassembleTranscript(
+            from: transcriptChunks,
+            originalURL: url,
+            recordingName: url.deletingPathExtension().lastPathComponent,
+            recordingDate: recordingDate,
+            recordingId: recordingId
+        )
+        let mergedSegments = reassembly.transcriptData.segments
+        let fullText = reassembly.transcriptData.plainText
         let finalProcessingTime = Date().timeIntervalSince(startTime)
 
         AppLog.shared.transcription("Chunked transcription completed: \(mergedSegments.count) segments, \(fullText.count) chars, \(Int(finalProcessingTime))s")
@@ -732,7 +739,7 @@ class WyomingWhisperClient: ObservableObject {
             fullText: fullText,
             segments: mergedSegments,
             processingTime: finalProcessingTime,
-            chunkCount: numberOfChunks,
+            chunkCount: transcriptChunks.count,
             success: true,
             error: nil
         )
@@ -784,38 +791,6 @@ class WyomingWhisperClient: ObservableObject {
         }
 
         AppLog.shared.transcription("Audio chunk created: \(outputURL.lastPathComponent)", level: .debug)
-    }
-
-    private func mergeAdjacentSegments(_ segments: [TranscriptSegment]) -> [TranscriptSegment] {
-        guard !segments.isEmpty else { return [] }
-
-        // Sort segments by start time
-        let sortedSegments = segments.sorted { $0.startTime < $1.startTime }
-        var mergedSegments: [TranscriptSegment] = []
-        var currentSegment = sortedSegments[0]
-
-        for nextSegment in sortedSegments.dropFirst() {
-            let timeDifference = nextSegment.startTime - currentSegment.endTime
-            let isSameSpeaker = currentSegment.speaker == nextSegment.speaker
-
-            // Merge if segments are close together (< 2 seconds) and same speaker
-            if timeDifference < 2.0 && isSameSpeaker && !currentSegment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                currentSegment = TranscriptSegment(
-                    speaker: currentSegment.speaker,
-                    text: currentSegment.text + " " + nextSegment.text,
-                    startTime: currentSegment.startTime,
-                    endTime: nextSegment.endTime
-                )
-            } else {
-                mergedSegments.append(currentSegment)
-                currentSegment = nextSegment
-            }
-        }
-
-        mergedSegments.append(currentSegment)
-
-        AppLog.shared.transcription("Merged \(segments.count) segments into \(mergedSegments.count) segments", level: .debug)
-        return mergedSegments
     }
 
     // MARK: - Status Properties
