@@ -195,9 +195,6 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getAllRecordingsWithData()
     }
 
-    func getRecordingsWithTranscripts() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        return coreDataManager.getRecordingsWithTranscripts()
-    }
 
     func deleteRecording(id: UUID) {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
@@ -423,9 +420,4 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Debug Methods
-
-    func debugDatabaseContents() {
-        coreDataManager.debugDatabaseContents()
-    }
 }

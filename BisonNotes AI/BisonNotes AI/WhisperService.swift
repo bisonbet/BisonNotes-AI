@@ -76,21 +76,6 @@ struct WhisperConfig {
     )
 }
 
-// MARK: - REST API Models
-
-struct WhisperTranscribeRequest {
-    let audioFile: URL
-    let output: String
-    let task: String
-    let language: String?
-    let wordTimestamps: Bool?
-    let vadFilter: Bool?
-    let encode: Bool?
-    let diarize: Bool?
-    let minSpeakers: Int?
-    let maxSpeakers: Int?
-}
-
 struct WhisperTranscribeResponse: Codable {
     let text: String
     let segments: [WhisperSegment]?
