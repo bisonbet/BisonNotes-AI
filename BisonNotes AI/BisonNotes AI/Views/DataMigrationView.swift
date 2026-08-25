@@ -1402,22 +1402,3 @@ struct CleanupResults {
     let orphanedRecordings: Int
     let freedSpaceMB: Double
 }
-
-// MARK: - Compact Debug Button Style
-
-struct CompactDebugButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.caption)
-            .foregroundColor(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(.secondarySystemGroupedBackground))
-                    .opacity(configuration.isPressed ? 0.8 : 1.0)
-            )
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
-    }
-}

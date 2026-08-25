@@ -4089,12 +4089,3 @@ private struct NoteEditorSheet: View {
         }
     }
 }
-
-// MARK: - Helper Functions
-
-struct SafeConfidenceHelper {
-    static func percent(_ confidence: Double) -> Int {
-        guard confidence.isFinite else { return 0 }
-        return Int(confidence * 100)
-    }
-}
