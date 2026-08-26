@@ -946,6 +946,38 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// The default zone does not implement `getChanges`, so the zone-change
+    /// fallback can only ever fail there. An empty query result — a device with no
+    /// deletion markers, say — must not be turned into a failed sync by it.
+    func testTheDefaultZoneNotSupportingChangeEnumerationDoesNotFailTheSync() async throws {
+        try createCompleteRecording(named: "No markers yet")
+        transport.zoneEnumerationFailure = CloudKitTestError.defaultZoneGetChangesUnsupported()
+
+        let result = try await runReconcile()
+
+        XCTAssertFalse(result.backupResult.wasSkippedNoChanges)
+        XCTAssertNil(result.wasDeferredUntil)
+        XCTAssertGreaterThan(
+            result.backupResult.recordingsBackedUp,
+            0,
+            "A zone that cannot enumerate changes means there is nothing more to look at, not that the backup failed"
+        )
+    }
+
+    func testAnUnsupportedZoneChangeStillSurfacesTheQuerysOwnFailure() async throws {
+        try createCompleteRecording(named: "Query broken")
+        // The query itself fails for a real reason, and the fallback is unavailable.
+        transport.queryFailures = [CloudKitTestError.ckError(.permissionFailure)]
+        transport.zoneEnumerationFailure = CloudKitTestError.defaultZoneGetChangesUnsupported()
+
+        do {
+            _ = try await runReconcile()
+            XCTFail("A genuine query failure must not be masked by the unavailable fallback")
+        } catch let error as CKError {
+            XCTAssertEqual(error.code, .permissionFailure, "The original failure is the one worth reporting")
+        }
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

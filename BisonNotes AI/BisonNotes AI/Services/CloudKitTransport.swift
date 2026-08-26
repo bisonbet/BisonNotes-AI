@@ -347,3 +347,25 @@ final class UserDefaultsCloudSyncPreferencesStore: CloudSyncPreferencesStore {
         }
     }
 }
+
+extension CKError {
+    /// CloudKit rejects `getChanges` against the default zone: change enumeration
+    /// is a custom-zone feature, and this app keeps everything in the default zone.
+    ///
+    /// It is not a sync failure — it means this particular way of listing records
+    /// does not exist here — so callers fall back to a query rather than failing
+    /// the operation. Matching includes the server's own wording because the code
+    /// CloudKit pairs with it is not specific to this condition.
+    var isUnsupportedZoneChangeRequest: Bool {
+        let message = localizedDescription.lowercased()
+        if message.contains("does not support getchanges") {
+            return true
+        }
+        switch code {
+        case .invalidArguments, .serverRejectedRequest:
+            return message.contains("getchanges") || message.contains("defaultzone")
+        default:
+            return false
+        }
+    }
+}

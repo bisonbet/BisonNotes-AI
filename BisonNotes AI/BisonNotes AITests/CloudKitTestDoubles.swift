@@ -15,6 +15,23 @@ import Foundation
 // MARK: - Errors
 
 enum CloudKitTestError {
+    /// What CloudKit actually returns for `CKFetchRecordZoneChangesOperation`
+    /// against the default zone, wording included: change enumeration is a
+    /// custom-zone feature and the server rejects the call outright.
+    static func defaultZoneGetChangesUnsupported() -> CKError {
+        CKError(
+            _nsError: NSError(
+                domain: CKErrorDomain,
+                code: CKError.Code.invalidArguments.rawValue,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Error fetching changes in zone <CKRecordZoneID: 0x0; zoneName=_defaultZone, " +
+                        "ownerName=__defaultOwner__>: AppDefaultZone does not support getChanges call"
+                ]
+            )
+        )
+    }
+
     static func ckError(
         _ code: CKError.Code,
         retryAfter: Double? = nil,

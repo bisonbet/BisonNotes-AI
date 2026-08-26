@@ -2406,9 +2406,21 @@ class iCloudStorageManager: ObservableObject {
     /// values are requested, so CloudKit never downloads the audio assets attached
     /// to backup records just to enumerate them.
     private func defaultZoneRecordIDs() async throws -> [CKRecord.ID] {
-        let recordIDs = try await cloudTransport.recordIDs(inZoneWith: CKRecordZone.default().zoneID)
-        AppLog.shared.iCloudSync("Found \(recordIDs.count) records in the default zone to erase", level: .debug)
-        return recordIDs
+        do {
+            let recordIDs = try await cloudTransport.recordIDs(inZoneWith: CKRecordZone.default().zoneID)
+            AppLog.shared.iCloudSync("Found \(recordIDs.count) records in the default zone to erase", level: .debug)
+            return recordIDs
+        } catch let error as CKError where error.isUnsupportedZoneChangeRequest {
+            // The default zone cannot be enumerated by change token. The erase
+            // still has its query sweep across every known record type, so this
+            // must not abort the wipe.
+            AppLog.shared.iCloudSync(
+                "The default zone does not support change enumeration; " +
+                "erasing from the per-type query sweep instead",
+                level: .debug
+            )
+            return []
+        }
     }
 
     /// Backstop for the change feed: queries each record type the app knows about.
@@ -6471,9 +6483,9 @@ extension iCloudStorageManager {
                 )
                 throw CloudSyncDeferredError(until: deferredUntil, recordCount: 0)
             }
-            return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
+            return try await recordsFromZoneChangesIfSupported(recordType: recordType, otherwise: error)
         } catch {
-            return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
+            return try await recordsFromZoneChangesIfSupported(recordType: recordType, otherwise: error)
         }
 
         if let failure = scan.failures.first {
@@ -6497,12 +6509,42 @@ extension iCloudStorageManager {
             return zoneQueryRecords
         }
 
-        let zoneChangeRecords = try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
+        // An empty query result is the normal answer for a type with no records —
+        // for example a device that has never had anything deleted asking for
+        // deletion markers. Treat a zone that cannot enumerate changes as "nothing
+        // more to try" rather than failing the sync around it.
+        let zoneChangeRecords = try await recordsFromZoneChangesIfSupported(
+            recordType: recordType,
+            otherwise: nil
+        )
         if !zoneChangeRecords.isEmpty {
             return zoneChangeRecords
         }
 
         return []
+    }
+
+    /// Change enumeration exists only in custom zones, and this app's records all
+    /// live in the default one, so CloudKit rejects the call outright there. That
+    /// rejection means "this listing method is unavailable", not "the sync failed":
+    /// it yields no records, and any error that sent us here is rethrown instead.
+    private func recordsFromZoneChangesIfSupported(
+        recordType: String,
+        otherwise originalError: (any Error)?
+    ) async throws -> [CKRecord] {
+        do {
+            return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
+        } catch let error as CKError where error.isUnsupportedZoneChangeRequest {
+            AppLog.shared.iCloudSync(
+                "The default zone does not support change enumeration; " +
+                "treating the \(recordType) query result as final",
+                level: .debug
+            )
+            if let originalError {
+                throw originalError
+            }
+            return []
+        }
     }
 
     private struct QueryScanResult {
