@@ -1533,6 +1533,60 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// A marker is the only record other devices have of a delete they did not
+    /// see. Retiring it in the same non-atomic batch as the records it authorises
+    /// means CloudKit can take the marker, permanently refuse one content record,
+    /// and leave that record indexed — so the next sync restores data the user
+    /// deleted, with nothing left to say it was ever deleted.
+    func testAnExpiredTombstoneOutlivesACleanupThatFailed() async throws {
+        let recordingId = UUID()
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        let markerName = "backup_deletion_\(recordingId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(type: "CD_BackupRecording", name: recordingRecordName),
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [recordingRecordName] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: markerName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deviceIdentifier": "another-device",
+                    "deletedAt": clock.now.addingTimeInterval(
+                        -(iCloudStorageManager.deletionMarkerRetentionInterval + 60)
+                    )
+                ]
+            )
+        ])
+        transport.perRecordDeleteFailures[CKRecord.ID(recordName: recordingRecordName)] = [
+            CloudKitTestError.ckError(.permissionFailure)
+        ]
+
+        do {
+            _ = try await runReconcile()
+            XCTFail("A cloud record the server refused to delete must surface")
+        } catch {
+            // Expected.
+        }
+
+        XCTAssertNotNil(
+            transport.record(named: recordingRecordName),
+            "The server refused this one, so it is still there and still indexed"
+        )
+        XCTAssertNotNil(
+            transport.record(named: markerName),
+            "…so the marker that authorises removing it has to still be there too"
+        )
+    }
+
     func testATombstoneWithNoUsableDeletionTimeIsNeverRetired() async throws {
         seedTrustedManifest()
         let undated = seedDeletionMarkers(count: 1, deletedAt: nil)[0]

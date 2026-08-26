@@ -2831,6 +2831,11 @@ extension iCloudStorageManager {
     /// each time, and a phase whose cost grew with every delete the user had ever made.
     private struct CloudDeletionPlan {
         var recordIDsToDelete: Set<CKRecord.ID> = []
+        /// Markers past the retention window, deleted only once everything else in
+        /// the plan has succeeded. A marker is the only record other devices have
+        /// of a delete they did not see, so it has to outlive the cleanup it
+        /// authorises — see `commitDeletionPlan`.
+        var expiredMarkerIDsToRetire: Set<CKRecord.ID> = []
         var recordingRecordNamesToUnindex: Set<String> = []
         var transcriptRecordNamesToUnindex: Set<String> = []
         var summaryRecordNamesToUnindex: Set<String> = []
@@ -5839,7 +5844,7 @@ extension iCloudStorageManager {
                   !deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator) else {
                 continue
             }
-            plan.recordIDsToDelete.insert(marker.recordID)
+            plan.expiredMarkerIDsToRetire.insert(marker.recordID)
         }
 
         application.deletedCloudRecords = try await commitDeletionPlan(plan, workspace: workspace)
@@ -6160,6 +6165,24 @@ extension iCloudStorageManager {
     /// Issues everything a run's deletions add up to: one batched delete, one
     /// manifest delta, and one save for the relationships that had to be cleared.
     private func commitDeletionPlan(
+        _ plan: CloudDeletionPlan,
+        workspace: CloudDeletionWorkspace?
+    ) async throws -> Int {
+        var removedRecordCount = try await applyDeletionPlan(plan, workspace: workspace)
+
+        // Retiring an expired marker in the same non-atomic batch as the records it
+        // authorises risks the worst possible half: CloudKit takes the marker and
+        // permanently refuses one content record, the run throws before the manifest
+        // is updated, and the surviving record is still indexed — so the next sync
+        // restores data the user deleted, with no marker left to say otherwise. A
+        // marker that lives one cycle longer costs a single extra delete.
+        removedRecordCount += try await deleteExistingCloudRecords(
+            Array(plan.expiredMarkerIDsToRetire)
+        )
+        return removedRecordCount
+    }
+
+    private func applyDeletionPlan(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
     ) async throws -> Int {
