@@ -198,9 +198,16 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         // accumulator is shared state and needs real synchronization.
         let collected = Mutex<[CKRecord]>([])
         let zoneFailure = Mutex<(any Error)?>(nil)
+        let recordFailure = Mutex<(any Error)?>(nil)
         operation.recordWasChangedBlock = { _, result in
-            if case .success(let record) = result {
+            switch result {
+            case .success(let record):
                 collected.withLock { $0.append(record) }
+            case .failure(let error):
+                // This scan is a discovery path: what it misses is not looked for
+                // again, because the manifest only names ids the device already
+                // knows. A partial set must not be returned as a complete one.
+                recordFailure.withLock { $0 = $0 ?? error }
             }
         }
         // A zone can fail while the operation as a whole reports success. Silently
@@ -219,7 +226,7 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
             database.add(operation)
         }
 
-        if let failure = zoneFailure.withLock({ $0 }) {
+        if let failure = zoneFailure.withLock({ $0 }) ?? recordFailure.withLock({ $0 }) {
             throw failure
         }
         return collected.withLock { $0 }

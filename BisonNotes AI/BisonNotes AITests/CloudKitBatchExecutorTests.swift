@@ -211,6 +211,18 @@ final class CloudKitBatchExecutorTests: XCTestCase {
         }
     }
 
+    func testAPerRecordFailureInAZoneScanIsNotAPartialScan() async throws {
+        transport.seed([CloudKitTestRecords.record(type: "CD_BackupRecording", name: "backup_recording_1")])
+        transport.zoneRecordFailure = CloudKitTestError.ckError(.internalError)
+
+        do {
+            _ = try await transport.recordZoneChanges(inZoneWith: CKRecordZone.default().zoneID)
+            XCTFail("A scan that could not read a record must not report a complete set")
+        } catch let error as CKError {
+            XCTAssertEqual(error.code, .internalError)
+        }
+    }
+
     func testAssetBearingSavesUseTheSmallerBatchSize() async throws {
         let temporaryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

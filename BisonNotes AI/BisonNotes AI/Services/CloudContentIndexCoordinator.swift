@@ -91,6 +91,16 @@ struct ManifestDelta: Equatable {
         )
     }
 
+    /// Just the removals. A write already in flight still has to suppress a
+    /// re-add of anything it is in the middle of taking out.
+    var removalsOnly: ManifestDelta {
+        ManifestDelta(
+            removeRecordings: removeRecordings,
+            removeTranscripts: removeTranscripts,
+            removeSummaries: removeSummaries
+        )
+    }
+
     /// Reapplies this delta on top of whatever the manifest holds now — the
     /// server's copy after a conflict, or the local read on the first try.
     func applied(to manifest: CloudActiveManifest) -> CloudActiveManifest {
@@ -135,6 +145,11 @@ final class CloudContentIndexCoordinator {
     /// follow-up rather than racing it, so the index is never written twice at once.
     private var writeChain: Task<CloudActiveManifest, any Error>?
     private var queuedDelta: ManifestDelta?
+    /// The delta of the write currently in flight. Its removals keep applying to
+    /// anything queued behind it: without that, an add of the same record name
+    /// arriving mid-write merges with an empty queue, and the follow-up puts the
+    /// name the in-flight write is removing straight back.
+    private var inFlightDelta: ManifestDelta?
 
     init(
         executor: CloudKitBatchExecutor,
@@ -198,6 +213,11 @@ final class CloudContentIndexCoordinator {
         }
 
         queuedDelta = (queuedDelta ?? ManifestDelta()).merged(with: delta)
+        if let inFlightDelta {
+            // A removal beats a concurrent add of the same id, including one that
+            // is only concurrent because it arrived while the removal was saving.
+            queuedDelta = inFlightDelta.removalsOnly.merged(with: queuedDelta ?? ManifestDelta())
+        }
 
         while true {
             if let running = writeChain {
@@ -236,6 +256,9 @@ final class CloudContentIndexCoordinator {
     }
 
     private func runWrite(_ delta: ManifestDelta) async throws -> CloudActiveManifest {
+        inFlightDelta = delta
+        defer { inFlightDelta = nil }
+
         let task = Task { @MainActor [weak self] () throws -> CloudActiveManifest in
             guard let self else { return CloudActiveManifest() }
             // An untrusted (older-schema) manifest is still the only record of what

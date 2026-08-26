@@ -209,6 +209,38 @@ final class CloudContentIndexCoordinatorTests: XCTestCase {
         XCTAssertEqual(manifest.transcripts, ["t"], "The queued delta still has to be written")
     }
 
+    func testARemovalInFlightStillBeatsAnAddThatArrivesDuringIt() async throws {
+        seedIndex(recordings: ["backup_recording_a", "backup_recording_b"])
+        let gate = AsyncGate()
+        transport.modifyGate = gate
+
+        // The removal reaches CloudKit and blocks there…
+        let removal = Task { @MainActor in
+            try await self.coordinator.apply(.removing(recordings: ["backup_recording_a"]))
+        }
+        while transport.modifyOperationCount == 0 {
+            await Task.yield()
+        }
+
+        // …and an add of the same id arrives while it is saving, so it merges with
+        // a queue the removal has already been taken out of.
+        let addition = Task { @MainActor in
+            try await self.coordinator.apply(.adding(recordings: ["backup_recording_a"]))
+        }
+        await Task.yield()
+        await Task.yield()
+        gate.open()
+
+        _ = try await removal.value
+        _ = try await addition.value
+
+        XCTAssertFalse(
+            storedManifest().recordings.contains("backup_recording_a"),
+            "A removal means a tombstone exists; an add that raced it must not put the name back"
+        )
+        XCTAssertTrue(storedManifest().recordings.contains("backup_recording_b"), "…and unrelated entries survive")
+    }
+
     func testAnUntrustedManifestIsNotUsedAsAKnownIdList() async throws {
         seedIndex(recordings: ["backup_recording_a"], manifestSchemaVersion: 1)
 

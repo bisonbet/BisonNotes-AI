@@ -90,6 +90,10 @@ final class FakeCloudKitTransport: CloudKitTransport {
     /// CloudKit reports while the operation as a whole succeeds.
     var zoneEnumerationFailure: (any Error)?
 
+    /// A per-record failure delivered by a zone scan while the zone itself and the
+    /// operation as a whole succeed.
+    var zoneRecordFailure: (any Error)?
+
     // MARK: Convenience
 
     func seed(_ records: [CKRecord]) {
@@ -274,6 +278,9 @@ final class FakeCloudKitTransport: CloudKitTransport {
         ledger.append(.zoneChanges(zoneName: zoneID.zoneName))
         if let zoneEnumerationFailure {
             throw zoneEnumerationFailure
+        }
+        if let zoneRecordFailure {
+            throw zoneRecordFailure
         }
         return Array(storage.values).sorted { $0.recordID.recordName < $1.recordID.recordName }
     }
