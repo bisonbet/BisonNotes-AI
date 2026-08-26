@@ -3265,9 +3265,36 @@ extension iCloudStorageManager {
             .filter { snapshot.recordings[$0] != nil }
         let recordingRecordsToWrite = try await fullRecordingRecords(for: recordIDsNeedingFullFetch)
 
+        // Records another device won between the snapshot and the refetch. They are
+        // what the cloud holds now, so the restore leg gets them rather than the
+        // local copy this leg set out to upload.
+        var remoteWinnersFoundWhileWriting: [CKRecord] = []
+
         for entry in recordingsNeedingUpload {
             let record = recordingRecordsToWrite[entry.recordID]
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: entry.recordID)
+
+            // The refetch reads the record again, and with it a fresh change tag.
+            // If another device wrote in the meantime, applying our fields now would
+            // save cleanly over the newer edit — no `serverRecordChanged` to catch
+            // it, because the tag we hold is the one that edit produced. Arbitrate
+            // once more against what actually came back.
+            if let refetched = recordingRecordsToWrite[entry.recordID],
+               !Self.shouldUploadLocalVersion(
+                   localTimestamp: localRecordingContentTimestamp(entry.recording),
+                   cloudTimestamp: backupRecordContentTimestamp(
+                       refetched,
+                       keys: Self.recordingContentTimestampKeys
+                   )
+               ) {
+                AppLog.shared.iCloudSync(
+                    "Another device wrote this recording while the run was in flight; keeping its version",
+                    level: .debug
+                )
+                remoteWinnersFoundWhileWriting.append(refetched)
+                continue
+            }
+
             var changed = recordingRecordsToWrite[entry.recordID] == nil
             applyRecordingFields(entry.recording, to: record, changed: &changed)
             if options.includeAudioFiles {
@@ -3394,7 +3421,10 @@ extension iCloudStorageManager {
         // device won a conflict, its copy is the one the restore leg must apply.
         var updatedSnapshot = snapshot
         updatedSnapshot.manifest = cloudManifest
-        updatedSnapshot.apply(saved: settledRecords, deleted: recordIDsToDelete)
+        updatedSnapshot.apply(
+            saved: settledRecords + remoteWinnersFoundWhileWriting,
+            deleted: recordIDsToDelete
+        )
         return CloudBackupLegOutcome(result: result, snapshot: updatedSnapshot)
     }
 
@@ -6842,11 +6872,14 @@ extension iCloudStorageManager {
 
             attempt += 1
             guard attempt <= maxRetryAttempts else {
+                // These records are still unsent. Returning the ones that settled
+                // would let the run commit its manifest and backup signature, and a
+                // matching signature would then skip the unsent edit forever.
                 AppLog.shared.iCloudSync(
                     "Gave up rebasing \(outcome.conflicts.count) record(s) another device kept changing",
                     level: .error
                 )
-                return Array(settled.values)
+                throw CloudSyncUnsettledRecordsError(recordCount: outcome.conflicts.count)
             }
 
             let byRecordID = Dictionary(uniqueKeysWithValues: pending.map { ($0.recordID, $0) })

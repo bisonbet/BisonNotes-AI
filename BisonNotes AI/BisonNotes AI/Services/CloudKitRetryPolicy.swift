@@ -92,6 +92,21 @@ struct CloudSyncDeferredError: LocalizedError, Equatable {
     }
 }
 
+/// Thrown when a record could not be settled because another device kept
+/// changing it. Like a deferral this is unfinished work rather than a fault, and
+/// it must reach the caller: a run that quietly returns the records that did
+/// settle would go on to commit the manifest and the backup signature, and the
+/// unsent edit would then be skipped on every later run because the signature
+/// already matched.
+struct CloudSyncUnsettledRecordsError: LocalizedError, Equatable {
+    let recordCount: Int
+
+    var errorDescription: String? {
+        "\(recordCount) item\(recordCount == 1 ? " is" : "s are") being changed on another device faster " +
+            "than this one can sync them. They will be retried on the next sync."
+    }
+}
+
 // MARK: - Outcomes
 
 /// Per-record results of a batched fetch. Callers read `records` for what arrived

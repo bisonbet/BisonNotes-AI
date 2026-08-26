@@ -98,6 +98,11 @@ final class CloudSyncOperationCoordinator {
     private var currentTask: Task<Void, any Error>?
     private var pending: [PendingRun] = []
     private var satisfiedWaiters: Set<Int> = []
+    /// Errors from a run, addressed to every submitter that run was covering.
+    /// A shared run's failure belongs to all of them: without this, the waiters
+    /// that did not execute it returned a coalesced outcome and their callers
+    /// reported a zero-valued transfer as though it had succeeded.
+    private var failuresByWaiter: [Int: any Error] = [:]
     private var nextWaiterID = 0
 
     var isRunning: Bool { currentTask != nil }
@@ -122,18 +127,24 @@ final class CloudSyncOperationCoordinator {
         }
 
         if allowJoiningRunningOperation, running.subsumes(intent) {
-            _ = try? await currentTask.value
+            // If the run we are riding on fails, this request failed with it.
+            try await currentTask.value
             return .joinedRunningOperation(running)
         }
 
         let waiterID = nextWaiterID
         nextWaiterID += 1
         let coalescedInto = enqueue(intent: intent, work: work, waiterID: waiterID)
-        defer { satisfiedWaiters.remove(waiterID) }
+        defer {
+            satisfiedWaiters.remove(waiterID)
+            failuresByWaiter.removeValue(forKey: waiterID)
+        }
 
         var ranOwnWork = false
         while !satisfiedWaiters.contains(waiterID) {
             if let task = self.currentTask {
+                // Another run's failure is not this request's to report; the run
+                // covering this request delivers its error through `failuresByWaiter`.
                 _ = try? await task.value
                 // Awaiting an already-finished task can return without suspending,
                 // and the run that owns it clears `currentTask` from its own
@@ -147,6 +158,9 @@ final class CloudSyncOperationCoordinator {
             try await run(intent: next.intent, work: next.work, satisfying: next.waiters)
         }
 
+        if let failure = failuresByWaiter[waiterID] {
+            throw failure
+        }
         return ranOwnWork ? .completed : .coalescedIntoFollowUp(coalescedInto)
     }
 
@@ -193,19 +207,25 @@ final class CloudSyncOperationCoordinator {
         do {
             try await task.value
         } catch {
-            finishRun(intent: intent, satisfying: waiters)
+            finishRun(intent: intent, satisfying: waiters, error: error)
             throw error
         }
-        finishRun(intent: intent, satisfying: waiters)
+        finishRun(intent: intent, satisfying: waiters, error: nil)
     }
 
-    private func finishRun(intent: CloudSyncIntent, satisfying waiters: Set<Int>) {
+    private func finishRun(intent: CloudSyncIntent, satisfying waiters: Set<Int>, error: (any Error)?) {
         currentTask = nil
         runningIntent = nil
         completedRunCount += 1
         lastCompletedIntent = intent
         // The work ran, successfully or not; nobody should keep waiting for it.
         satisfiedWaiters.formUnion(waiters)
+        if let error {
+            // Everyone this run was covering asked for work that has now failed.
+            for waiter in waiters {
+                failuresByWaiter[waiter] = error
+            }
+        }
     }
 
     #if DEBUG

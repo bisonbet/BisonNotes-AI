@@ -77,6 +77,10 @@ final class FakeCloudKitTransport: CloudKitTransport {
     /// Awaited inside every fetch, for the same reason.
     var fetchGate: AsyncGate?
 
+    /// Fires just before a fetch is answered, so a test can simulate another
+    /// device writing between two reads in the same run.
+    var beforeFetch: (@MainActor (FakeCloudKitTransport) -> Void)?
+
     /// Thrown by the zone enumeration, standing in for a per-zone failure that
     /// CloudKit reports while the operation as a whole succeeds.
     var zoneEnumerationFailure: (any Error)?
@@ -155,6 +159,8 @@ final class FakeCloudKitTransport: CloudKitTransport {
         if let fetchGate {
             await fetchGate.wait()
         }
+
+        beforeFetch?(self)
 
         var results: [CKRecord.ID: Result<CKRecord, any Error>] = [:]
         for recordID in recordIDs {

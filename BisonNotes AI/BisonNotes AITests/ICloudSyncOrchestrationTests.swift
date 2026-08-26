@@ -491,6 +491,142 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// The refetch that pulls a recording's full record also pulls a fresh change
+    /// tag. An edit that landed in between would therefore save cleanly over the
+    /// top — no conflict to catch it — so the winner has to be decided again.
+    func testANewerRemoteEditArrivingMidRunIsNotOverwritten() async throws {
+        let recordingId = try createRecordingOnlyForConflict(named: "Local name")
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        let recordID = CKRecord.ID(recordName: recordName)
+
+        // The snapshot sees an older cloud copy, so the local row wins…
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName,
+                fields: [
+                    "recordingName": "Stale cloud name",
+                    "recordingDate": Date(),
+                    "createdAt": Date(),
+                    "lastModified": Date().addingTimeInterval(-3_600),
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        // …and another device writes a newer edit before the full refetch.
+        var fetchCount = 0
+        transport.beforeFetch = { transport in
+            fetchCount += 1
+            guard fetchCount == 1 else { return }
+            transport.seed([
+                CloudKitTestRecords.record(
+                    type: "CD_BackupRecording",
+                    name: recordName,
+                    fields: [
+                        "recordingName": "Renamed on another device",
+                        "recordingDate": Date(),
+                        "createdAt": Date(),
+                        "lastModified": Date().addingTimeInterval(3_600),
+                        "syncLifecycle": "active",
+                        "syncSchemaVersion": 2
+                    ]
+                )
+            ])
+        }
+
+        _ = try await runReconcile()
+
+        XCTAssertEqual(
+            transport.record(named: recordName)?["recordingName"] as? String,
+            "Renamed on another device",
+            "A newer remote edit must survive a run that had already decided to upload"
+        )
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(recording.recordingName, "Renamed on another device", "…and it must reach this device on the same pass")
+    }
+
+    func testRecordsThatNeverSettleFailTheRunRatherThanBeingForgotten() async throws {
+        let recordingId = try createRecordingOnlyForConflict(named: "Contended")
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        let recordID = CKRecord.ID(recordName: recordName)
+
+        // Another device wins every rebase, always with a newer-looking record so
+        // this device keeps trying rather than conceding.
+        transport.perRecordSaveFailures[recordID] = (0..<5).map { _ in
+            CloudKitTestError.ckError(
+                .serverRecordChanged,
+                serverRecord: CloudKitTestRecords.record(
+                    type: "CD_BackupRecording",
+                    name: recordName,
+                    fields: ["lastModified": Date().addingTimeInterval(-3_600)]
+                )
+            )
+        }
+
+        do {
+            _ = try await runReconcile()
+            XCTFail("A record that never reached CloudKit must fail the run")
+        } catch is CloudSyncUnsettledRecordsError {
+            // Expected.
+        }
+
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
+            "A matching signature would skip this unsent edit on every later run"
+        )
+        XCTAssertNil(manager.lastSuccessfulRoutineSyncDate)
+    }
+
+    func testAWaiterOnASharedRunSeesThatRunsFailure() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        struct SharedRunFailure: Error {}
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .reviewScan) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first run to start") { coordinator.isRunning }
+
+        // Two equivalent manual backups queue together; one drains the shared entry.
+        var outcomes: [Result<CloudSyncRunOutcome, any Error>] = []
+        var waiters: [Task<Void, Never>] = []
+        for _ in 0..<2 {
+            waiters.append(
+                Task { @MainActor in
+                    do {
+                        let outcome = try await coordinator.submit(
+                            intent: .seedFromThisDevice,
+                            allowJoiningRunningOperation: false
+                        ) {
+                            throw SharedRunFailure()
+                        }
+                        outcomes.append(.success(outcome))
+                    } catch {
+                        outcomes.append(.failure(error))
+                    }
+                }
+            )
+        }
+        await waitUntil("both backups to queue as one job") { coordinator.pendingFollowUpCount == 1 }
+        gate.open()
+
+        _ = try await first.value
+        for waiter in waiters {
+            await waiter.value
+        }
+
+        XCTAssertEqual(outcomes.count, 2)
+        for outcome in outcomes {
+            if case .success(let value) = outcome {
+                XCTFail("A waiter on a failed run must not report \(value)")
+            }
+        }
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {
