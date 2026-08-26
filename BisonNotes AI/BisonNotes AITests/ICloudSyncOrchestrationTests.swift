@@ -1533,6 +1533,146 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// The manifest write is conflict-rebased onto whatever the server holds, so
+    /// what it settles on is not always this run's arithmetic on the snapshot it
+    /// started with. Restoring an entry another device removed while the run was in
+    /// flight puts back an item that device deleted.
+    func testAnEntryRemovedByTheSettledManifestIsNotRestored() async throws {
+        try createCompleteRecording(named: "Mine")
+        let cloudOnlyId = UUID()
+        let cloudOnlyName = "backup_recording_\(cloudOnlyId.uuidString)"
+        let now = Date()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [cloudOnlyName] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: cloudOnlyName,
+                fields: [
+                    "recordingName": "Deleted on the other device",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "elsewhere.m4a",
+                    "duration": 8.0,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        // The other device drops its recording from the manifest while this run is
+        // between its snapshot and its own manifest write.
+        transport.perRecordSaveFailures[CKRecord.ID(recordName: "content_index")] = [
+            CloudKitTestError.ckError(
+                .serverRecordChanged,
+                serverRecord: CloudKitTestRecords.record(
+                    type: "CD_BackupContentIndex",
+                    name: "content_index",
+                    fields: [
+                        "recordingRecordNames": [] as NSArray,
+                        "transcriptRecordNames": [] as NSArray,
+                        "summaryRecordNames": [] as NSArray,
+                        "manifestSchemaVersion": 2
+                    ]
+                )
+            )
+        ]
+
+        _ = try await runReconcile()
+
+        XCTAssertNil(
+            appCoordinator.coreDataManager.getRecording(id: cloudOnlyId),
+            "The manifest the write settled on is the one the restore leg has to believe"
+        )
+        let settled = transport.record(named: "content_index")?["recordingRecordNames"] as? [String]
+        XCTAssertFalse(
+            settled?.contains(cloudOnlyName) ?? true,
+            "…and the rebase must not have put the other device's entry back"
+        )
+    }
+
+    /// The confirming read is the more recent word on what the cloud holds. If it
+    /// says the record is gone, falling back to the stale metadata copy writes a
+    /// recording to this device that another device has just deleted.
+    func testARecordingDeletedDuringTheAssetRefetchIsNotRestored() async throws {
+        let recordingId = UUID()
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        let survivorId = UUID()
+        let survivorRecordName = "backup_recording_\(survivorId.uuidString)"
+        let now = Date()
+        func cloudRecording(_ name: String, _ title: String, file: String) -> CKRecord {
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: name,
+                fields: [
+                    "recordingName": title,
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": file,
+                    "duration": 12.0,
+                    "audioSignature": "1024-1700000000",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        }
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [recordingRecordName, survivorRecordName] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            ),
+            cloudRecording(recordingRecordName, "Deleted mid-restore", file: "gone.m4a"),
+            cloudRecording(survivorRecordName, "Still there", file: "kept.m4a")
+        ])
+
+        // The manifest read brings both records down first; the asset refetch asks
+        // for them a second time. Another device deletes one of them in between, so
+        // only the confirming read knows it is gone.
+        var fullReadCount = 0
+        transport.beforeFetch = { transport in
+            guard case .fetch(let names, let desiredKeys) = transport.ledger.last,
+                  desiredKeys == nil,
+                  names.contains(recordingRecordName) else {
+                return
+            }
+            fullReadCount += 1
+            guard fullReadCount == 2 else { return }
+            transport.storage.removeValue(forKey: CKRecord.ID(recordName: recordingRecordName))
+        }
+
+        _ = try await manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: true,
+            restoreSettings: false
+        )
+
+        XCTAssertNil(
+            appCoordinator.coreDataManager.getRecording(id: recordingId),
+            "The read that confirmed the record is gone must win over the copy from before it"
+        )
+        XCTAssertNotNil(
+            appCoordinator.coreDataManager.getRecording(id: survivorId),
+            "…while everything that read did not object to is restored as normal"
+        )
+        XCTAssertEqual(fullReadCount, 2, "The refetch this covers has to have happened")
+    }
+
     /// A marker is the only record other devices have of a delete they did not
     /// see. Retiring it in the same non-atomic batch as the records it authorises
     /// means CloudKit can take the marker, permanently refuse one content record,

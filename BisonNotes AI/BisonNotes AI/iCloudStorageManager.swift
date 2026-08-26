@@ -3047,6 +3047,16 @@ extension iCloudStorageManager {
                 summaries.removeValue(forKey: recordID)
             }
         }
+
+        /// Discards records the settled manifest no longer lists. A manifest write
+        /// that was conflict-rebased comes back naming what another device left
+        /// behind, which can be less than this run set out to claim; the leg that
+        /// reads the snapshot next must not restore an entry that device removed.
+        mutating func dropRecordsTheManifestNoLongerNames() {
+            recordings = recordings.filter { manifest.recordings.contains($0.key.recordName) }
+            transcripts = transcripts.filter { manifest.transcripts.contains($0.key.recordName) }
+            summaries = summaries.filter { manifest.summaries.contains($0.key.recordName) }
+        }
     }
 
     /// Everything a content-changing operation must know before it writes: what
@@ -3574,10 +3584,16 @@ extension iCloudStorageManager {
         recorder?.begin(.commitManifest)
         // Data operations have all succeeded by here: the manifest never claims a
         // record that failed to upload, and never keeps one that was deleted.
-        try await applyManifestDelta(manifestDelta)
+        let settledManifest = try await applyManifestDelta(manifestDelta)
         recorder?.endPhase()
 
-        let cloudManifest = manifestDelta.applied(to: snapshot.manifest)
+        // The settled manifest, not this run's arithmetic on a snapshot that may
+        // already be stale: where another device added or removed an entry while
+        // this run was in flight, the coordinator rebased onto its record and that
+        // is what the cloud now holds. The restore leg reads this snapshot next,
+        // and restoring an item another device removed is exactly what it must not
+        // do.
+        let cloudManifest = settledManifest ?? manifestDelta.applied(to: snapshot.manifest)
         let processedSummary = "processed [recordings: \(result.recordingsBackedUp), " +
             "transcripts: \(result.transcriptsBackedUp), summaries: \(result.summariesBackedUp)]"
         let writeSummary = "saved [records: \(recordsToSave.count)], deleted [records: \(recordIDsToDelete.count)]"
@@ -3613,6 +3629,12 @@ extension iCloudStorageManager {
             saved: settledRecords + remoteWinnersFoundWhileWriting,
             deleted: recordIDsToDelete
         )
+        // Only meaningful when the manifest was trusted to begin with: without that,
+        // it never claimed to name everything in the cloud, and pruning against it
+        // would throw away the cloud-only records the discovery scan just found.
+        if snapshot.manifestWasTrusted {
+            updatedSnapshot.dropRecordsTheManifestNoLongerNames()
+        }
         return CloudBackupLegOutcome(result: result, snapshot: updatedSnapshot)
     }
 
@@ -7089,9 +7111,14 @@ extension iCloudStorageManager {
     /// Adds and removes manifest entries without overwriting what another device
     /// wrote. See `CloudContentIndexCoordinator` for why a whole-record rewrite of
     /// `content_index` is never acceptable outside repair.
-    private func applyManifestDelta(_ delta: ManifestDelta) async throws {
-        guard !delta.isEmpty else { return }
-        _ = try await contentIndexCoordinator.apply(delta)
+    /// - Returns: the manifest CloudKit settled on, which is not always this
+    ///   delta applied to the snapshot: a concurrent write is conflict-rebased by
+    ///   the coordinator, so another device's addition or removal comes back here.
+    ///   `nil` when there was nothing to send.
+    @discardableResult
+    private func applyManifestDelta(_ delta: ManifestDelta) async throws -> CloudActiveManifest? {
+        guard !delta.isEmpty else { return nil }
+        return try await contentIndexCoordinator.apply(delta)
     }
 
     /// Full manifest replacement. Explicit repair and one-time migration only.
@@ -7309,7 +7336,14 @@ extension iCloudStorageManager {
         recordMetrics(fetch: outcome)
         try outcome.throwIfIncomplete()
 
-        return records.map { outcome.records[$0.recordID] ?? $0 }
+        // A record the server reports as gone was deleted by another device between
+        // the metadata snapshot and this read. Falling back to the stale copy would
+        // write a recording back to this device that the confirming read has just
+        // said no longer exists. Records this fetch never asked about are untouched.
+        return records.compactMap { record in
+            if let refreshed = outcome.records[record.recordID] { return refreshed }
+            return outcome.missing.contains(record.recordID) ? nil : record
+        }
     }
     /// Local counterpart of `resolveLatestRecordsPerRecording`: picks the one row per
     /// recording that every device will agree on, and reports the rows it supersedes.
