@@ -157,9 +157,23 @@ final class CloudContentIndexCoordinator {
     /// The manifest, but only when it carries the current schema version. An older
     /// manifest is not trustworthy enough to drive a known-ID fetch.
     func fetchTrustedManifest() async throws -> CloudActiveManifest {
-        guard let record = try await fetchIndexRecord() else { return CloudActiveManifest() }
-        guard isTrusted(record) else { return CloudActiveManifest() }
-        return manifest(from: record)
+        try await fetchManifestState().manifest
+    }
+
+    /// The manifest and whether it can be trusted.
+    ///
+    /// The two are not the same question. An untrusted manifest yields an empty
+    /// list, and a caller that cannot tell that apart from "the cloud holds
+    /// nothing" will look up only the ids it already knows and never discover
+    /// what is up there.
+    func fetchManifestState() async throws -> (manifest: CloudActiveManifest, isTrusted: Bool) {
+        guard let record = try await fetchIndexRecord() else {
+            return (CloudActiveManifest(), false)
+        }
+        guard isTrusted(record) else {
+            return (CloudActiveManifest(), false)
+        }
+        return (manifest(from: record), true)
     }
 
     func fetchIndexRecord() async throws -> CKRecord? {

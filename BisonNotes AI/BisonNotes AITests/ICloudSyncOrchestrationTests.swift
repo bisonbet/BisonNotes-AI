@@ -824,6 +824,128 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertFalse(manager.operationCoordinator.isRunning)
     }
 
+    /// An upload queued before the user erased iCloud would put everything back
+    /// the moment the erase finished.
+    func testWorkQueuedBeforeAnEraseDoesNotRepopulateTheCloud() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var uploadRan = false
+
+        let erase = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .erase,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the erase to start") { coordinator.isRunning }
+
+        let upload = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .routineSnapshot,
+                allowJoiningRunningOperation: false
+            ) {
+                uploadRan = true
+            }
+        }
+        await waitUntil("the upload to queue behind it") { coordinator.hasPendingFollowUp }
+        gate.open()
+
+        _ = try await erase.value
+        do {
+            _ = try await upload.value
+            XCTFail("A queued upload must not silently succeed after an erase")
+        } catch is CloudSyncSupersededByEraseError {
+            // Expected.
+        }
+
+        XCTAssertFalse(uploadRan, "Erasing iCloud and then immediately re-uploading is the one thing the user did not ask for")
+    }
+
+    func testAReadQueuedBeforeAnEraseStillRuns() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var restoreRan = false
+
+        let erase = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .erase,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the erase to start") { coordinator.isRunning }
+
+        let restore = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .restoreToThisDevice,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                restoreRan = true
+            }
+        }
+        await waitUntil("the restore to queue behind it") { coordinator.hasPendingFollowUp }
+        gate.open()
+
+        _ = try await erase.value
+        _ = try await restore.value
+
+        XCTAssertTrue(restoreRan, "Only work that writes to the cloud is cancelled by an erase")
+    }
+
+    /// Without a trusted manifest the snapshot is only what this device already
+    /// knew to ask for, so a device with local data of its own must still scan.
+    func testAnUntrustedManifestStillDiscoversCloudOnlyRecords() async throws {
+        try createCompleteRecording(named: "Local only here")
+
+        let cloudOnlyId = UUID()
+        let now = Date()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: "backup_recording_\(cloudOnlyId.uuidString)",
+                fields: [
+                    "recordingName": "From another device",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "elsewhere.m4a",
+                    "duration": 30.0,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            // A manifest written by an older schema: present, but not to be trusted
+            // as the list of everything that is up there.
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 1
+                ]
+            )
+        ])
+
+        _ = try await manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: false,
+            restoreSettings: false
+        )
+
+        XCTAssertTrue(
+            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
+            "An established device must keep discovering cloud-only records, not just a fresh install"
+        )
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

@@ -43,6 +43,16 @@ enum CloudSyncIntent: String, CaseIterable, Sendable {
         }
     }
 
+    /// True when running this puts content back into CloudKit.
+    var writesToCloud: Bool {
+        switch self {
+        case .routineSnapshot, .deletionFlush, .seedFromThisDevice, .fullRepair:
+            return true
+        case .restoreToThisDevice, .reviewScan, .erase:
+            return false
+        }
+    }
+
     /// True when a run of `self` already does everything `other` would have done.
     func subsumes(_ other: CloudSyncIntent) -> Bool {
         if self == other { return true }
@@ -55,6 +65,16 @@ enum CloudSyncIntent: String, CaseIterable, Sendable {
         default:
             return false
         }
+    }
+}
+
+/// Thrown to work that was still queued when the user erased their iCloud data.
+/// Running it afterwards would put the content straight back — which is the one
+/// thing someone who just erased their cloud copy did not ask for.
+struct CloudSyncSupersededByEraseError: LocalizedError, Equatable {
+    var errorDescription: String? {
+        "This sync was cancelled because iCloud data was erased. " +
+            "Use Back Up Now when you want this device's data in iCloud again."
     }
 }
 
@@ -255,6 +275,26 @@ final class CloudSyncOperationCoordinator {
             // Everyone this run was covering asked for work that has now failed.
             for waiter in waiters {
                 failuresByWaiter[waiter] = error
+            }
+        }
+
+        if intent == .erase, error == nil {
+            cancelQueuedWorkSupersededByErase()
+        }
+    }
+
+    /// An upload queued before the user erased iCloud would put the content back
+    /// the moment the erase finished. Those entries are dropped and their callers
+    /// told why, rather than being run against the container they just emptied.
+    private func cancelQueuedWorkSupersededByErase() {
+        let superseded = pending.filter { $0.intent.writesToCloud }
+        guard !superseded.isEmpty else { return }
+        pending.removeAll { $0.intent.writesToCloud }
+
+        for entry in superseded {
+            satisfiedWaiters.formUnion(entry.waiters)
+            for waiter in entry.waiters {
+                failuresByWaiter[waiter] = CloudSyncSupersededByEraseError()
             }
         }
     }

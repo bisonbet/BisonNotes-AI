@@ -612,12 +612,19 @@ class iCloudStorageManager: ObservableObject {
             }
             AppLog.shared.iCloudSync("Successfully synced batch: \(syncedCount) summaries")
         } catch {
+            // The queue was drained before the upload; without this the whole batch
+            // is gone and those summaries are never sent again.
+            let stillQueuedIds = Set(pendingSyncQueue.map(\.id))
+            pendingSyncQueue.insert(
+                contentsOf: batch.filter { !stillQueuedIds.contains($0.id) },
+                at: 0
+            )
             await updateSyncStatus(.failed(error.localizedDescription))
             await MainActor.run {
-                self.pendingSyncCount = 0
+                self.pendingSyncCount = self.pendingSyncQueue.count
             }
             AppLog.shared.iCloudSync(
-                "Batch sync failed: \(error.localizedDescription)",
+                "Batch sync failed, returning \(batch.count) summaries to the queue: \(error.localizedDescription)",
                 level: .error
             )
         }
@@ -675,6 +682,10 @@ class iCloudStorageManager: ObservableObject {
         let recordIDs = summariesToSync.map { CKRecord.ID(recordName: $0.id.uuidString) }
         let fetchOutcome = try await cloudExecutor.fetch(recordIDs)
         recordMetrics(fetch: fetchOutcome)
+        // Only a record CloudKit says is absent may be created fresh. Reading a
+        // failed or deferred fetch as "not there" builds a new record over the top
+        // of the server's copy.
+        try fetchOutcome.throwIfIncomplete()
 
         var recordsToSave: [CKRecord] = []
         for summary in summariesToSync {
@@ -2852,6 +2863,10 @@ extension iCloudStorageManager {
         var transcripts: [CKRecord.ID: CKRecord] = [:]
         var summaries: [CKRecord.ID: CKRecord] = [:]
         var manifest = CloudActiveManifest()
+        /// False when the manifest was missing or written by an older schema. The
+        /// snapshot is then only what this device already knew to ask for, which
+        /// says nothing about what else is in the cloud.
+        var manifestWasTrusted = false
 
         func record(for recordID: CKRecord.ID) -> CKRecord? {
             recordings[recordID] ?? transcripts[recordID] ?? summaries[recordID]
@@ -3091,8 +3106,10 @@ extension iCloudStorageManager {
             makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: $0)
         })
 
+        let manifestState = try await contentIndexCoordinator.fetchManifestState()
         let snapshot = try await fetchBackupCloudSnapshot(
-            manifest: try await fetchTrustedActiveManifestRecordNames(),
+            manifest: manifestState.manifest,
+            manifestWasTrusted: manifestState.isTrusted,
             recordingRecordNames: localRecordingRecordNames.union(excludedRecordingRecordNames),
             transcriptRecordNames: localTranscriptRecordNames,
             summaryRecordNames: localSummaryRecordNames
@@ -3436,6 +3453,7 @@ extension iCloudStorageManager {
     /// (without their audio assets) and one for transcripts and summaries.
     private func fetchBackupCloudSnapshot(
         manifest: CloudActiveManifest,
+        manifestWasTrusted: Bool,
         recordingRecordNames: Set<String>,
         transcriptRecordNames: Set<String>,
         summaryRecordNames: Set<String>,
@@ -3443,6 +3461,7 @@ extension iCloudStorageManager {
     ) async throws -> BackupCloudSnapshot {
         var snapshot = BackupCloudSnapshot()
         snapshot.manifest = manifest
+        snapshot.manifestWasTrusted = manifestWasTrusted
 
         let recordingIDs = manifest.recordings.union(recordingRecordNames)
             .sorted()
@@ -3494,6 +3513,19 @@ extension iCloudStorageManager {
         recordMetrics(fetch: outcome)
         try outcome.throwIfIncomplete()
         return outcome.records.filter { $0.value.recordType == Self.backupRecordingRecordType }
+    }
+
+    /// Combines two record lists by id, keeping the preferred copy where both hold
+    /// the same record.
+    private static func mergedByRecordID(preferring preferred: [CKRecord], over others: [CKRecord]) -> [CKRecord] {
+        var merged: [CKRecord.ID: CKRecord] = [:]
+        for record in others {
+            merged[record.recordID] = record
+        }
+        for record in preferred {
+            merged[record.recordID] = record
+        }
+        return Array(merged.values)
     }
 
     private func mergedRecords(
@@ -4164,8 +4196,10 @@ extension iCloudStorageManager {
                 restoreSnapshot = snapshot
             } else {
                 recorder?.begin(.fetchCloudSnapshot)
+                let manifestState = try await contentIndexCoordinator.fetchManifestState()
                 restoreSnapshot = try await fetchBackupCloudSnapshot(
-                    manifest: try await fetchTrustedActiveManifestRecordNames(),
+                    manifest: manifestState.manifest,
+                    manifestWasTrusted: manifestState.isTrusted,
                     recordingRecordNames: [],
                     transcriptRecordNames: [],
                     summaryRecordNames: [],
@@ -4177,17 +4211,40 @@ extension iCloudStorageManager {
             var transcriptRecords = Array(restoreSnapshot.transcripts.values)
             var summaryRecords = Array(restoreSnapshot.summaries.values)
 
-            if recordingRecords.isEmpty, transcriptRecords.isEmpty, summaryRecords.isEmpty {
-                // No trusted manifest and nothing known by id. This is a first
-                // install, a restored device, or a repair — the one situation where
-                // a full scan is the right tool.
+            // Without a trusted manifest the snapshot holds only the ids this device
+            // already knew to ask for. Deciding on emptiness alone meant a device
+            // with any local data of its own quietly stopped discovering
+            // cloud-only records — a first install found them, an established
+            // device never did.
+            //
+            // The snapshot's own flag can be stale: when the backup leg shares its
+            // snapshot, the manifest may have been created by that leg's commit
+            // afterwards. Ask again rather than scanning the whole zone on the
+            // strength of a flag from earlier in the same run.
+            var manifestIsTrusted = restoreSnapshot.manifestWasTrusted
+            if !manifestIsTrusted {
+                manifestIsTrusted = try await contentIndexCoordinator.fetchManifestState().isTrusted
+            }
+
+            if !manifestIsTrusted ||
+                (recordingRecords.isEmpty && transcriptRecords.isEmpty && summaryRecords.isEmpty) {
+                // A first install, a restored device, an untrusted manifest, or a
+                // repair — the situations where a full scan is the right tool.
                 recorder?.begin(.fetchCloudSnapshot)
-                recordingRecords = try await fetchBackupRecords(
+                let scannedRecordings = try await fetchBackupRecords(
                     recordType: Self.backupRecordingRecordType)
-                transcriptRecords = try await fetchBackupRecords(
+                let scannedTranscripts = try await fetchBackupRecords(
                     recordType: Self.backupTranscriptRecordType)
-                summaryRecords = try await fetchBackupRecords(
+                let scannedSummaries = try await fetchBackupRecords(
                     recordType: Self.backupSummaryRecordType)
+
+                // Merged, not replaced: the snapshot carries what this run just
+                // settled — including a record another device won a conflict with,
+                // which a scan started from the server's stored copy would not show.
+                recordingRecords = Self.mergedByRecordID(preferring: recordingRecords, over: scannedRecordings)
+                transcriptRecords = Self.mergedByRecordID(preferring: transcriptRecords, over: scannedTranscripts)
+                summaryRecords = Self.mergedByRecordID(preferring: summaryRecords, over: scannedSummaries)
+
                 if !recordingRecords.isEmpty || !transcriptRecords.isEmpty || !summaryRecords.isEmpty {
                     AppLog.shared.iCloudSync(
                         "Restore bootstrap scan - recordings: \(recordingRecords.count), " +
@@ -5620,7 +5677,20 @@ extension iCloudStorageManager {
 
         // The manifest names every live record, so the children of this recording
         // are found with one batched read per type instead of a full scan.
-        let manifestRecords = (try? await fetchBackupRecordsFromContentIndex()) ?? BackupContentRecordsFromIndex()
+        //
+        // This read must not be swallowed. Failing it quietly deleted the recording
+        // and left its transcript and summary in the cloud, where the next restore
+        // brings them back as orphans — and the durable deletion entry, believing
+        // itself finished, would not try again.
+        var manifestRecords = try await fetchBackupRecordsFromContentIndex()
+        if manifestRecords.transcripts.isEmpty && manifestRecords.summaries.isEmpty {
+            // No trusted manifest to name the children. A deletion that leaves
+            // orphans behind is worse than one scan on a path the user drives.
+            manifestRecords.transcripts = try await fetchBackupRecords(
+                recordType: Self.backupTranscriptRecordType)
+            manifestRecords.summaries = try await fetchBackupRecords(
+                recordType: Self.backupSummaryRecordType)
+        }
         let transcriptRecords = manifestRecords.transcripts
         let summaryRecords = manifestRecords.summaries
         let discoveredTranscriptRecords = transcriptRecords.filter { record in
