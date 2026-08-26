@@ -175,9 +175,18 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         // CloudKit invokes the per-record block on its own queue, so the
         // accumulator is shared state and needs real synchronization.
         let collected = Mutex<[CKRecord]>([])
+        let zoneFailure = Mutex<(any Error)?>(nil)
         operation.recordWasChangedBlock = { _, result in
             if case .success(let record) = result {
                 collected.withLock { $0.append(record) }
+            }
+        }
+        // A zone can fail while the operation as a whole reports success. Silently
+        // returning the partial list would make an unavailable zone look like an
+        // empty one to every caller that reads the result.
+        operation.recordZoneFetchResultBlock = { _, result in
+            if case .failure(let error) = result {
+                zoneFailure.withLock { $0 = $0 ?? error }
             }
         }
 
@@ -188,6 +197,9 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
             database.add(operation)
         }
 
+        if let failure = zoneFailure.withLock({ $0 }) {
+            throw failure
+        }
         return collected.withLock { $0 }
     }
 
@@ -203,10 +215,20 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         operation.fetchAllChanges = true
 
         let collected = Mutex<[CKRecord.ID]>([])
+        let zoneFailure = Mutex<(any Error)?>(nil)
         operation.recordWasChangedBlock = { recordID, _ in
             // Keep the ID even when the record body failed to decode; it still
             // needs deleting.
             collected.withLock { $0.append(recordID) }
+        }
+        // "Erase All iCloud Data" deletes exactly what this enumeration returns and
+        // then resets the local bookkeeping. A zone that failed while the operation
+        // succeeded would produce an empty, successful erase with records still in
+        // the account, so the failure has to reach the caller.
+        operation.recordZoneFetchResultBlock = { _, result in
+            if case .failure(let error) = result {
+                zoneFailure.withLock { $0 = $0 ?? error }
+            }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -216,6 +238,9 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
             database.add(operation)
         }
 
+        if let failure = zoneFailure.withLock({ $0 }) {
+            throw failure
+        }
         return collected.withLock { $0 }
     }
 

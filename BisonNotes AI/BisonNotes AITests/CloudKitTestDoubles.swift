@@ -77,6 +77,10 @@ final class FakeCloudKitTransport: CloudKitTransport {
     /// Awaited inside every fetch, for the same reason.
     var fetchGate: AsyncGate?
 
+    /// Thrown by the zone enumeration, standing in for a per-zone failure that
+    /// CloudKit reports while the operation as a whole succeeds.
+    var zoneEnumerationFailure: (any Error)?
+
     // MARK: Convenience
 
     func seed(_ records: [CKRecord]) {
@@ -247,11 +251,17 @@ final class FakeCloudKitTransport: CloudKitTransport {
 
     func recordZoneChanges(inZoneWith zoneID: CKRecordZone.ID) async throws -> [CKRecord] {
         ledger.append(.zoneChanges(zoneName: zoneID.zoneName))
+        if let zoneEnumerationFailure {
+            throw zoneEnumerationFailure
+        }
         return Array(storage.values).sorted { $0.recordID.recordName < $1.recordID.recordName }
     }
 
     func recordIDs(inZoneWith zoneID: CKRecordZone.ID) async throws -> [CKRecord.ID] {
         ledger.append(.zoneRecordIDs(zoneName: zoneID.zoneName))
+        if let zoneEnumerationFailure {
+            throw zoneEnumerationFailure
+        }
         return storage.keys.sorted { $0.recordName < $1.recordName }
     }
 

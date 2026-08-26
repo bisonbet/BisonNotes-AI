@@ -2295,6 +2295,23 @@ class iCloudStorageManager: ObservableObject {
 
         try await validateiCloudAccountAvailability()
 
+        // The whole wipe runs as one coordinated operation. Flagging a manual
+        // transfer only stops *new* automatic work from starting: a snapshot
+        // already in flight would carry on and could save its records back after
+        // the enumeration had passed them, leaving content behind while the erase
+        // reported success.
+        var result = CloudEraseResult()
+        try await operationCoordinator.submit(
+            intent: .erase,
+            allowJoiningRunningOperation: false
+        ) { [weak self] in
+            guard let self else { return }
+            result = try await self.performErase()
+        }
+        return result
+    }
+
+    private func performErase() async throws -> CloudEraseResult {
         // Hold off automatic sync and auto-backup for the whole wipe, otherwise a
         // background upload can repopulate the container while it is being erased.
         isManualCloudTransferInProgress = true
@@ -3804,8 +3821,29 @@ extension iCloudStorageManager {
 
         try await validateiCloudAccountAvailability()
         let recorder = beginRun(reason: .reviewRestore, intent: .restoreToThisDevice)
-        defer { endRun(recorder, result: .succeeded) }
+        do {
+            let result = try await performReviewItemRestore(
+                item,
+                appCoordinator: appCoordinator,
+                includeAudioFiles: includeAudioFiles,
+                recorder: recorder
+            )
+            endRun(recorder, result: .succeeded)
+            return result
+        } catch {
+            // A restore that threw part way through is not a successful one; the
+            // metrics have to be able to tell the two apart.
+            endRun(recorder, result: .failed)
+            throw error
+        }
+    }
 
+    private func performReviewItemRestore(
+        _ item: CloudReviewItem,
+        appCoordinator: AppDataCoordinator,
+        includeAudioFiles: Bool,
+        recorder: CloudSyncRunRecorder?
+    ) async throws -> CloudRestoreResult {
         // One batched read covers all three types: the review item names its own
         // records, so there is nothing to search for.
         recorder?.begin(.fetchCloudSnapshot)

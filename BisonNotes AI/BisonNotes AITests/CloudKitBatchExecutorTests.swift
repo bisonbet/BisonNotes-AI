@@ -195,6 +195,22 @@ final class CloudKitBatchExecutorTests: XCTestCase {
 
     // MARK: Assets
 
+    // MARK: Zone enumeration
+
+    func testAZoneFailureDuringEnumerationIsNotAnEmptyZone() async throws {
+        // "Erase All iCloud Data" deletes exactly what the enumeration returns and
+        // then resets the local bookkeeping, so a zone that could not be read has
+        // to surface as an error rather than as nothing to do.
+        transport.zoneEnumerationFailure = CloudKitTestError.ckError(.zoneNotFound)
+
+        do {
+            _ = try await transport.recordIDs(inZoneWith: CKRecordZone.default().zoneID)
+            XCTFail("A failed zone enumeration must not report success")
+        } catch let error as CKError {
+            XCTAssertEqual(error.code, .zoneNotFound)
+        }
+    }
+
     func testAssetBearingSavesUseTheSmallerBatchSize() async throws {
         let temporaryURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

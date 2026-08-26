@@ -75,16 +75,35 @@ enum CloudSyncRunOutcome: Equatable {
 final class CloudSyncOperationCoordinator {
     typealias Work = @MainActor () async throws -> Void
 
+    /// Work waiting for the current run to finish.
+    ///
+    /// Two requests share an entry only when one intent subsumes the other — a
+    /// second routine snapshot rides along with the first, but a queued restore
+    /// and a queued upload are different jobs and both have to happen. Dropping
+    /// one on priority alone let its caller believe the work was done: an
+    /// auto-backup that lost the slot returned an empty result, and the device
+    /// then cleared its pending-changes flag with the edits still unsent.
+    private struct PendingRun {
+        var intent: CloudSyncIntent
+        var work: Work
+        /// Submitters this entry will satisfy when it runs.
+        var waiters: Set<Int>
+    }
+
     private(set) var runningIntent: CloudSyncIntent?
     /// Runs that actually executed work. Orchestration tests assert on this.
     private(set) var completedRunCount = 0
     private(set) var lastCompletedIntent: CloudSyncIntent?
 
     private var currentTask: Task<Void, any Error>?
-    private var followUp: (intent: CloudSyncIntent, work: Work)?
+    private var pending: [PendingRun] = []
+    private var satisfiedWaiters: Set<Int> = []
+    private var nextWaiterID = 0
 
     var isRunning: Bool { currentTask != nil }
-    var hasPendingFollowUp: Bool { followUp != nil }
+    var hasPendingFollowUp: Bool { !pending.isEmpty }
+    /// Distinct jobs waiting. Equivalent requests collapse, independent ones do not.
+    var pendingFollowUpCount: Int { pending.count }
 
     /// Submits work, waiting until either it or the run that covers it has finished.
     ///
@@ -107,18 +126,13 @@ final class CloudSyncOperationCoordinator {
             return .joinedRunningOperation(running)
         }
 
-        // At most one follow-up exists at a time; the highest-priority intent to
-        // arrive owns it, and every other waiter rides on its completion.
-        if let existing = followUp {
-            if intent.priority > existing.intent.priority {
-                followUp = (intent, work)
-            }
-        } else {
-            followUp = (intent, work)
-        }
-        let coalescedInto = followUp?.intent ?? intent
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        let coalescedInto = enqueue(intent: intent, work: work, waiterID: waiterID)
+        defer { satisfiedWaiters.remove(waiterID) }
 
-        while true {
+        var ranOwnWork = false
+        while !satisfiedWaiters.contains(waiterID) {
             if let task = self.currentTask {
                 _ = try? await task.value
                 // Awaiting an already-finished task can return without suspending,
@@ -128,15 +142,48 @@ final class CloudSyncOperationCoordinator {
                 await Task.yield()
                 continue
             }
-            if let pending = followUp {
-                followUp = nil
-                try await run(intent: pending.intent, work: pending.work)
-            }
-            return .coalescedIntoFollowUp(coalescedInto)
+            guard let next = takeHighestPriorityPending() else { break }
+            ranOwnWork = ranOwnWork || next.waiters.contains(waiterID)
+            try await run(intent: next.intent, work: next.work, satisfying: next.waiters)
         }
+
+        return ranOwnWork ? .completed : .coalescedIntoFollowUp(coalescedInto)
     }
 
-    private func run(intent: CloudSyncIntent, work: @escaping Work) async throws {
+    /// Adds this request to the queue, merging it into an existing entry only when
+    /// one of the two intents covers the other.
+    /// - Returns: the intent whose run will satisfy this request.
+    private func enqueue(intent: CloudSyncIntent, work: @escaping Work, waiterID: Int) -> CloudSyncIntent {
+        if let index = pending.firstIndex(where: { $0.intent.subsumes(intent) }) {
+            // An equivalent or broader job is already queued; ride on it.
+            pending[index].waiters.insert(waiterID)
+            return pending[index].intent
+        }
+
+        if let index = pending.firstIndex(where: { intent.subsumes($0.intent) }) {
+            // This request covers one that is queued: take over its waiters rather
+            // than leaving them behind.
+            pending[index].intent = intent
+            pending[index].work = work
+            pending[index].waiters.insert(waiterID)
+            return intent
+        }
+
+        pending.append(PendingRun(intent: intent, work: work, waiters: [waiterID]))
+        return intent
+    }
+
+    private func takeHighestPriorityPending() -> PendingRun? {
+        guard !pending.isEmpty else { return nil }
+        let index = pending.indices.max { pending[$0].intent.priority < pending[$1].intent.priority } ?? 0
+        return pending.remove(at: index)
+    }
+
+    private func run(
+        intent: CloudSyncIntent,
+        work: @escaping Work,
+        satisfying waiters: Set<Int> = []
+    ) async throws {
         let task = Task { @MainActor in
             try await work()
         }
@@ -146,17 +193,19 @@ final class CloudSyncOperationCoordinator {
         do {
             try await task.value
         } catch {
-            finishRun(intent: intent)
+            finishRun(intent: intent, satisfying: waiters)
             throw error
         }
-        finishRun(intent: intent)
+        finishRun(intent: intent, satisfying: waiters)
     }
 
-    private func finishRun(intent: CloudSyncIntent) {
+    private func finishRun(intent: CloudSyncIntent, satisfying waiters: Set<Int>) {
         currentTask = nil
         runningIntent = nil
         completedRunCount += 1
         lastCompletedIntent = intent
+        // The work ran, successfully or not; nobody should keep waiting for it.
+        satisfiedWaiters.formUnion(waiters)
     }
 
     #if DEBUG

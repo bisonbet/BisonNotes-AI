@@ -140,6 +140,30 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         return false
     }
 
+    /// The coordinator's contract is that every request is *covered* — by its own
+    /// run, or by one whose intent subsumes it. Which waiter happens to execute a
+    /// queued closure is not part of it: either one may drain the queue.
+    private func assertOutcomeCovers(
+        _ outcome: CloudSyncRunOutcome,
+        _ intent: CloudSyncIntent,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        switch outcome {
+        case .completed:
+            break
+        case .joinedRunningOperation(let covering), .coalescedIntoFollowUp(let covering):
+            XCTAssertTrue(
+                covering.subsumes(intent),
+                "\(covering) does not cover \(intent), so this caller was told work happened that did not",
+                file: file,
+                line: line
+            )
+        case .deferred:
+            XCTFail("Expected \(intent) to run, not to be deferred", file: file, line: line)
+        }
+    }
+
     // MARK: - Phase barrier
 
     func testReconcileRunsThePhaseBarrierInOrder() async throws {
@@ -528,7 +552,93 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertEqual(coordinator.completedRunCount, 2)
     }
 
-    func testAnUrgentDeletionFlushOutranksAQueuedRoutineSnapshot() async throws {
+    /// Priority decides which queued job goes first — never whether it happens.
+    func testAQueuedJobIsNotDiscardedByAnEqualPriorityOne() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var executedIntents: [CloudSyncIntent] = []
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .reviewScan) {
+                executedIntents.append(.reviewScan)
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first run to start") { coordinator.isRunning }
+
+        // A restore and an upload are both priority 3 but do entirely different
+        // things; dropping either one loses work its caller believes was done.
+        let restore = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .restoreToThisDevice,
+                allowJoiningRunningOperation: false
+            ) {
+                executedIntents.append(.restoreToThisDevice)
+            }
+        }
+        await waitUntil("the restore to queue") { coordinator.pendingFollowUpCount == 1 }
+        let seed = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false
+            ) {
+                executedIntents.append(.seedFromThisDevice)
+            }
+        }
+        await waitUntil("the upload to queue alongside it") { coordinator.pendingFollowUpCount == 2 }
+        gate.open()
+
+        _ = try await first.value
+        let restoreOutcome = try await restore.value
+        let seedOutcome = try await seed.value
+
+        XCTAssertEqual(executedIntents.count, 3, "Neither queued job may be dropped")
+        XCTAssertTrue(executedIntents.contains(.restoreToThisDevice))
+        XCTAssertTrue(executedIntents.contains(.seedFromThisDevice))
+        assertOutcomeCovers(restoreOutcome, .restoreToThisDevice)
+        assertOutcomeCovers(seedOutcome, .seedFromThisDevice)
+    }
+
+    func testEquivalentQueuedRequestsStillCollapse() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var runCount = 0
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .seedFromThisDevice) {
+                runCount += 1
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first run to start") { coordinator.isRunning }
+
+        var followers: [Task<CloudSyncRunOutcome, any Error>] = []
+        for _ in 0..<4 {
+            followers.append(
+                Task { @MainActor in
+                    try await coordinator.submit(
+                        intent: .routineSnapshot,
+                        allowJoiningRunningOperation: false
+                    ) {
+                        runCount += 1
+                    }
+                }
+            )
+        }
+        await waitUntil("the burst to collapse into one job") { coordinator.pendingFollowUpCount == 1 }
+        gate.open()
+
+        _ = try await first.value
+        for follower in followers {
+            _ = try await follower.value
+        }
+
+        XCTAssertEqual(runCount, 2, "Four identical routine requests are still one follow-up")
+    }
+
+    /// A user's deletion is never dropped. It either gets its own run or is
+    /// carried by one that flushes durable tombstones as its first phase.
+    func testAnUrgentDeletionFlushIsAlwaysCarriedByARun() async throws {
         let coordinator = CloudSyncOperationCoordinator()
         let gate = AsyncGate()
         var executedIntents: [CloudSyncIntent] = []
@@ -563,13 +673,14 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
         _ = try await first.value
         _ = try await routine.value
-        _ = try await deletion.value
+        let deletionOutcome = try await deletion.value
 
         XCTAssertEqual(
             executedIntents,
-            [.reviewScan, .deletionFlush],
-            "The higher-priority intent owns the single follow-up"
+            [.reviewScan, .routineSnapshot],
+            "A routine pass flushes tombstones first, so it covers the queued deletion rather than displacing it"
         )
+        assertOutcomeCovers(deletionOutcome, .deletionFlush)
     }
 
     // MARK: - Bootstrap
