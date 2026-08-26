@@ -601,7 +601,18 @@ class iCloudStorageManager: ObservableObject {
         }
 
         do {
-            let syncedCount = try await uploadLegacySummaryRecords(batch)
+            var syncedCount = 0
+            // An erase can be enumerating and deleting CD_EnhancedSummary records
+            // right now. Writing outside the coordinator let this batch save one
+            // back afterwards, with the erase still reporting success.
+            try await operationCoordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) { [weak self] in
+                guard let self else { return }
+                syncedCount = try await self.uploadLegacySummaryRecords(batch)
+            }
             for summary in batch {
                 recentlySyncedSummaries[summary.id] = Date()
             }
@@ -711,16 +722,6 @@ class iCloudStorageManager: ObservableObject {
         return recordsToSave.count
     }
 
-    /// Single-summary path, kept for the callers that own exactly one summary.
-    /// Ordinary collection processing goes through `uploadLegacySummaryRecords`.
-    private func performIndividualSync(_ summary: EnhancedSummaryData) async throws {
-        _ = try await uploadLegacySummaryRecords([summary])
-        await MainActor.run {
-            self.lastSyncDate = Date()
-            UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
-        }
-    }
-
     private func summaryByClearingTranscript(_ summary: EnhancedSummaryData) -> EnhancedSummaryData {
         EnhancedSummaryData(
             id: summary.id,
@@ -763,7 +764,15 @@ class iCloudStorageManager: ObservableObject {
         AppLog.shared.iCloudSync("Starting batch sync of \(syncableSummaries.count) summaries", level: .debug)
 
         do {
-            let syncedCount = try await uploadLegacySummaryRecords(syncableSummaries)
+            var syncedCount = 0
+            try await operationCoordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) { [weak self] in
+                guard let self else { return }
+                syncedCount = try await self.uploadLegacySummaryRecords(syncableSummaries)
+            }
             await updateSyncStatus(.completed)
             AppLog.shared.iCloudSync("Successfully synced all \(syncedCount) summaries")
         } catch {
@@ -1762,14 +1771,40 @@ class iCloudStorageManager: ObservableObject {
     /// A cold launch forces one; the activation notification that follows it a
     /// moment later finds that run in flight and joins it, so the pair produces one
     /// sync rather than two.
-    func shouldStartRoutineSnapshot(force: Bool) -> Bool {
+    func shouldStartRoutineSnapshot(force: Bool, appCoordinator: AppDataCoordinator? = nil) -> Bool {
         guard isEnabled else { return false }
         if force { return true }
         // Never start work CloudKit has asked us to hold off on.
         if cloudExecutor.isDeferred { return false }
         if hasPendingCloudWork { return true }
+        // `hasPendingLocalChanges` only catches the paths that remember to set it.
+        // A rename made straight through `CoreDataManager` sets nothing, and the
+        // edit then waited out the maintenance window. The backup signature covers
+        // every local edit however it was made, so it — not the flag — is the
+        // authority on whether there is anything to send.
+        if let appCoordinator, localDataDiffersFromLastBackup(appCoordinator: appCoordinator) {
+            return true
+        }
         guard let lastSuccess = lastSuccessfulRoutineSyncDate else { return true }
         return Date().timeIntervalSince(lastSuccess) >= Self.routineSyncStaleInterval
+    }
+
+    /// Whether the local dataset still matches what the last completed backup sent.
+    /// A local Core Data read; far cheaper than the CloudKit round trip it decides.
+    private func localDataDiffersFromLastBackup(appCoordinator: AppDataCoordinator) -> Bool {
+        guard let storedSignature = UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) else {
+            return true
+        }
+
+        let selection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+        let currentSignature = computeBackupStateSignature(
+            recordings: selection.recordings,
+            transcripts: selection.transcripts,
+            summaries: selection.summaries,
+            appCoordinator: appCoordinator,
+            options: currentCloudBackupOptions()
+        )
+        return currentSignature != storedSignature
     }
 
     private func setupPeriodicSync() {
@@ -2363,7 +2398,7 @@ class iCloudStorageManager: ObservableObject {
 
             // The default zone itself cannot be deleted, so remove its records.
             var recordIDs = try await defaultZoneRecordIDs()
-            recordIDs.append(contentsOf: await queriedRecordIDsForKnownTypes())
+            recordIDs.append(contentsOf: try await queriedRecordIDsForKnownTypes())
 
             let deletion = try await deleteCloudRecordsInBatches(recordIDs)
             result.recordsDeleted = deletion.deleted
@@ -2425,8 +2460,14 @@ class iCloudStorageManager: ObservableObject {
 
     /// Backstop for the change feed: queries each record type the app knows about.
     /// A type that was never created has no schema to query, which is not a failure
-    /// for an erase, so query errors are logged and skipped.
-    private func queriedRecordIDsForKnownTypes() async -> [CKRecord.ID] {
+    /// for an erase, so *that* error is skipped.
+    ///
+    /// Nothing else may be. The default zone cannot enumerate changes, which makes
+    /// this sweep the only way an erase finds anything: a throttled or refused
+    /// query that is quietly skipped leaves those records in the account while the
+    /// erase reports success and resets the local bookkeeping that would have
+    /// found them again.
+    private func queriedRecordIDsForKnownTypes() async throws -> [CKRecord.ID] {
         var recordIDs: [CKRecord.ID] = []
 
         for recordType in Self.allKnownCloudRecordTypes {
@@ -2447,8 +2488,14 @@ class iCloudStorageManager: ObservableObject {
                         resultsLimit: CKQueryOperation.maximumResults
                     )
                 }
-            } catch {
-                AppLog.shared.iCloudSync("Erase sweep skipped \(recordType): \(error.localizedDescription)", level: .debug)
+            } catch let error as CKError where Self.isAbsentRecordTypeDiagnostic(error) {
+                // The type was never created in this container, so it holds nothing
+                // to erase.
+                AppLog.shared.iCloudSync("Erase sweep skipped \(recordType): no such record type", level: .debug)
+            } catch let error as CKError where Self.isMissingQueryableIndexDiagnostic(error.localizedDescription) {
+                // The records exist but cannot be listed. Erasing around them and
+                // claiming success would leave the user's data in iCloud.
+                throw Self.cloudBackupQueryableIndexError(recordType: recordType)
             }
         }
 
@@ -7081,7 +7128,31 @@ extension iCloudStorageManager {
                 settled[recordID] = savedRecord
             }
 
-            if let failure = outcome.failures.values.first {
+            // An unreadable or changed audio file must not take the recording's
+            // metadata — or every other record in the batch — down with it. Strip
+            // the asset and send the metadata on its own; clearing the stored
+            // signature leaves the audio to be retried on a later run.
+            var recordsToRetryWithoutAudio: [CKRecord] = []
+            let recordsByID = Dictionary(uniqueKeysWithValues: pending.map { ($0.recordID, $0) })
+            for (recordID, failure) in outcome.failures {
+                guard let ckError = failure as? CKError, ckError.isAssetFileProblem,
+                      let record = recordsByID[recordID] else { continue }
+                record[Self.fieldAudioAsset] = nil
+                record[Self.fieldAudioSignature] = nil
+                recordsToRetryWithoutAudio.append(record)
+                AppLog.shared.iCloudSync(
+                    "CloudKit could not take the audio for a recording; " +
+                    "uploading its metadata without it and retrying the audio later",
+                    level: .error
+                )
+            }
+
+            let remainingFailures = outcome.failures.filter { recordID, failure in
+                guard let ckError = failure as? CKError else { return true }
+                return !(ckError.isAssetFileProblem && recordsByID[recordID] != nil)
+            }
+
+            if let failure = remainingFailures.values.first {
                 if let ckError = failure as? CKError,
                    let recordType = pending.first?.recordType,
                    let schemaError = cloudBackupProductionSchemaError(from: ckError, recordType: recordType) {
@@ -7097,9 +7168,17 @@ extension iCloudStorageManager {
 
             // A deferred save reached nobody. Returning here would let the caller
             // record the upload as done and skip it on the next activation.
-            try outcome.throwIfIncomplete()
+            //
+            // Checked directly rather than through `throwIfIncomplete()`, which
+            // reads the unfiltered failure set and would rethrow the very asset
+            // errors just handled above.
+            if let deferredUntil = outcome.deferredUntil, !outcome.deferred.isEmpty {
+                throw CloudSyncDeferredError(until: deferredUntil, recordCount: outcome.deferred.count)
+            }
 
-            guard !outcome.conflicts.isEmpty else { return Array(settled.values) }
+            guard !outcome.conflicts.isEmpty || !recordsToRetryWithoutAudio.isEmpty else {
+                return Array(settled.values)
+            }
 
             attempt += 1
             guard attempt <= maxRetryAttempts else {
@@ -7113,10 +7192,9 @@ extension iCloudStorageManager {
                 throw CloudSyncUnsettledRecordsError(recordCount: outcome.conflicts.count)
             }
 
-            let byRecordID = Dictionary(uniqueKeysWithValues: pending.map { ($0.recordID, $0) })
-            var retryRecords: [CKRecord] = []
+            var retryRecords: [CKRecord] = recordsToRetryWithoutAudio
             for (recordID, serverRecord) in outcome.conflicts {
-                guard let localRecord = byRecordID[recordID] else { continue }
+                guard let localRecord = recordsByID[recordID] else { continue }
                 if let rebased = resolveSaveConflict(local: localRecord, server: serverRecord) {
                     retryRecords.append(rebased)
                 } else {
@@ -7273,6 +7351,16 @@ extension iCloudStorageManager {
     }
 
     static let missingQueryableIndexErrorCode = 4013
+
+    /// A record type that was never created in this container. Querying it is not
+    /// a failure — there is simply nothing of that type here.
+    static func isAbsentRecordTypeDiagnostic(_ error: CKError) -> Bool {
+        if error.code == .unknownItem { return true }
+        let normalized = error.localizedDescription.lowercased()
+        return normalized.contains("did not find record type") ||
+            normalized.contains("unknown record type") ||
+            normalized.contains("record type") && normalized.contains("not found")
+    }
 
     /// Names the one thing that fixes this, because the raw CloudKit string does
     /// not: the index has to be added per record type in the CloudKit Console.

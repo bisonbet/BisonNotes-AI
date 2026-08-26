@@ -978,6 +978,50 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         }
     }
 
+    /// A rename made straight through `CoreDataManager` sets no pending flag, so
+    /// the flag cannot be the only signal that there is something to send.
+    func testAnEditMadeOutsideTheAutoBackupPathStillEarnsASync() async throws {
+        let recordingId = try createCompleteRecording(named: "Original name")
+        _ = try await runReconcile()
+        XCTAssertFalse(
+            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            "nothing has changed yet"
+        )
+
+        try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: "Renamed")
+
+        XCTAssertTrue(
+            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            "A rename must not wait out the maintenance window just because it took a different code path"
+        )
+    }
+
+    func testAnAudioFailureDoesNotStopTheMetadataUpload() async throws {
+        try createCompleteRecording(named: "Bad audio")
+        try createCompleteRecording(named: "Fine")
+
+        // CloudKit refuses the audio for every recording in the batch.
+        let recordingNames = appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+            recording.id.map { "backup_recording_\($0.uuidString)" }
+        }
+        for name in recordingNames {
+            transport.perRecordSaveFailures[CKRecord.ID(recordName: name)] = [
+                CloudKitTestError.ckError(.assetFileNotFound)
+            ]
+        }
+
+        let result = try await runReconcile()
+
+        XCTAssertEqual(
+            result.backupResult.recordingsBackedUp,
+            2,
+            "Audio that CloudKit would not take must not fail the recordings' metadata"
+        )
+        for name in recordingNames {
+            XCTAssertNotNil(transport.record(named: name), "the metadata still has to reach CloudKit")
+        }
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

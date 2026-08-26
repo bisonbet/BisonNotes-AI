@@ -402,7 +402,7 @@ class AppDataCoordinator: ObservableObject {
     func reconcileiCloudIfEnabled(reason: CloudSyncReason, force: Bool = false) {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         guard iCloudManager.isEnabled else { return }
-        guard iCloudManager.shouldStartRoutineSnapshot(force: force) else { return }
+        guard iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else { return }
 
         Task {
             do {
