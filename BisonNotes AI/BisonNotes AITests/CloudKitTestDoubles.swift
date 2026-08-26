@@ -59,6 +59,8 @@ final class FakeCloudKitTransport: CloudKitTransport {
     /// Consumed in order, one entry per whole-operation call. `nil` means success.
     var fetchFailures: [(any Error)?] = []
     var modifyFailures: [(any Error)?] = []
+    /// Consumed in order, one entry per `CKQuery`. `nil` means success.
+    var queryFailures: [(any Error)?] = []
     /// Consumed in order per record, whenever that record is fetched.
     var perRecordFetchFailures: [CKRecord.ID: [any Error]] = [:]
     /// Consumed in order per record, whenever that record is saved.
@@ -236,6 +238,11 @@ final class FakeCloudKitTransport: CloudKitTransport {
         resultsLimit: Int
     ) async throws -> CloudKitQueryPage {
         ledger.append(.query(recordType: query.recordType))
+
+        if !queryFailures.isEmpty, let failure = queryFailures.removeFirst() {
+            throw failure
+        }
+
         let matches = storage.values
             .filter { $0.recordType == query.recordType }
             .sorted { $0.recordID.recordName < $1.recordID.recordName }

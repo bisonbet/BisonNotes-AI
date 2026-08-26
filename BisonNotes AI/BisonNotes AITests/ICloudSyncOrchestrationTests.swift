@@ -627,6 +627,112 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         }
     }
 
+    func testAThrottledQueryDoesNotEscalateIntoAZoneScan() async throws {
+        try createCompleteRecording(named: "Throttled query")
+        // The deletion-marker scan is the first query a run makes.
+        transport.queryFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 600)]
+
+        let result = try await runReconcile()
+
+        XCTAssertNotNil(result.wasDeferredUntil, "A throttled scan is deferred work, not an empty cloud")
+        let zoneScans = transport.ledger.filter {
+            if case .zoneChanges = $0 { return true }
+            return false
+        }
+        XCTAssertTrue(
+            zoneScans.isEmpty,
+            "Escalating a throttled query into a zone scan is more traffic inside the window CloudKit asked us to sit out"
+        )
+        XCTAssertTrue(manager.cloudExecutor.isDeferred, "…and the gate has to close so nothing else goes out either")
+    }
+
+    func testTwoManualBackupsEachRunTheirOwnPass() async throws {
+        // Both callers read a result out of their own closure, so neither may be
+        // handed the other's run — a zero-valued result reads as a clean transfer.
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var runCount = 0
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .reviewScan) { await gate.wait() }
+        }
+        await waitUntil("the first run to start") { coordinator.isRunning }
+
+        var backups: [Task<CloudSyncRunOutcome, any Error>] = []
+        for _ in 0..<2 {
+            backups.append(
+                Task { @MainActor in
+                    try await coordinator.submit(
+                        intent: .seedFromThisDevice,
+                        allowJoiningRunningOperation: false,
+                        coalescesWithEquivalentRequests: false
+                    ) {
+                        runCount += 1
+                    }
+                }
+            )
+        }
+        await waitUntil("both backups to queue separately") { coordinator.pendingFollowUpCount == 2 }
+        gate.open()
+
+        _ = try await first.value
+        for backup in backups {
+            let outcome = try await backup.value
+            assertOutcomeCovers(outcome, .seedFromThisDevice)
+        }
+        // The point of the fix: neither closure was discarded, so neither caller is
+        // left holding the zero-valued result its own closure never filled in.
+        XCTAssertEqual(runCount, 2, "Each result-bearing request runs its own closure")
+    }
+
+    func testOneQueuedJobFailingDoesNotStrandAnother() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        struct BackupFailure: Error {}
+        var routineRan = false
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .reviewScan) { await gate.wait() }
+        }
+        await waitUntil("the first run to start") { coordinator.isRunning }
+
+        // A manual backup (higher priority) and a routine snapshot queue together.
+        let backup = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                throw BackupFailure()
+            }
+        }
+        await waitUntil("the backup to queue") { coordinator.pendingFollowUpCount == 1 }
+        let routine = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .routineSnapshot,
+                allowJoiningRunningOperation: false
+            ) {
+                routineRan = true
+            }
+        }
+        await waitUntil("the routine snapshot to queue too") { coordinator.pendingFollowUpCount == 2 }
+        gate.open()
+
+        _ = try await first.value
+        do {
+            _ = try await backup.value
+            XCTFail("The backup's own caller must see its failure")
+        } catch is BackupFailure {
+            // Expected.
+        }
+        _ = try await routine.value
+
+        XCTAssertTrue(
+            routineRan,
+            "A failure in someone else's queued job must not leave this one with nobody to run it"
+        )
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

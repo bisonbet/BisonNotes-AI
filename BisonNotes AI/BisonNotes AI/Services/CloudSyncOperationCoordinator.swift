@@ -88,6 +88,11 @@ final class CloudSyncOperationCoordinator {
         var work: Work
         /// Submitters this entry will satisfy when it runs.
         var waiters: Set<Int>
+        /// False for work whose caller reads a result out of its own closure.
+        /// Collapsing two of those would hand the loser an untouched, zero-valued
+        /// result that reads as a completed transfer — and silently drop whatever
+        /// options its closure had captured.
+        var allowsCoalescing: Bool
     }
 
     private(set) var runningIntent: CloudSyncIntent?
@@ -115,10 +120,14 @@ final class CloudSyncOperationCoordinator {
     /// - Parameter allowJoiningRunningOperation: pass `false` for work whose input
     ///   changed after the running operation read its snapshot — a user deletion,
     ///   or an explicit user-initiated transfer — so it is guaranteed its own pass.
+    /// - Parameter coalescesWithEquivalentRequests: pass `false` when the caller
+    ///   reads a result out of its own closure, so its work is never replaced by
+    ///   an equivalent request's.
     @discardableResult
     func submit(
         intent: CloudSyncIntent,
         allowJoiningRunningOperation: Bool = true,
+        coalescesWithEquivalentRequests: Bool = true,
         work: @escaping Work
     ) async throws -> CloudSyncRunOutcome {
         guard let running = runningIntent, let currentTask else {
@@ -134,7 +143,12 @@ final class CloudSyncOperationCoordinator {
 
         let waiterID = nextWaiterID
         nextWaiterID += 1
-        let coalescedInto = enqueue(intent: intent, work: work, waiterID: waiterID)
+        let coalescedInto = enqueue(
+            intent: intent,
+            work: work,
+            waiterID: waiterID,
+            allowsCoalescing: coalescesWithEquivalentRequests
+        )
         defer {
             satisfiedWaiters.remove(waiterID)
             failuresByWaiter.removeValue(forKey: waiterID)
@@ -155,7 +169,15 @@ final class CloudSyncOperationCoordinator {
             }
             guard let next = takeHighestPriorityPending() else { break }
             ranOwnWork = ranOwnWork || next.waiters.contains(waiterID)
-            try await run(intent: next.intent, work: next.work, satisfying: next.waiters)
+            do {
+                try await run(intent: next.intent, work: next.work, satisfying: next.waiters)
+            } catch {
+                // This may be someone else's job that this submitter happened to
+                // drain. Its failure belongs to its own waiters, who receive it
+                // through `failuresByWaiter`; throwing here would abandon the loop
+                // and leave this request's work with nobody left to run it. Our own
+                // failure, if this was our entry, is delivered the same way below.
+            }
         }
 
         if let failure = failuresByWaiter[waiterID] {
@@ -167,23 +189,32 @@ final class CloudSyncOperationCoordinator {
     /// Adds this request to the queue, merging it into an existing entry only when
     /// one of the two intents covers the other.
     /// - Returns: the intent whose run will satisfy this request.
-    private func enqueue(intent: CloudSyncIntent, work: @escaping Work, waiterID: Int) -> CloudSyncIntent {
-        if let index = pending.firstIndex(where: { $0.intent.subsumes(intent) }) {
-            // An equivalent or broader job is already queued; ride on it.
-            pending[index].waiters.insert(waiterID)
-            return pending[index].intent
+    private func enqueue(
+        intent: CloudSyncIntent,
+        work: @escaping Work,
+        waiterID: Int,
+        allowsCoalescing: Bool
+    ) -> CloudSyncIntent {
+        if allowsCoalescing {
+            if let index = pending.firstIndex(where: { $0.allowsCoalescing && $0.intent.subsumes(intent) }) {
+                // An equivalent or broader job is already queued; ride on it.
+                pending[index].waiters.insert(waiterID)
+                return pending[index].intent
+            }
+
+            if let index = pending.firstIndex(where: { $0.allowsCoalescing && intent.subsumes($0.intent) }) {
+                // This request covers one that is queued: take over its waiters
+                // rather than leaving them behind.
+                pending[index].intent = intent
+                pending[index].work = work
+                pending[index].waiters.insert(waiterID)
+                return intent
+            }
         }
 
-        if let index = pending.firstIndex(where: { intent.subsumes($0.intent) }) {
-            // This request covers one that is queued: take over its waiters rather
-            // than leaving them behind.
-            pending[index].intent = intent
-            pending[index].work = work
-            pending[index].waiters.insert(waiterID)
-            return intent
-        }
-
-        pending.append(PendingRun(intent: intent, work: work, waiters: [waiterID]))
+        pending.append(
+            PendingRun(intent: intent, work: work, waiters: [waiterID], allowsCoalescing: allowsCoalescing)
+        )
         return intent
     }
 

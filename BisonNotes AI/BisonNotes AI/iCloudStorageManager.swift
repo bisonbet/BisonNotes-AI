@@ -2303,7 +2303,8 @@ class iCloudStorageManager: ObservableObject {
         var result = CloudEraseResult()
         try await operationCoordinator.submit(
             intent: .erase,
-            allowJoiningRunningOperation: false
+            allowJoiningRunningOperation: false,
+            coalescesWithEquivalentRequests: false
         ) { [weak self] in
             guard let self else { return }
             result = try await self.performErase()
@@ -2942,7 +2943,9 @@ extension iCloudStorageManager {
         var result = CloudBackupResult()
         try await operationCoordinator.submit(
             intent: .seedFromThisDevice,
-            allowJoiningRunningOperation: false
+            allowJoiningRunningOperation: false,
+            // This caller reads its result out of the closure below.
+            coalescesWithEquivalentRequests: false
         ) { [weak self] in
             guard let self else { return }
             result = try await self.performManualBackup(appCoordinator: appCoordinator, options: options)
@@ -3599,7 +3602,12 @@ extension iCloudStorageManager {
             // A review scan queries the zone, so it queues behind anything already
             // running rather than competing with it for the same records.
             var items: [CloudReviewItem] = []
-            try await operationCoordinator.submit(intent: .reviewScan) { [weak self] in
+            // The scan's findings come back through `items`, so this request must
+            // keep its own closure rather than riding on another scan's.
+            try await operationCoordinator.submit(
+                intent: .reviewScan,
+                coalescesWithEquivalentRequests: false
+            ) { [weak self] in
                 guard let self else { return }
                 items = try await self.scanCloudOnlyReviewItems(appCoordinator: appCoordinator)
             }
@@ -4023,7 +4031,8 @@ extension iCloudStorageManager {
         var result = CloudRestoreResult()
         try await operationCoordinator.submit(
             intent: .restoreToThisDevice,
-            allowJoiningRunningOperation: false
+            allowJoiningRunningOperation: false,
+            coalescesWithEquivalentRequests: false
         ) { [weak self] in
             guard let self else { return }
             result = try await self.performManualRestore(
@@ -6306,14 +6315,15 @@ extension iCloudStorageManager {
     /// activation cost a full enumeration.
     private func fetchBackupRecords(recordType: String) async throws -> [CKRecord] {
         // A server-requested backoff covers queries too. Starting a scan during one
-        // is exactly the traffic CloudKit asked us to stop sending.
+        // is exactly the traffic CloudKit asked us to stop sending — and returning
+        // an empty list would let the caller read the backoff as an empty cloud.
         if let deferredUntil = cloudExecutor.deferredUntil {
             AppLog.shared.iCloudSync(
                 "Skipped a \(recordType) scan: CloudKit asked for a backoff " +
                 "for another \(Int(deferredUntil.timeIntervalSinceNow))s",
                 level: .debug
             )
-            return []
+            throw CloudSyncDeferredError(until: deferredUntil, recordCount: 0)
         }
 
         let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
@@ -6355,6 +6365,20 @@ extension iCloudStorageManager {
             }
 
             return []
+        } catch let error as CKError {
+            // A query does not run through the batch executor, so the retry policy
+            // never sees this error. Falling straight into a zone scan would put
+            // another request on the wire inside a backoff the server just asked
+            // for; the fallback exists for schema problems, not for throttling.
+            if let deferredUntil = cloudExecutor.recordDeferralIfThrottled(error) {
+                AppLog.shared.iCloudSync(
+                    "CloudKit throttled a \(recordType) scan; waiting " +
+                    "\(Int(deferredUntil.timeIntervalSinceNow))s instead of falling back to a zone scan",
+                    level: .debug
+                )
+                throw CloudSyncDeferredError(until: deferredUntil, recordCount: 0)
+            }
+            return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
         } catch {
             return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
         }

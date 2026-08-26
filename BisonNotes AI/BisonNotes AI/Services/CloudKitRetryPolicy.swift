@@ -87,8 +87,12 @@ struct CloudSyncDeferredError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         let seconds = max(0, Int(until.timeIntervalSinceNow.rounded()))
-        return "iCloud asked this device to wait \(seconds)s before syncing again. " +
-            "\(recordCount) item\(recordCount == 1 ? "" : "s") will sync automatically after that."
+        let preamble = "iCloud asked this device to wait \(seconds)s before syncing again."
+        guard recordCount > 0 else {
+            return preamble + " Syncing will resume automatically after that."
+        }
+        return preamble +
+            " \(recordCount) item\(recordCount == 1 ? "" : "s") will sync automatically after that."
     }
 }
 

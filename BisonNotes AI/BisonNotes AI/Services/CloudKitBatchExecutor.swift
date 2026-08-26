@@ -496,6 +496,24 @@ extension CloudKitBatchExecutor {
         preferences.setDate(nil, forKey: deferralKey)
     }
 
+    /// Applies the retry policy to an error raised *outside* a batched operation —
+    /// a `CKQuery` or a zone scan — so those paths respect the same gate.
+    ///
+    /// Returns the deferral when one was recorded. Any throttling answer counts:
+    /// a query that CloudKit is rate-limiting must not be escalated into a heavier
+    /// zone scan, which is more traffic in the window it just asked us to sit out.
+    @discardableResult
+    func recordDeferralIfThrottled(_ error: CKError) -> Date? {
+        switch retryPolicy.decision(for: error, attempt: 0, jitter: jitterProvider()) {
+        case .deferFor(let seconds):
+            return recordDeferral(seconds: seconds)
+        case .retry(let delay):
+            return recordDeferral(seconds: delay)
+        case .fail:
+            return nil
+        }
+    }
+
     @discardableResult
     private func recordDeferral(seconds: TimeInterval) -> Date {
         let until = clock.now.addingTimeInterval(max(seconds, 0))
