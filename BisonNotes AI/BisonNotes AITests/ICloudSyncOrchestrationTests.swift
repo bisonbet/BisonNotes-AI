@@ -1332,6 +1332,144 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertNotEqual(outcome, .joinedRunningOperation(.reviewScan))
     }
 
+    // MARK: - Inbound tombstones
+
+    /// Markers for items this device has never seen — the state every device
+    /// reached, because nothing ever removed an applied marker.
+    @discardableResult
+    private func seedDeletionMarkers(count: Int, deletedAt: Date?) -> [String] {
+        let names = (0..<count).map { _ in "backup_deletion_\(UUID().uuidString)" }
+        transport.seed(
+            names.map { name in
+                var fields: [String: any CKRecordValueProtocol] = [
+                    "recordingId": String(name.dropFirst("backup_deletion_".count)),
+                    "deviceIdentifier": "another-device"
+                ]
+                if let deletedAt {
+                    fields["deletedAt"] = deletedAt
+                }
+                return CloudKitTestRecords.record(type: "CD_BackupDeletion", name: name, fields: fields)
+            }
+        )
+        return names
+    }
+
+    func testTombstonesDoNotMakeARunReadTheDatasetAgainForEachOne() async throws {
+        for index in 0..<3 {
+            try createCompleteRecording(named: "Live \(index)")
+        }
+        seedTrustedManifest()
+        // A first pass puts this device's content, and a manifest naming it, in the cloud.
+        _ = try await runReconcile()
+
+        seedDeletionMarkers(count: 12, deletedAt: clock.now.addingTimeInterval(-60))
+        let namesReadBefore = transport.fetchedRecordNames.count
+        let operationsBefore = transport.ledger.count
+
+        _ = try await runReconcile(reason: .appBecameActive)
+
+        let namesReadThisRun = Array(transport.fetchedRecordNames.dropFirst(namesReadBefore))
+        let readsPerRecord = Dictionary(grouping: namesReadThisRun, by: { $0 }).mapValues(\.count)
+
+        // Content records: the deletion workspace reads the dataset once, and the
+        // backup leg's snapshot reads it once. Twelve markers must not mean twelve
+        // more — that is what fetched ten thousand records for a hundred and fifty
+        // live ones and put six minutes into one phase.
+        let mostReadContentRecord = readsPerRecord
+            .filter { $0.key.hasPrefix("backup_") }
+            .max { $0.value < $1.value }
+        XCTAssertLessThanOrEqual(
+            mostReadContentRecord?.value ?? 0,
+            3,
+            mostReadContentRecord.map { "\($0.key) was read \($0.value) times" } ?? ""
+        )
+
+        // The manifest itself is read a handful of times — the workspace, the
+        // snapshot, the delta commit — and none of them are per marker.
+        XCTAssertLessThanOrEqual(
+            readsPerRecord["content_index"] ?? 0,
+            6,
+            "Reading the manifest once per tombstone is what made this phase grow with every delete"
+        )
+
+        let markerQueries = transport.ledger.dropFirst(operationsBefore).filter {
+            if case .query(let recordType) = $0 { return recordType == "CD_BackupDeletion" }
+            return false
+        }
+        XCTAssertEqual(markerQueries.count, 1, "One marker scan covers the whole run")
+    }
+
+    func testATombstonePastItsRetentionWindowIsRetired() async throws {
+        seedTrustedManifest()
+        let stale = seedDeletionMarkers(
+            count: 1,
+            deletedAt: clock.now.addingTimeInterval(-(iCloudStorageManager.deletionMarkerRetentionInterval + 60))
+        )[0]
+        let fresh = seedDeletionMarkers(count: 1, deletedAt: clock.now.addingTimeInterval(-60))[0]
+
+        _ = try await runReconcile()
+
+        XCTAssertNil(
+            transport.record(named: stale),
+            "A marker whose delete has had the retention window to reach every device is replayed for nothing"
+        )
+        XCTAssertNotNil(
+            transport.record(named: fresh),
+            "A recent marker still has devices to tell"
+        )
+    }
+
+    func testATombstoneWithNoUsableDeletionTimeIsNeverRetired() async throws {
+        seedTrustedManifest()
+        let undated = seedDeletionMarkers(count: 1, deletedAt: nil)[0]
+        clock.advance(iCloudStorageManager.deletionMarkerRetentionInterval * 2)
+
+        _ = try await runReconcile()
+
+        XCTAssertNotNil(
+            transport.record(named: undated),
+            "A marker whose age cannot be established must not be aged out"
+        )
+    }
+
+    func testAManualBackupQueuedBehindASyncSaysItIsWaiting() async throws {
+        try createCompleteRecording(named: "Queued behind a sync")
+        seedTrustedManifest()
+
+        let gate = AsyncGate()
+        transport.fetchGate = gate
+
+        let reconcile = Task { @MainActor in try await self.runReconcile() }
+        await waitUntil("the routine pass to be running") { self.manager.isAutomaticReconcileRunning }
+
+        let backup = Task { @MainActor in
+            try await self.manager.backupAllDataToiCloud(
+                appCoordinator: self.appCoordinator,
+                options: CloudBackupOptions(
+                    includeAudioFiles: false,
+                    includeSettings: false,
+                    includeSensitiveSettings: false
+                )
+            )
+        }
+        let sawWaiting = await waitUntil("the backup to report that it is queued") {
+            self.manager.isUserTransferWaitingForRunningSync
+        }
+        XCTAssertTrue(
+            sawWaiting,
+            "A backup held behind a running sync showed the same spinner as work in flight, so it read as stalled"
+        )
+
+        gate.open()
+        _ = try await reconcile.value
+        _ = try await backup.value
+
+        XCTAssertFalse(
+            manager.isUserTransferWaitingForRunningSync,
+            "The flag has to clear once the transfer gets its turn"
+        )
+    }
+
     // MARK: - Bootstrap
 
     func testAMissingManifestFallsBackToAScanOnceAndThenUsesKnownIds() async throws {

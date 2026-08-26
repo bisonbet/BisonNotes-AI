@@ -267,10 +267,14 @@ final class FakeCloudKitTransport: CloudKitTransport {
             throw failure
         }
 
+        // `CKQueryOperation.maximumResults` is zero — it means "server's choice",
+        // not "no records". Taking it literally handed the scan an empty first page
+        // and made it fall through to the zone query, so every scan looked like two.
+        let limit = resultsLimit == CKQueryOperation.maximumResults ? Int.max : max(resultsLimit, 0)
         let matches = storage.values
             .filter { $0.recordType == query.recordType }
             .sorted { $0.recordID.recordName < $1.recordID.recordName }
-            .prefix(max(resultsLimit, 0))
+            .prefix(limit)
         return CloudKitQueryPage(
             matchResults: matches.map { record in
                 if let failure = queryRecordFailures[record.recordID.recordName] {

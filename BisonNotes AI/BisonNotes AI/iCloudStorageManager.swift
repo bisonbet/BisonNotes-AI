@@ -238,6 +238,10 @@ class iCloudStorageManager: ObservableObject {
     @Published var pendingConflicts: [SyncConflict] = []
     @Published var lastMaintenanceMessage: String?
     @Published var isAutomaticReconcileRunning = false
+    /// True while a transfer the user asked for is waiting for a sync already in
+    /// progress. Its spinner used to be indistinguishable from work in flight, so a
+    /// backup queued behind a slow routine pass read as a stalled one.
+    @Published var isUserTransferWaitingForRunningSync = false
     @Published var pendingCloudReviewItems: [CloudReviewItem] = []
     @Published var isScanningCloudReviewItems = false
     @Published var cloudReviewError: String?
@@ -2620,6 +2624,9 @@ private struct CodableSettingsBackupPayload: Codable {
 }
 
 private struct BackupContentRecordsFromIndex {
+    /// The manifest these records were named by. Held so a caller can tell a name
+    /// the manifest still lists from one it never had.
+    var manifest = CloudActiveManifest()
     var recordings: [CKRecord] = []
     var transcripts: [CKRecord] = []
     var summaries: [CKRecord] = []
@@ -2774,6 +2781,44 @@ extension iCloudStorageManager {
         var recordings = Set<UUID>()
         var transcripts = Set<UUID>()
         var summaries = Set<UUID>()
+    }
+
+    /// One read of the cloud state every deletion decision resolves against, taken
+    /// once for a run instead of once per tombstone.
+    private struct CloudDeletionWorkspace {
+        var manifestRecords = BackupContentRecordsFromIndex()
+        /// Empty unless the run needs them: legacy summary records have no manifest
+        /// entry, so finding them costs a query scan.
+        var legacySummaryRecords: [CKRecord] = []
+    }
+
+    /// The cloud mutations a set of deletions adds up to.
+    ///
+    /// Deletions are planned in memory against one snapshot and issued together: one
+    /// batched delete, one manifest delta, one save for the relationships that had to
+    /// be cleared. Issuing them per tombstone meant a manifest read and a legacy scan
+    /// each time, and a phase whose cost grew with every delete the user had ever made.
+    private struct CloudDeletionPlan {
+        var recordIDsToDelete: Set<CKRecord.ID> = []
+        var recordingRecordNamesToUnindex: Set<String> = []
+        var transcriptRecordNamesToUnindex: Set<String> = []
+        var summaryRecordNamesToUnindex: Set<String> = []
+        /// Transcript ids whose inbound references must be cleared from surviving records.
+        var clearedTranscriptIds: Set<String> = []
+        /// Summary ids whose inbound references must be cleared from surviving records.
+        var clearedSummaryIds: Set<String> = []
+
+        @MainActor
+        func clearsTranscript(on record: CKRecord) -> Bool {
+            guard let value = record[iCloudStorageManager.fieldTranscriptId] as? String else { return false }
+            return clearedTranscriptIds.contains(value)
+        }
+
+        @MainActor
+        func clearsSummary(on record: CKRecord) -> Bool {
+            guard let value = record[iCloudStorageManager.fieldSummaryId] as? String else { return false }
+            return clearedSummaryIds.contains(value)
+        }
     }
 
     private static let fieldRecordingName = "recordingName"
@@ -3029,6 +3074,8 @@ extension iCloudStorageManager {
             )
         }
         var result = CloudBackupResult()
+        isUserTransferWaitingForRunningSync = operationCoordinator.isRunning
+        defer { isUserTransferWaitingForRunningSync = false }
         try await operationCoordinator.submit(
             intent: .seedFromThisDevice,
             allowJoiningRunningOperation: false,
@@ -3036,6 +3083,7 @@ extension iCloudStorageManager {
             coalescesWithEquivalentRequests: false
         ) { [weak self] in
             guard let self else { return }
+            self.isUserTransferWaitingForRunningSync = false
             result = try await self.performManualBackup(appCoordinator: appCoordinator, options: options)
         }
         return result
@@ -4198,12 +4246,15 @@ extension iCloudStorageManager {
             )
         }
         var result = CloudRestoreResult()
+        isUserTransferWaitingForRunningSync = operationCoordinator.isRunning
+        defer { isUserTransferWaitingForRunningSync = false }
         try await operationCoordinator.submit(
             intent: .restoreToThisDevice,
             allowJoiningRunningOperation: false,
             coalescesWithEquivalentRequests: false
         ) { [weak self] in
             guard let self else { return }
+            self.isUserTransferWaitingForRunningSync = false
             result = try await self.performManualRestore(
                 appCoordinator: appCoordinator,
                 includeAudioFiles: includeAudioFiles,
@@ -5588,144 +5639,103 @@ extension iCloudStorageManager {
             recordType: Self.backupDeletionRecordType)
         guard !deletionRecords.isEmpty else { return (DeletionMarkerApplication(), CloudDeletionTargets()) }
 
+        /// A marker that survived the withdrawal check, kept alongside the record it
+        /// came from so the marker itself can be retired once it has done its job.
+        struct ApplicableMarker {
+            let target: CloudDeletionTarget
+            let recordID: CKRecord.ID
+            /// The marker's own `deletedAt`, or nil when the field is unusable. A
+            /// marker whose age cannot be established is never retired.
+            let deletedAt: Date?
+        }
+
         var application = DeletionMarkerApplication()
         var targets = CloudDeletionTargets()
+        var plan = CloudDeletionPlan()
+        var applicableMarkers: [ApplicableMarker] = []
 
-        /// Withdraws a tombstone whose target was edited here after the delete. The
-        /// later edit wins, and because the marker is gone before this reconcile's
-        /// backup leg runs, the surviving item uploads again for every device.
-        func reviveLocallyModifiedItem(_ record: CKRecord, describedAs description: String) async throws {
-            try await deleteBackupRecords([record.recordID])
-            application.revivedLocally += 1
-            AppLog.shared.iCloudSync(
-                "Kept \(description) that changed after it was deleted on another device; withdrew the iCloud deletion marker"
-            )
-        }
+        // MARK: Decide first, against local state alone
 
         for record in deletionRecords {
             guard let target = decodeDeletionTarget(record: record) else {
                 continue
             }
 
+            if shouldWithdrawDeletionMarker(for: target, appCoordinator: appCoordinator) {
+                // The later edit wins, and because the marker goes before this
+                // reconcile's backup leg runs, the surviving item uploads again for
+                // every device.
+                plan.recordIDsToDelete.insert(record.recordID)
+                application.revivedLocally += 1
+                AppLog.shared.iCloudSync(
+                    "Kept \(target.kind.rawValue) \(target.id.uuidString) that changed after it was " +
+                        "deleted on another device; withdrew the iCloud deletion marker"
+                )
+                continue
+            }
+
+            applicableMarkers.append(
+                ApplicableMarker(
+                    target: target,
+                    recordID: record.recordID,
+                    deletedAt: record[Self.fieldDeletedAt] as? Date
+                )
+            )
+
             switch target.kind {
             case .recording:
-                let recording = appCoordinator.coreDataManager.getRecording(id: target.id)
-                if let recording,
-                   recording.isCloudSyncDisabled == false,
-                   Self.shouldReviveLocallyModifiedItem(
-                       localTimestamp: localRecordingContentTimestamp(recording),
-                       deletedAt: target.deletedAt
-                   ) {
-                    try await reviveLocallyModifiedItem(record, describedAs: "recording \(target.id.uuidString)")
-                    continue
-                }
-
                 targets.recordings.insert(target.id)
-                application.deletedCloudRecords += try await deleteCloudContentRecords(
-                    recordingId: target.id,
-                    transcriptIds: [],
-                    summaryIds: []
-                )
-
-                guard let recording, recording.isCloudSyncDisabled == false else {
-                    continue
-                }
-                do {
-                    // Applying someone else's tombstone, so do not raise one of
-                    // our own on the way back out.
-                    try appCoordinator.coreDataManager.deleteRecording(
-                        id: target.id,
-                        enqueueCloudDeletion: false
-                    )
-                    application.deletedLocalItems += 1
-                } catch CoreDataDeletionError.recordingNotFound {
-                    // Already gone locally — the marker has nothing left to apply.
-                    continue
-                } catch {
-                    AppLog.shared.iCloudSync(
-                        "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",
-                        level: .error
-                    )
-                }
             case .transcript:
-                let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id)
-                let transcriptParent = transcript.flatMap { candidate in
-                    candidate.recording
-                        ?? candidate.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
-                }
-                if let transcript,
-                   transcriptParent?.isCloudSyncDisabled != true,
-                   Self.shouldReviveLocallyModifiedItem(
-                       localTimestamp: localTranscriptContentTimestamp(transcript),
-                       deletedAt: target.deletedAt
-                   ) {
-                    try await reviveLocallyModifiedItem(record, describedAs: "transcript \(target.id.uuidString)")
-                    continue
-                }
-
                 targets.transcripts.insert(target.id)
-                application.deletedCloudRecords += try await deleteTranscriptContentRecords(
-                    transcriptId: target.id
-                )
-
-                guard transcript != nil, transcriptParent?.isCloudSyncDisabled != true else { continue }
-                do {
-                    // Applying another device's marker; raising one of our own
-                    // would re-create the tombstone after a revive withdrew it.
-                    try appCoordinator.coreDataManager.deleteTranscript(
-                        id: target.id,
-                        enqueueCloudDeletion: false
-                    )
-                } catch {
-                    AppLog.shared.iCloudSync(
-                        "Failed to apply iCloud transcript deletion locally for \(target.id.uuidString): \(error)",
-                        level: .error
-                    )
-                }
-                if appCoordinator.coreDataManager.getTranscript(id: target.id) == nil {
-                    application.deletedLocalItems += 1
-                }
             case .summary:
-                let summary = appCoordinator.coreDataManager.getSummary(id: target.id)
-                let summaryParent = summary.flatMap { candidate in
-                    candidate.recording
-                        ?? candidate.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
-                }
-                if let summary,
-                   summaryParent?.isCloudSyncDisabled != true,
-                   Self.shouldReviveLocallyModifiedItem(
-                       localTimestamp: summary.generatedAt,
-                       deletedAt: target.deletedAt
-                   ) {
-                    try await reviveLocallyModifiedItem(record, describedAs: "summary \(target.id.uuidString)")
-                    continue
-                }
-
                 targets.summaries.insert(target.id)
-                application.deletedCloudRecords += try await deleteSummaryContentRecords(
-                    summaryIds: [target.id]
-                )
-
-                guard summary != nil, summaryParent?.isCloudSyncDisabled != true else { continue }
-                do {
-                    // deleteSummary removes the attachment files itself, but only
-                    // once the row deletion has committed. Doing it here first
-                    // destroyed the user's notes even when that save rolled back.
-                    try appCoordinator.coreDataManager.deleteSummary(
-                        id: target.id,
-                        enqueueCloudDeletion: false
-                    )
-                } catch {
-                    AppLog.shared.iCloudSync(
-                        "Failed to apply iCloud summary deletion locally for \(target.id.uuidString): \(error)",
-                        level: .error
-                    )
-                }
-                if appCoordinator.coreDataManager.getSummary(id: target.id) == nil {
-                    application.deletedLocalItems += 1
-                }
             }
         }
+
+        // MARK: One read of the cloud, one batch of writes
+        //
+        // Every marker resolves against the same cloud state, so the manifest and
+        // the legacy summary records are read once for the whole set. Reading them
+        // inside the loop is what made this phase fetch ten thousand records for a
+        // hundred and fifty live ones, and spend six minutes doing it.
+        var workspace: CloudDeletionWorkspace?
+        if !applicableMarkers.isEmpty {
+            // Only a recording or a transcript can still be referenced by a legacy
+            // summary record; a summary's own legacy record is named after the
+            // summary and needs no scan to find.
+            let needsLegacyRecords = applicableMarkers.contains { $0.target.kind != .summary }
+            workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: needsLegacyRecords)
+        }
+
+        if let workspace {
+            for marker in applicableMarkers {
+                applyDeletionMarker(
+                    marker.target,
+                    appCoordinator: appCoordinator,
+                    workspace: workspace,
+                    plan: &plan,
+                    application: &application
+                )
+            }
+        }
+
+        // MARK: Retire markers that have nothing left to say
+        //
+        // A marker exists so other devices learn about a delete they did not see.
+        // Nothing ever removed them, so every delete the user had ever made was
+        // replayed on every sync and this phase grew without bound. Past the
+        // retention window, with the target already gone from this device, replaying
+        // a marker buys nothing.
+        for marker in applicableMarkers {
+            guard let deletedAt = marker.deletedAt,
+                  syncClock.now.timeIntervalSince(deletedAt) > Self.deletionMarkerRetentionInterval,
+                  !deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator) else {
+                continue
+            }
+            plan.recordIDsToDelete.insert(marker.recordID)
+        }
+
+        application.deletedCloudRecords = try await commitDeletionPlan(plan, workspace: workspace)
 
         if application.didChangeAnything {
             let deletedLocalCount = application.deletedLocalItems
@@ -5757,6 +5767,165 @@ extension iCloudStorageManager {
         return (application, targets)
     }
 
+    /// True when the marker's target was edited on this device after the delete, so
+    /// the later edit wins and the tombstone should be withdrawn.
+    private func shouldWithdrawDeletionMarker(
+        for target: CloudDeletionTarget,
+        appCoordinator: AppDataCoordinator
+    ) -> Bool {
+        switch target.kind {
+        case .recording:
+            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
+                  recording.isCloudSyncDisabled == false else {
+                return false
+            }
+            return Self.shouldReviveLocallyModifiedItem(
+                localTimestamp: localRecordingContentTimestamp(recording),
+                deletedAt: target.deletedAt
+            )
+        case .transcript:
+            guard let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id),
+                  parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+                return false
+            }
+            return Self.shouldReviveLocallyModifiedItem(
+                localTimestamp: localTranscriptContentTimestamp(transcript),
+                deletedAt: target.deletedAt
+            )
+        case .summary:
+            guard let summary = appCoordinator.coreDataManager.getSummary(id: target.id),
+                  parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+                return false
+            }
+            return Self.shouldReviveLocallyModifiedItem(
+                localTimestamp: summary.generatedAt,
+                deletedAt: target.deletedAt
+            )
+        }
+    }
+
+    /// Adds one inbound tombstone's cloud work to the run's plan and applies its
+    /// local half. Nothing here touches the network: the plan is issued once, for
+    /// every marker together, by `commitDeletionPlan`.
+    private func applyDeletionMarker(
+        _ target: CloudDeletionTarget,
+        appCoordinator: AppDataCoordinator,
+        workspace: CloudDeletionWorkspace,
+        plan: inout CloudDeletionPlan,
+        application: inout DeletionMarkerApplication
+    ) {
+        switch target.kind {
+        case .recording:
+            planRecordingContentDeletion(
+                recordingId: target.id,
+                transcriptIds: [],
+                summaryIds: [],
+                workspace: workspace,
+                into: &plan
+            )
+
+            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
+                  recording.isCloudSyncDisabled == false else {
+                return
+            }
+            do {
+                // Applying someone else's tombstone, so do not raise one of our own
+                // on the way back out.
+                try appCoordinator.coreDataManager.deleteRecording(
+                    id: target.id,
+                    enqueueCloudDeletion: false
+                )
+                application.deletedLocalItems += 1
+            } catch CoreDataDeletionError.recordingNotFound {
+                // Already gone locally — the marker has nothing left to apply.
+            } catch {
+                AppLog.shared.iCloudSync(
+                    "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",
+                    level: .error
+                )
+            }
+
+        case .transcript:
+            planTranscriptContentDeletion(transcriptId: target.id, into: &plan)
+
+            guard let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id),
+                  parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+                return
+            }
+            do {
+                // Applying another device's marker; raising one of our own would
+                // re-create the tombstone after a revive withdrew it.
+                try appCoordinator.coreDataManager.deleteTranscript(
+                    id: target.id,
+                    enqueueCloudDeletion: false
+                )
+            } catch {
+                AppLog.shared.iCloudSync(
+                    "Failed to apply iCloud transcript deletion locally for \(target.id.uuidString): \(error)",
+                    level: .error
+                )
+            }
+            if appCoordinator.coreDataManager.getTranscript(id: target.id) == nil {
+                application.deletedLocalItems += 1
+            }
+
+        case .summary:
+            planSummaryContentDeletion(summaryIds: [target.id], into: &plan)
+
+            guard let summary = appCoordinator.coreDataManager.getSummary(id: target.id),
+                  parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+                return
+            }
+            do {
+                // deleteSummary removes the attachment files itself, but only once
+                // the row deletion has committed. Doing it here first destroyed the
+                // user's notes even when that save rolled back.
+                try appCoordinator.coreDataManager.deleteSummary(
+                    id: target.id,
+                    enqueueCloudDeletion: false
+                )
+            } catch {
+                AppLog.shared.iCloudSync(
+                    "Failed to apply iCloud summary deletion locally for \(target.id.uuidString): \(error)",
+                    level: .error
+                )
+            }
+            if appCoordinator.coreDataManager.getSummary(id: target.id) == nil {
+                application.deletedLocalItems += 1
+            }
+        }
+    }
+
+    private func deletionTargetExistsLocally(
+        _ target: CloudDeletionTarget,
+        appCoordinator: AppDataCoordinator
+    ) -> Bool {
+        switch target.kind {
+        case .recording:
+            return appCoordinator.coreDataManager.getRecording(id: target.id) != nil
+        case .transcript:
+            return appCoordinator.coreDataManager.getTranscript(id: target.id) != nil
+        case .summary:
+            return appCoordinator.coreDataManager.getSummary(id: target.id) != nil
+        }
+    }
+
+    private func parentRecording(
+        of transcript: TranscriptEntry,
+        appCoordinator: AppDataCoordinator
+    ) -> RecordingEntry? {
+        transcript.recording
+            ?? transcript.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
+    }
+
+    private func parentRecording(
+        of summary: SummaryEntry,
+        appCoordinator: AppDataCoordinator
+    ) -> RecordingEntry? {
+        summary.recording
+            ?? summary.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
+    }
+
     private func fetchDeletionTargets() async throws -> CloudDeletionTargets {
         let deletionRecords = try await fetchBackupRecords(
             recordType: Self.backupDeletionRecordType)
@@ -5775,190 +5944,256 @@ extension iCloudStorageManager {
         return targets
     }
 
-    private func deleteCloudContentRecords(
-        recordingId: UUID,
-        transcriptIds: [UUID],
-        summaryIds: [UUID]
-    ) async throws -> Int {
-        let recordingBackupRecordName = makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
-        var backupRecordIDs = [CKRecord.ID(recordName: recordingBackupRecordName)]
+    /// Reads, once, everything the deletion planners resolve against.
+    ///
+    /// A run may be applying one tombstone or a hundred; they all decide against the
+    /// same cloud state, so this is read per run rather than per marker.
+    private func makeDeletionWorkspace(
+        needsLegacySummaryRecords: Bool
+    ) async throws -> CloudDeletionWorkspace {
+        var workspace = CloudDeletionWorkspace()
 
-        let knownTranscriptRecordNames = transcriptIds.map {
-            makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: $0)
-        }
-        let knownSummaryRecordNames = summaryIds.map {
-            makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0)
-        }
-        backupRecordIDs.append(contentsOf: knownTranscriptRecordNames.map { CKRecord.ID(recordName: $0) })
-        backupRecordIDs.append(contentsOf: knownSummaryRecordNames.map { CKRecord.ID(recordName: $0) })
-
-        // The manifest names every live record, so the children of this recording
-        // are found with one batched read per type instead of a full scan.
+        // The manifest names every live record, so the children of a deleted
+        // recording are found without a scan.
         //
         // This read must not be swallowed. Failing it quietly deleted the recording
         // and left its transcript and summary in the cloud, where the next restore
         // brings them back as orphans — and the durable deletion entry, believing
         // itself finished, would not try again.
-        var manifestRecords = try await fetchBackupRecordsFromContentIndex()
-        if manifestRecords.transcripts.isEmpty && manifestRecords.summaries.isEmpty {
+        workspace.manifestRecords = try await fetchBackupRecordsFromContentIndex()
+        if workspace.manifestRecords.transcripts.isEmpty && workspace.manifestRecords.summaries.isEmpty {
             // No trusted manifest to name the children. A deletion that leaves
             // orphans behind is worse than one scan on a path the user drives.
-            manifestRecords.transcripts = try await fetchBackupRecords(
+            workspace.manifestRecords.transcripts = try await fetchBackupRecords(
                 recordType: Self.backupTranscriptRecordType)
-            manifestRecords.summaries = try await fetchBackupRecords(
+            workspace.manifestRecords.summaries = try await fetchBackupRecords(
                 recordType: Self.backupSummaryRecordType)
         }
-        let transcriptRecords = manifestRecords.transcripts
-        let summaryRecords = manifestRecords.summaries
-        let discoveredTranscriptRecords = transcriptRecords.filter { record in
-            backupRecordBelongsToRecording(record, recordingId: recordingId)
-        }
-        let discoveredSummaryRecords = summaryRecords.filter { record in
-            backupRecordBelongsToRecording(record, recordingId: recordingId)
-        }
-        let discoveredTranscriptRecordNames = discoveredTranscriptRecords.map { $0.recordID.recordName }
-        let discoveredSummaryRecordNames = discoveredSummaryRecords.map { $0.recordID.recordName }
-        backupRecordIDs.append(contentsOf: discoveredTranscriptRecords.map(\.recordID))
-        backupRecordIDs.append(contentsOf: discoveredSummaryRecords.map(\.recordID))
 
-        let legacySummaryRecordIDs = try await legacySummarySyncRecordIDs(
-            recordingId: recordingId,
-            summaryIds: summaryIds)
-
-        let deletedRecordCount = try await deleteExistingCloudRecords(
-            backupRecordIDs + legacySummaryRecordIDs)
-        try await removeBackupRecordNamesFromContentIndex(
-            recordingRecordNames: [recordingBackupRecordName],
-            transcriptRecordNames: Array(Set(knownTranscriptRecordNames + discoveredTranscriptRecordNames)),
-            summaryRecordNames: Array(Set(knownSummaryRecordNames + discoveredSummaryRecordNames)))
-        return deletedRecordCount
+        if needsLegacySummaryRecords {
+            workspace.legacySummaryRecords = await legacySummarySyncRecords()
+        }
+        return workspace
     }
 
-    private func deleteTranscriptContentRecords(
-        transcriptId: UUID
-    ) async throws -> Int {
-        let backupTranscriptRecordName = makeBackupRecordName(
-            prefix: Self.backupTranscriptRecordPrefix,
-            id: transcriptId
+    /// Adds a recording and everything hanging off it to the run's delete batch.
+    private func planRecordingContentDeletion(
+        recordingId: UUID,
+        transcriptIds: [UUID],
+        summaryIds: [UUID],
+        workspace: CloudDeletionWorkspace,
+        into plan: inout CloudDeletionPlan
+    ) {
+        let recordingRecordName = makeBackupRecordName(
+            prefix: Self.backupRecordingRecordPrefix,
+            id: recordingId
         )
-        var deletedRecordCount = try await deleteExistingCloudRecords(
-            [CKRecord.ID(recordName: backupTranscriptRecordName)])
-        try await removeBackupRecordNamesFromContentIndex(
-            recordingRecordNames: [],
-            transcriptRecordNames: [backupTranscriptRecordName],
-            summaryRecordNames: [])
+        plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordingRecordName))
+        plan.recordingRecordNamesToUnindex.insert(recordingRecordName)
 
-        // Clear the parent and summary references as part of the same cloud
-        // mutation. Otherwise a device restoring only the cloud backup could
-        // recreate a dangling transcript link after the transcript record was
-        // removed.
-        let transcriptIdString = transcriptId.uuidString
-        let manifestRecords = try await fetchBackupRecordsFromContentIndex()
-
-        // Recording records arrive without their audio assets, so the ones that
-        // need editing are refetched in full before being written back.
-        let recordingsToClear = manifestRecords.recordings.filter {
-            $0[Self.fieldTranscriptId] as? String == transcriptIdString
+        var transcriptRecordNames = Set(
+            transcriptIds.map { makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: $0) }
+        )
+        var summaryRecordNames = Set(
+            summaryIds.map { makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0) }
+        )
+        for record in workspace.manifestRecords.transcripts
+        where backupRecordBelongsToRecording(record, recordingId: recordingId) {
+            transcriptRecordNames.insert(record.recordID.recordName)
         }
+        for record in workspace.manifestRecords.summaries
+        where backupRecordBelongsToRecording(record, recordingId: recordingId) {
+            summaryRecordNames.insert(record.recordID.recordName)
+        }
+
+        plan.recordIDsToDelete.formUnion(transcriptRecordNames.map { CKRecord.ID(recordName: $0) })
+        plan.recordIDsToDelete.formUnion(summaryRecordNames.map { CKRecord.ID(recordName: $0) })
+        plan.transcriptRecordNamesToUnindex.formUnion(transcriptRecordNames)
+        plan.summaryRecordNamesToUnindex.formUnion(summaryRecordNames)
+
+        // Legacy `CD_EnhancedSummary` records predate the manifest, so they are
+        // matched out of the run's single scan rather than looked up by id.
+        plan.recordIDsToDelete.formUnion(summaryIds.map { CKRecord.ID(recordName: $0.uuidString) })
+        for record in workspace.legacySummaryRecords
+        where record[CloudKitSummaryRecord.recordingIdField] as? String == recordingId.uuidString {
+            plan.recordIDsToDelete.insert(record.recordID)
+        }
+    }
+
+    private func planTranscriptContentDeletion(
+        transcriptId: UUID,
+        into plan: inout CloudDeletionPlan
+    ) {
+        let recordName = makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: transcriptId)
+        plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordName))
+        plan.transcriptRecordNamesToUnindex.insert(recordName)
+        // The parent and summary references go in the same cloud mutation. Otherwise
+        // a device restoring only the cloud backup could recreate a dangling
+        // transcript link after the transcript record was removed.
+        plan.clearedTranscriptIds.insert(transcriptId.uuidString)
+    }
+
+    private func planSummaryContentDeletion(
+        summaryIds: [UUID],
+        into plan: inout CloudDeletionPlan
+    ) {
+        for summaryId in summaryIds {
+            let recordName = makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: summaryId)
+            plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordName))
+            plan.summaryRecordNamesToUnindex.insert(recordName)
+            // A summary's legacy sync record is named after the summary itself, so it
+            // is the one legacy record that needs no scan to find.
+            plan.recordIDsToDelete.insert(CKRecord.ID(recordName: summaryId.uuidString))
+            // The recording's scalar relationship and lifecycle status have to go too,
+            // or a restore resurrects a dangling summary reference from the parent.
+            plan.clearedSummaryIds.insert(summaryId.uuidString)
+        }
+    }
+
+    /// Issues everything a run's deletions add up to: one batched delete, one
+    /// manifest delta, and one save for the relationships that had to be cleared.
+    private func commitDeletionPlan(
+        _ plan: CloudDeletionPlan,
+        workspace: CloudDeletionWorkspace?
+    ) async throws -> Int {
+        var removedRecordCount = try await deleteExistingCloudRecords(Array(plan.recordIDsToDelete))
+
+        guard let workspace else {
+            return removedRecordCount
+        }
+
+        // Only names the manifest actually holds are worth a delta. Sending the rest
+        // would rewrite `content_index` on every sync that saw an old tombstone, for
+        // no change at all.
+        try await removeBackupRecordNamesFromContentIndex(
+            recordingRecordNames: Array(
+                plan.recordingRecordNamesToUnindex.intersection(workspace.manifestRecords.manifest.recordings)
+            ),
+            transcriptRecordNames: Array(
+                plan.transcriptRecordNamesToUnindex.intersection(workspace.manifestRecords.manifest.transcripts)
+            ),
+            summaryRecordNames: Array(
+                plan.summaryRecordNamesToUnindex.intersection(workspace.manifestRecords.manifest.summaries)
+            )
+        )
+
+        guard !plan.clearedTranscriptIds.isEmpty || !plan.clearedSummaryIds.isEmpty else {
+            return removedRecordCount
+        }
+
+        // A record this plan is deleting must never be written back. The manifest is
+        // read once at the top of the run, so a recording removed by one marker is
+        // still in that snapshot when a later marker clears a reference to it.
+        func survives(_ record: CKRecord) -> Bool {
+            !plan.recordIDsToDelete.contains(record.recordID)
+        }
+
+        let recordingsToClear = workspace.manifestRecords.recordings.filter { record in
+            survives(record) && (plan.clearsTranscript(on: record) || plan.clearsSummary(on: record))
+        }
+        // Recording records arrive without their audio assets, so the ones that need
+        // editing are refetched in full before being written back.
         let fullRecordings = try await fullRecordingRecords(for: recordingsToClear.map(\.recordID))
-        var relationshipRecordsToSave: [CKRecord] = []
+
+        var recordsToSave: [CKRecord] = []
         for partialRecord in recordingsToClear {
             let record = fullRecordings[partialRecord.recordID] ?? partialRecord
             var shouldSave = false
-            updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &shouldSave)
-            updateStringField(
-                Self.fieldTranscriptionStatus,
-                value: ProcessingStatus.notStarted.rawValue,
-                on: record,
-                changed: &shouldSave
-            )
-            updateDateField(Self.fieldLastModified, value: syncClock.now, on: record, changed: &shouldSave)
+            if plan.clearsTranscript(on: record) {
+                updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &shouldSave)
+                updateStringField(
+                    Self.fieldTranscriptionStatus,
+                    value: ProcessingStatus.notStarted.rawValue,
+                    on: record,
+                    changed: &shouldSave
+                )
+            }
+            if plan.clearsSummary(on: record) {
+                updateStringField(Self.fieldSummaryId, value: nil, on: record, changed: &shouldSave)
+                updateStringField(
+                    Self.fieldSummaryStatus,
+                    value: ProcessingStatus.notStarted.rawValue,
+                    on: record,
+                    changed: &shouldSave
+                )
+            }
             if shouldSave {
-                relationshipRecordsToSave.append(record)
+                updateDateField(Self.fieldLastModified, value: syncClock.now, on: record, changed: &shouldSave)
+                recordsToSave.append(record)
             }
         }
 
-        for record in manifestRecords.summaries where record[Self.fieldTranscriptId] as? String == transcriptIdString {
+        for record in workspace.manifestRecords.summaries
+        where survives(record) && plan.clearsTranscript(on: record) {
             var shouldSave = false
             updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &shouldSave)
             updateDateField(Self.fieldLastModified, value: syncClock.now, on: record, changed: &shouldSave)
             if shouldSave {
-                relationshipRecordsToSave.append(record)
+                recordsToSave.append(record)
             }
         }
 
-        try await saveBackupRecords(relationshipRecordsToSave)
-        deletedRecordCount += relationshipRecordsToSave.count
+        try await saveBackupRecords(recordsToSave)
+        removedRecordCount += recordsToSave.count
 
-        // A legacy summary record may still point at the removed transcript. Keep the
+        // A legacy summary record may still point at a removed transcript. Keep the
         // summary, but clear that relationship so legacy restore cannot recreate it.
-        let legacyRecords = try await fetchLegacySummarySyncRecords()
         var legacyRecordsToSave: [CKRecord] = []
-        for record in legacyRecords where record[CloudKitSummaryRecord.transcriptIdField] as? String == transcriptId.uuidString {
+        for record in workspace.legacySummaryRecords where survives(record) {
+            guard let transcriptIdString = record[CloudKitSummaryRecord.transcriptIdField] as? String,
+                  plan.clearedTranscriptIds.contains(transcriptIdString) else {
+                continue
+            }
             record[CloudKitSummaryRecord.transcriptIdField] = nil
             record[CloudKitSummaryRecord.lastModifiedField] = syncClock.now
             legacyRecordsToSave.append(record)
         }
         do {
             try await saveBackupRecords(legacyRecordsToSave)
-            deletedRecordCount += legacyRecordsToSave.count
+            removedRecordCount += legacyRecordsToSave.count
         } catch {
             AppLog.shared.iCloudSync(
                 "Could not clear deleted transcript references from \(legacyRecordsToSave.count) legacy summary record(s): \(error.localizedDescription)",
                 level: .error
             )
         }
-        return deletedRecordCount
+
+        return removedRecordCount
+    }
+
+    private func deleteCloudContentRecords(
+        recordingId: UUID,
+        transcriptIds: [UUID],
+        summaryIds: [UUID]
+    ) async throws -> Int {
+        let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: true)
+        var plan = CloudDeletionPlan()
+        planRecordingContentDeletion(
+            recordingId: recordingId,
+            transcriptIds: transcriptIds,
+            summaryIds: summaryIds,
+            workspace: workspace,
+            into: &plan
+        )
+        return try await commitDeletionPlan(plan, workspace: workspace)
+    }
+
+    private func deleteTranscriptContentRecords(
+        transcriptId: UUID
+    ) async throws -> Int {
+        let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: true)
+        var plan = CloudDeletionPlan()
+        planTranscriptContentDeletion(transcriptId: transcriptId, into: &plan)
+        return try await commitDeletionPlan(plan, workspace: workspace)
     }
 
     private func deleteSummaryContentRecords(
         summaryIds: [UUID]
     ) async throws -> Int {
-        let backupSummaryRecordNames = summaryIds.map {
-            makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0)
-        }
-        let recordIDs = summaryIds.map { CKRecord.ID(recordName: $0.uuidString) } +
-            backupSummaryRecordNames.map { CKRecord.ID(recordName: $0) }
-
-        let legacySummaryRecordIDs = try await legacySummarySyncRecordIDs(
-            recordingId: nil,
-            summaryIds: summaryIds)
-        var deletedRecordCount = try await deleteExistingCloudRecords(
-            recordIDs + legacySummaryRecordIDs)
-        try await removeBackupRecordNamesFromContentIndex(
-            recordingRecordNames: [],
-            transcriptRecordNames: [],
-            summaryRecordNames: backupSummaryRecordNames)
-
-        // Clear the recording's scalar relationship and lifecycle status so a
-        // restore cannot resurrect a dangling summary reference from the parent
-        // recording record.
-        let manifestRecords = try await fetchBackupRecordsFromContentIndex()
-        let summaryIdStrings = Set(summaryIds.map { $0.uuidString })
-        let recordingsToClear = manifestRecords.recordings.filter { record in
-            guard let summaryIdString = record[Self.fieldSummaryId] as? String else { return false }
-            return summaryIdStrings.contains(summaryIdString)
-        }
-        let fullRecordings = try await fullRecordingRecords(for: recordingsToClear.map(\.recordID))
-        var relationshipRecordsToSave: [CKRecord] = []
-        for partialRecord in recordingsToClear {
-            let record = fullRecordings[partialRecord.recordID] ?? partialRecord
-            var shouldSave = false
-            updateStringField(Self.fieldSummaryId, value: nil, on: record, changed: &shouldSave)
-            updateStringField(
-                Self.fieldSummaryStatus,
-                value: ProcessingStatus.notStarted.rawValue,
-                on: record,
-                changed: &shouldSave
-            )
-            updateDateField(Self.fieldLastModified, value: syncClock.now, on: record, changed: &shouldSave)
-            if shouldSave {
-                relationshipRecordsToSave.append(record)
-            }
-        }
-        try await saveBackupRecords(relationshipRecordsToSave)
-        deletedRecordCount += relationshipRecordsToSave.count
-        return deletedRecordCount
+        let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: false)
+        var plan = CloudDeletionPlan()
+        planSummaryContentDeletion(summaryIds: summaryIds, into: &plan)
+        return try await commitDeletionPlan(plan, workspace: workspace)
     }
 
     /// Deletes in one batch and reports how many records were really there. The
@@ -5971,24 +6206,6 @@ extension iCloudStorageManager {
         recordMetrics(modify: outcome)
         try outcome.throwIfIncomplete()
         return outcome.deleted.count - outcome.alreadyAbsent.count
-    }
-
-    private func legacySummarySyncRecordIDs(
-        recordingId: UUID?,
-        summaryIds: [UUID]
-    ) async throws -> [CKRecord.ID] {
-        let summaryIdStrings = Set(summaryIds.map { $0.uuidString })
-        var recordsToDelete: [CKRecord.ID] = summaryIds.map { CKRecord.ID(recordName: $0.uuidString) }
-
-        for record in await legacySummarySyncRecords() {
-            let recordRecordingId = record[CloudKitSummaryRecord.recordingIdField] as? String
-            if (recordingId.map { recordRecordingId == $0.uuidString } ?? false) ||
-                summaryIdStrings.contains(record.recordID.recordName) {
-                recordsToDelete.append(record.recordID)
-            }
-        }
-
-        return Array(Dictionary(grouping: recordsToDelete, by: { $0.recordName }).compactMap { $0.value.first })
     }
 
     private func fetchLegacySummarySyncRecords() async throws -> [CKRecord] {
@@ -6759,6 +6976,7 @@ extension iCloudStorageManager {
         guard !manifest.isEmpty else { return BackupContentRecordsFromIndex() }
 
         return BackupContentRecordsFromIndex(
+            manifest: manifest,
             recordings: try await fetchBackupRecordsByRecordNames(
                 Array(manifest.recordings).sorted(),
                 expectedRecordType: Self.backupRecordingRecordType,
@@ -6810,6 +7028,17 @@ extension iCloudStorageManager {
     /// lands more than this far after the deletion. Absorbs cross-device clock skew
     /// and the common race where a delete and a background write happen together.
     static let deletionReviveGraceInterval: TimeInterval = 60
+
+    /// How long a deletion marker is kept in CloudKit once its work is done.
+    ///
+    /// A marker exists so devices that were not present for a delete still learn
+    /// about it. Nothing ever removed them, so every delete the user had made was
+    /// replayed on every sync: sixty-six markers against a hundred and fifty live
+    /// records read ten thousand records and took six minutes. Past this window a
+    /// marker whose target is already gone from this device is retired. A device
+    /// that has been offline longer than this re-uploads what it still holds, which
+    /// is the same trade every tombstone-collecting sync engine makes.
+    static let deletionMarkerRetentionInterval: TimeInterval = 30 * 24 * 60 * 60
 
     /// Posted when the network comes back and durable work is still queued.
     static let networkRestoredNotification = Notification.Name("iCloudNetworkRestored")
