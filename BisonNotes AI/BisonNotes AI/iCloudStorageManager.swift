@@ -3,6 +3,7 @@ import CloudKit
 import SwiftUI
 import Network
 import CoreData
+import Synchronization
 
 // MARK: - Sync Status
 
@@ -1238,15 +1239,22 @@ class iCloudStorageManager: ObservableObject {
                 configurationsByRecordZoneID: nil
             )
 
-            var cloudOnlyRecords: [CKRecord] = []
+            // CloudKit calls this on its own queue, so the block must be
+            // `@Sendable` — a closure formed in this main-actor class otherwise
+            // inherits its isolation and traps on the callback — and the
+            // accumulator has to be synchronized rather than a captured `var`.
+            let collectedCloudOnlyRecords = Mutex<[CKRecord]>([])
+            // Phase 1 is finished, so this is a fixed set by now; the block reads a
+            // snapshot of it rather than the still-mutable local.
+            let alreadyCheckedUUIDs = checkedUUIDs
 
-            zoneChangesOperation.recordWasChangedBlock = { _, result in
+            zoneChangesOperation.recordWasChangedBlock = { @Sendable _, result in
                 switch result {
                 case .success(let record):
                     // Only process our summary records that we haven't already checked
                     if record.recordType == CloudKitSummaryRecord.recordType &&
-                       !checkedUUIDs.contains(record.recordID.recordName) {
-                        cloudOnlyRecords.append(record)
+                       !alreadyCheckedUUIDs.contains(record.recordID.recordName) {
+                        collectedCloudOnlyRecords.withLock { $0.append(record) }
                     }
                 case .failure(let error):
                     AppLog.shared.iCloudSync("Failed to fetch cloud-only record: \(error.localizedDescription)", level: .error)
@@ -1254,14 +1262,14 @@ class iCloudStorageManager: ObservableObject {
             }
 
             _ = try await withCheckedThrowingContinuation { continuation in
-                zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+                zoneChangesOperation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                     continuation.resume(with: result)
                 }
                 database.add(zoneChangesOperation)
             }
 
             // Convert the cloud-only records
-            for record in cloudOnlyRecords {
+            for record in collectedCloudOnlyRecords.withLock({ $0 }) {
                 do {
                     let summary = try createEnhancedSummaryData(from: record)
                     foundSummaries.append(summary)
@@ -1319,13 +1327,15 @@ class iCloudStorageManager: ObservableObject {
             configurationsByRecordZoneID: configsByZoneID
         )
 
-        var foundRecords: [CKRecord] = []
+        // `@Sendable` and a synchronized accumulator: CloudKit calls this back on
+        // its own queue, where a main-actor-isolated closure traps.
+        let collectedRecords = Mutex<[CKRecord]>([])
 
-        zoneChangesOperation.recordWasChangedBlock = { _, result in
+        zoneChangesOperation.recordWasChangedBlock = { @Sendable _, result in
             switch result {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
-                    foundRecords.append(record)
+                    collectedRecords.withLock { $0.append(record) }
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record with configuration: \(error.localizedDescription)", level: .error)
@@ -1333,7 +1343,7 @@ class iCloudStorageManager: ObservableObject {
         }
 
         _ = try await withCheckedThrowingContinuation { continuation in
-            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                 continuation.resume(with: result)
             }
             database.add(zoneChangesOperation)
@@ -1341,7 +1351,7 @@ class iCloudStorageManager: ObservableObject {
 
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []
-        for record in foundRecords {
+        for record in collectedRecords.withLock({ $0 }) {
             do {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
@@ -1362,13 +1372,15 @@ class iCloudStorageManager: ObservableObject {
             configurationsByRecordZoneID: nil
         )
 
-        var foundRecords: [CKRecord] = []
+        // `@Sendable` and a synchronized accumulator: CloudKit calls this back on
+        // its own queue, where a main-actor-isolated closure traps.
+        let collectedRecords = Mutex<[CKRecord]>([])
 
-        zoneChangesOperation.recordWasChangedBlock = { _, result in
+        zoneChangesOperation.recordWasChangedBlock = { @Sendable _, result in
             switch result {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
-                    foundRecords.append(record)
+                    collectedRecords.withLock { $0.append(record) }
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record: \(error.localizedDescription)", level: .error)
@@ -1376,7 +1388,7 @@ class iCloudStorageManager: ObservableObject {
         }
 
         _ = try await withCheckedThrowingContinuation { continuation in
-            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                 continuation.resume(with: result)
             }
             database.add(zoneChangesOperation)
@@ -1384,7 +1396,7 @@ class iCloudStorageManager: ObservableObject {
 
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []
-        for record in foundRecords {
+        for record in collectedRecords.withLock({ $0 }) {
             do {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)
@@ -1405,13 +1417,15 @@ class iCloudStorageManager: ObservableObject {
             configurationsByRecordZoneID: nil
         )
 
-        var foundRecords: [CKRecord] = []
+        // `@Sendable` and a synchronized accumulator: CloudKit calls this back on
+        // its own queue, where a main-actor-isolated closure traps.
+        let collectedRecords = Mutex<[CKRecord]>([])
 
-        zoneChangesOperation.recordWasChangedBlock = { _, result in
+        zoneChangesOperation.recordWasChangedBlock = { @Sendable _, result in
             switch result {
             case .success(let record):
                 if record.recordType == CloudKitSummaryRecord.recordType {
-                    foundRecords.append(record)
+                    collectedRecords.withLock { $0.append(record) }
                 }
             case .failure(let error):
                 AppLog.shared.iCloudSync("Failed to fetch record in zone: \(error.localizedDescription)", level: .error)
@@ -1419,7 +1433,7 @@ class iCloudStorageManager: ObservableObject {
         }
 
         _ = try await withCheckedThrowingContinuation { continuation in
-            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { result in
+            zoneChangesOperation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                 continuation.resume(with: result)
             }
             database.add(zoneChangesOperation)
@@ -1427,7 +1441,7 @@ class iCloudStorageManager: ObservableObject {
 
         // Convert records to summaries
         var summaries: [EnhancedSummaryData] = []
-        for record in foundRecords {
+        for record in collectedRecords.withLock({ $0 }) {
             do {
                 let summary = try createEnhancedSummaryData(from: record)
                 summaries.append(summary)

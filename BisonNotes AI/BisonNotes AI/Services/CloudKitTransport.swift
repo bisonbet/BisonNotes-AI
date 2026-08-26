@@ -194,12 +194,15 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
             configurationsByRecordZoneID: nil
         )
 
-        // CloudKit invokes the per-record block on its own queue, so the
-        // accumulator is shared state and needs real synchronization.
+        // CloudKit invokes these blocks on its own queue, never on the main one.
+        // They must therefore be `@Sendable`: a closure formed in this main-actor
+        // class otherwise inherits its isolation, and the runtime isolation check
+        // Swift emits for that traps the moment CloudKit calls back. The `Mutex`
+        // accumulators are what make the captured state safe to touch there.
         let collected = Mutex<[CKRecord]>([])
         let zoneFailure = Mutex<(any Error)?>(nil)
         let recordFailure = Mutex<(any Error)?>(nil)
-        operation.recordWasChangedBlock = { _, result in
+        operation.recordWasChangedBlock = { @Sendable _, result in
             switch result {
             case .success(let record):
                 collected.withLock { $0.append(record) }
@@ -213,14 +216,14 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         // A zone can fail while the operation as a whole reports success. Silently
         // returning the partial list would make an unavailable zone look like an
         // empty one to every caller that reads the result.
-        operation.recordZoneFetchResultBlock = { _, result in
+        operation.recordZoneFetchResultBlock = { @Sendable _, result in
             if case .failure(let error) = result {
                 zoneFailure.withLock { $0 = $0 ?? error }
             }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            operation.fetchRecordZoneChangesResultBlock = { result in
+            operation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                 continuation.resume(with: result)
             }
             database.add(operation)
@@ -243,9 +246,11 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         )
         operation.fetchAllChanges = true
 
+        // `@Sendable` for the same reason as above: CloudKit calls these on its own
+        // queue, and a main-actor-isolated closure traps there.
         let collected = Mutex<[CKRecord.ID]>([])
         let zoneFailure = Mutex<(any Error)?>(nil)
-        operation.recordWasChangedBlock = { recordID, _ in
+        operation.recordWasChangedBlock = { @Sendable recordID, _ in
             // Keep the ID even when the record body failed to decode; it still
             // needs deleting.
             collected.withLock { $0.append(recordID) }
@@ -254,14 +259,14 @@ final class CKDatabaseCloudKitTransport: CloudKitTransport {
         // then resets the local bookkeeping. A zone that failed while the operation
         // succeeded would produce an empty, successful erase with records still in
         // the account, so the failure has to reach the caller.
-        operation.recordZoneFetchResultBlock = { _, result in
+        operation.recordZoneFetchResultBlock = { @Sendable _, result in
             if case .failure(let error) = result {
                 zoneFailure.withLock { $0 = $0 ?? error }
             }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            operation.fetchRecordZoneChangesResultBlock = { result in
+            operation.fetchRecordZoneChangesResultBlock = { @Sendable result in
                 continuation.resume(with: result)
             }
             database.add(operation)
