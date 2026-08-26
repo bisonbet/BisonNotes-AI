@@ -73,6 +73,23 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertFalse(KeychainSecretStore.isLegacyAWSSettingKey("openAICompatibleModel"))
     }
 
+    func testMissingQueryableIndexProducesAnActionableError() {
+        // What CloudKit actually says, which names neither the index nor the fix.
+        XCTAssertTrue(
+            iCloudStorageManager.isMissingQueryableIndexDiagnostic(
+                "Field 'recordName' is not marked queryable"
+            )
+        )
+        XCTAssertTrue(iCloudStorageManager.isMissingQueryableIndexDiagnostic("'recordName' is not queryable"))
+        XCTAssertFalse(iCloudStorageManager.isMissingQueryableIndexDiagnostic("Network unavailable"))
+
+        let error = iCloudStorageManager.cloudBackupQueryableIndexError(recordType: "CD_BackupDeletion")
+        XCTAssertTrue(error.localizedDescription.contains("CD_BackupDeletion"))
+        let suggestion = (error.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String) ?? ""
+        XCTAssertTrue(suggestion.contains("QUERYABLE"), "the message has to name the fix, not just the symptom")
+        XCTAssertTrue(suggestion.lowercased().contains("recordname"))
+    }
+
     func testProductionSchemaDiagnosticProducesActionableError() {
         let diagnostic = "Cannot create new type CD_BackupRecording in production schema"
 

@@ -6541,10 +6541,20 @@ extension iCloudStorageManager {
                 level: .debug
             )
             if let originalError {
-                throw originalError
+                throw Self.actionableScanError(originalError, recordType: recordType)
             }
             return []
         }
+    }
+
+    /// Neither way of listing a record type works when the query has no index and
+    /// the default zone cannot enumerate changes. Say which one is missing and how
+    /// to add it, rather than passing CloudKit's own wording to the user.
+    private static func actionableScanError(_ error: any Error, recordType: String) -> any Error {
+        guard isMissingQueryableIndexDiagnostic(error.localizedDescription) else {
+            return error
+        }
+        return cloudBackupQueryableIndexError(recordType: recordType)
     }
 
     private struct QueryScanResult {
@@ -7252,6 +7262,34 @@ extension iCloudStorageManager {
         let normalized = diagnosticText.lowercased()
         return normalized.contains("cannot create new type") &&
             normalized.contains("production schema")
+    }
+
+    /// CloudKit refuses a fetch-everything query unless the record type carries a
+    /// QUERYABLE index on `recordName`. Saving records creates the type but never
+    /// the index, so a container can hold data that cannot be listed.
+    static func isMissingQueryableIndexDiagnostic(_ diagnosticText: String) -> Bool {
+        let normalized = diagnosticText.lowercased()
+        return normalized.contains("not queryable") || normalized.contains("not marked queryable")
+    }
+
+    static let missingQueryableIndexErrorCode = 4013
+
+    /// Names the one thing that fixes this, because the raw CloudKit string does
+    /// not: the index has to be added per record type in the CloudKit Console.
+    static func cloudBackupQueryableIndexError(recordType: String) -> NSError {
+        NSError(
+            domain: "iCloudStorageManager",
+            code: missingQueryableIndexErrorCode,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "iCloud sync cannot list \(recordType) records because that record type has no " +
+                    "queryable index on recordName.",
+                NSLocalizedRecoverySuggestionErrorKey:
+                    "In the CloudKit Console, open Schema › Indexes for \(recordType) and add a " +
+                    "QUERYABLE index on recordName, then deploy the schema to production. " +
+                    "Deletions made on other devices cannot be seen until this exists."
+            ]
+        )
     }
 
     static func cloudBackupProductionSchemaError(recordType: String) -> NSError {
