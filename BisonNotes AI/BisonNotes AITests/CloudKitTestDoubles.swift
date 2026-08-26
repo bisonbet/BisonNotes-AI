@@ -436,6 +436,21 @@ final class RecordingAssetStaging: CloudAssetStaging {
     }
 }
 
+/// A staging area that can never make a copy — a full or unwritable temporary
+/// directory. Distinct from a missing source: the file is still there, and still
+/// owed to the cloud.
+@MainActor
+final class UnwritableAssetStaging: CloudAssetStaging {
+    private(set) var attemptedSources: [URL] = []
+
+    func stage(_ sourceURL: URL) -> URL? {
+        attemptedSources.append(sourceURL)
+        return nil
+    }
+
+    func cleanUp() {}
+}
+
 // MARK: - Record builders
 
 enum CloudKitTestRecords {

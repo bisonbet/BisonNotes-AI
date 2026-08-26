@@ -44,11 +44,17 @@ enum CloudSyncIntent: String, CaseIterable, Sendable {
     }
 
     /// True when running this puts content back into CloudKit.
+    ///
+    /// A restore reads the cloud, but neither of its paths only reads it: a review
+    /// restore reactivates the selected records and adds them to the manifest, and
+    /// a full restore flushes queued deletion markers before it reads. Either one,
+    /// run against the container the user has just emptied, repopulates it after
+    /// the erase has already reported itself finished.
     var writesToCloud: Bool {
         switch self {
-        case .routineSnapshot, .deletionFlush, .seedFromThisDevice, .fullRepair:
+        case .routineSnapshot, .deletionFlush, .seedFromThisDevice, .fullRepair, .restoreToThisDevice:
             return true
-        case .restoreToThisDevice, .reviewScan, .erase:
+        case .reviewScan, .erase:
             return false
         }
     }

@@ -286,6 +286,18 @@ class iCloudStorageManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "lastAutoBackupDate") }
     }
 
+    // MARK: - Deferred Retry
+
+    /// Brings routine sync back after a server-requested backoff has expired.
+    private var deferredSyncRetryTimer: Timer?
+
+    /// When the armed retry is due, so a second deferral does not push it later.
+    private(set) var deferredSyncRetryTarget: Date?
+
+    /// Fire a little after the window rather than exactly on it: a timer that
+    /// lands a fraction early is refused by the same gate and buys nothing.
+    private let deferredSyncRetryLeeway: TimeInterval = 5
+
     // MARK: - Private Properties
 
     private static let sharedContainerIdentifier = "iCloud.Bison-Networking.BisonNotes-AI"
@@ -364,6 +376,17 @@ class iCloudStorageManager: ObservableObject {
         return coordinator
     }
 
+    /// Builds the per-run staging area audio assets are copied into. Injectable so
+    /// a failure to stage — a full or unwritable temporary directory — can be
+    /// exercised without arranging one on the test machine.
+    private var assetStagingFactory: @MainActor (String) -> any CloudAssetStaging
+
+    #if DEBUG
+    func setAssetStagingFactoryForTesting(_ factory: @escaping @MainActor (String) -> any CloudAssetStaging) {
+        assetStagingFactory = factory
+    }
+    #endif
+
     func recordMetrics(fetch outcome: CloudKitFetchOutcome) {
         activeRunRecorder?.add(fetch: outcome)
     }
@@ -377,13 +400,17 @@ class iCloudStorageManager: ObservableObject {
         clock: any CloudSyncClock = SystemCloudSyncClock(),
         sleeper: any CloudSyncSleeper = SystemCloudSyncSleeper(),
         preferences: any CloudSyncPreferencesStore = UserDefaultsCloudSyncPreferencesStore(),
-        metricsSink: (any CloudSyncMetricsSink)? = CloudSyncLogMetricsSink()
+        metricsSink: (any CloudSyncMetricsSink)? = CloudSyncLogMetricsSink(),
+        assetStagingFactory: @escaping @MainActor (String) -> any CloudAssetStaging = {
+            TemporaryDirectoryAssetStaging(runIdentifier: $0)
+        }
     ) {
         self.injectedTransport = transport
         self.syncClock = clock
         self.syncSleeper = sleeper
         self.syncPreferences = preferences
         self.syncMetricsSink = metricsSink
+        self.assetStagingFactory = assetStagingFactory
         self.deviceIdentifier = PlatformDevice.vendorIdentifier
 
         // Load saved settings
@@ -525,6 +552,7 @@ class iCloudStorageManager: ObservableObject {
         // Stop periodic sync
         syncTimer?.invalidate()
         syncTimer = nil
+        cancelDeferredSyncRetry()
 
         await updateSyncStatus(.idle)
         AppLog.shared.iCloudSync("iCloud sync disabled")
@@ -2572,6 +2600,9 @@ struct CloudBackupResult {
     var summariesBackedUp: Int = 0
     var audioFilesBackedUp: Int = 0
     var audioFilesSkippedUnchanged: Int = 0
+    /// Audio this run meant to upload and could not stage a copy of. The run is
+    /// otherwise complete, but it must not be recorded as one.
+    var audioFilesPendingRetry: Int = 0
     var settingsBackedUp: Bool = false
     var includedSensitiveSettings: Bool = false
     var wasSkippedNoChanges: Bool = false
@@ -3394,9 +3425,7 @@ extension iCloudStorageManager {
 
         // Only recordings that are actually being written are refetched in full,
         // and only then does their audio asset come back down with them.
-        let staging = TemporaryDirectoryAssetStaging(
-            runIdentifier: recorder?.runIdentifier ?? UUID().uuidString
-        )
+        let staging = assetStagingFactory(recorder?.runIdentifier ?? UUID().uuidString)
         defer { staging.cleanUp() }
 
         // Only records the cloud already holds need the full refetch; a recording
@@ -3555,11 +3584,12 @@ extension iCloudStorageManager {
         )
 
         // Only a complete run may advance the signature; a partial failure threw
-        // long before this line. Audio that CloudKit would not take is the one
-        // thing that gets this far unfinished: the metadata went, but the upload
-        // did not, and recording the signature here would let every later run take
-        // the unchanged-since-last-backup shortcut and never retry it.
-        if saveOutcome.didDropAudioToSaveMetadata {
+        // long before this line. Audio is the one thing that gets this far
+        // unfinished — CloudKit refused the asset, or no staging copy could be
+        // made of it. The metadata went either way, and recording the signature
+        // here would let every later run take the unchanged-since-last-backup
+        // shortcut and never retry the upload.
+        if saveOutcome.didDropAudioToSaveMetadata || result.audioFilesPendingRetry > 0 {
             UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
             AppLog.shared.iCloudSync(
                 "Audio still needs uploading, so this run is not recorded as a complete backup",
@@ -5006,6 +5036,62 @@ extension iCloudStorageManager {
         )
     }
 
+    /// Arms a single retry for when CloudKit's backoff window expires.
+    ///
+    /// A deferral is described to the caller as work that resumes by itself, and
+    /// nothing else makes that true. In the default `.changesOnly` mode the
+    /// periodic timer runs no routine reconcile, so an app left in the foreground
+    /// with no further edit, activation, or network transition would sit on unsent
+    /// local work and undiscovered remote changes long after the gate had opened.
+    private func scheduleDeferredSyncRetry(
+        until: Date,
+        appCoordinator: AppDataCoordinator,
+        reason: CloudSyncReason
+    ) {
+        guard isEnabled else { return }
+        // Keep the earliest outstanding retry. Re-arming on every deferred request
+        // would push the retry further out each time one arrived.
+        if deferredSyncRetryTimer != nil, let armed = deferredSyncRetryTarget, armed <= until {
+            return
+        }
+
+        deferredSyncRetryTimer?.invalidate()
+        deferredSyncRetryTarget = until
+        let delay = max(until.timeIntervalSinceNow, 0) + deferredSyncRetryLeeway
+        AppLog.shared.iCloudSync(
+            "Sync deferred by CloudKit; retrying in \(Int(delay))s",
+            level: .debug
+        )
+        deferredSyncRetryTimer = Timer.scheduledTimer(
+            withTimeInterval: delay,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.deferredSyncRetryTimer = nil
+                self.deferredSyncRetryTarget = nil
+                guard self.isEnabled, self.networkStatus.canSync else { return }
+                do {
+                    _ = try await self.reconcileAllDataWithiCloud(
+                        appCoordinator: appCoordinator,
+                        reason: reason
+                    )
+                } catch {
+                    AppLog.shared.iCloudSync(
+                        "Retry after a CloudKit backoff failed: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
+        }
+    }
+
+    func cancelDeferredSyncRetry() {
+        deferredSyncRetryTimer?.invalidate()
+        deferredSyncRetryTimer = nil
+        deferredSyncRetryTarget = nil
+    }
+
     func reconcileAllDataWithiCloud(
         appCoordinator: AppDataCoordinator,
         reason: CloudSyncReason
@@ -5025,6 +5111,7 @@ extension iCloudStorageManager {
             // here would be a lie; the caller needs to know work is still pending.
             var deferredResult = CloudReconcileResult()
             deferredResult.wasDeferredUntil = deferredUntil
+            armRetryIfDeferred(deferredResult, appCoordinator: appCoordinator)
             return deferredResult
         }
 
@@ -5036,6 +5123,8 @@ extension iCloudStorageManager {
 
         switch outcome {
         case .completed:
+            // A run can start and still be turned away part way through.
+            armRetryIfDeferred(result, appCoordinator: appCoordinator)
             return result
         case .joinedRunningOperation(let intent), .coalescedIntoFollowUp(let intent):
             // The work happened, but not as this request's own run. Reporting an
@@ -5048,8 +5137,24 @@ extension iCloudStorageManager {
             return result
         case .deferred(let until):
             result.wasDeferredUntil = until
+            armRetryIfDeferred(result, appCoordinator: appCoordinator)
             return result
         }
+    }
+
+    /// Deliberately re-enters `reconcileAllDataWithiCloud` rather than the throttled
+    /// trigger in `AppDataCoordinator`: a deferred run never advanced the maintenance
+    /// clock, and the work it left behind is owed regardless of that window.
+    private func armRetryIfDeferred(
+        _ result: CloudReconcileResult,
+        appCoordinator: AppDataCoordinator
+    ) {
+        guard let until = result.wasDeferredUntil else { return }
+        scheduleDeferredSyncRetry(
+            until: until,
+            appCoordinator: appCoordinator,
+            reason: .deferredRetry
+        )
     }
 
     private func performReconcile(
@@ -5137,6 +5242,8 @@ extension iCloudStorageManager {
             // failed pass must not buy itself fifteen quiet minutes.
             lastSuccessfulRoutineSyncDate = Date()
             hasPendingLocalChanges = false
+            // Whatever an earlier backoff left owing has now been done.
+            cancelDeferredSyncRetry()
             endRun(recorder, result: result.backupResult.wasSkippedNoChanges ? .skippedNoChanges : .succeeded)
             return result
         } catch let deferral as CloudSyncDeferredError {
@@ -7147,8 +7254,13 @@ extension iCloudStorageManager {
             return false
         case .upload(let uploadByteCount, let uploadSignature):
             guard let localURL, let stagedURL = staging.stage(localURL) else {
-                // The file went away between the check and the copy. Metadata still
-                // uploads; the next run with the file present attaches the audio.
+                // Either the file went away between the check and the copy, or the
+                // copy itself failed — a full or momentarily unwritable temporary
+                // directory. Metadata still uploads, but this run has not done what
+                // it set out to do: its signature already covers this file's
+                // unchanged contents, so stamping it would let every later run take
+                // the nothing-changed shortcut and never come back for the audio.
+                result.audioFilesPendingRetry += 1
                 return false
             }
 

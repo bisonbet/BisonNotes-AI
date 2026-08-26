@@ -32,6 +32,8 @@ enum CloudSyncReason: String, CaseIterable, Sendable {
     case userDeletion
     case networkRestored
     case periodicHealthCheck
+    /// A run re-entered because a server-requested backoff window has expired.
+    case deferredRetry
     case manualBackup
     case manualRestore
     case databaseRepair

@@ -67,6 +67,8 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
     override func tearDown() async throws {
         manager?.clearPendingCloudMutationsForTesting()
+        // A retry armed by a deferred run holds the coordinator until it fires.
+        manager?.cancelDeferredSyncRetry()
         manager = nil
         metrics = nil
         preferences = nil
@@ -459,6 +461,74 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertNil(manager.lastSuccessfulRoutineSyncDate, "A deferred run must not buy itself a quiet maintenance window")
         XCTAssertEqual(metrics.lastReport?.result, .deferred)
         XCTAssertTrue(contentModifyIndexes.isEmpty)
+    }
+
+    /// A deferral is reported as work that resumes by itself. In the default
+    /// `.changesOnly` mode nothing else makes that true: the periodic timer runs no
+    /// routine reconcile, so a foregrounded app with no further edit, activation or
+    /// network transition would never come back for the work.
+    func testADeferredRunArmsItsOwnRetry() async throws {
+        try createCompleteRecording(named: "Deferred, then owed")
+        transport.fetchFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 600)]
+
+        let result = try await runReconcile()
+        let deferredUntil = try XCTUnwrap(result.wasDeferredUntil)
+        let armed = try XCTUnwrap(
+            manager.deferredSyncRetryTarget,
+            "A deferred run must schedule its own return; nothing else will"
+        )
+        XCTAssertEqual(armed.timeIntervalSince1970, deferredUntil.timeIntervalSince1970, accuracy: 1)
+
+        // A second deferral must not keep pushing the retry further out.
+        transport.fetchFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 3600)]
+        _ = try await runReconcile(reason: .appBecameActive)
+        let stillArmed = try XCTUnwrap(manager.deferredSyncRetryTarget)
+        XCTAssertEqual(
+            stillArmed.timeIntervalSince1970,
+            armed.timeIntervalSince1970,
+            accuracy: 1,
+            "The earliest outstanding retry stands"
+        )
+    }
+
+    /// The temporary directory can be full or momentarily unwritable. The metadata
+    /// still goes, but the run has not done what it set out to do — and its
+    /// signature already covers this file's unchanged contents, so stamping it
+    /// would mean no later run ever came back for the audio.
+    func testAudioThatCouldNotBeStagedLeavesTheBackupSignaturePending() async throws {
+        let recordingId = try createCompleteRecording(named: "Unstageable audio")
+        // A recording created outside the Documents directory is stored by filename
+        // alone, so the audio has to be where the app would really look for it —
+        // otherwise the run decides there is nothing to upload and proves nothing.
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let audioURL = documents.appendingPathComponent(try XCTUnwrap(recording.recordingURL))
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+
+        let staging = UnwritableAssetStaging()
+        manager.setAssetStagingFactoryForTesting { _ in staging }
+
+        _ = try await manager.backupAllDataToiCloud(
+            appCoordinator: appCoordinator,
+            options: CloudBackupOptions(
+                includeAudioFiles: true,
+                includeSettings: false,
+                includeSensitiveSettings: false
+            )
+        )
+
+        XCTAssertFalse(staging.attemptedSources.isEmpty, "The run has to have tried to upload the audio")
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
+            "Audio that never left the device must not be recorded as a complete backup"
+        )
+        XCTAssertNotNil(
+            transport.record(named: "backup_recording_\(recordingId.uuidString)"),
+            "…while the metadata still uploads: audio never blocks it"
+        )
     }
 
     func testADeferredSaveLeavesTheUploadOutstanding() async throws {
@@ -922,6 +992,45 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     func testAReadQueuedBeforeAnEraseStillRuns() async throws {
         let coordinator = CloudSyncOperationCoordinator()
         let gate = AsyncGate()
+        var scanRan = false
+
+        let erase = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .erase,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the erase to start") { coordinator.isRunning }
+
+        let scan = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .reviewScan,
+                allowJoiningRunningOperation: false,
+                coalescesWithEquivalentRequests: false
+            ) {
+                scanRan = true
+            }
+        }
+        await waitUntil("the scan to queue behind it") { coordinator.hasPendingFollowUp }
+        gate.open()
+
+        _ = try await erase.value
+        _ = try await scan.value
+
+        XCTAssertTrue(scanRan, "Only work that writes to the cloud is cancelled by an erase")
+    }
+
+    /// A restore reads the cloud, but it does not only read it: a review restore
+    /// reactivates its records and adds them to the manifest, and a full restore
+    /// flushes queued deletion markers first. Queued behind an erase, either one
+    /// repopulates the container the user has just emptied — after the erase has
+    /// already told them it finished.
+    func testARestoreQueuedBeforeAnEraseIsCancelledWithIt() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
         var restoreRan = false
 
         let erase = Task { @MainActor in
@@ -948,9 +1057,14 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         gate.open()
 
         _ = try await erase.value
-        _ = try await restore.value
+        do {
+            _ = try await restore.value
+            XCTFail("A restore queued before an erase must not quietly repopulate the cloud")
+        } catch is CloudSyncSupersededByEraseError {
+            // Expected: the caller is told why, rather than left believing it ran.
+        }
 
-        XCTAssertTrue(restoreRan, "Only work that writes to the cloud is cancelled by an erase")
+        XCTAssertFalse(restoreRan)
     }
 
     /// Without a trusted manifest the snapshot is only what this device already

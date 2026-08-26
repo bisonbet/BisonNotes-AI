@@ -55,7 +55,9 @@ enum CloudAudioAssetPolicy {
 @MainActor
 protocol CloudAssetStaging: AnyObject {
     /// Copies `sourceURL` into this run's staging directory and returns the copy.
-    /// Returns `nil` when the source is gone — the caller keeps the metadata.
+    /// Returns `nil` when no copy could be made — the source is gone, or the
+    /// staging directory is full or unwritable. The caller keeps the metadata and
+    /// leaves the audio owing.
     func stage(_ sourceURL: URL) -> URL?
     /// Removes every staged file. Callers invoke this from `defer`, after CloudKit
     /// has reported a result for every record that referenced a staged asset.
