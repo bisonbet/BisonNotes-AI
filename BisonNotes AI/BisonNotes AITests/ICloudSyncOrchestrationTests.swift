@@ -359,6 +359,114 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertTrue(transport.ledger.isEmpty, "Not one request may be sent during a server-requested backoff")
     }
 
+    /// A mid-run deferral is the dangerous case: the run has already started, so
+    /// the entry-point backoff check cannot catch it. If deferred records fall
+    /// through as "absent", the run looks like a successful sync of an empty cloud.
+    func testADeferralPartWayThroughARunDoesNotLookLikeASuccessfulSync() async throws {
+        try createCompleteRecording(named: "Deferred mid-run")
+        // The manifest read succeeds; the content snapshot is thrown back at us.
+        transport.fetchFailures = [
+            nil,
+            CloudKitTestError.ckError(.requestRateLimited, retryAfter: 900)
+        ]
+
+        let result = try await runReconcile()
+
+        XCTAssertNotNil(result.wasDeferredUntil, "A run that never reached CloudKit must report itself as deferred")
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
+            "Deferred work is not uploaded work; the signature must not claim otherwise"
+        )
+        XCTAssertNil(manager.lastSuccessfulRoutineSyncDate, "A deferred run must not buy itself a quiet maintenance window")
+        XCTAssertEqual(metrics.lastReport?.result, .deferred)
+        XCTAssertTrue(contentModifyIndexes.isEmpty)
+    }
+
+    func testADeferredSaveLeavesTheUploadOutstanding() async throws {
+        try createCompleteRecording(named: "Deferred save")
+        transport.modifyFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 900)]
+
+        let result = try await runReconcile()
+
+        XCTAssertNotNil(result.wasDeferredUntil)
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
+            "Records that never left the device must still look like pending work on the next activation"
+        )
+        XCTAssertFalse(manager.shouldStartRoutineSnapshot(force: false), "…but not until the backoff window has passed")
+
+        clock.advance(901)
+        XCTAssertTrue(
+            manager.shouldStartRoutineSnapshot(force: false),
+            "Once CloudKit is willing to talk again the outstanding upload must be retried"
+        )
+    }
+
+    /// A conflict this device correctly loses still has to reach Core Data on the
+    /// same pass — otherwise the winning remote edit waits for the next sync.
+    func testAConflictLostToANewerServerRecordIsAppliedInTheSameRun() async throws {
+        let recordingId = try createRecordingOnlyForConflict(named: "Local name")
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        let recordID = CKRecord.ID(recordName: recordName)
+
+        // The cloud copy this run fetches looks older, so the backup leg decides to
+        // upload…
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName,
+                fields: [
+                    "recordingName": "Stale cloud name",
+                    "recordingDate": Date(),
+                    "createdAt": Date(),
+                    "lastModified": Date().addingTimeInterval(-3_600),
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        // …but another device wrote a newer edit in between, and the save conflicts.
+        let serverWinner = CloudKitTestRecords.record(
+            type: "CD_BackupRecording",
+            name: recordName,
+            fields: [
+                "recordingName": "Renamed on another device",
+                "recordingDate": Date(),
+                "createdAt": Date(),
+                "lastModified": Date().addingTimeInterval(3_600),
+                "syncLifecycle": "active",
+                "syncSchemaVersion": 2
+            ]
+        )
+        transport.perRecordSaveFailures[recordID] = [
+            CloudKitTestError.ckError(.serverRecordChanged, serverRecord: serverWinner)
+        ]
+
+        _ = try await runReconcile()
+
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(
+            recording.recordingName,
+            "Renamed on another device",
+            "The server's winning edit must be applied on this pass, not carried as our stale local copy"
+        )
+    }
+
+    @discardableResult
+    private func createRecordingOnlyForConflict(named name: String) throws -> UUID {
+        let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        return appCoordinator.addRecording(
+            url: audioURL,
+            name: name,
+            date: Date(),
+            fileSize: 1_024,
+            duration: 30,
+            quality: .whisperOptimized
+        )
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

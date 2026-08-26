@@ -72,6 +72,26 @@ struct CloudKitRetryPolicy: Equatable {
     }
 }
 
+// MARK: - Deferral
+
+/// Thrown when records could not be sent because CloudKit asked this device to
+/// wait. It is deliberately not a per-record failure: nothing went wrong, the
+/// work simply has not happened yet.
+///
+/// Without it, a deferred fetch looks like an empty cloud and a deferred save
+/// looks like a completed upload, and the run goes on to advance the backup
+/// signature and the throttle clock as though everything had reached CloudKit.
+struct CloudSyncDeferredError: LocalizedError, Equatable {
+    let until: Date
+    let recordCount: Int
+
+    var errorDescription: String? {
+        let seconds = max(0, Int(until.timeIntervalSinceNow.rounded()))
+        return "iCloud asked this device to wait \(seconds)s before syncing again. " +
+            "\(recordCount) item\(recordCount == 1 ? "" : "s") will sync automatically after that."
+    }
+}
+
 // MARK: - Outcomes
 
 /// Per-record results of a batched fetch. Callers read `records` for what arrived
@@ -89,10 +109,17 @@ struct CloudKitFetchOutcome {
 
     func record(for recordID: CKRecord.ID) -> CKRecord? { records[recordID] }
 
-    /// Rethrows the first permanent failure. Used where the previous per-record
-    /// code path threw, so error surfacing to the UI is unchanged.
-    func throwIfFailed() throws {
+    /// Rethrows the first permanent failure, or reports a deferral. Used where the
+    /// previous per-record code path threw, so error surfacing is unchanged.
+    ///
+    /// Deferred records must not fall through as "absent": a caller that reads
+    /// `records` would otherwise conclude the cloud is empty when it has simply
+    /// not been asked yet.
+    func throwIfIncomplete() throws {
         if let error = failures.values.first { throw error }
+        if let deferredUntil, !deferred.isEmpty {
+            throw CloudSyncDeferredError(until: deferredUntil, recordCount: deferred.count)
+        }
     }
 }
 
@@ -113,8 +140,14 @@ struct CloudKitModifyOutcome {
     var savedCount: Int { saved.count }
     var deletedCount: Int { deleted.count }
 
-    func throwIfFailed() throws {
+    /// Rethrows the first permanent failure, or reports a deferral. A deferred
+    /// save reached nobody, so treating an empty `failures` set as success would
+    /// let the run mark work uploaded that is still sitting on this device.
+    func throwIfIncomplete() throws {
         if let error = failures.values.first { throw error }
+        if let deferredUntil, !deferred.isEmpty {
+            throw CloudSyncDeferredError(until: deferredUntil, recordCount: deferred.count)
+        }
     }
 }
 

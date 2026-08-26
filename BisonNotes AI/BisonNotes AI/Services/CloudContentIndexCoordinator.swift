@@ -164,7 +164,7 @@ final class CloudContentIndexCoordinator {
 
     func fetchIndexRecord() async throws -> CKRecord? {
         let outcome = try await executor.fetch([recordID])
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
         return outcome.records[recordID]
     }
 

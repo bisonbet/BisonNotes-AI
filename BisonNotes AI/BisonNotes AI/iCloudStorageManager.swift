@@ -3338,7 +3338,7 @@ extension iCloudStorageManager {
         let losingRecordIDs = Set(recordIDsToDelete)
         recordsToSave.removeAll { losingRecordIDs.contains($0.recordID) }
 
-        try await saveBackupRecords(recordsToSave)
+        let settledRecords = try await saveBackupRecords(recordsToSave)
         try await deleteBackupRecords(recordIDsToDelete)
 
         if options.includeSettings {
@@ -3372,10 +3372,12 @@ extension iCloudStorageManager {
         // long before this line.
         UserDefaults.standard.set(currentBackupStateSignature, forKey: Self.backupStateSignatureKey)
 
-        // Hand the restore leg what this leg already knows the cloud holds.
+        // Hand the restore leg what this leg already knows the cloud holds — which
+        // is the settled records, not what we set out to write: where another
+        // device won a conflict, its copy is the one the restore leg must apply.
         var updatedSnapshot = snapshot
         updatedSnapshot.manifest = cloudManifest
-        updatedSnapshot.apply(saved: recordsToSave, deleted: recordIDsToDelete)
+        updatedSnapshot.apply(saved: settledRecords, deleted: recordIDsToDelete)
         return CloudBackupLegOutcome(result: result, snapshot: updatedSnapshot)
     }
 
@@ -3405,7 +3407,7 @@ extension iCloudStorageManager {
                 desiredKeys: includeAudioAssets ? nil : Self.recordingMetadataKeys
             )
             recordMetrics(fetch: outcome)
-            try outcome.throwIfFailed()
+            try outcome.throwIfIncomplete()
             for (recordID, record) in outcome.records
             where record.recordType == Self.backupRecordingRecordType {
                 snapshot.recordings[recordID] = record
@@ -3415,7 +3417,7 @@ extension iCloudStorageManager {
         if !contentIDs.isEmpty {
             let outcome = try await cloudExecutor.fetch(contentIDs)
             recordMetrics(fetch: outcome)
-            try outcome.throwIfFailed()
+            try outcome.throwIfIncomplete()
             for (recordID, record) in outcome.records {
                 switch record.recordType {
                 case Self.backupTranscriptRecordType:
@@ -3440,7 +3442,7 @@ extension iCloudStorageManager {
         guard !recordIDs.isEmpty else { return [:] }
         let outcome = try await cloudExecutor.fetch(recordIDs)
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
         return outcome.records.filter { $0.value.recordType == Self.backupRecordingRecordType }
     }
 
@@ -4608,7 +4610,7 @@ extension iCloudStorageManager {
                 let recordID = CKRecord.ID(recordName: recordName)
                 let fetchOutcome = try await cloudExecutor.fetch([recordID])
                 recordMetrics(fetch: fetchOutcome)
-                try fetchOutcome.throwIfFailed()
+                try fetchOutcome.throwIfIncomplete()
                 guard let record = fetchOutcome.records[recordID] else { continue }
                 guard record.recordType == CloudKitSummaryRecord.recordType else {
                     continue
@@ -4743,9 +4745,9 @@ extension iCloudStorageManager {
             isAutomaticReconcileRunning = false
         }
 
+        var result = CloudReconcileResult()
         do {
             let options = currentCloudBackupOptions()
-            var result = CloudReconcileResult()
 
             let preflight = try await performDeletionPreflight(
                 appCoordinator: appCoordinator,
@@ -4817,6 +4819,17 @@ extension iCloudStorageManager {
             lastSuccessfulRoutineSyncDate = Date()
             hasPendingLocalChanges = false
             endRun(recorder, result: result.backupResult.wasSkippedNoChanges ? .skippedNoChanges : .succeeded)
+            return result
+        } catch let deferral as CloudSyncDeferredError {
+            // CloudKit asked this device to wait mid-run. That is not a failure and
+            // not a completed sync: the pending work stays pending, the throttle
+            // clock does not advance, and the caller is told when to come back.
+            endRun(recorder, result: .deferred)
+            result.wasDeferredUntil = deferral.until
+            AppLog.shared.iCloudSync(
+                "iCloud sync deferred mid-run for \(Int(deferral.until.timeIntervalSinceNow))s at CloudKit's request",
+                level: .debug
+            )
             return result
         } catch {
             endRun(recorder, result: .failed)
@@ -5651,7 +5664,7 @@ extension iCloudStorageManager {
 
         let outcome = try await cloudExecutor.delete(recordIDs)
         recordMetrics(modify: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
         return outcome.deleted.count - outcome.alreadyAbsent.count
     }
 
@@ -6166,7 +6179,7 @@ extension iCloudStorageManager {
     ) async throws -> CKRecord {
         let outcome = try await cloudExecutor.fetch([recordID])
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
 
         if let existingRecord = outcome.records[recordID], existingRecord.recordType == recordType {
             return existingRecord
@@ -6189,7 +6202,7 @@ extension iCloudStorageManager {
             desiredKeys: desiredKeys
         )
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
 
         return recordNames.compactMap { recordName in
             guard let record = outcome.records[CKRecord.ID(recordName: recordName)] else { return nil }
@@ -6209,7 +6222,7 @@ extension iCloudStorageManager {
             desiredKeys: desiredKeys
         )
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
 
         return recordNames.compactMap { recordName in
             guard let record = outcome.records[CKRecord.ID(recordName: recordName)] else { return nil }
@@ -6309,7 +6322,7 @@ extension iCloudStorageManager {
         let probeID = CKRecord.ID(recordName: probeRecordName)
         let outcome = try await cloudExecutor.fetch([probeID])
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
         return outcome.records[probeID] != nil
     }
 
@@ -6540,7 +6553,7 @@ extension iCloudStorageManager {
 
         let outcome = try await cloudExecutor.fetch(recordsMissingAssets.map(\.recordID))
         recordMetrics(fetch: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
 
         return records.map { outcome.records[$0.recordID] ?? $0 }
     }
@@ -6731,7 +6744,7 @@ extension iCloudStorageManager {
         guard !recordIDs.isEmpty else { return }
         let outcome = try await cloudExecutor.delete(recordIDs)
         recordMetrics(modify: outcome)
-        try outcome.throwIfFailed()
+        try outcome.throwIfIncomplete()
     }
 
     private func deleteBackupRecord(_ recordID: CKRecord.ID) async throws {
@@ -6748,15 +6761,26 @@ extension iCloudStorageManager {
     /// because one item in it lost a race. The conflict itself is decided by the
     /// same newest-content-wins rule the backup leg uses, so a server copy that is
     /// newer than ours is a successful skip rather than an overwrite.
-    private func saveBackupRecords(_ records: [CKRecord]) async throws {
-        guard !records.isEmpty else { return }
+    /// - Returns: what CloudKit holds for these records afterwards — the copies
+    ///   this device wrote, plus the server's copy wherever it turned out to be
+    ///   newer than ours. The caller folds that into the run's snapshot, so the
+    ///   restore leg applies a winning remote edit in the same pass instead of
+    ///   carrying our stale local copy forward.
+    @discardableResult
+    private func saveBackupRecords(_ records: [CKRecord]) async throws -> [CKRecord] {
+        guard !records.isEmpty else { return [] }
 
         var pending = records
+        var settled: [CKRecord.ID: CKRecord] = [:]
         var attempt = 0
 
         while !pending.isEmpty {
             let outcome = try await cloudExecutor.save(pending)
             recordMetrics(modify: outcome)
+
+            for (recordID, savedRecord) in outcome.saved {
+                settled[recordID] = savedRecord
+            }
 
             if let failure = outcome.failures.values.first {
                 if let ckError = failure as? CKError,
@@ -6772,7 +6796,11 @@ extension iCloudStorageManager {
                 throw failure
             }
 
-            guard !outcome.conflicts.isEmpty else { return }
+            // A deferred save reached nobody. Returning here would let the caller
+            // record the upload as done and skip it on the next activation.
+            try outcome.throwIfIncomplete()
+
+            guard !outcome.conflicts.isEmpty else { return Array(settled.values) }
 
             attempt += 1
             guard attempt <= maxRetryAttempts else {
@@ -6780,15 +6808,25 @@ extension iCloudStorageManager {
                     "Gave up rebasing \(outcome.conflicts.count) record(s) another device kept changing",
                     level: .error
                 )
-                return
+                return Array(settled.values)
             }
 
             let byRecordID = Dictionary(uniqueKeysWithValues: pending.map { ($0.recordID, $0) })
-            pending = outcome.conflicts.compactMap { recordID, serverRecord in
-                guard let localRecord = byRecordID[recordID] else { return nil }
-                return resolveSaveConflict(local: localRecord, server: serverRecord)
+            var retryRecords: [CKRecord] = []
+            for (recordID, serverRecord) in outcome.conflicts {
+                guard let localRecord = byRecordID[recordID] else { continue }
+                if let rebased = resolveSaveConflict(local: localRecord, server: serverRecord) {
+                    retryRecords.append(rebased)
+                } else {
+                    // The server's copy won. It, not our unsent local record, is
+                    // what the cloud holds for this id.
+                    settled[recordID] = serverRecord
+                }
             }
+            pending = retryRecords
         }
+
+        return Array(settled.values)
     }
 
     /// Rebases one conflicted save onto the server's current record.
@@ -7003,7 +7041,7 @@ extension iCloudStorageManager {
         do {
             let outcome = try await cloudExecutor.fetch([recordID])
             recordMetrics(fetch: outcome)
-            try outcome.throwIfFailed()
+            try outcome.throwIfIncomplete()
             guard let record = outcome.records[recordID] else {
                 return (false, false)
             }
