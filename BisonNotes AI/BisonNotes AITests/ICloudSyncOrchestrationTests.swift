@@ -1214,6 +1214,43 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         assertOutcomeCovers(deletionOutcome, .deletionFlush)
     }
 
+    /// A result-bearing request must not join a running operation either: joining
+    /// skips its closure exactly as coalescing does, and it would return with its
+    /// own result still empty.
+    func testAResultBearingRequestDoesNotJoinARunningOperation() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        var runCount = 0
+
+        let first = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .reviewScan,
+                coalescesWithEquivalentRequests: false
+            ) {
+                runCount += 1
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first scan to start") { coordinator.isRunning }
+
+        let second = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .reviewScan,
+                coalescesWithEquivalentRequests: false
+            ) {
+                runCount += 1
+            }
+        }
+        await waitUntil("the second scan to queue rather than join") { coordinator.hasPendingFollowUp }
+        gate.open()
+
+        _ = try await first.value
+        let outcome = try await second.value
+
+        XCTAssertEqual(runCount, 2, "The second scan has to run its own closure to fill in its own results")
+        XCTAssertNotEqual(outcome, .joinedRunningOperation(.reviewScan))
+    }
+
     // MARK: - Bootstrap
 
     func testAMissingManifestFallsBackToAScanOnceAndThenUsesKnownIds() async throws {

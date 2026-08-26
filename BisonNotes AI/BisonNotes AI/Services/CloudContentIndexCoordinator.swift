@@ -150,6 +150,11 @@ final class CloudContentIndexCoordinator {
     /// arriving mid-write merges with an empty queue, and the follow-up puts the
     /// name the in-flight write is removing straight back.
     private var inFlightDelta: ManifestDelta?
+    /// Callers whose deltas are merged into `queuedDelta` and not yet written.
+    private var queuedWaiters: Set<Int> = []
+    /// How a finished write reports back to every caller it was carrying.
+    private var outcomesByWaiter: [Int: Result<CloudActiveManifest, any Error>] = [:]
+    private var nextWaiterID = 0
 
     init(
         executor: CloudKitBatchExecutor,
@@ -212,6 +217,11 @@ final class CloudContentIndexCoordinator {
             return try await fetchTrustedManifest()
         }
 
+        let waiterID = nextWaiterID
+        nextWaiterID += 1
+        queuedWaiters.insert(waiterID)
+        defer { outcomesByWaiter.removeValue(forKey: waiterID) }
+
         queuedDelta = (queuedDelta ?? ManifestDelta()).merged(with: delta)
         if let inFlightDelta {
             // A removal beats a concurrent add of the same id, including one that
@@ -220,9 +230,16 @@ final class CloudContentIndexCoordinator {
         }
 
         while true {
+            if let outcome = outcomesByWaiter[waiterID] {
+                // The write carrying this delta has finished, whoever ran it.
+                return try outcome.get()
+            }
             if let running = writeChain {
                 // Wait for the in-flight write rather than starting a second one.
                 // Our delta is already queued, so it either rode along or runs next.
+                // Its error, if any, reaches us through `outcomesByWaiter`: a write
+                // that failed must not let a caller believe its delta was saved and
+                // go on to clear a deletion queue or stamp a backup signature.
                 _ = try? await running.value
                 // Awaiting a finished task can return without suspending, and the
                 // writer clears `writeChain` from its own continuation, so yield
@@ -235,7 +252,9 @@ final class CloudContentIndexCoordinator {
                 return try await fetchTrustedManifest()
             }
             queuedDelta = nil
-            return try await runWrite(pending)
+            let covered = queuedWaiters
+            queuedWaiters.removeAll()
+            return try await runWrite(pending, covering: covered)
         }
     }
 
@@ -255,7 +274,10 @@ final class CloudContentIndexCoordinator {
         return try await task.value
     }
 
-    private func runWrite(_ delta: ManifestDelta) async throws -> CloudActiveManifest {
+    private func runWrite(
+        _ delta: ManifestDelta,
+        covering waiters: Set<Int>
+    ) async throws -> CloudActiveManifest {
         inFlightDelta = delta
         defer { inFlightDelta = nil }
 
@@ -268,7 +290,22 @@ final class CloudContentIndexCoordinator {
         }
         writeChain = task
         defer { writeChain = nil }
-        return try await task.value
+
+        do {
+            let manifest = try await task.value
+            record(.success(manifest), for: waiters)
+            return manifest
+        } catch {
+            record(.failure(error), for: waiters)
+            throw error
+        }
+    }
+
+    /// Hands one write's outcome to every caller whose delta it was carrying.
+    private func record(_ outcome: Result<CloudActiveManifest, any Error>, for waiters: Set<Int>) {
+        for waiter in waiters {
+            outcomesByWaiter[waiter] = outcome
+        }
     }
 
     private func write(

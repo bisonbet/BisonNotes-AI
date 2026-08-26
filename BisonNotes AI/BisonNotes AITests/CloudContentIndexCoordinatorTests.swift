@@ -241,6 +241,42 @@ final class CloudContentIndexCoordinatorTests: XCTestCase {
         XCTAssertTrue(storedManifest().recordings.contains("backup_recording_b"), "…and unrelated entries survive")
     }
 
+    /// Two callers merge into one write. If that write fails, the caller that did
+    /// not run it must not return as though its delta had been saved — its next
+    /// step is clearing a deletion queue or stamping a backup signature.
+    func testAFailedMergedWriteFailsEveryCallerItWasCarrying() async throws {
+        seedIndex()
+        let gate = AsyncGate()
+        transport.modifyGate = gate
+        transport.perRecordSaveFailures[CKRecord.ID(recordName: indexRecordName)] = Array(
+            repeating: CloudKitTestError.ckError(.permissionFailure),
+            count: 4
+        )
+
+        let first = Task { @MainActor in
+            try await self.coordinator.apply(.adding(recordings: ["a"]))
+        }
+        while transport.modifyOperationCount == 0 {
+            await Task.yield()
+        }
+        let second = Task { @MainActor in
+            try await self.coordinator.apply(.adding(transcripts: ["t"]))
+        }
+        await Task.yield()
+        await Task.yield()
+        gate.open()
+
+        var failures = 0
+        for task in [first, second] {
+            do {
+                _ = try await task.value
+            } catch {
+                failures += 1
+            }
+        }
+        XCTAssertEqual(failures, 2, "Both callers asked for a manifest change that never reached CloudKit")
+    }
+
     func testAnUntrustedManifestIsNotUsedAsAKnownIdList() async throws {
         seedIndex(recordings: ["backup_recording_a"], manifestSchemaVersion: 1)
 

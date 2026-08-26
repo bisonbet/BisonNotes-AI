@@ -218,7 +218,7 @@ class AppDataCoordinator: ObservableObject {
 
         Task {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Deleted local recording and queued iCloud deletion marker for retry: \(error)", level: .error)
             }
@@ -250,7 +250,7 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
         }
@@ -287,7 +287,7 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local summary but failed to remove iCloud summary records: \(error)", level: .error)
         }
@@ -314,7 +314,7 @@ class AppDataCoordinator: ObservableObject {
 
         if disabled {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Marked recording local-only and queued iCloud removal for retry: \(error)", level: .error)
             }

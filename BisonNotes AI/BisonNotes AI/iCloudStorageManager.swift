@@ -3708,7 +3708,10 @@ extension iCloudStorageManager {
             // running rather than competing with it for the same records.
             var items: [CloudReviewItem] = []
             // The scan's findings come back through `items`, so this request must
-            // keep its own closure rather than riding on another scan's.
+            // keep its own closure rather than riding on another scan's — whether
+            // by being coalesced behind one or by joining one already running.
+            // A joined request returns with `items` still empty, which would wipe
+            // the very list the running scan is building.
             try await operationCoordinator.submit(
                 intent: .reviewScan,
                 coalescesWithEquivalentRequests: false
@@ -5420,6 +5423,30 @@ extension iCloudStorageManager {
 
     private static func mergedUUIDs(_ lhs: [UUID], _ rhs: [UUID]) -> [UUID] {
         Array(Set(lhs + rhs)).sorted { $0.uuidString < $1.uuidString }
+    }
+
+    /// Entry point for a deletion the user just made.
+    ///
+    /// Tombstone saves, content deletes, and manifest edits are writes like any
+    /// other: run outside the coordinator, a flush can save a tombstone after an
+    /// erase has already enumerated the zone, leaving that content in the account
+    /// while the erase reports success. Callers already inside a coordinated run
+    /// use `flushPendingiCloudMutations` directly — that is the preflight phase of
+    /// the run they are in.
+    @discardableResult
+    func flushPendingiCloudDeletions(
+        appCoordinator: AppDataCoordinator
+    ) async throws -> (deletions: Int, localOnlyRemovals: Int, summaryRemovals: Int) {
+        var result: (deletions: Int, localOnlyRemovals: Int, summaryRemovals: Int) = (0, 0, 0)
+        try await operationCoordinator.submit(
+            intent: .deletionFlush,
+            allowJoiningRunningOperation: false,
+            coalescesWithEquivalentRequests: false
+        ) { [weak self] in
+            guard let self else { return }
+            result = try await self.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+        }
+        return result
     }
 
     @discardableResult

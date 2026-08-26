@@ -142,7 +142,10 @@ final class CloudSyncOperationCoordinator {
     ///   or an explicit user-initiated transfer — so it is guaranteed its own pass.
     /// - Parameter coalescesWithEquivalentRequests: pass `false` when the caller
     ///   reads a result out of its own closure, so its work is never replaced by
-    ///   an equivalent request's.
+    ///   an equivalent request's. This also stops the request joining a run
+    ///   already in flight: joining has exactly the same effect — the caller's
+    ///   closure never runs — and a request that cannot afford to be coalesced
+    ///   cannot afford to be joined either.
     @discardableResult
     func submit(
         intent: CloudSyncIntent,
@@ -155,7 +158,7 @@ final class CloudSyncOperationCoordinator {
             return .completed
         }
 
-        if allowJoiningRunningOperation, running.subsumes(intent) {
+        if allowJoiningRunningOperation, coalescesWithEquivalentRequests, running.subsumes(intent) {
             // If the run we are riding on fails, this request failed with it.
             try await currentTask.value
             return .joinedRunningOperation(running)
