@@ -151,6 +151,79 @@ final class CloudKitRetryPolicyTests: XCTestCase {
         XCTAssertEqual(outcome.deferred, [record.recordID])
     }
 
+    func testChunksBehindADeferralAreNeverSent() async throws {
+        let names = CloudKitTestRecords.names(count: 161)
+        transport.seed(names.map { CloudKitTestRecords.record(type: "CD_BackupRecording", name: $0) })
+        // The first chunk of 100 comes back with a long backoff.
+        transport.fetchFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 600)]
+
+        let outcome = try await executor.fetch(CloudKitTestRecords.recordIDs(names))
+
+        XCTAssertEqual(
+            transport.fetchOperationCount,
+            1,
+            "Once CloudKit has asked this device to stop, the chunks behind the first must not be sent"
+        )
+        XCTAssertEqual(outcome.deferred.count, 161, "…and all of them have to be reported as still outstanding")
+        XCTAssertTrue(outcome.records.isEmpty)
+    }
+
+    func testWritesBehindADeferralAreNeverSent() async throws {
+        let records = CloudKitTestRecords.names(count: 150).map {
+            CloudKitTestRecords.record(type: "CD_BackupSummary", name: $0)
+        }
+        transport.modifyFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 600)]
+
+        let outcome = try await executor.modify(saving: records, deleting: [])
+
+        XCTAssertEqual(transport.modifyOperationCount, 1)
+        XCTAssertEqual(outcome.deferred.count, 150)
+        XCTAssertTrue(outcome.saved.isEmpty)
+    }
+
+    func testTheLongestRequestedDelayIsHonoredForAMixedBatch() async throws {
+        let names = ["quick", "slow"]
+        transport.seed(names.map { CloudKitTestRecords.record(type: "CD_BackupRecording", name: $0) })
+        // Two records in one batch, each asking for a different wait.
+        transport.perRecordFetchFailures[CKRecord.ID(recordName: "quick")] = [
+            CloudKitTestError.ckError(.requestRateLimited, retryAfter: 2)
+        ]
+        transport.perRecordFetchFailures[CKRecord.ID(recordName: "slow")] = [
+            CloudKitTestError.ckError(.requestRateLimited, retryAfter: 8)
+        ]
+
+        let outcome = try await executor.fetch(CloudKitTestRecords.recordIDs(names))
+
+        XCTAssertEqual(
+            sleeper.requestedSleeps,
+            [8],
+            "Resending after the first record's two seconds would ignore what the server said about the second"
+        )
+        XCTAssertEqual(outcome.records.count, 2)
+    }
+
+    func testARecordDemandingALongWaitDefersTheOnesBesideIt() async throws {
+        let names = ["quick", "throttled"]
+        transport.seed(names.map { CloudKitTestRecords.record(type: "CD_BackupRecording", name: $0) })
+        transport.perRecordFetchFailures[CKRecord.ID(recordName: "quick")] = [
+            CloudKitTestError.ckError(.requestRateLimited, retryAfter: 2)
+        ]
+        transport.perRecordFetchFailures[CKRecord.ID(recordName: "throttled")] = [
+            CloudKitTestError.ckError(.requestRateLimited, retryAfter: 300)
+        ]
+
+        let outcome = try await executor.fetch(CloudKitTestRecords.recordIDs(names))
+
+        XCTAssertTrue(sleeper.requestedSleeps.isEmpty, "A five-minute wait is not spent asleep in the foreground")
+        XCTAssertEqual(
+            outcome.deferred.count,
+            2,
+            "The backoff gate is global, so the record that only wanted two seconds waits with it"
+        )
+        XCTAssertEqual(outcome.deferredUntil, clock.now.addingTimeInterval(300))
+        XCTAssertEqual(transport.fetchOperationCount, 1)
+    }
+
     func testRetriesStopAfterThreeAttempts() async throws {
         transport.seed([CloudKitTestRecords.record(type: "CD_BackupSummary", name: "summary_1")])
         transport.fetchFailures = Array(

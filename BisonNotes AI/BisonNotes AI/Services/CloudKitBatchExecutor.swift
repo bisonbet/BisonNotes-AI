@@ -93,6 +93,13 @@ final class CloudKitBatchExecutor {
     ) async throws {
         guard !recordIDs.isEmpty else { return }
 
+        // An earlier chunk, split, or retry may have closed the gate. CloudKit asked
+        // this device to stop; the chunks behind it must not keep going.
+        if let until = deferredUntil {
+            markDeferred(recordIDs, until: until, into: &outcome)
+            return
+        }
+
         outcome.stats.requestCount += 1
         outcome.stats.batchCount += 1
 
@@ -106,30 +113,29 @@ final class CloudKitBatchExecutor {
                 try await fetchChunk(halves.1, desiredKeys: desiredKeys, attempt: attempt, into: &outcome)
                 return
             }
-            try await retryFetch(recordIDs, desiredKeys: desiredKeys, after: error, attempt: attempt, into: &outcome)
+            try await retryFetch(
+                recordIDs.map { RetryableFailure(recordID: $0, error: error) },
+                desiredKeys: desiredKeys,
+                attempt: attempt,
+                into: &outcome
+            )
             return
         }
 
-        let retry = classifyFetchResults(results, for: recordIDs, into: &outcome)
-        guard !retry.recordIDs.isEmpty, let retryError = retry.error else { return }
-        try await retryFetch(
-            retry.recordIDs,
-            desiredKeys: desiredKeys,
-            after: retryError,
-            attempt: attempt,
-            into: &outcome
-        )
+        let retryable = classifyFetchResults(results, for: recordIDs, into: &outcome)
+        guard !retryable.isEmpty else { return }
+        try await retryFetch(retryable, desiredKeys: desiredKeys, attempt: attempt, into: &outcome)
     }
 
     /// Sorts one batch's results into arrived / missing / failed, and reports which
-    /// record IDs are worth sending again.
+    /// records are worth sending again — each with its own error, because CloudKit
+    /// can ask for a different wait per record.
     private func classifyFetchResults(
         _ results: [CKRecord.ID: Result<CKRecord, any Error>],
         for recordIDs: [CKRecord.ID],
         into outcome: inout CloudKitFetchOutcome
-    ) -> (recordIDs: [CKRecord.ID], error: CKError?) {
-        var retryIDs: [CKRecord.ID] = []
-        var retryError: CKError?
+    ) -> [RetryableFailure] {
+        var retryable: [RetryableFailure] = []
 
         for recordID in recordIDs {
             switch results[recordID] {
@@ -140,8 +146,7 @@ final class CloudKitBatchExecutor {
                 case .missing:
                     outcome.missing.insert(recordID)
                 case .retryable(let ckError):
-                    retryIDs.append(recordID)
-                    retryError = retryError ?? ckError
+                    retryable.append(RetryableFailure(recordID: recordID, error: ckError))
                 case .conflict, .permanent:
                     // A conflict is not meaningful for a read.
                     outcome.failures[recordID] = error
@@ -151,27 +156,30 @@ final class CloudKitBatchExecutor {
             }
         }
 
-        return (retryIDs, retryError)
+        return retryable
     }
 
     private func retryFetch(
-        _ recordIDs: [CKRecord.ID],
+        _ failures: [RetryableFailure],
         desiredKeys: [CKRecord.FieldKey]?,
-        after error: CKError,
         attempt: Int,
         into outcome: inout CloudKitFetchOutcome
     ) async throws {
-        switch try await resolveRetry(for: error, attempt: attempt, stats: &outcome.stats) {
-        case .retry(let nextAttempt):
-            // Only the record IDs that failed go back out.
-            try await fetchChunk(recordIDs, desiredKeys: desiredKeys, attempt: nextAttempt, into: &outcome)
-        case .deferred(let until):
-            outcome.deferred.formUnion(recordIDs)
-            outcome.deferredUntil = until
-            outcome.stats.deferredCount += recordIDs.count
-        case .failed:
-            for recordID in recordIDs { outcome.failures[recordID] = error }
+        let plan = planRetry(for: failures, attempt: attempt)
+
+        for failure in plan.permanent {
+            outcome.failures[failure.recordID] = failure.error
         }
+        if !plan.deferred.isEmpty, let until = plan.deferredUntil {
+            markDeferred(plan.deferred, until: until, into: &outcome)
+        }
+
+        guard !plan.retryable.isEmpty else { return }
+        outcome.stats.retryCount += 1
+        outcome.stats.retryWaitSeconds += plan.retryDelay
+        try await sleeper.sleep(seconds: plan.retryDelay)
+        // Only the record IDs that failed go back out.
+        try await fetchChunk(plan.retryable, desiredKeys: desiredKeys, attempt: attempt + 1, into: &outcome)
     }
 
     // MARK: - Modify
@@ -232,6 +240,13 @@ final class CloudKitBatchExecutor {
     ) async throws {
         guard !records.isEmpty || !recordIDs.isEmpty else { return }
 
+        // An earlier chunk, split, or retry may have closed the gate. Writing on
+        // through a backoff CloudKit asked for is what deepens the throttling.
+        if let until = deferredUntil {
+            markDeferred(records.map(\.recordID) + recordIDs, until: until, into: &outcome)
+            return
+        }
+
         outcome.stats.requestCount += 1
         outcome.stats.batchCount += 1
 
@@ -257,8 +272,10 @@ final class CloudKitBatchExecutor {
             try await retryModify(
                 saving: records,
                 deleting: recordIDs,
+                failures: (records.map(\.recordID) + recordIDs).map {
+                    RetryableFailure(recordID: $0, error: error)
+                },
                 savePolicy: savePolicy,
-                after: error,
                 attempt: attempt,
                 into: &outcome
             )
@@ -266,12 +283,12 @@ final class CloudKitBatchExecutor {
         }
 
         let retry = classifyModifyResults(results, saving: records, deleting: recordIDs, into: &outcome)
-        guard !retry.records.isEmpty || !retry.recordIDs.isEmpty, let retryError = retry.error else { return }
+        guard !retry.failures.isEmpty else { return }
         try await retryModify(
             saving: retry.records,
             deleting: retry.recordIDs,
+            failures: retry.failures,
             savePolicy: savePolicy,
-            after: retryError,
             attempt: attempt,
             into: &outcome
         )
@@ -307,10 +324,10 @@ final class CloudKitBatchExecutor {
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
         into outcome: inout CloudKitModifyOutcome
-    ) -> (records: [CKRecord], recordIDs: [CKRecord.ID], error: CKError?) {
+    ) -> (records: [CKRecord], recordIDs: [CKRecord.ID], failures: [RetryableFailure]) {
         var retryRecords: [CKRecord] = []
         var retryDeletes: [CKRecord.ID] = []
-        var retryError: CKError?
+        var retryable: [RetryableFailure] = []
 
         for record in records {
             switch results.saveResults[record.recordID] {
@@ -320,7 +337,7 @@ final class CloudKitBatchExecutor {
                 switch Self.classify(error) {
                 case .retryable(let ckError):
                     retryRecords.append(record)
-                    retryError = retryError ?? ckError
+                    retryable.append(RetryableFailure(recordID: record.recordID, error: ckError))
                 case .conflict(let serverRecord):
                     outcome.conflicts[record.recordID] = serverRecord
                 case .missing, .permanent:
@@ -345,7 +362,7 @@ final class CloudKitBatchExecutor {
                     outcome.deleted.insert(recordID)
                 case .retryable(let ckError):
                     retryDeletes.append(recordID)
-                    retryError = retryError ?? ckError
+                    retryable.append(RetryableFailure(recordID: recordID, error: ckError))
                 case .conflict, .permanent:
                     outcome.failures[recordID] = error
                 }
@@ -354,64 +371,111 @@ final class CloudKitBatchExecutor {
             }
         }
 
-        return (retryRecords, retryDeletes, retryError)
+        return (retryRecords, retryDeletes, retryable)
     }
 
     private func retryModify(
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
+        failures: [RetryableFailure],
         savePolicy: CKModifyRecordsOperation.RecordSavePolicy,
-        after error: CKError,
         attempt: Int,
         into outcome: inout CloudKitModifyOutcome
     ) async throws {
-        let affectedIDs = records.map(\.recordID) + recordIDs
-        switch try await resolveRetry(for: error, attempt: attempt, stats: &outcome.stats) {
-        case .retry(let nextAttempt):
-            // Records that already succeeded are never resent.
-            try await modifyChunk(
-                saving: records,
-                deleting: recordIDs,
-                savePolicy: savePolicy,
-                attempt: nextAttempt,
-                into: &outcome
-            )
-        case .deferred(let until):
-            outcome.deferred.formUnion(affectedIDs)
-            outcome.deferredUntil = until
-            outcome.stats.deferredCount += affectedIDs.count
-        case .failed:
-            for recordID in affectedIDs { outcome.failures[recordID] = error }
+        let plan = planRetry(for: failures, attempt: attempt)
+
+        for failure in plan.permanent {
+            outcome.failures[failure.recordID] = failure.error
         }
+        if !plan.deferred.isEmpty, let until = plan.deferredUntil {
+            markDeferred(plan.deferred, until: until, into: &outcome)
+        }
+
+        let resendable = Set(plan.retryable)
+        guard !resendable.isEmpty else { return }
+        outcome.stats.retryCount += 1
+        outcome.stats.retryWaitSeconds += plan.retryDelay
+        try await sleeper.sleep(seconds: plan.retryDelay)
+        // Records that already succeeded — or that are now deferred — are never resent.
+        try await modifyChunk(
+            saving: records.filter { resendable.contains($0.recordID) },
+            deleting: recordIDs.filter { resendable.contains($0) },
+            savePolicy: savePolicy,
+            attempt: attempt + 1,
+            into: &outcome
+        )
     }
 
     // MARK: - Shared retry handling
 
-    private enum RetryResolution {
-        case retry(nextAttempt: Int)
-        case deferred(until: Date)
-        case failed
+    struct RetryableFailure {
+        let recordID: CKRecord.ID
+        let error: CKError
     }
 
-    /// Applies the retry policy, performing the wait itself so callers only decide
-    /// *what* to resend. Never sleeps past `maximumForegroundWait`: a longer wait
-    /// becomes a persisted eligibility time and a deferred result.
-    private func resolveRetry(
-        for error: CKError,
-        attempt: Int,
-        stats: inout CloudKitOperationStats
-    ) async throws -> RetryResolution {
-        switch retryPolicy.decision(for: error, attempt: attempt, jitter: jitterProvider()) {
-        case .retry(let delay):
-            stats.retryCount += 1
-            stats.retryWaitSeconds += delay
-            try await sleeper.sleep(seconds: delay)
-            return .retry(nextAttempt: attempt + 1)
-        case .deferFor(let seconds):
-            return .deferred(until: recordDeferral(seconds: seconds))
-        case .fail:
-            return .failed
+    private struct RetryPlan {
+        var retryable: [CKRecord.ID] = []
+        /// The longest wait any resendable record asked for. Retrying sooner than
+        /// that would ignore what CloudKit said about one of them.
+        var retryDelay: TimeInterval = 0
+        var deferred: [CKRecord.ID] = []
+        var deferredUntil: Date?
+        var permanent: [RetryableFailure] = []
+    }
+
+    /// Decides what happens to each failed record separately.
+    ///
+    /// CloudKit can ask for two seconds on one record and two minutes on another in
+    /// the same batch. Applying the first error's decision to all of them resent
+    /// records long before the server said they could go.
+    private func planRetry(for failures: [RetryableFailure], attempt: Int) -> RetryPlan {
+        var plan = RetryPlan()
+        var longestDeferral: TimeInterval = 0
+
+        for failure in failures {
+            switch retryPolicy.decision(for: failure.error, attempt: attempt, jitter: jitterProvider()) {
+            case .retry(let delay):
+                plan.retryable.append(failure.recordID)
+                plan.retryDelay = max(plan.retryDelay, delay)
+            case .deferFor(let seconds):
+                plan.deferred.append(failure.recordID)
+                longestDeferral = max(longestDeferral, seconds)
+            case .fail:
+                plan.permanent.append(failure)
+            }
         }
+
+        if !plan.deferred.isEmpty {
+            plan.deferredUntil = recordDeferral(seconds: longestDeferral)
+            // The gate is global: once it closes nothing may be sent, so records
+            // that would otherwise have been retried wait with the rest.
+            plan.deferred.append(contentsOf: plan.retryable)
+            plan.retryable.removeAll()
+        }
+
+        return plan
+    }
+
+    private func markDeferred(
+        _ recordIDs: [CKRecord.ID],
+        until: Date,
+        into outcome: inout CloudKitFetchOutcome
+    ) {
+        let newlyDeferred = recordIDs.filter { !outcome.deferred.contains($0) }
+        outcome.deferred.formUnion(newlyDeferred)
+        outcome.deferredUntil = until
+        outcome.stats.deferredCount += newlyDeferred.count
+    }
+
+    private func markDeferred(
+        _ recordIDs: [CKRecord.ID],
+        until: Date,
+        into outcome: inout CloudKitModifyOutcome
+    ) {
+        let newlyDeferred = recordIDs.filter { !outcome.deferred.contains($0) }
+        outcome.deferred.formUnion(newlyDeferred)
+        outcome.deferredUntil = until
+        outcome.stats.deferredCount += newlyDeferred.count
     }
 }
 
