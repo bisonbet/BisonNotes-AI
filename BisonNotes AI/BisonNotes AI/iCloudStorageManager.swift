@@ -3475,7 +3475,8 @@ extension iCloudStorageManager {
         let losingRecordIDs = Set(recordIDsToDelete)
         recordsToSave.removeAll { losingRecordIDs.contains($0.recordID) }
 
-        let settledRecords = try await saveBackupRecords(recordsToSave)
+        let saveOutcome = try await saveBackupRecords(recordsToSave)
+        let settledRecords = saveOutcome.settledRecords
         try await deleteBackupRecords(recordIDsToDelete)
 
         if options.includeSettings {
@@ -3506,8 +3507,19 @@ extension iCloudStorageManager {
         )
 
         // Only a complete run may advance the signature; a partial failure threw
-        // long before this line.
-        UserDefaults.standard.set(currentBackupStateSignature, forKey: Self.backupStateSignatureKey)
+        // long before this line. Audio that CloudKit would not take is the one
+        // thing that gets this far unfinished: the metadata went, but the upload
+        // did not, and recording the signature here would let every later run take
+        // the unchanged-since-last-backup shortcut and never retry it.
+        if saveOutcome.didDropAudioToSaveMetadata {
+            UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+            AppLog.shared.iCloudSync(
+                "Audio still needs uploading, so this run is not recorded as a complete backup",
+                level: .debug
+            )
+        } else {
+            UserDefaults.standard.set(currentBackupStateSignature, forKey: Self.backupStateSignatureKey)
+        }
 
         // Hand the restore leg what this leg already knows the cloud holds — which
         // is the settled records, not what we set out to write: where another
@@ -4027,10 +4039,6 @@ extension iCloudStorageManager {
                 Self.backupSummaryRecordType
             ]
         )
-        let recordingRecords = selectedRecords.filter { $0.recordType == Self.backupRecordingRecordType }
-        let transcriptRecords = selectedRecords.filter { $0.recordType == Self.backupTranscriptRecordType }
-        let summaryRecords = selectedRecords.filter { $0.recordType == Self.backupSummaryRecordType }
-
         recorder?.begin(.writeContent)
         var recordsToReactivate: [CKRecord] = []
         for record in selectedRecords {
@@ -4040,7 +4048,19 @@ extension iCloudStorageManager {
                 recordsToReactivate.append(record)
             }
         }
-        try await saveBackupRecords(recordsToReactivate)
+        // Another device may have updated one of these between the fetch above and
+        // this save. Where it did, the settled copy is the server's, and restoring
+        // the one we set out to write would put a stale version on this device.
+        let reactivated = try await saveBackupRecords(recordsToReactivate).settledRecords
+        let settledByRecordID = Dictionary(
+            reactivated.map { ($0.recordID, $0) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        let settledRecords = selectedRecords.map { settledByRecordID[$0.recordID] ?? $0 }
+
+        let recordingRecords = settledRecords.filter { $0.recordType == Self.backupRecordingRecordType }
+        let transcriptRecords = settledRecords.filter { $0.recordType == Self.backupTranscriptRecordType }
+        let summaryRecords = settledRecords.filter { $0.recordType == Self.backupSummaryRecordType }
 
         removeQuarantineEntries(
             backupRecordNames: item.backupRecordNames,
@@ -4293,16 +4313,13 @@ extension iCloudStorageManager {
             // cloud-only records — a first install found them, an established
             // device never did.
             //
-            // The snapshot's own flag can be stale: when the backup leg shares its
-            // snapshot, the manifest may have been created by that leg's commit
-            // afterwards. Ask again rather than scanning the whole zone on the
-            // strength of a flag from earlier in the same run.
-            var manifestIsTrusted = restoreSnapshot.manifestWasTrusted
-            if !manifestIsTrusted {
-                manifestIsTrusted = try await contentIndexCoordinator.fetchManifestState().isTrusted
-            }
-
-            if !manifestIsTrusted ||
+            // The state that matters is the one from *before* this run wrote
+            // anything. Re-reading it here trusted a manifest the backup leg had
+            // just created from locally known ids alone, which skipped the scan and
+            // left active cloud-only records undiscoverable: they are absent from
+            // the new manifest, and the review scan deliberately ignores active
+            // records, so nothing would ever look for them again.
+            if !restoreSnapshot.manifestWasTrusted ||
                 (recordingRecords.isEmpty && transcriptRecords.isEmpty && summaryRecords.isEmpty) {
                 // A first install, a restored device, an untrusted manifest, or a
                 // repair — the situations where a full scan is the right tool.
@@ -7139,12 +7156,23 @@ extension iCloudStorageManager {
     ///   newer than ours. The caller folds that into the run's snapshot, so the
     ///   restore leg applies a winning remote edit in the same pass instead of
     ///   carrying our stale local copy forward.
+    struct BackupSaveOutcome {
+        /// What CloudKit holds for these records afterwards — the copies this
+        /// device wrote, plus the server's wherever it turned out to be newer.
+        var settledRecords: [CKRecord] = []
+        /// True when audio CloudKit refused was stripped so the metadata could go.
+        /// The run must not then record itself as fully uploaded, or the signature
+        /// shortcut would skip the retry that was promised.
+        var didDropAudioToSaveMetadata = false
+    }
+
     @discardableResult
-    private func saveBackupRecords(_ records: [CKRecord]) async throws -> [CKRecord] {
-        guard !records.isEmpty else { return [] }
+    private func saveBackupRecords(_ records: [CKRecord]) async throws -> BackupSaveOutcome {
+        guard !records.isEmpty else { return BackupSaveOutcome() }
 
         var pending = records
         var settled: [CKRecord.ID: CKRecord] = [:]
+        var droppedAudio = false
         var attempt = 0
 
         while !pending.isEmpty {
@@ -7167,6 +7195,7 @@ extension iCloudStorageManager {
                 record[Self.fieldAudioAsset] = nil
                 record[Self.fieldAudioSignature] = nil
                 recordsToRetryWithoutAudio.append(record)
+                droppedAudio = true
                 AppLog.shared.iCloudSync(
                     "CloudKit could not take the audio for a recording; " +
                     "uploading its metadata without it and retrying the audio later",
@@ -7204,7 +7233,10 @@ extension iCloudStorageManager {
             }
 
             guard !outcome.conflicts.isEmpty || !recordsToRetryWithoutAudio.isEmpty else {
-                return Array(settled.values)
+                return BackupSaveOutcome(
+                    settledRecords: Array(settled.values),
+                    didDropAudioToSaveMetadata: droppedAudio
+                )
             }
 
             attempt += 1
@@ -7233,7 +7265,10 @@ extension iCloudStorageManager {
             pending = retryRecords
         }
 
-        return Array(settled.values)
+        return BackupSaveOutcome(
+            settledRecords: Array(settled.values),
+            didDropAudioToSaveMetadata: droppedAudio
+        )
     }
 
     /// Rebases one conflicted save onto the server's current record.

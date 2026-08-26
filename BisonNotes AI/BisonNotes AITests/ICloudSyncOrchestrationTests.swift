@@ -166,8 +166,26 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
     // MARK: - Phase barrier
 
+    /// Seeds a manifest this build trusts, so a run is the steady-state one rather
+    /// than a first-contact run that legitimately adds a discovery scan.
+    private func seedTrustedManifest() {
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            )
+        ])
+    }
+
     func testReconcileRunsThePhaseBarrierInOrder() async throws {
         try createCompleteRecording(named: "Phase order")
+        seedTrustedManifest()
 
         _ = try await runReconcile()
 
@@ -193,6 +211,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
     func testDeletionMarkersAreAppliedExactlyOncePerRun() async throws {
         try createCompleteRecording(named: "Tombstones once")
+        seedTrustedManifest()
 
         _ = try await runReconcile()
 
@@ -217,6 +236,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         for index in 0..<3 {
             try createCompleteRecording(named: "Recording \(index)")
         }
+        seedTrustedManifest()
 
         _ = try await runReconcile()
 
@@ -290,6 +310,41 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             firstSyncStamp,
             secondSyncStamp,
             "Rewriting syncUpdatedAt on an unchanged record is what made two devices trade the same records forever"
+        )
+    }
+
+    /// A manifest the backup leg wrote in this same run lists only what this
+    /// device already knew about. Trusting it for the restore leg's discovery
+    /// decision hides every active cloud-only record, permanently: they are not in
+    /// the new manifest, and the review scan ignores active records by design.
+    func testAManifestCreatedThisRunDoesNotSuppressDiscovery() async throws {
+        try createCompleteRecording(named: "Local content")
+
+        // Another device's record, in the cloud but named by no manifest.
+        let cloudOnlyId = UUID()
+        let now = Date()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: "backup_recording_\(cloudOnlyId.uuidString)",
+                fields: [
+                    "recordingName": "From another device",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "elsewhere.m4a",
+                    "duration": 30.0,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
+            "The run must discover this before trusting the manifest it just wrote"
         )
     }
 
@@ -1020,6 +1075,32 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         for name in recordingNames {
             XCTAssertNotNil(transport.record(named: name), "the metadata still has to reach CloudKit")
         }
+    }
+
+    /// The audio retry the metadata fallback promises only happens if the run
+    /// stops short of calling itself a complete backup.
+    func testAnAudioFallbackLeavesTheBackupSignaturePending() async throws {
+        try createCompleteRecording(named: "Audio refused")
+        seedTrustedManifest()
+        let recordingNames = appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+            recording.id.map { "backup_recording_\($0.uuidString)" }
+        }
+        for name in recordingNames {
+            transport.perRecordSaveFailures[CKRecord.ID(recordName: name)] = [
+                CloudKitTestError.ckError(.assetFileModified)
+            ]
+        }
+
+        _ = try await runReconcile()
+
+        XCTAssertNil(
+            UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
+            "Recording the signature here would let every later run skip the audio that never uploaded"
+        )
+        XCTAssertTrue(
+            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            "…and the next activation has to pick the retry up"
+        )
     }
 
     // MARK: - Failure handling
