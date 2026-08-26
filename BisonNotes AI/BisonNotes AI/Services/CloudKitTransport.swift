@@ -85,11 +85,33 @@ struct CloudKitQueryPage {
         self.queryCursor = queryCursor
     }
 
+    /// Successful matches only. For probes that just need to know whether anything
+    /// is there; a scan that has to be complete must use `recordsOrThrow()`.
     var records: [CKRecord] {
         matchResults.compactMap { _, result in
             if case .success(let record) = result { return record }
             return nil
         }
+    }
+
+    var failures: [(recordID: CKRecord.ID, error: any Error)] {
+        matchResults.compactMap { recordID, result in
+            if case .failure(let error) = result { return (recordID, error) }
+            return nil
+        }
+    }
+
+    /// Every record in the page, or the first per-record failure.
+    ///
+    /// CloudKit can fail individual records while still returning a page. Dropping
+    /// those silently makes a partial scan look like a complete one — and a scan is
+    /// the only way the cloud-only records it missed would ever have been found,
+    /// because the manifest-driven path only ever looks up ids it already knows.
+    func recordsOrThrow() throws -> [CKRecord] {
+        if let failure = failures.first {
+            throw failure.error
+        }
+        return records
     }
 }
 

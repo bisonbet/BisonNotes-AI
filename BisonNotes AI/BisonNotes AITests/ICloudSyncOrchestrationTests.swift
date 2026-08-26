@@ -733,6 +733,97 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// A scan is the only way a cloud-only record is ever found; the
+    /// manifest-driven path only looks up ids it already knows. So a page that
+    /// dropped one record must not read as a complete dataset.
+    func testAPartialQueryPageFailsTheScanRatherThanLookingComplete() async throws {
+        let goodId = UUID()
+        let badId = UUID()
+        let now = Date()
+        for (recordingId, name) in [(goodId, "Readable"), (badId, "Unreadable")] {
+            transport.seed([
+                CloudKitTestRecords.record(
+                    type: "CD_BackupRecording",
+                    name: "backup_recording_\(recordingId.uuidString)",
+                    fields: [
+                        "recordingName": name,
+                        "recordingDate": now,
+                        "createdAt": now,
+                        "lastModified": now,
+                        "recordingURL": "\(name).m4a",
+                        "duration": 12.0,
+                        "syncLifecycle": "active",
+                        "syncSchemaVersion": 2
+                    ]
+                )
+            ])
+        }
+        // CloudKit hands back one record and one failure in the same page.
+        transport.queryRecordFailures["backup_recording_\(badId.uuidString)"] =
+            CloudKitTestError.ckError(.internalError)
+
+        do {
+            _ = try await manager.restoreAllDataFromiCloud(
+                appCoordinator: appCoordinator,
+                includeAudioFiles: false,
+                restoreSettings: false
+            )
+            XCTFail("A scan that could not read every record must not report success")
+        } catch {
+            // Expected.
+        }
+
+        XCTAssertFalse(
+            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == goodId },
+            "Half a dataset must not be committed as a finished restore"
+        )
+    }
+
+    func testAReviewItemRestoreTakesItsTurnInTheCoordinator() async throws {
+        let item = CloudReviewItem(
+            id: UUID().uuidString,
+            recordingId: UUID(),
+            title: "Held for review",
+            date: Date(),
+            backupRecordNames: ["backup_recording_\(UUID().uuidString)"],
+            legacySummaryRecordNames: [],
+            hasRecording: true,
+            hasAudio: false,
+            hasTranscript: false,
+            hasSummary: false,
+            sourceDeviceIdentifier: nil
+        )
+
+        let gate = AsyncGate()
+        let blocking = Task { @MainActor in
+            try await self.manager.operationCoordinator.submit(intent: .erase) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the erase to take the coordinator") { self.manager.operationCoordinator.isRunning }
+        transport.clearLedger()
+
+        let restore = Task { @MainActor in
+            try await self.manager.restoreCloudReviewItem(
+                item,
+                appCoordinator: self.appCoordinator,
+                includeAudioFiles: false
+            )
+        }
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertTrue(
+            transport.ledger.allSatisfy { if case .accountStatus = $0 { return true } else { return false } },
+            "A review restore must not read or write while another operation holds the coordinator"
+        )
+
+        gate.open()
+        _ = try await blocking.value
+        _ = try? await restore.value
+        XCTAssertFalse(manager.operationCoordinator.isRunning)
+    }
+
     // MARK: - Failure handling
 
     func testAFailedRunAdvancesNeitherTheSignatureNorTheLastSuccessDate() async throws {

@@ -59,6 +59,9 @@ final class FakeCloudKitTransport: CloudKitTransport {
     /// Consumed in order, one entry per whole-operation call. `nil` means success.
     var fetchFailures: [(any Error)?] = []
     var modifyFailures: [(any Error)?] = []
+    /// Per-record failures mixed into a query page alongside the successes,
+    /// keyed by the record name CloudKit reports them for.
+    var queryRecordFailures: [String: any Error] = [:]
     /// Consumed in order, one entry per `CKQuery`. `nil` means success.
     var queryFailures: [(any Error)?] = []
     /// Consumed in order per record, whenever that record is fetched.
@@ -248,7 +251,12 @@ final class FakeCloudKitTransport: CloudKitTransport {
             .sorted { $0.recordID.recordName < $1.recordID.recordName }
             .prefix(max(resultsLimit, 0))
         return CloudKitQueryPage(
-            matchResults: matches.map { ($0.recordID, .success($0)) },
+            matchResults: matches.map { record in
+                if let failure = queryRecordFailures[record.recordID.recordName] {
+                    return (record.recordID, .failure(failure))
+                }
+                return (record.recordID, .success(record))
+            },
             queryCursor: nil
         )
     }

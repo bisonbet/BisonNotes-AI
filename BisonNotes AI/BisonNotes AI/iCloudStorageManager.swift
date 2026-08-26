@@ -3858,6 +3858,32 @@ extension iCloudStorageManager {
         }
 
         try await validateiCloudAccountAvailability()
+
+        // Restoring one review item still writes records and mutates the manifest,
+        // so it takes its turn like any other operation. Running outside the
+        // coordinator let it interleave with an erase and put records back after
+        // the enumeration had already passed them.
+        var result = CloudRestoreResult()
+        try await operationCoordinator.submit(
+            intent: .restoreToThisDevice,
+            allowJoiningRunningOperation: false,
+            coalescesWithEquivalentRequests: false
+        ) { [weak self] in
+            guard let self else { return }
+            result = try await self.runReviewItemRestore(
+                item,
+                appCoordinator: appCoordinator,
+                includeAudioFiles: includeAudioFiles
+            )
+        }
+        return result
+    }
+
+    private func runReviewItemRestore(
+        _ item: CloudReviewItem,
+        appCoordinator: AppDataCoordinator,
+        includeAudioFiles: Bool
+    ) async throws -> CloudRestoreResult {
         let recorder = beginRun(reason: .reviewRestore, intent: .restoreToThisDevice)
         do {
             let result = try await performReviewItemRestore(
@@ -3996,6 +4022,21 @@ extension iCloudStorageManager {
 
         try await validateiCloudAccountAvailability()
 
+        // Deleting a review item removes cloud records and rewrites the manifest,
+        // so it queues with everything else rather than racing it.
+        var deletedCount = 0
+        try await operationCoordinator.submit(
+            intent: .deletionFlush,
+            allowJoiningRunningOperation: false,
+            coalescesWithEquivalentRequests: false
+        ) { [weak self] in
+            guard let self else { return }
+            deletedCount = try await self.performReviewItemDeletion(item)
+        }
+        return deletedCount
+    }
+
+    private func performReviewItemDeletion(_ item: CloudReviewItem) async throws -> Int {
         var recordIDs = item.backupRecordNames.map { CKRecord.ID(recordName: $0) }
         recordIDs.append(contentsOf: item.legacySummaryRecordNames.map { CKRecord.ID(recordName: $0) })
 
@@ -6326,45 +6367,13 @@ extension iCloudStorageManager {
             throw CloudSyncDeferredError(until: deferredUntil, recordCount: 0)
         }
 
-        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
-
+        // The query and the records it returns fail in different ways, and they are
+        // not interchangeable: a query that could not run at all may be a schema
+        // problem worth a fallback, while a record CloudKit could not return is a
+        // hole in the dataset that no fallback fixes and none of them should hide.
+        let scan: QueryScanResult
         do {
-            var records: [CKRecord] = []
-            var page = try await cloudTransport.records(
-                matching: query,
-                inZoneWith: nil,
-                desiredKeys: nil,
-                resultsLimit: CKQueryOperation.maximumResults
-            )
-
-            while true {
-                records.append(contentsOf: page.records)
-
-                guard let queryCursor = page.queryCursor else {
-                    break
-                }
-                page = try await cloudTransport.records(
-                    continuingMatchFrom: queryCursor,
-                    desiredKeys: nil,
-                    resultsLimit: CKQueryOperation.maximumResults
-                )
-            }
-
-            if !records.isEmpty {
-                return records
-            }
-
-            let zoneQueryRecords = try await fetchBackupRecordsInDefaultZoneQuery(recordType: recordType)
-            if !zoneQueryRecords.isEmpty {
-                return zoneQueryRecords
-            }
-
-            let zoneChangeRecords = try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
-            if !zoneChangeRecords.isEmpty {
-                return zoneChangeRecords
-            }
-
-            return []
+            scan = try await runQueryScan(recordType: recordType)
         } catch let error as CKError {
             // A query does not run through the batch executor, so the retry policy
             // never sees this error. Falling straight into a zone scan would put
@@ -6382,6 +6391,68 @@ extension iCloudStorageManager {
         } catch {
             return try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
         }
+
+        if let failure = scan.failures.first {
+            // A scan is the only way a cloud-only record is ever found: the
+            // manifest path only looks up ids it already knows. Reporting a
+            // partial page as a complete dataset loses that record for good.
+            AppLog.shared.iCloudSync(
+                "A \(recordType) scan could not read \(scan.failures.count) record(s); " +
+                "reporting the scan as incomplete rather than as a smaller dataset",
+                level: .error
+            )
+            throw failure.error
+        }
+
+        if !scan.records.isEmpty {
+            return scan.records
+        }
+
+        let zoneQueryRecords = try await fetchBackupRecordsInDefaultZoneQuery(recordType: recordType)
+        if !zoneQueryRecords.isEmpty {
+            return zoneQueryRecords
+        }
+
+        let zoneChangeRecords = try await fetchBackupRecordsUsingZoneChanges(recordType: recordType)
+        if !zoneChangeRecords.isEmpty {
+            return zoneChangeRecords
+        }
+
+        return []
+    }
+
+    private struct QueryScanResult {
+        var records: [CKRecord] = []
+        var failures: [(recordID: CKRecord.ID, error: any Error)] = []
+    }
+
+    /// Walks every page of a type query, keeping the records and the per-record
+    /// failures apart so the caller can tell a smaller dataset from an incomplete read.
+    private func runQueryScan(recordType: String) async throws -> QueryScanResult {
+        let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
+        var scan = QueryScanResult()
+        var page = try await cloudTransport.records(
+            matching: query,
+            inZoneWith: nil,
+            desiredKeys: nil,
+            resultsLimit: CKQueryOperation.maximumResults
+        )
+
+        while true {
+            scan.records.append(contentsOf: page.records)
+            scan.failures.append(contentsOf: page.failures)
+
+            guard let queryCursor = page.queryCursor else {
+                break
+            }
+            page = try await cloudTransport.records(
+                continuingMatchFrom: queryCursor,
+                desiredKeys: nil,
+                resultsLimit: CKQueryOperation.maximumResults
+            )
+        }
+
+        return scan
     }
 
     private func fetchBackupRecordsInDefaultZoneQuery(recordType: String) async throws -> [CKRecord] {
@@ -6392,7 +6463,7 @@ extension iCloudStorageManager {
             desiredKeys: nil,
             resultsLimit: 1000
         )
-        return page.records
+        return try page.recordsOrThrow()
     }
 
     private func fetchBackupRecordsUsingZoneChanges(recordType: String) async throws -> [CKRecord] {
