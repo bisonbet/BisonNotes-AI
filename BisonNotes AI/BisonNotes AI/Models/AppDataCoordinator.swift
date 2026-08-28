@@ -18,8 +18,7 @@ class AppDataCoordinator: ObservableObject {
     /// singleton Window scene rather than a per-recording WindowGroup.
     @Published var macPlayerRecordingID: UUID?
 
-    private var lastAutomaticiCloudReconcileDate: Date?
-    private let automaticiCloudReconcileMinInterval: TimeInterval = 300
+    private var networkRestoredObserver: (any NSObjectProtocol)?
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
@@ -219,7 +218,7 @@ class AppDataCoordinator: ObservableObject {
 
         Task {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Deleted local recording and queued iCloud deletion marker for retry: \(error)", level: .error)
             }
@@ -251,7 +250,7 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
         }
@@ -288,7 +287,7 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local summary but failed to remove iCloud summary records: \(error)", level: .error)
         }
@@ -315,7 +314,7 @@ class AppDataCoordinator: ObservableObject {
 
         if disabled {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Marked recording local-only and queued iCloud removal for retry: \(error)", level: .error)
             }
@@ -394,23 +393,31 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled != true
     }
 
-    func reconcileiCloudIfEnabled(reason: String, force: Bool = false) {
+    /// Asks the sync engine for one routine pass.
+    ///
+    /// The decision to run belongs to `iCloudStorageManager`: it knows whether work
+    /// is pending, when the last successful check was, and whether CloudKit has
+    /// asked for a backoff. Requests that arrive while a run is in flight are
+    /// coalesced there rather than starting a second pass.
+    func reconcileiCloudIfEnabled(reason: CloudSyncReason, force: Bool = false) {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         guard iCloudManager.isEnabled else { return }
-
-        if !force,
-           let lastAutomaticiCloudReconcileDate,
-           Date().timeIntervalSince(lastAutomaticiCloudReconcileDate) < automaticiCloudReconcileMinInterval {
-            return
-        }
-        lastAutomaticiCloudReconcileDate = Date()
+        guard iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else { return }
 
         Task {
             do {
-                _ = try await iCloudManager.reconcileAllDataWithiCloud(
+                let result = try await iCloudManager.reconcileAllDataWithiCloud(
                     appCoordinator: self,
                     reason: reason
                 )
+                guard !result.wasCoalescedIntoRunningSync else { return }
+                if let deferredUntil = result.wasDeferredUntil {
+                    AppLog.shared.coreData(
+                        "iCloud sync deferred for \(Int(deferredUntil.timeIntervalSinceNow))s at CloudKit's request",
+                        level: .debug
+                    )
+                    return
+                }
                 syncRecordingURLs()
                 NotificationCenter.default.post(name: NSNotification.Name("iCloudReconcileCompleted"), object: nil)
                 objectWillChange.send()
@@ -420,4 +427,17 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
+    /// Picks queued work back up when the network returns.
+    func observeNetworkRestorationForiCloud() {
+        guard networkRestoredObserver == nil else { return }
+        networkRestoredObserver = NotificationCenter.default.addObserver(
+            forName: iCloudStorageManager.networkRestoredNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.reconcileiCloudIfEnabled(reason: .networkRestored, force: true)
+            }
+        }
+    }
 }

@@ -3,6 +3,7 @@
 //  BisonNotes AITests
 //
 
+import CloudKit
 import XCTest
 @testable import BisonNotes_AI
 
@@ -70,6 +71,23 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("awsBedrockModel"))
         XCTAssertTrue(KeychainSecretStore.isLegacyAWSSettingKey("enableAWSTranscribe"))
         XCTAssertFalse(KeychainSecretStore.isLegacyAWSSettingKey("openAICompatibleModel"))
+    }
+
+    func testMissingQueryableIndexProducesAnActionableError() {
+        // What CloudKit actually says, which names neither the index nor the fix.
+        XCTAssertTrue(
+            iCloudStorageManager.isMissingQueryableIndexDiagnostic(
+                "Field 'recordName' is not marked queryable"
+            )
+        )
+        XCTAssertTrue(iCloudStorageManager.isMissingQueryableIndexDiagnostic("'recordName' is not queryable"))
+        XCTAssertFalse(iCloudStorageManager.isMissingQueryableIndexDiagnostic("Network unavailable"))
+
+        let error = iCloudStorageManager.cloudBackupQueryableIndexError(recordType: "CD_BackupDeletion")
+        XCTAssertTrue(error.localizedDescription.contains("CD_BackupDeletion"))
+        let suggestion = (error.userInfo[NSLocalizedRecoverySuggestionErrorKey] as? String) ?? ""
+        XCTAssertTrue(suggestion.contains("QUERYABLE"), "the message has to name the fix, not just the symptom")
+        XCTAssertTrue(suggestion.lowercased().contains("recordname"))
     }
 
     func testProductionSchemaDiagnosticProducesActionableError() {
@@ -960,4 +978,282 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+
+    // MARK: - Batched Execution Parity
+    //
+    // The arbitration rules above are pure functions, and the tests for them stay
+    // that way. These run the same rules through the real sync legs and a scripted
+    // CloudKit transport, because batching changed *how* records are read and
+    // written — and a rule that only holds one record at a time is no rule at all.
+
+    private struct SyncEngineHarness {
+        let manager: iCloudStorageManager
+        let transport: FakeCloudKitTransport
+        let clock: ManualCloudSyncClock
+    }
+
+    private static let syncEngineDefaultsKeys = [
+        "iCloudBackupStateSignatureV1",
+        "iCloudActiveManifestMigrationCompletedV2",
+        "iCloudLastSuccessfulRoutineSyncV1"
+    ]
+
+    private func makeSyncEngineHarness() -> SyncEngineHarness {
+        for key in Self.syncEngineDefaultsKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        UserDefaults.standard.set(true, forKey: "iCloudActiveManifestMigrationCompletedV2")
+        // Read by `init`, so it has to be set before the manager is built; assigning
+        // `isEnabled` afterwards would start the real CloudKit enable path.
+        UserDefaults.standard.set(true, forKey: "iCloudSyncEnabled")
+        defer { UserDefaults.standard.set(false, forKey: "iCloudSyncEnabled") }
+
+        let transport = FakeCloudKitTransport()
+        let clock = ManualCloudSyncClock()
+        let manager = iCloudStorageManager(
+            transport: transport,
+            clock: clock,
+            sleeper: RecordingCloudSyncSleeper(clock: clock),
+            preferences: InMemoryCloudSyncPreferencesStore(),
+            metricsSink: nil
+        )
+        manager.networkStatus = .available
+        manager.clearPendingCloudMutationsForTesting()
+        return SyncEngineHarness(manager: manager, transport: transport, clock: clock)
+    }
+
+    private func recordName(_ prefix: String, _ id: UUID) -> String {
+        "\(prefix)\(id.uuidString)"
+    }
+
+    // MARK: Durable deletion intent
+
+    func testPendingTombstoneSurvivesAPartialBatchFailure() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = try createCompleteRecording(named: "To delete")
+        let recordingRecordName = recordName("backup_recording_", recordingId)
+        harness.transport.seed([
+            CloudKitTestRecords.record(type: "CD_BackupRecording", name: recordingRecordName)
+        ])
+        harness.transport.perRecordDeleteFailures[CKRecord.ID(recordName: recordingRecordName)] = [
+            CloudKitTestError.ckError(.permissionFailure)
+        ]
+
+        harness.manager.enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: [],
+            summaryIds: []
+        )
+        XCTAssertEqual(harness.manager.pendingCloudDeletionCountForTesting, 1)
+
+        do {
+            _ = try await harness.manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+            XCTFail("A failed cloud deletion must surface")
+        } catch {
+            // Expected.
+        }
+
+        XCTAssertEqual(
+            harness.manager.pendingCloudDeletionCountForTesting,
+            1,
+            "Durable deletion intent is the only authority for removing cloud content; it survives until every step succeeds"
+        )
+        harness.manager.clearPendingCloudMutationsForTesting()
+    }
+
+    func testPendingTombstoneIsClearedOnlyAfterTheWholeSequenceSucceeds() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = try createCompleteRecording(named: "Deleted cleanly")
+        let recordingRecordName = recordName("backup_recording_", recordingId)
+        harness.transport.seed([
+            CloudKitTestRecords.record(type: "CD_BackupRecording", name: recordingRecordName),
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [recordingRecordName] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            )
+        ])
+
+        harness.manager.enqueueRecordingDeletionForiCloud(
+            recordingId: recordingId,
+            transcriptIds: [],
+            summaryIds: []
+        )
+        _ = try await harness.manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+
+        XCTAssertEqual(harness.manager.pendingCloudDeletionCountForTesting, 0)
+        XCTAssertNil(harness.transport.record(named: recordingRecordName), "The content record is gone")
+        XCTAssertNotNil(
+            harness.transport.record(named: "backup_deletion_\(recordingId.uuidString)"),
+            "…and the tombstone that says so is in place"
+        )
+        let manifest = harness.transport.record(named: "content_index")?["recordingRecordNames"] as? [String]
+        XCTAssertEqual(manifest, [], "The manifest must not keep claiming a record that was deleted")
+    }
+
+    // MARK: Arbitration through the real legs
+
+    func testNewerCloudRecordWinsThroughBatchedExecution() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = try createRecordingOnly(named: "Local name")
+        let recordingRecordName = recordName("backup_recording_", recordingId)
+        let cloudEdit = Date().addingTimeInterval(600)
+        harness.transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Renamed on another device",
+                    "recordingDate": Date(),
+                    "createdAt": Date(),
+                    "lastModified": cloudEdit,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        _ = try await harness.manager.reconcileAllDataWithiCloud(
+            appCoordinator: appCoordinator,
+            reason: .appLaunch
+        )
+
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(
+            recording.recordingName,
+            "Renamed on another device",
+            "The newer edit wins whichever device syncs last"
+        )
+        XCTAssertEqual(
+            harness.transport.record(named: recordingRecordName)?["recordingName"] as? String,
+            "Renamed on another device",
+            "…and this device must not have overwritten it on the way past"
+        )
+    }
+
+    func testRevivalGraceSurvivesBatchedExecution() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = try createRecordingOnly(named: "Edited after delete")
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        recording.lastModified = Date()
+        try appCoordinator.coreDataManager.managedObjectContext.save()
+
+        let deletionRecordName = "backup_deletion_\(recordingId.uuidString)"
+        harness.transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: deletionRecordName,
+                fields: [
+                    // Deleted elsewhere well over the grace window ago; this device
+                    // has edited the item since.
+                    "deletedAt": Date().addingTimeInterval(-600),
+                    "recordingId": recordingId.uuidString
+                ]
+            )
+        ])
+
+        _ = try await harness.manager.reconcileAllDataWithiCloud(
+            appCoordinator: appCoordinator,
+            reason: .appLaunch
+        )
+
+        XCTAssertNotNil(
+            appCoordinator.coreDataManager.getRecording(id: recordingId),
+            "An edit more than the grace interval after a delete beats that delete"
+        )
+        XCTAssertNil(
+            harness.transport.record(named: deletionRecordName),
+            "…and the tombstone is withdrawn so every device keeps the item"
+        )
+    }
+
+    func testLocalOnlyRecordingIsWithdrawnFromTheCloudThroughTheBatchedLeg() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = try createCompleteRecording(named: "Keep on device")
+        let recordingRecordName = recordName("backup_recording_", recordingId)
+        harness.transport.seed([
+            CloudKitTestRecords.record(type: "CD_BackupRecording", name: recordingRecordName)
+        ])
+        try appCoordinator.coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: true)
+
+        _ = try await harness.manager.reconcileAllDataWithiCloud(
+            appCoordinator: appCoordinator,
+            reason: .appLaunch
+        )
+
+        XCTAssertNil(
+            harness.transport.record(named: recordingRecordName),
+            "Keep on This Device means the cloud copy goes away"
+        )
+    }
+
+    func testRestoreRelinksRecordingsToTheirTranscriptAndSummary() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = UUID()
+        let transcriptId = UUID()
+        let summaryId = UUID()
+        let now = Date()
+
+        harness.transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName("backup_recording_", recordingId),
+                fields: [
+                    "recordingName": "Restored",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "restored.m4a",
+                    "duration": 42.0,
+                    "transcriptId": transcriptId.uuidString,
+                    "summaryId": summaryId.uuidString,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupTranscript",
+                name: recordName("backup_transcript_", transcriptId),
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "engine": "fixture",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupSummary",
+                name: recordName("backup_summary_", summaryId),
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "transcriptId": transcriptId.uuidString,
+                    "summary": "Restored summary body long enough to look like real content.",
+                    "generatedAt": now,
+                    "lastModified": now,
+                    "aiMethod": "fixture",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        _ = try await harness.manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: false,
+            restoreSettings: false
+        )
+
+        let recording = try XCTUnwrap(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertEqual(recording.transcriptId, transcriptId)
+        XCTAssertEqual(recording.summaryId, summaryId)
+        XCTAssertNotNil(recording.transcript, "The relationship, not just the id, has to be repaired")
+        XCTAssertNotNil(recording.summary)
+    }
 }

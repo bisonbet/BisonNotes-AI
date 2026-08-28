@@ -430,8 +430,12 @@ struct SettingsView: View {
 
                 if isRunningCloudBackupAction {
                     ModernInlineStatus(
-                        title: "Working...",
-                        subtitle: nil,
+                        title: iCloudManager.isUserTransferWaitingForRunningSync
+                            ? "Waiting its turn..."
+                            : "Working...",
+                        subtitle: iCloudManager.isUserTransferWaitingForRunningSync
+                            ? "A sync is already running; this starts as soon as it finishes"
+                            : nil,
                         systemImage: "arrow.triangle.2.circlepath",
                         tint: .secondary,
                         showsProgress: true
@@ -797,7 +801,11 @@ struct SettingsView: View {
                         ProgressView()
                             .progressViewStyle(.circular)
                             .scaleEffect(0.8)
-                        Text("Working…")
+                        Text(
+                            iCloudManager.isUserTransferWaitingForRunningSync
+                                ? "Waiting for the sync already in progress…"
+                                : "Working…"
+                        )
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }

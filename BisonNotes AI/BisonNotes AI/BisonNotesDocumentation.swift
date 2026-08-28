@@ -20,14 +20,41 @@ enum BisonNotesDocumentation {
         ) as? String)
     }
 
+    /// A section of the guide, named the way a screen thinks about it.
+    ///
+    /// The anchors themselves are version-scoped — `bn23-ai` in the 2.3 guide,
+    /// `bn24-ai` in the 2.4 one — so a call site that spells one out keeps opening
+    /// the previous release's anchor the moment the app ships a new version. The
+    /// caller names the section; the installed version supplies the prefix.
+    enum GuideSection: String {
+        case aiSettings = "ai"
+    }
+
     /// The guide section for a given screen, so in-app help keeps landing on the
     /// part that answers the question rather than the top of the page.
-    static func releaseGuideURL(fragment: String) -> URL {
+    static func releaseGuideURL(section: GuideSection) -> URL {
         releaseGuideURL(
             forMarketingVersion: Bundle.main.object(
                 forInfoDictionaryKey: "CFBundleShortVersionString"
             ) as? String,
-            fragment: fragment
+            section: section
+        )
+    }
+
+    static func releaseGuideURL(
+        forMarketingVersion marketingVersion: String?,
+        section: GuideSection
+    ) -> URL {
+        guard let versionSlug = versionSlug(for: marketingVersion) else {
+            // The unversioned landing page carries none of these anchors, so a
+            // fragment there would land the reader nowhere.
+            return releaseGuideURL(forMarketingVersion: marketingVersion)
+        }
+
+        let anchorPrefix = "bn\(versionSlug.replacingOccurrences(of: "-", with: ""))"
+        return releaseGuideURL(
+            forMarketingVersion: marketingVersion,
+            fragment: "\(anchorPrefix)-\(section.rawValue)"
         )
     }
 

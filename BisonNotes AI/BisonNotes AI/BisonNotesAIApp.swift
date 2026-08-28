@@ -820,7 +820,8 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
-                    appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
+                    appCoordinator.observeNetworkRestorationForiCloud()
+                    appCoordinator.reconcileiCloudIfEnabled(reason: .appLaunch, force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
                 #if os(iOS)
@@ -851,7 +852,9 @@ struct BisonNotesAIApp: App {
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
-                    appCoordinator.reconcileiCloudIfEnabled(reason: "app active")
+                    // Not forced: the launch pass is usually still running, and an
+                    // activation with nothing pending has nothing to do.
+                    appCoordinator.reconcileiCloudIfEnabled(reason: .appBecameActive)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
                     NSLog("📎 Darwin notification received from Share Extension")
