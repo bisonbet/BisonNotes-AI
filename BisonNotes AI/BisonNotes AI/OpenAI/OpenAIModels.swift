@@ -356,9 +356,17 @@ class MessageFormatDetector {
         "perplexity.ai"             // Perplexity
     ]
 
-    /// Detect the message format based on the base URL
-    /// Checks manual override first, then falls back to automatic detection
+    /// Detect the message format based on the base URL.
+    /// Empty configuration uses the safe string default; nonempty URLs check
+    /// the manual override first, then fall back to automatic detection.
     static func detectFormat(for baseURL: String) -> MessageContentFormat {
+        let normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBaseURL.isEmpty else {
+            // An empty compatible-provider setting is expected during initial
+            // setup, not a malformed URL worth logging.
+            return .string
+        }
+
         // Check for manual override first
         if UserDefaults.standard.bool(forKey: manualOverrideEnabledKey) {
             let manualFormat = UserDefaults.standard.string(forKey: manualFormatKey) ?? "string"
@@ -368,11 +376,11 @@ class MessageFormatDetector {
         }
 
         // Automatic detection based on URL host
-        guard let url = URL(string: baseURL),
+        guard let url = URL(string: normalizedBaseURL),
               let host = url.host?.lowercased() else {
             // If URL parsing fails, fall back to string matching
             AppLog.shared.networking("Failed to parse base URL, using fallback detection", level: .error)
-            return detectFormatFallback(for: baseURL)
+            return detectFormatFallback(for: normalizedBaseURL)
         }
 
         // Use extracted logic for host-based detection
@@ -509,9 +517,14 @@ class MessageFormatDetector {
 
     /// Detect format without considering manual override (for UI display)
     static func detectFormatWithoutOverride(for baseURL: String) -> MessageContentFormat {
-        guard let url = URL(string: baseURL),
+        let normalizedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBaseURL.isEmpty else {
+            return .string
+        }
+
+        guard let url = URL(string: normalizedBaseURL),
               let host = url.host?.lowercased() else {
-            return detectFormatFallback(for: baseURL)
+            return detectFormatFallback(for: normalizedBaseURL)
         }
 
         // Use extracted logic for host-based detection

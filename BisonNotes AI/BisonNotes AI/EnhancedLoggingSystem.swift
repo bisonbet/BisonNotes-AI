@@ -75,21 +75,33 @@ final class AppLog: Sendable {
     private static let maxBreadcrumbLines = 750
     private static let cleanShutdownKey = "AppLog_CleanShutdown"
     private let sessionId = UUID().uuidString
-    private let lifecycleState = OSAllocatedUnfairLock(initialState: false)
+    private struct LifecycleState {
+        var previousSessionCrashed = false
+        var launchWasMarked = false
+    }
+    private let lifecycleState = OSAllocatedUnfairLock(initialState: LifecycleState())
 
-    /// Captured at launch before the flag is reset so the value survives the whole session.
-    private(set) var previousSessionCrashed: Bool {
-        get { lifecycleState.withLock { $0 } }
-        set { lifecycleState.withLock { $0 = newValue } }
+    /// Captured once at launch before the shutdown marker is reset. This
+    /// diagnostic fact remains stable for the lifetime of the process.
+    var previousSessionCrashed: Bool {
+        lifecycleState.withLock { $0.previousSessionCrashed }
     }
 
     /// Call on app launch. Reads the previous session's shutdown state, then resets the flag.
     /// Must be called before anything checks `previousSessionCrashed`.
     func markLaunch() {
-        // On very first install the key doesn't exist — UserDefaults returns false,
-        // which would look like a crash. Treat missing key as clean.
-        let hasKey = UserDefaults.standard.object(forKey: Self.cleanShutdownKey) != nil
-        previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
+        let shouldMarkLaunch = lifecycleState.withLock { state -> Bool in
+            guard !state.launchWasMarked else { return false }
+            state.launchWasMarked = true
+
+            // On very first install the key doesn't exist — UserDefaults returns false,
+            // which would look like a crash. Treat missing key as clean.
+            let hasKey = UserDefaults.standard.object(forKey: Self.cleanShutdownKey) != nil
+            state.previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
+            return true
+        }
+        guard shouldMarkLaunch else { return }
+
         // Reset for this session — if we crash, it stays false
         UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
 

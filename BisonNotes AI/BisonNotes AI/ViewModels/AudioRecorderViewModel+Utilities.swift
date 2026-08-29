@@ -30,8 +30,18 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 	}
 
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+		let finishedURL = recorder.url
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			#if os(iOS)
+			if isFinalizingRecoverySegment || recoveryFinalizedSegmentURLs.contains(finishedURL.standardizedFileURL) {
+				AppLog.shared.recording(
+					"Ignoring recorder completion owned by coordinated recovery",
+					level: .debug
+				)
+				return
+			}
+			#endif
 			// Check if we're still in recording mode - if so, this was an interruption, not a user stop
 			// In this case, don't save as a finished recording - let the interruption handler deal with it
 			if isRecording {
@@ -53,18 +63,36 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				return
 			}
 
-			// Start background task to protect Core Data save operations
+			// Start background task to protect file validation and Core Data save operations.
 			beginBackgroundTask()
+			defer { endBackgroundTask() }
 
+			recordingBeingProcessed = true // Set flag to prevent duplicate processing
 			if flag {
 				if appIsBackgrounding {
 					AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
 				} else {
 					AppLog.shared.recording("Recording finished successfully")
 				}
-				recordingBeingProcessed = true // Set flag to prevent duplicate processing
 
-				if let resolvedRecordingURL = recordingURL {
+				guard let resolvedRecordingURL = recordingURL,
+					  resolvedRecordingURL.standardizedFileURL == finishedURL.standardizedFileURL else {
+					AppLog.shared.recording("Recorder finished for an unexpected recording URL; ignoring callback", level: .error)
+					recordingBeingProcessed = false
+					return
+				}
+
+				switch await RecordingFinalizationPolicy.inspect(
+					url: resolvedRecordingURL,
+					delegateSucceeded: true
+				) {
+				case .rejected(let rejection):
+					AppLog.shared.recording(
+						"Recording finalization rejected the captured file: \(rejection)",
+						level: .error
+					)
+					rejectRecordingFinalization(at: resolvedRecordingURL, rejection: rejection)
+				case .usable(let fileSize, let duration):
 					saveLocationData(for: resolvedRecordingURL)
 
 					// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
@@ -72,8 +100,6 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 					// Add recording using workflow manager for proper UUID consistency
 					if let workflowManager = workflowManager {
-						let fileSize = getFileSize(url: resolvedRecordingURL)
-						let duration = getRecordingDuration(url: resolvedRecordingURL)
 						let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
 						// Create display name for phone recording
@@ -95,32 +121,32 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 						// Watch audio integration removed
 						self.resetRecordingLocation()
 						self.recordingStartedAt = nil
+						self.resetRecordingAttemptArtifacts()
 					} else {
 						AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
 					}
 				}
 
-				// Reset processing flag after successful completion
 				recordingBeingProcessed = false
-
-				// Deactivate audio session to restore high-quality music playback
-				Task { @MainActor [weak self] in
-					guard let self else { return }
-					try? await self.enhancedAudioSessionManager.deactivateSession()
-				}
 			} else {
-				errorMessage = "Recording failed"
-				recordingBeingProcessed = false // Reset flag on failure too
-
-				// Also deactivate session on failure
-				Task { @MainActor [weak self] in
-					guard let self else { return }
-					try? await self.enhancedAudioSessionManager.deactivateSession()
+				guard let currentURL = recordingURL,
+					  currentURL.standardizedFileURL == finishedURL.standardizedFileURL else {
+					AppLog.shared.recording(
+						"Ignoring an unsuccessful recorder callback for a non-current recording URL",
+						level: .debug
+					)
+					recordingBeingProcessed = false
+					return
 				}
+
+				let rejection = RecordingFinalizationRejection.delegateReportedFailure
+				AppLog.shared.recording("Recording delegate reported an unsuccessful finalization", level: .error)
+				rejectRecordingFinalization(at: finishedURL, rejection: rejection)
 			}
 
-			// End background task that protected the Core Data save operation
-			self.endBackgroundTask()
+			// Deactivate audio session after either a successful save or a rejected
+			// current-attempt artifact.
+			try? await self.enhancedAudioSessionManager.deactivateSession()
 		}
 	}
 }
@@ -258,6 +284,80 @@ extension AudioRecorderViewModel {
 // MARK: - File Operations
 
 extension AudioRecorderViewModel {
+
+	func registerRecordingAttemptArtifact(at url: URL) {
+		let standardizedURL = url.standardizedFileURL
+		guard !recordingAttemptArtifacts.contains(where: { $0.url == standardizedURL }) else { return }
+		recordingAttemptArtifacts.append(
+			RecordingAttemptArtifact(
+				url: standardizedURL,
+				existedBeforeAttempt: FileManager.default.fileExists(atPath: standardizedURL.path)
+			)
+		)
+	}
+
+	func resetRecordingAttemptArtifacts() {
+		recordingAttemptArtifacts.removeAll()
+	}
+
+	func removeOwnedRecordingAttemptArtifact(at url: URL) {
+		let standardizedURL = url.standardizedFileURL
+		guard let artifact = recordingAttemptArtifacts.first(where: { $0.url == standardizedURL }) else {
+			AppLog.shared.recording(
+				"Not removing unregistered recording artifact \(url.lastPathComponent)",
+				level: .debug
+			)
+			return
+		}
+		guard !artifact.existedBeforeAttempt else {
+			AppLog.shared.recording(
+				"Not removing pre-existing recording artifact \(url.lastPathComponent)",
+				level: .debug
+			)
+			return
+		}
+
+		guard FileManager.default.fileExists(atPath: standardizedURL.path) else { return }
+		do {
+			try FileManager.default.removeItem(at: standardizedURL)
+			AppLog.shared.recording("Removed unusable current-attempt recording artifact", level: .debug)
+		} catch {
+			AppLog.shared.recording(
+				"Could not remove unusable recording artifact: \(error.localizedDescription)",
+				level: .error
+			)
+		}
+	}
+
+	func rejectRecordingFinalization(at url: URL?, rejection: RecordingFinalizationRejection) {
+		#if os(iOS)
+		recordingIntentActive = false
+		callInterruptionTracker.removeAll()
+		#endif
+		if let url {
+			removeOwnedRecordingAttemptArtifact(at: url)
+		}
+		isRecording = false
+		isStartingRecording = false
+		stopBackgroundTimeMonitoring()
+		recordingState = .idle
+		recordingTime = 0
+		stopRecordingTimer()
+		audioRecorder = nil
+		liveTranscriptText = ""
+		recordingURL = nil
+		recordingSegments = []
+		mainRecordingURL = nil
+		currentSegmentIndex = 0
+		isInInterruption = false
+		interruptionRecordingURL = nil
+		recorderStoppedUnexpectedlyTime = nil
+		recordingBeingProcessed = false
+		resetRecordingLocation()
+		recordingStartedAt = nil
+		errorMessage = rejection.userMessage
+		resetRecordingAttemptArtifacts()
+	}
 
 	func getFileSize(url: URL) -> Int64 {
 		do {

@@ -81,6 +81,7 @@ extension AudioRecorderViewModel {
 		if isMacSystemAudioCaptureEnabled {
 			if CGPreflightScreenCaptureAccess() {
 				let systemAudioURL = Self.macSystemAudioURL(for: url)
+				registerRecordingAttemptArtifact(at: systemAudioURL)
 				let capture = MacSystemAudioCapture(outputURL: systemAudioURL)
 				do {
 					try await capture.start(initiallyPaused: true)
@@ -172,6 +173,7 @@ extension AudioRecorderViewModel {
 		}
 
 		let scratchURL = suppliedScratchURL ?? Self.macScratchURL(for: url)
+		registerRecordingAttemptArtifact(at: scratchURL)
 		let fileManager = FileManager.default
 		if fileManager.fileExists(atPath: scratchURL.path) {
 			try fileManager.removeItem(at: scratchURL)
@@ -298,6 +300,7 @@ extension AudioRecorderViewModel {
 	func startMacContinuation(at finalURL: URL) throws {
 		let segmentIndex = macScratchSegmentURLs.count + 1
 		let scratchURL = Self.macScratchURL(for: finalURL, segmentIndex: segmentIndex)
+		registerRecordingAttemptArtifact(at: scratchURL)
 		try startMacEnginePipeline(
 			at: finalURL,
 			scratchURL: scratchURL,

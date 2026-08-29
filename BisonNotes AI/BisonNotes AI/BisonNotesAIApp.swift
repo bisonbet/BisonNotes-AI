@@ -1350,12 +1350,6 @@ struct BisonNotesAIApp: App {
         Task {
             let backgroundManager = BackgroundProcessingManager.shared
 
-            guard !AppLog.shared.previousSessionCrashed else {
-                AppLog.shared.general("Skipping background job processing because previous session crashed", level: .error)
-                task.setTaskCompleted(success: true)
-                return
-            }
-
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {
                 AppLog.shared.general("Processing queued jobs in background")

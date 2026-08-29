@@ -35,23 +35,32 @@ extension AudioRecorderViewModel {
                 systemAudioURL: usableSystemAudioURL,
                 finalURL: url
             )
-            guard await audioAssetHasUsableAudio(at: url) else {
+
+            let finalization = await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true)
+            guard case .usable(let fileSize, let duration) = finalization else {
+                let description: String
+                if case .rejected(let rejection) = finalization {
+                    description = rejection.userMessage
+                } else {
+                    description = "The finalized recording did not contain usable audio."
+                }
                 throw NSError(
                     domain: "AudioRecorderViewModel.Mac",
                     code: -18,
-                    userInfo: [NSLocalizedDescriptionKey: "The finalized recording did not contain usable audio."]
+                    userInfo: [NSLocalizedDescriptionKey: description]
                 )
             }
+
+            removeMacScratchFiles(scratchURLs)
+            if let systemAudioURL = macSystemAudioURL {
+                try? FileManager.default.removeItem(at: systemAudioURL)
+            }
+            saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
+            return
         } catch {
             handleMacFinalizationFailure(error, scratchURLs: scratchURLs, finalURL: url)
             return
         }
-
-        removeMacScratchFiles(scratchURLs)
-        if let systemAudioURL = macSystemAudioURL {
-            try? FileManager.default.removeItem(at: systemAudioURL)
-        }
-        saveFinalizedMacRecording(at: url)
     }
 
     private func usableSystemAudioURL() async -> URL? {
@@ -98,15 +107,12 @@ extension AudioRecorderViewModel {
     }
 
     private func audioAssetHasUsableAudio(at url: URL) async -> Bool {
-        guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        let asset = AVURLAsset(url: url)
-        do {
-            let duration = try await asset.load(.duration).seconds
-            guard duration.isFinite, duration > 0 else { return false }
-            return !(try await asset.loadTracks(withMediaType: .audio)).isEmpty
-        } catch {
+        switch await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true) {
+        case .usable:
+            return true
+        case .rejected(let rejection):
             AppLog.shared.recording(
-                "Could not inspect captured audio \(url.lastPathComponent): \(error.localizedDescription)",
+                "Could not inspect captured audio \(url.lastPathComponent): \(rejection)",
                 level: .error
             )
             return false
@@ -134,7 +140,7 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func saveFinalizedMacRecording(at url: URL) {
+    private func saveFinalizedMacRecording(at url: URL, fileSize: Int64, duration: TimeInterval) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.recording(
                 "Mac finalize: recording file is missing at \(url.lastPathComponent)",
@@ -154,8 +160,8 @@ extension AudioRecorderViewModel {
             url: url,
             name: generateAppRecordingDisplayName(),
             date: currentRecordingDate(for: url),
-            fileSize: getFileSize(url: url),
-            duration: getRecordingDuration(url: url),
+            fileSize: fileSize,
+            duration: duration,
             quality: AudioRecorderViewModel.getCurrentAudioQuality(),
             locationData: recordingLocationSnapshot()
         )
@@ -189,6 +195,7 @@ extension AudioRecorderViewModel {
         macScratchSegmentURLs = []
         macSystemAudioURL = nil
         macMicrophoneStartOffset = 0
+        resetRecordingAttemptArtifacts()
     }
 
     func allMacScratchURLs() -> [URL] {

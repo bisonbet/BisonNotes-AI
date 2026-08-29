@@ -46,6 +46,76 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         XCTAssertEqual(info.sampleRate, 16_000, accuracy: 1)
     }
 
+    func testHeaderOnlyAudioIsRejectedBeforePersistence() async throws {
+        let audioURL = tempDirectory.appendingPathComponent("header-only.caf")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        _ = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+
+        let result = await RecordingFinalizationPolicy.inspect(url: audioURL, delegateSucceeded: true)
+
+        XCTAssertFalse(result.isUsable)
+
+        let zeroDurationFacts = RecordingFinalizationFacts(
+            delegateSucceeded: true,
+            fileExists: true,
+            fileSize: 128,
+            duration: 0,
+            hasAudioTrack: true
+        )
+        XCTAssertEqual(
+            RecordingFinalizationPolicy.evaluate(zeroDurationFacts),
+            .rejected(.invalidDuration)
+        )
+    }
+
+    func testMissingAndUnreadableAudioAreRejected() async {
+        let missingURL = tempDirectory.appendingPathComponent("missing.m4a")
+        let missingResult = await RecordingFinalizationPolicy.inspect(url: missingURL, delegateSucceeded: true)
+        XCTAssertEqual(missingResult, .rejected(.fileMissing))
+
+        let unreadableURL = tempDirectory.appendingPathComponent("unreadable.m4a")
+        FileManager.default.createFile(atPath: unreadableURL.path, contents: Data())
+        let unreadableResult = await RecordingFinalizationPolicy.inspect(url: unreadableURL, delegateSucceeded: true)
+        XCTAssertEqual(unreadableResult, .rejected(.fileUnreadable))
+    }
+
+    func testValidShortAudioIsAcceptedForFinalization() async throws {
+        let audioURL = tempDirectory.appendingPathComponent("valid-finalization.caf")
+        try createSilentAudioFixture(at: audioURL, duration: 0.2)
+
+        let result = await RecordingFinalizationPolicy.inspect(url: audioURL, delegateSucceeded: true)
+
+        guard case .usable(let fileSize, let duration) = result else {
+            return XCTFail("Expected a valid short recording to be usable, got \(result)")
+        }
+        XCTAssertGreaterThan(fileSize, 0)
+        XCTAssertGreaterThan(duration, 0)
+    }
+
+    func testFailedRecorderDelegateRejectsEvenAValidAudioFile() async throws {
+        let audioURL = tempDirectory.appendingPathComponent("delegate-failed.caf")
+        try createSilentAudioFixture(at: audioURL, duration: 0.2)
+
+        let result = await RecordingFinalizationPolicy.inspect(url: audioURL, delegateSucceeded: false)
+
+        XCTAssertEqual(result, .rejected(.delegateReportedFailure))
+    }
+
+    func testUsableAudioBeforeInterruptionRemainsAccepted() {
+        let facts = RecordingFinalizationFacts(
+            delegateSucceeded: true,
+            fileExists: true,
+            fileSize: 128,
+            duration: 0.25,
+            hasAudioTrack: true
+        )
+
+        XCTAssertEqual(
+            RecordingFinalizationPolicy.evaluate(facts),
+            .usable(fileSize: 128, duration: 0.25)
+        )
+    }
+
     func testEmptyAudioFileIsRejectedBeforeTranscriptionWorkStarts() async throws {
         let audioURL = tempDirectory.appendingPathComponent("empty.m4a")
         FileManager.default.createFile(atPath: audioURL.path, contents: Data())

@@ -4,10 +4,47 @@
 //
 
 import Foundation
+import Speech
 import XCTest
 @testable import BisonNotes_AI
 
 final class Swift6AudioConcurrencyTests: XCTestCase {
+	func testSpeechAuthorizationResolvesWhenCallbackRunsOnBackgroundQueue() async {
+		let granted = await SpeechAuthorizationClient.requestPermission { completion in
+			DispatchQueue.global(qos: .userInitiated).async {
+				completion(.authorized)
+			}
+		}
+
+		XCTAssertTrue(granted)
+	}
+
+	func testSpeechAuthorizationRejectsEveryNonAuthorizedStatus() async {
+		let statuses: [SFSpeechRecognizerAuthorizationStatus] = [
+			.denied,
+			.restricted,
+			.notDetermined
+		]
+
+		for status in statuses {
+			let granted = await SpeechAuthorizationClient.requestPermission { completion in
+				completion(status)
+			}
+			XCTAssertFalse(granted, "Unexpected authorization result for \(status)")
+		}
+	}
+
+	func testSpeechAuthorizationIgnoresDuplicateCallbacks() async {
+		let granted = await SpeechAuthorizationClient.requestPermission { completion in
+			DispatchQueue.global(qos: .userInitiated).async {
+				completion(.authorized)
+				completion(.denied)
+			}
+		}
+
+		XCTAssertTrue(granted)
+	}
+
 	func testCaptureHealthSerializesConcurrentRealtimeWrites() throws {
 		let health = RecordingCaptureHealth()
 		let start = Date(timeIntervalSince1970: 4_000)

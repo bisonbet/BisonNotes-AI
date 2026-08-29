@@ -145,8 +145,7 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
                 // Extract recording URL from notification user info
                 if let recordingURLString,
                    let url = URL(string: recordingURLString) {
-                    // Resume recording
-                    recorderVM.recordingState = .recording
+                    // The recovery coordinator owns the state transition.
                     await recorderVM.resumeRecordingAfterInterruption(url: url)
                 } else {
                     AppLog.shared.general("No recording URL found in notification", level: .error)

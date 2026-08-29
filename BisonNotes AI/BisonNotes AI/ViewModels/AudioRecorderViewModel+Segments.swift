@@ -24,16 +24,49 @@ extension AudioRecorderViewModel {
 
 	/// Merge multiple recording segments into a single file after interruptions
 	@MainActor
-	func mergeRecordingSegments() async {
-		guard recordingSegments.count > 1, let mainURL = mainRecordingURL else {
+	func mergeRecordingSegments(
+		expectedRecordingSessionID: UUID? = nil,
+		expectedRecoveryRequestID: UUID? = nil
+	) async {
+		let recoveryIsCurrent: () -> Bool = {
+			guard !Task.isCancelled else { return false }
+			#if os(iOS)
+			if let expectedRecordingSessionID,
+			   self.recordingSessionID != expectedRecordingSessionID {
+				return false
+			}
+			if let expectedRecoveryRequestID {
+				guard let expectedRecordingSessionID else { return false }
+				return self.recoveryCoordinator.accepts(
+					requestID: expectedRecoveryRequestID,
+					recordingSessionID: expectedRecordingSessionID
+				)
+			}
+			return true
+			#else
+			return true
+			#endif
+		}
+
+		guard recoveryIsCurrent(), recordingSegments.count > 1, let mainURL = mainRecordingURL else {
 			AppLog.shared.recording("No segments to merge", level: .debug)
 			return
 		}
+		let segments = recordingSegments
 
-		AppLog.shared.recording("Merging \(recordingSegments.count) segments")
+		AppLog.shared.recording("Merging \(segments.count) segments")
 
 		// Start background task to protect file merging and Core Data save operations
 		beginBackgroundTask()
+		var temporaryURL: URL?
+		var mergeCompleted = false
+		defer {
+			if !mergeCompleted, let temporaryURL,
+			   FileManager.default.fileExists(atPath: temporaryURL.path) {
+				try? FileManager.default.removeItem(at: temporaryURL)
+			}
+			endBackgroundTask()
+		}
 
 		do {
 			// Create AVAsset for each segment
@@ -51,7 +84,8 @@ extension AudioRecorderViewModel {
 			var currentTime = CMTime.zero
 
 			// Add each segment to the composition
-			for (index, segmentURL) in recordingSegments.enumerated() {
+			for (index, segmentURL) in segments.enumerated() {
+				guard recoveryIsCurrent() else { return }
 				let asset = AVURLAsset(url: segmentURL)
 
 				// Get the audio track from the segment
@@ -59,9 +93,11 @@ extension AudioRecorderViewModel {
 					AppLog.shared.recording("Segment \(index + 1) has no audio track, skipping")
 					continue
 				}
+				guard recoveryIsCurrent() else { return }
 
 				// Get the duration of this segment
 				let duration = try await asset.load(.duration)
+				guard recoveryIsCurrent() else { return }
 
 				// Insert the segment at the current time
 				let timeRange = CMTimeRange(start: .zero, duration: duration)
@@ -84,27 +120,69 @@ extension AudioRecorderViewModel {
 
 			// Export to a temporary file first (to avoid overwriting existing segments)
 			let tempURL = mainURL.deletingLastPathComponent().appendingPathComponent("temp_merge_\(UUID().uuidString).m4a")
+			temporaryURL = tempURL
+			registerRecordingAttemptArtifact(at: tempURL)
 
 			// Use the modern export API (iOS 18+)
 			try await exportSession.export(to: tempURL, as: .m4a)
+			guard recoveryIsCurrent() else { return }
 			AppFileProtection.apply(to: tempURL)
 
 			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
-			// Clean up individual segment files
-			await cleanupSegmentFiles()
-
-			// Move the merged file to the final location
-			let fileManager = FileManager.default
-
-			// Remove the final destination if it exists
-			if fileManager.fileExists(atPath: mainURL.path) {
-				try fileManager.removeItem(at: mainURL)
+			let finalization = await RecordingFinalizationPolicy.inspect(url: tempURL, delegateSucceeded: true)
+			guard recoveryIsCurrent() else { return }
+			guard case .usable(let fileSize, let duration) = finalization else {
+				if case .rejected(let rejection) = finalization {
+					AppLog.shared.recording(
+						"Merged recording was not usable: \(rejection)",
+						level: .error
+					)
+					removeOwnedRecordingAttemptArtifact(at: tempURL)
+					errorMessage = rejection.userMessage
+				}
+				return
 			}
 
-			// Move temp file to final location
-			try fileManager.moveItem(at: tempURL, to: mainURL)
+			// Replace the original main segment only after the merged file has been
+			// exported and validated. Keep a recoverable backup until the move is
+			// complete so a filesystem error cannot discard the last valid segment.
+			let fileManager = FileManager.default
+			let backupURL = mainURL.deletingLastPathComponent()
+				.appendingPathComponent("merge_backup_\(UUID().uuidString).m4a")
+			registerRecordingAttemptArtifact(at: backupURL)
+			var originalMovedToBackup = false
+			do {
+				if fileManager.fileExists(atPath: mainURL.path) {
+					try fileManager.moveItem(at: mainURL, to: backupURL)
+					originalMovedToBackup = true
+				}
+				try fileManager.moveItem(at: tempURL, to: mainURL)
+			} catch {
+				if originalMovedToBackup,
+				   !fileManager.fileExists(atPath: mainURL.path),
+				   fileManager.fileExists(atPath: backupURL.path) {
+					try? fileManager.moveItem(at: backupURL, to: mainURL)
+				}
+				throw error
+			}
+			mergeCompleted = true
+			removeOwnedRecordingAttemptArtifact(at: backupURL)
 			AppFileProtection.apply(to: mainURL)
+
+			// The merged output is now safe. Remove only the superseded segments;
+			// never delete the new file at mainURL.
+			guard recoveryIsCurrent() else { return }
+			let obsoleteSegments = segments.filter {
+				$0.standardizedFileURL != mainURL.standardizedFileURL
+			}
+			deleteSegmentFiles(obsoleteSegments)
+			guard recoveryIsCurrent() else { return }
+			if segmentURLTrackingMatches(segments) {
+				recordingSegments = []
+				mainRecordingURL = nil
+				currentSegmentIndex = 0
+			}
 
 			AppLog.shared.recording("Successfully merged all segments")
 
@@ -118,8 +196,6 @@ extension AudioRecorderViewModel {
 
 			// Add recording using workflow manager
 			if let workflowManager = workflowManager {
-				let fileSize = getFileSize(url: mainURL)
-				let duration = getRecordingDuration(url: mainURL)
 				let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
 				// Create display name for phone recording
@@ -140,29 +216,38 @@ extension AudioRecorderViewModel {
 
 				self.resetRecordingLocation()
 				self.recordingStartedAt = nil
+				self.resetRecordingAttemptArtifacts()
 			} else {
 				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
 			}
 
-			// End background task after successful merge and save
-			endBackgroundTask()
-
 		} catch {
 			AppLog.shared.recording("Error merging segments: \(error.localizedDescription)", level: .error)
-			// End background task even on error
-			endBackgroundTask()
 		}
 	}
 
 	/// Clean up individual segment files after successful merge
 	@MainActor
-	func cleanupSegmentFiles() async {
-		guard recordingSegments.count > 1 else { return }
+	func cleanupSegmentFiles(segmentURLs: [URL]? = nil) async {
+		let segmentsToDelete = segmentURLs ?? recordingSegments
+		guard segmentsToDelete.count > 1 else { return }
 
+		// Delete all segment files (including the first one for a complete merge).
+		deleteSegmentFiles(segmentsToDelete)
+
+		// Clear the segment tracking only when this operation still owns the same
+		// set of segments. A stale merge must not clear a newer recording session.
+		if segmentURLTrackingMatches(segmentsToDelete) {
+			recordingSegments = []
+			mainRecordingURL = nil
+			currentSegmentIndex = 0
+		}
+	}
+
+	@MainActor
+	private func deleteSegmentFiles(_ segments: [URL]) {
 		let fileManager = FileManager.default
-
-		// Delete all segment files (including the first one, since we're merging to a temp file first)
-		for segmentURL in recordingSegments {
+		for segmentURL in segments {
 			do {
 				if fileManager.fileExists(atPath: segmentURL.path) {
 					try fileManager.removeItem(at: segmentURL)
@@ -172,11 +257,11 @@ extension AudioRecorderViewModel {
 				AppLog.shared.recording("Failed to delete segment: \(error.localizedDescription)", level: .error)
 			}
 		}
+	}
 
-		// Clear the segment tracking
-		recordingSegments = []
-		mainRecordingURL = nil
-		currentSegmentIndex = 0
+	@MainActor
+	private func segmentURLTrackingMatches(_ segments: [URL]) -> Bool {
+		recordingSegments == segments
 	}
 
 	// MARK: - Buffer Checkpointing
