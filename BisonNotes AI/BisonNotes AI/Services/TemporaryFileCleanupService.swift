@@ -14,7 +14,7 @@ final class TemporaryFileCleanupService {
 
     private let fileManager = FileManager.default
     private let defaultMaxAge: TimeInterval = 6 * 60 * 60
-    /// Floor for the iCloud audio staging directory. See `cleanupAudioStagingDirectory`.
+    /// Floor for the iCloud audio staging directory. See `scheduleAudioStagingCleanup`.
     private static let audioStagingMinimumAge: TimeInterval = 6 * 60 * 60
 
     private init() {}
@@ -50,12 +50,7 @@ final class TemporaryFileCleanupService {
             reclaimedBytes: &reclaimedBytes,
             errors: &errors
         )
-        cleanupAudioStagingDirectory(
-            cutoff: cutoff,
-            deletedCount: &deletedCount,
-            reclaimedBytes: &reclaimedBytes,
-            errors: &errors
-        )
+        scheduleAudioStagingCleanup(cutoff: cutoff)
 
         if deletedCount > 0 {
             AppLog.shared.fileManagement("Cleaned up \(deletedCount) stale temporary file(s), reclaimed \(formatBytes(reclaimedBytes))")
@@ -147,57 +142,34 @@ final class TemporaryFileCleanupService {
     /// behind — the staging copies are the recordings themselves, so a single orphaned
     /// run can be gigabytes.
     ///
-    /// A run directory's timestamp only moves when the run stages another file, so a
-    /// sync that is slow between files must not look abandoned. This keeps its own
-    /// floor rather than trusting the caller's `maxAge`, which is 30 minutes on the
-    /// background-processing path.
-    private func cleanupAudioStagingDirectory(
-        cutoff: Date,
-        deletedCount: inout Int,
-        reclaimedBytes: inout Int64,
-        errors: inout [String]
-    ) {
-        let stagingRoot = fileManager.temporaryDirectory
-            .appendingPathComponent("iCloudAudioStaging", isDirectory: true)
-        guard isSafeChild(stagingRoot, of: fileManager.temporaryDirectory) else { return }
-
+    /// That size is why this one runs off the main actor while the rest of this
+    /// service stays inline: `cleanupStaleFiles()` is called straight from the launch
+    /// and activation handlers, and measuring then recursively deleting gigabytes
+    /// there would block the UI for the whole traversal. Its totals are logged when
+    /// it finishes rather than folded into this call's return value.
+    private func scheduleAudioStagingCleanup(cutoff: Date) {
+        // A run directory's timestamp only moves when the run stages another file, so
+        // a sync that is slow between files must not look abandoned. This keeps its
+        // own floor rather than trusting the caller's `maxAge`, which is 30 minutes
+        // on the background-processing path.
         let stagingCutoff = min(cutoff, Date().addingTimeInterval(-Self.audioStagingMinimumAge))
+        Task.detached(priority: .utility) {
+            let sweep = AudioStagingCleanupSweep()
+            let result = sweep.run(cutoff: stagingCutoff)
 
-        for runDirectory in directChildren(of: stagingRoot) {
-            guard isDirectory(runDirectory),
-                  let ageDate = modificationOrCreationDate(runDirectory),
-                  ageDate < stagingCutoff else {
-                continue
+            if result.deletedCount > 0 {
+                AppLog.shared.fileManagement(
+                    "Cleaned up \(result.deletedCount) orphaned iCloud audio staging run(s), "
+                    + "reclaimed \(ByteCountFormatter.string(fromByteCount: result.reclaimedBytes, countStyle: .file))"
+                )
             }
-
-            let size = directorySize(runDirectory)
-            do {
-                try fileManager.removeItem(at: runDirectory)
-                deletedCount += 1
-                reclaimedBytes += size
-            } catch {
-                errors.append("\(runDirectory.lastPathComponent): \(error.localizedDescription)")
+            if !result.errors.isEmpty {
+                AppLog.shared.fileManagement(
+                    "Staging cleanup skipped \(result.errors.count) run(s): \(result.errors.joined(separator: "; "))",
+                    level: .error
+                )
             }
         }
-
-        removeDirectoryIfEmpty(stagingRoot)
-    }
-
-    private func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
-
-    private func directorySize(_ directory: URL) -> Int64 {
-        guard let enumerator = fileManager.enumerator(
-            at: directory,
-            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
-        ) else { return 0 }
-
-        var total: Int64 = 0
-        for case let url as URL in enumerator where isRegularFile(url) {
-            total += fileSize(url)
-        }
-        return total
     }
 
     private func directChildren(of directory: URL) -> [URL] {
@@ -281,5 +253,99 @@ final class TemporaryFileCleanupService {
 
     private func formatBytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+// MARK: - Audio Staging Sweep
+
+/// Removes iCloud audio staging runs that a crash or kill orphaned.
+///
+/// Deliberately not main-actor isolated: an orphaned run holds a full copy of
+/// every recording it staged, so measuring and deleting one can take long enough
+/// to be visible in the UI. Constructed inside the detached task, so nothing
+/// non-`Sendable` crosses an isolation boundary.
+struct AudioStagingCleanupSweep {
+
+    struct Result {
+        var deletedCount = 0
+        var reclaimedBytes: Int64 = 0
+        var errors: [String] = []
+    }
+
+    private let fileManager = FileManager()
+
+    func run(cutoff: Date) -> Result {
+        var result = Result()
+        let tempRoot = fileManager.temporaryDirectory
+        let stagingRoot = tempRoot.appendingPathComponent("iCloudAudioStaging", isDirectory: true)
+        guard isSafeChild(stagingRoot, of: tempRoot) else { return result }
+
+        for runDirectory in directChildren(of: stagingRoot) {
+            guard isDirectory(runDirectory),
+                  let ageDate = modificationOrCreationDate(runDirectory),
+                  ageDate < cutoff else {
+                continue
+            }
+
+            let size = directorySize(runDirectory)
+            do {
+                try fileManager.removeItem(at: runDirectory)
+                result.deletedCount += 1
+                result.reclaimedBytes += size
+            } catch {
+                result.errors.append("\(runDirectory.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        removeDirectoryIfEmpty(stagingRoot)
+        return result
+    }
+
+    private func directChildren(of directory: URL) -> [URL] {
+        (try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .creationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+    }
+
+    private func isRegularFile(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true
+    }
+
+    private func modificationOrCreationDate(_ url: URL) -> Date? {
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+        return values?.contentModificationDate ?? values?.creationDate
+    }
+
+    private func directorySize(_ directory: URL) -> Int64 {
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator where isRegularFile(url) {
+            total += Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+        return total
+    }
+
+    private func isSafeChild(_ url: URL, of root: URL) -> Bool {
+        let childPath = url.standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        return childPath == rootPath || childPath.hasPrefix(rootPath + "/")
+    }
+
+    private func removeDirectoryIfEmpty(_ directory: URL) {
+        guard let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil),
+              contents.isEmpty else {
+            return
+        }
+        try? fileManager.removeItem(at: directory)
     }
 }

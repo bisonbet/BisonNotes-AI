@@ -187,9 +187,14 @@ final class CacheMaintenanceService {
         if let lastSweep, now.timeIntervalSince(lastSweep) < Self.sweepInterval { return }
         lastSweep = now
 
-        let isDownloadInFlight = MLXSwiftDownloadManager.shared.isDownloading
         Task.detached(priority: .utility) {
-            let report = CacheMaintenanceSweep().run(isDownloadInFlight: isDownloadInFlight)
+            // Checked again immediately before each deletion rather than sampled
+            // once: the sweep can spend a long time enumerating and deleting tens
+            // of gigabytes, and a download started in that window would otherwise
+            // have the repository it is writing deleted out from under it.
+            let report = await CacheMaintenanceSweep().run {
+                await MainActor.run { MLXSwiftDownloadManager.shared.isDownloading }
+            }
             guard report.didReclaimAnything else { return }
             AppLog.shared.fileManagement(
                 "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "
@@ -212,9 +217,11 @@ struct CacheMaintenanceSweep {
 
     private let fileManager = FileManager()
 
-    func run(isDownloadInFlight: Bool) -> CacheMaintenanceReport {
+    /// - Parameter isDownloadInFlight: consulted again before every model-cache
+    ///   deletion, so a download that starts mid-sweep still protects its blobs.
+    func run(isDownloadInFlight: @Sendable () async -> Bool) async -> CacheMaintenanceReport {
         var report = CacheMaintenanceReport()
-        pruneHuggingFaceBlobCache(into: &report, isDownloadInFlight: isDownloadInFlight)
+        await pruneHuggingFaceBlobCache(into: &report, isDownloadInFlight: isDownloadInFlight)
         pruneCloudKitAssetCache(into: &report)
         return report
     }
@@ -243,18 +250,20 @@ struct CacheMaintenanceSweep {
 
     private func pruneHuggingFaceBlobCache(
         into report: inout CacheMaintenanceReport,
-        isDownloadInFlight: Bool
-    ) {
+        isDownloadInFlight: @Sendable () async -> Bool
+    ) async {
         guard let hubCacheRoot, let materializedModelsRoot else { return }
 
         let installed = installedModelIDs(under: materializedModelsRoot)
 
         for directory in directChildren(of: hubCacheRoot) {
             guard isDirectory(directory) else { continue }
+            // Re-read per directory. Deleting a repo a download is actively writing
+            // would break both the download and the resume state it depends on.
             guard let reason = CacheMaintenancePolicy.hubPruneReason(
                 directoryName: directory.lastPathComponent,
                 installedModelIDs: installed,
-                isDownloadInFlight: isDownloadInFlight
+                isDownloadInFlight: await isDownloadInFlight()
             ) else { continue }
 
             let size = directorySize(directory)

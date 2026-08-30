@@ -206,6 +206,83 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(LogTrimPolicy.trim(lines: lines, maxLines: 100, maxBytes: 10_000), lines)
     }
 
+    // MARK: - Rolling log file, against real files
+
+    private func makeTempLogURL() -> URL {
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("LogFileTests-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return dir.appendingPathComponent("log.txt")
+    }
+
+    /// The regression that motivated splitting `PersistentLogFile` out of `AppLog`:
+    /// the append handle was opened write-only, so the separator check failed with
+    /// EBADF, the append reported failure, and the caller replaced the whole file
+    /// with the single newest line — losing all history on every log call.
+    func testAppendingKeepsEarlierLines() {
+        let url = makeTempLogURL()
+        let file = PersistentLogFile(url: url, maxLines: 100, maxBytes: 1_000_000)
+
+        file.append("first")
+        file.append("second")
+        file.append("third")
+
+        let contents = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let lines = contents.components(separatedBy: "\n").filter { !$0.isEmpty }
+        XCTAssertEqual(lines, ["first", "second", "third"])
+    }
+
+    func testAppendCreatesTheFileWhenMissing() {
+        let url = makeTempLogURL()
+        PersistentLogFile(url: url, maxLines: 100, maxBytes: 1_000_000).append("only")
+
+        XCTAssertEqual(
+            (try? String(contentsOf: url, encoding: .utf8))?.trimmingCharacters(in: .newlines),
+            "only"
+        )
+    }
+
+    /// Files written by earlier versions end without a trailing newline. Appending
+    /// must not run onto the end of the last line.
+    func testAppendAddsTheMissingSeparatorForALegacyFile() throws {
+        let url = makeTempLogURL()
+        try "old one\nold two".write(to: url, atomically: true, encoding: .utf8)
+
+        PersistentLogFile(url: url, maxLines: 100, maxBytes: 1_000_000).append("new")
+
+        let lines = (try String(contentsOf: url, encoding: .utf8))
+            .components(separatedBy: "\n").filter { !$0.isEmpty }
+        XCTAssertEqual(lines, ["old one", "old two", "new"])
+    }
+
+    /// Over the ceiling the file is compacted well under it, so the rewrite is
+    /// occasional rather than per-line — the other half of the 4 MB defect, where
+    /// every call read and rewrote the whole file.
+    func testFileIsCompactedOnceItExceedsItsByteCeiling() {
+        let url = makeTempLogURL()
+        let file = PersistentLogFile(url: url, maxLines: 10_000, maxBytes: 4_096)
+        let line = String(repeating: "x", count: 200)
+
+        for _ in 0..<100 { file.append(line) }
+
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        XCTAssertLessThanOrEqual(size, 4_096)
+        XCTAssertGreaterThan(size, 0, "compaction must not empty the file")
+    }
+
+    /// Compaction keeps the newest entries, which are the ones a crash report needs.
+    func testCompactionKeepsTheNewestLines() {
+        let url = makeTempLogURL()
+        let file = PersistentLogFile(url: url, maxLines: 5, maxBytes: 200)
+
+        for index in 0..<40 { file.append("line \(index)") }
+
+        let contents = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        XCTAssertTrue(contents.contains("line 39"))
+        XCTAssertFalse(contents.contains("line 0\n"))
+    }
+
     // MARK: - Diagnostic export naming
 
     /// `TemporaryFileCleanupService` deletes by name, so the predicate has to be
