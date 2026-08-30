@@ -9,6 +9,34 @@ import XCTest
 @testable import BisonNotes_AI
 
 final class MacRecordingReliabilityTests: XCTestCase {
+	func testRecordingInputSelectionPreservesPreferenceThenTriesMeetingBridge() {
+		let candidates = [
+			MacRecordingInputCandidate(deviceID: 7, name: "MacBook Microphone"),
+			MacRecordingInputCandidate(deviceID: 9, name: "ZoomAudioDevice"),
+			MacRecordingInputCandidate(deviceID: 5, name: "Poly Sync 10")
+		]
+
+		XCTAssertEqual(
+			MacRecordingInputSelection.orderedDeviceIDs(
+				preferredDeviceID: 7,
+				defaultDeviceID: 5,
+				available: candidates
+			),
+			[7, 5, 9]
+		)
+	}
+
+	func testRecordingInputSelectionRetainsDefaultWhenDiscoveryIsTemporarilyBehind() {
+		XCTAssertEqual(
+			MacRecordingInputSelection.orderedDeviceIDs(
+				preferredDeviceID: 11,
+				defaultDeviceID: 13,
+				available: []
+			),
+			[13]
+		)
+	}
+
 	func testSystemAudioStartupGateReleasesExactlyOnceForMicrophoneWrite() {
 		var gate = MacSystemAudioStartupGate()
 		let sessionID = UUID()
