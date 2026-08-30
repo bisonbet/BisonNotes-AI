@@ -489,6 +489,41 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
     }
 
+    func testSavingOneSegmentDoesNotRetireAMultiSegmentTrail() throws {
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let snapshotURL = documents.appendingPathComponent("deferred-recovery.json")
+        let main = documents.appendingPathComponent("test-multi.m4a")
+        let second = documents.appendingPathComponent("test-multi_seg1.m4a")
+        for url in [main, second] {
+            try Data("audio".utf8).write(to: url)
+        }
+        defer {
+            for url in [main, second, snapshotURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        let manager = EnhancedAudioSessionManager()
+        let viewModel = AudioRecorderViewModel(audioSessionManager: manager)
+        try? FileManager.default.removeItem(at: snapshotURL)
+        viewModel.persistRecoverySnapshot(
+            segments: [main, second],
+            mainRecordingURL: main,
+            currentSegmentIndex: 1
+        )
+
+        // Saving a later segment on its own does not finish this recording:
+        // the earlier audio still needs the trail to be merged.
+        viewModel.clearDeferredRecoverySnapshotEntries(containing: second)
+        XCTAssertEqual(try parkedMainFilenames(at: snapshotURL), ["test-multi.m4a"])
+
+        // Saving the merge target does finish it.
+        viewModel.clearDeferredRecoverySnapshotEntries(containing: main)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
+    }
+
     private func parkedMainFilenames(at snapshotURL: URL) throws -> [String] {
         let data = try Data(contentsOf: snapshotURL)
         let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]

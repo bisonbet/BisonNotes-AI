@@ -181,11 +181,19 @@ extension AudioRecorderViewModel {
 			? preservedMainURL
 			: preservedSegments.first
 		await persistTerminatedRecoverySegments(for: request, reason: reason)
-		releaseTerminatedRecoverySnapshot(
+		let trailKept = releaseTerminatedRecoverySnapshot(
 			segments: preservedSegments,
 			mainURL: preservedMainURL,
 			persistedURL: persistedURL
 		)
+		if trailKept, preservedSegments.count > 1 {
+			// These segments still have to be merged, and only the reclaim path
+			// does that — it needs `recordingURL` nil to run. Leaving it on the
+			// last segment instead lets the unprocessed-recording pass save that
+			// one file alone, which both loses the earlier audio and produces a
+			// second row once the reclaim later merges the full set.
+			recordingURL = nil
+		}
 		guard recoveryCoordinator.accepts(request),
 			  recordingSessionID == request.recordingSessionID else {
 			return .cancelled
@@ -214,24 +222,27 @@ extension AudioRecorderViewModel {
 	/// so its snapshot may be the only durable index of these segments. The merge
 	/// swallows export failures and the app can be killed mid-save, so the entry
 	/// is dropped on the database row and rewritten on anything else.
+	///
+	/// Returns `true` when the trail was kept because the save did not land.
 	@MainActor
+	@discardableResult
 	private func releaseTerminatedRecoverySnapshot(
 		segments: [URL],
 		mainURL: URL?,
 		persistedURL: URL?
-	) {
+	) -> Bool {
 		let key = mainURL?.lastPathComponent ?? segments.first?.lastPathComponent
 		if let persistedURL,
 		   let appCoordinator,
 		   appCoordinator.getRecording(url: persistedURL) != nil {
 			clearDeferredRecoverySnapshot(forKey: key)
-			return
+			return false
 		}
 
 		let survivors = segments.filter { FileManager.default.fileExists(atPath: $0.path) }
 		guard let mainURL, !survivors.isEmpty else {
 			clearDeferredRecoverySnapshot(forKey: key)
-			return
+			return false
 		}
 		AppLog.shared.audioSession(
 			"Terminated recovery did not persist; keeping \(survivors.count) segment(s) for the next pass",
@@ -242,6 +253,7 @@ extension AudioRecorderViewModel {
 			mainRecordingURL: mainURL,
 			currentSegmentIndex: max(survivors.count - 1, 0)
 		)
+		return true
 	}
 
 	@MainActor
@@ -421,14 +433,18 @@ extension AudioRecorderViewModel {
 		writeDeferredRecoveryEntries(survivors)
 	}
 
-	/// Drop any entry that parks `url`, once that file is in the database.
+	/// Retire any entry that `url` completes, once that file is in the database.
+	///
+	/// Only the save of what an entry actually parks completes it: its merge
+	/// target, or its one segment. Matching any member segment would let a lone
+	/// segment's save retire the trail for the rest of a multi-segment recording,
+	/// leaving the earlier segments with nothing pointing at them at all.
 	@MainActor
 	func clearDeferredRecoverySnapshotEntries(containing url: URL) {
 		let filename = url.lastPathComponent
 		let entries = loadDeferredRecoveryEntries()
 		let survivors = entries.filter { entry in
-			entry.mainRecordingFilename != filename
-				&& !entry.segmentFilenames.contains(filename)
+			!(entry.mainRecordingFilename == filename || entry.segmentFilenames == [filename])
 		}
 		guard survivors.count != entries.count else { return }
 		writeDeferredRecoveryEntries(survivors)
