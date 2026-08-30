@@ -14,6 +14,8 @@ final class TemporaryFileCleanupService {
 
     private let fileManager = FileManager.default
     private let defaultMaxAge: TimeInterval = 6 * 60 * 60
+    /// Floor for the iCloud audio staging directory. See `cleanupAudioStagingDirectory`.
+    private static let audioStagingMinimumAge: TimeInterval = 6 * 60 * 60
 
     private init() {}
 
@@ -43,6 +45,12 @@ final class TemporaryFileCleanupService {
 
         cleanupAudioChunksDirectory(cutoff: cutoff, deletedCount: &deletedCount, reclaimedBytes: &reclaimedBytes, errors: &errors)
         cleanupWebImportsDirectory(
+            cutoff: cutoff,
+            deletedCount: &deletedCount,
+            reclaimedBytes: &reclaimedBytes,
+            errors: &errors
+        )
+        cleanupAudioStagingDirectory(
             cutoff: cutoff,
             deletedCount: &deletedCount,
             reclaimedBytes: &reclaimedBytes,
@@ -134,6 +142,64 @@ final class TemporaryFileCleanupService {
         removeDirectoryIfEmpty(importsRoot)
     }
 
+    /// `TemporaryDirectoryAssetStaging` removes its own run directory from a `defer`,
+    /// but a crash or a kill mid-upload leaves a full copy of every staged recording
+    /// behind — the staging copies are the recordings themselves, so a single orphaned
+    /// run can be gigabytes.
+    ///
+    /// A run directory's timestamp only moves when the run stages another file, so a
+    /// sync that is slow between files must not look abandoned. This keeps its own
+    /// floor rather than trusting the caller's `maxAge`, which is 30 minutes on the
+    /// background-processing path.
+    private func cleanupAudioStagingDirectory(
+        cutoff: Date,
+        deletedCount: inout Int,
+        reclaimedBytes: inout Int64,
+        errors: inout [String]
+    ) {
+        let stagingRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("iCloudAudioStaging", isDirectory: true)
+        guard isSafeChild(stagingRoot, of: fileManager.temporaryDirectory) else { return }
+
+        let stagingCutoff = min(cutoff, Date().addingTimeInterval(-Self.audioStagingMinimumAge))
+
+        for runDirectory in directChildren(of: stagingRoot) {
+            guard isDirectory(runDirectory),
+                  let ageDate = modificationOrCreationDate(runDirectory),
+                  ageDate < stagingCutoff else {
+                continue
+            }
+
+            let size = directorySize(runDirectory)
+            do {
+                try fileManager.removeItem(at: runDirectory)
+                deletedCount += 1
+                reclaimedBytes += size
+            } catch {
+                errors.append("\(runDirectory.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+
+        removeDirectoryIfEmpty(stagingRoot)
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+    }
+
+    private func directorySize(_ directory: URL) -> Int64 {
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+
+        var total: Int64 = 0
+        for case let url as URL in enumerator where isRegularFile(url) {
+            total += fileSize(url)
+        }
+        return total
+    }
+
     private func directChildren(of directory: URL) -> [URL] {
         (try? fileManager.contentsOfDirectory(
             at: directory,
@@ -163,6 +229,10 @@ final class TemporaryFileCleanupService {
         if name.hasPrefix("catalyst_meeting_mix_") && ext == "m4a" { return true }
         if name.hasSuffix("-system.m4a") { return true }
         if name.hasPrefix("temp_merge_") && ext == "m4a" { return true }
+        // Diagnostic exports are written for the share sheet and are multi-megabyte.
+        // `LogExporter` clears the previous ones each time it exports; this catches
+        // the ones a crash or a dismissed share sheet left behind.
+        if LogExporter.isExportFileName(name) { return true }
 
         return false
     }

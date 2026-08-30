@@ -370,6 +370,35 @@ extension MLXSwiftDownloadManager {
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
         }
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies into its `downloadBase`, so the directory above is only half of what
+        // the model occupies. Removing just it left a full second copy behind — two
+        // "deleted" models were still costing 3.3 GB. `CacheMaintenanceService` also
+        // sweeps these, but a delete the user asked for should free the space now.
+        removeHubBlobCache(for: modelId)
+    }
+
+    private func removeHubBlobCache(for modelId: String) {
+        guard let hubRepo = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent(
+                CacheMaintenancePolicy.hubRepoDirectoryName(forModelID: modelId),
+                isDirectory: true
+            ),
+            FileManager.default.fileExists(atPath: hubRepo.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: hubRepo)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Could not remove blob cache for \(modelId): \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 }
 
