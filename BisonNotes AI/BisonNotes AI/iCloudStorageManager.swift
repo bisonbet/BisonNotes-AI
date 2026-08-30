@@ -3482,7 +3482,6 @@ extension iCloudStorageManager {
             // it, because the tag we hold is the one that edit produced. Arbitrate
             // once more against what actually came back.
             if let refetched = recordingRecordsToWrite[entry.recordID],
-               !hasPendingImportedAudioRemoval,
                !Self.shouldUploadLocalVersion(
                    localTimestamp: localRecordingContentTimestamp(entry.recording),
                    cloudTimestamp: backupRecordContentTimestamp(
@@ -3490,6 +3489,25 @@ extension iCloudStorageManager {
                        keys: Self.recordingContentTimestampKeys
                    )
                ) {
+                // A queued audio removal is an explicit user deletion, so it still has
+                // to land even though the other device's metadata wins. Clear the audio
+                // on *their* record rather than falling through to `applyRecordingFields`,
+                // which would put this device's stale name, dates, location, and
+                // processing state over the newer edit merely to drop the audio.
+                if hasPendingImportedAudioRemoval {
+                    var changed = false
+                    clearAudioBackupFields(on: refetched, changed: &changed)
+                    if changed {
+                        AppLog.shared.iCloudSync(
+                            "Another device wrote this recording while the run was in flight; "
+                            + "keeping its version and clearing only the removed audio",
+                            level: .debug
+                        )
+                        recordsToSave.append(refetched)
+                        continue
+                    }
+                }
+
                 AppLog.shared.iCloudSync(
                     "Another device wrote this recording while the run was in flight; keeping its version",
                     level: .debug
