@@ -466,7 +466,6 @@ class iCloudStorageManager: ObservableObject {
         guard container != nil, database != nil else {
             let error = NSError(domain: "iCloudStorageManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to initialize CloudKit components"])
             EnhancedLogger.shared.logiCloudSyncError("CloudKit Initialization", error: error)
-            EnhancedErrorHandler().handleiCloudSyncError(error, context: "CloudKit Setup")
             await updateSyncStatus(.failed("CloudKit initialization failed"))
             return
         }
@@ -496,7 +495,6 @@ class iCloudStorageManager: ObservableObject {
         guard let container = container else {
             let error = NSError(domain: "iCloudStorageManager", code: 2, userInfo: [NSLocalizedDescriptionKey: "CloudKit not initialized"])
             EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
-            EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
             await updateSyncStatus(.failed("CloudKit not initialized"))
             return
         }
@@ -507,7 +505,6 @@ class iCloudStorageManager: ObservableObject {
             guard accountStatus == .available else {
                 let error = NSError(domain: "iCloudStorageManager", code: 3, userInfo: [NSLocalizedDescriptionKey: "iCloud account not available"])
                 EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
-                EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
                 await updateSyncStatus(.failed("iCloud account not available"))
                 return
             }
@@ -538,7 +535,6 @@ class iCloudStorageManager: ObservableObject {
 
         } catch {
             EnhancedLogger.shared.logiCloudSyncError("Enable iCloud Sync", error: error)
-            EnhancedErrorHandler().handleiCloudSyncError(error, context: "Enable Sync")
             await updateSyncStatus(.failed(error.localizedDescription))
             await MainActor.run {
                 self.isEnabled = false
