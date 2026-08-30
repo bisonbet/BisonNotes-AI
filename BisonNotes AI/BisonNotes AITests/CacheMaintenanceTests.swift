@@ -329,6 +329,87 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(report.removedDirectoryCount, 0)
     }
 
+    // MARK: - Sharded model completeness
+
+    /// A materialized model directory with a valid `config.json` and nothing else.
+    private func makeMaterializedModelDirectory() throws -> URL {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ModelDir-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("config.json"))
+        return directory
+    }
+
+    private func writeShardIndex(in directory: URL, shards: [String]) throws {
+        var weightMap: [String: String] = [:]
+        for (index, shard) in shards.enumerated() {
+            weightMap["layer.\(index).weight"] = shard
+        }
+        try JSONSerialization
+            .data(withJSONObject: ["weight_map": weightMap])
+            .write(to: directory.appendingPathComponent("model.safetensors.index.json"))
+    }
+
+    private func writeShard(_ name: String, in directory: URL, byteCount: Int = 128) throws {
+        try Data(repeating: 0x64, count: byteCount)
+            .write(to: directory.appendingPathComponent(name))
+    }
+
+    /// One landed shard used to be enough. A relaunch mid-download then read the
+    /// model as installed, so the sweep deleted the blob cache the interrupted
+    /// download needed to resume and Settings offered the model as ready.
+    func testShardedModelIsIncompleteUntilEveryShardLands() throws {
+        let directory = try makeMaterializedModelDirectory()
+        let shards = [
+            "model-00001-of-00003.safetensors",
+            "model-00002-of-00003.safetensors",
+            "model-00003-of-00003.safetensors"
+        ]
+        try writeShardIndex(in: directory, shards: shards)
+        try writeShard(shards[0], in: directory)
+
+        XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+
+        try writeShard(shards[1], in: directory)
+        try writeShard(shards[2], in: directory)
+
+        XCTAssertTrue(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+    }
+
+    /// A shard file that exists but holds nothing is a copy that was interrupted.
+    func testShardedModelWithAnEmptyShardIsIncomplete() throws {
+        let directory = try makeMaterializedModelDirectory()
+        let shards = ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"]
+        try writeShardIndex(in: directory, shards: shards)
+        try writeShard(shards[0], in: directory)
+        try writeShard(shards[1], in: directory, byteCount: 0)
+
+        XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+    }
+
+    /// The index itself can be half-copied. Falling back to "any one weight file"
+    /// there would call a partly downloaded sharded model complete.
+    func testShardedModelWithAnUnreadableIndexIsIncomplete() throws {
+        let directory = try makeMaterializedModelDirectory()
+        try Data("{ not json".utf8)
+            .write(to: directory.appendingPathComponent("model.safetensors.index.json"))
+        try writeShard("model-00001-of-00002.safetensors", in: directory)
+
+        XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+    }
+
+    /// An unsharded model has no index, and its single weight file is the whole model.
+    func testUnshardedModelIsCompleteWithItsOneWeightFile() throws {
+        let directory = try makeMaterializedModelDirectory()
+
+        XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+
+        try writeShard("model.safetensors", in: directory)
+
+        XCTAssertTrue(CacheMaintenancePolicy.isMaterializedModelComplete(at: directory))
+    }
+
     func testPersistedInFlightModelRetainsBlobCacheAfterRelaunch() async throws {
         let root = try makeCachesRoot(
             hubRepos: ["models--org--marked"],

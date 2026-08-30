@@ -60,20 +60,51 @@ enum CacheMaintenancePolicy {
         return "\(namespace)/\(repository)"
     }
 
-    /// A materialized model is usable only when its configuration and at least
-    /// one non-empty weight file have landed. `config.json` can be copied before
-    /// the download is interrupted, so it is not a completion marker by itself.
+    /// A materialized model is usable only when its configuration and all of its
+    /// weights have landed. `config.json` can be copied before the download is
+    /// interrupted, so it is not a completion marker by itself.
+    ///
+    /// A sharded model publishes `model.safetensors.index.json`, whose weight map
+    /// names every shard. One non-empty shard is no evidence the rest arrived —
+    /// and treating a half-copied model as installed is what let the sweep delete
+    /// the very blob cache the interrupted download needed to resume, and made
+    /// the model read as ready in Settings. So when the index is present, every
+    /// shard it names must be present and non-empty; an index that cannot be read
+    /// is itself a partly copied model, and counts as incomplete.
     static func isMaterializedModelComplete(at directory: URL) -> Bool {
-        let fileManager = FileManager.default
         let configURL = directory.appendingPathComponent("config.json")
-        let configValues = try? configURL.resourceValues(
-            forKeys: [.isRegularFileKey, .fileSizeKey]
-        )
-        guard configValues?.isRegularFile == true, (configValues?.fileSize ?? 0) > 0 else {
-            return false
+        guard isNonEmptyRegularFile(configURL) else { return false }
+
+        if let shardNames = shardedWeightFilenames(at: directory) {
+            guard !shardNames.isEmpty else { return false }
+            return shardNames.allSatisfy {
+                isNonEmptyRegularFile(directory.appendingPathComponent($0))
+            }
         }
 
-        guard let enumerator = fileManager.enumerator(
+        return containsNonEmptyWeightFile(at: directory)
+    }
+
+    /// Every distinct filename the safetensors weight map references, or `nil`
+    /// when this model is not sharded (no index file at all).
+    ///
+    /// An index that exists but cannot be parsed returns an empty set rather than
+    /// `nil`: the file is there, so the model claims to be sharded, and falling
+    /// back to the single-weight check would call it complete on one shard.
+    private static func shardedWeightFilenames(at directory: URL) -> Set<String>? {
+        let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
+        guard isNonEmptyRegularFile(indexURL) else { return nil }
+
+        guard let data = try? Data(contentsOf: indexURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let weightMap = json["weight_map"] as? [String: String] else {
+            return []
+        }
+        return Set(weightMap.values)
+    }
+
+    private static func containsNonEmptyWeightFile(at directory: URL) -> Bool {
+        guard let enumerator = FileManager.default.enumerator(
             at: directory,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
@@ -83,12 +114,14 @@ enum CacheMaintenancePolicy {
 
         while let file = enumerator.nextObject() as? URL {
             guard file.pathExtension.lowercased() == "safetensors" else { continue }
-            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-            if values?.isRegularFile == true, (values?.fileSize ?? 0) > 0 {
-                return true
-            }
+            if isNonEmptyRegularFile(file) { return true }
         }
         return false
+    }
+
+    private static func isNonEmptyRegularFile(_ url: URL) -> Bool {
+        let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        return values?.isRegularFile == true && (values?.fileSize ?? 0) > 0
     }
 
     /// Why a hub repository directory is being removed. Only used for reporting —

@@ -294,14 +294,9 @@ extension AudioRecorderViewModel {
 			if failure.category == .mediaServicesReset {
 				enhancedAudioSessionManager.resetPreparedSessionAfterMediaServicesReset()
 			}
-			guard failure.attempt < AudioActivationFailure.maximumActivationAttempts else {
-				_ = await terminateAudioRecovery(
-					request,
-					reason: failure.errorDescription ?? "Audio session activation failed",
-					notify: true
-				)
-				return .stopped
-			}
+			// No budget check here: `AudioActivationFailure.disposition` is the
+			// single owner of the bound and only answers `.retry` while the
+			// attempt is under it — an exhausted budget arrives as `.fail`.
 			do {
 				try await recoverySleeper.sleep(for: min(Double(failure.attempt) * 0.5, 2.0))
 				return .retry
