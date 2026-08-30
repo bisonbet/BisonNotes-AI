@@ -62,14 +62,22 @@ extension AudioRecorderViewModel {
 		case .waitingForMicrophone:
 			guard !macAwaitingRecoveryBuffer else { return }
 			guard enhancedAudioSessionManager.resolvedInputDeviceID() != nil else { return }
-			await recoverNativeMacInput(keepPaused: false)
+			// A device became available while we were waiting, so the input we were
+			// last bound to is no longer evidence of a bad device — Core Audio may
+			// have handed the reconnected microphone the same ID. See
+			// `MacRecordingInputSelection.excludedDeviceID`.
+			await recoverNativeMacInput(keepPaused: false, trigger: .deviceBecameAvailable)
 		default:
 			break
 		}
 	}
 
 	@MainActor
-	func recoverNativeMacInput(keepPaused: Bool, forceRestart: Bool = false) async {
+	func recoverNativeMacInput(
+		keepPaused: Bool,
+		forceRestart: Bool = false,
+		trigger: MacInputRecoveryTrigger = .currentInputFailed
+	) async {
 		guard !isRecoveringMacInput, isRecording, let finalURL = recordingURL else { return }
 		isRecoveringMacInput = true
 		defer { isRecoveringMacInput = false }
@@ -97,7 +105,10 @@ extension AudioRecorderViewModel {
 		do {
 			try startMacContinuationWithAutomaticInputFallback(
 				at: finalURL,
-				excluding: macInputDeviceID
+				excluding: MacRecordingInputSelection.excludedDeviceID(
+					currentInputDeviceID: macInputDeviceID,
+					trigger: trigger
+				)
 			)
 			macAwaitingRecoveryBuffer = true
 			pendingMacInputRecovery = PendingMacInputRecovery(

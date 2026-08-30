@@ -37,6 +37,48 @@ final class MacRecordingReliabilityTests: XCTestCase {
 		)
 	}
 
+	/// A microphone that just stopped producing audio must not be retried, or the
+	/// fallback would keep picking the device that is already failing.
+	func testFailedInputIsExcludedFromItsOwnRetry() {
+		XCTAssertEqual(
+			MacRecordingInputSelection.excludedDeviceID(
+				currentInputDeviceID: 7,
+				trigger: .currentInputFailed
+			),
+			7
+		)
+	}
+
+	/// Core Audio can reuse a device ID when a microphone is plugged back in, and
+	/// the failure path never clears the ID the recording was bound to. Carrying
+	/// the exclusion into the reconnection filtered the returning microphone out of
+	/// its own recovery, leaving a recording with no other input stuck in
+	/// `waitingForMicrophone` for the rest of the session.
+	func testReconnectedInputIsNotExcludedFromRecovery() {
+		XCTAssertNil(
+			MacRecordingInputSelection.excludedDeviceID(
+				currentInputDeviceID: 7,
+				trigger: .deviceBecameAvailable
+			)
+		)
+	}
+
+	/// With nothing excluded, a returning microphone is a candidate again even when
+	/// it is the only input present — the case that used to strand the recording.
+	func testSoleReconnectedMicrophoneRemainsACandidate() {
+		let excluded = MacRecordingInputSelection.excludedDeviceID(
+			currentInputDeviceID: 7,
+			trigger: .deviceBecameAvailable
+		)
+		let candidates = MacRecordingInputSelection.orderedDeviceIDs(
+			preferredDeviceID: 7,
+			defaultDeviceID: 7,
+			available: [MacRecordingInputCandidate(deviceID: 7, name: "MacBook Microphone")]
+		)
+
+		XCTAssertEqual(candidates.filter { $0 != excluded }, [7])
+	}
+
 	func testSystemAudioStartupGateReleasesExactlyOnceForMicrophoneWrite() {
 		var gate = MacSystemAudioStartupGate()
 		let sessionID = UUID()

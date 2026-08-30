@@ -17,7 +17,42 @@ struct MacRecordingInputCandidate: Equatable, Sendable {
     let name: String
 }
 
+/// Why a microphone recovery attempt is starting.
+///
+/// The distinction matters because the exclusion below is a hard filter
+/// (`recordingInputCandidates(excluding:)` drops the device outright rather than
+/// deprioritizing it), so a device left out is not tried at all.
+enum MacInputRecoveryTrigger: Equatable, Sendable {
+    /// The bound input stopped producing audio, or stopped resolving.
+    case currentInputFailed
+    /// A device became available while the recording was waiting for one.
+    case deviceBecameAvailable
+}
+
 enum MacRecordingInputSelection {
+    /// The input the next recovery attempt must skip, if any.
+    ///
+    /// Core Audio can hand a reconnected microphone the same device ID it had
+    /// before, so the ID the recording was last bound to is only evidence of a bad
+    /// device while that device is the one that just failed. On a reconnection it
+    /// is just as likely to be the device the user plugged back in.
+    ///
+    /// Carrying the exclusion into a reconnection is what left a recording stuck:
+    /// the failure path never clears `macInputDeviceID`, so a mic that came back
+    /// with its old ID was filtered out of its own recovery, and with no other
+    /// input present the recording stayed in `waitingForMicrophone` for good.
+    static func excludedDeviceID(
+        currentInputDeviceID: UInt32?,
+        trigger: MacInputRecoveryTrigger
+    ) -> UInt32? {
+        switch trigger {
+        case .currentInputFailed:
+            return currentInputDeviceID
+        case .deviceBecameAvailable:
+            return nil
+        }
+    }
+
     /// Orders startup candidates without changing the user's persisted choice:
     /// use that choice first, then the current system default, then other
     /// available inputs. Virtual meeting bridges are tried before unrelated
