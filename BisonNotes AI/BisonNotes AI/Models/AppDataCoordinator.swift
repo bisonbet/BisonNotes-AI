@@ -306,10 +306,19 @@ class AppDataCoordinator: ObservableObject {
             requestedAt: deletionDate
         )
 
-        func withdrawQueuedRemovals() {
-            for transcriptId in transcriptIds {
+        // `deleteTranscript` commits a save of its own, so its rows can be durably
+        // gone even when the work below fails. Withdrawing a marker for one of those
+        // would leave the transcript deleted locally with nothing telling the other
+        // devices — the resurrection this method exists to prevent — so only intents
+        // whose mutation has not committed are taken back.
+        var committedTranscriptIds: Set<UUID> = []
+
+        func withdrawUncommittedRemovals() {
+            for transcriptId in transcriptIds where !committedTranscriptIds.contains(transcriptId) {
                 iCloudManager.clearPendingTranscriptRemoval(transcriptId: transcriptId)
             }
+            // `recordingURL` is only cleared by the `saveContext()` below, so if that
+            // did not land the audio is still referenced locally and its intent goes.
             iCloudManager.clearPendingImportedAudioRemoval(recordingId: recordingId)
         }
 
@@ -318,6 +327,7 @@ class AppDataCoordinator: ObservableObject {
                 // The marker is already queued; this only removes the local row.
                 // Works when the request's relationship is stale, too.
                 try coreDataManager.deleteTranscript(id: transcriptId, enqueueCloudDeletion: false)
+                committedTranscriptIds.insert(transcriptId)
             }
 
             guard let recording = coreDataManager.getRecording(id: recordingId) else {
@@ -347,7 +357,7 @@ class AppDataCoordinator: ObservableObject {
             recording.lastModified = deletionDate
             try coreDataManager.saveContext()
         } catch {
-            withdrawQueuedRemovals()
+            withdrawUncommittedRemovals()
             throw error
         }
 
