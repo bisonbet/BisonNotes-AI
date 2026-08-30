@@ -1143,19 +1143,6 @@ struct SummariesView: View {
         }
     }
 
-    private func syncAllSummaries() async {
-        do {
-            try await iCloudManager.syncAllSummaries()
-        } catch {
-            AppLog.shared.summarization("Sync error: \(error)", level: .error)
-            await MainActor.run {
-                errorMessage = "iCloud sync failed: \(error.localizedDescription)"
-                errorRecoverySuggestion = ""
-                showErrorAlert = true
-            }
-        }
-    }
-
 } // End of SummariesView struct
 
 // MARK: - Preview

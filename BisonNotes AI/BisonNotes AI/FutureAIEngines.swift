@@ -634,69 +634,6 @@ class LocalLLMEngine: SummarizationEngine, ConnectionTestable {
         let models = try await service.loadAvailableModels()
         return models.map { $0.name }
     }
-
-    // MARK: - Debug Methods
-
-    func testCompleteProcessing() async throws -> String {
-        AppLog.shared.networking("LocalLLMEngine: Testing complete processing with simple prompt", level: .debug)
-
-        updateConfiguration()
-
-        guard let service = ollamaService else {
-            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
-        }
-
-        // Test connection first
-        let isConnected = await service.testConnection()
-        guard isConnected else {
-            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server")
-        }
-
-        // Simple test to see what Ollama returns
-        let testText = "I need to call John tomorrow and buy groceries. Don't forget the meeting at 3pm. We discussed the quarterly budget and decided to increase marketing spend."
-
-        do {
-            let result = try await service.processComplete(from: testText)
-            let summary = "Successfully processed: Summary (\(result.summary.count) chars), \(result.tasks.count) tasks, \(result.reminders.count) reminders, \(result.titles.count) titles, content type: \(result.contentType.rawValue)"
-            AppLog.shared.networking("LocalLLMEngine: Complete processing test successful")
-            return summary
-        } catch {
-            let errorMessage = "Complete processing test failed: \(error.localizedDescription)"
-            AppLog.shared.networking("LocalLLMEngine: \(errorMessage)", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: errorMessage)
-        }
-    }
-
-    func testJSONParsing() async throws -> String {
-        AppLog.shared.networking("LocalLLMEngine: Testing JSON parsing with simple prompt", level: .debug)
-
-        updateConfiguration()
-
-        guard let service = ollamaService else {
-            throw SummarizationError.aiServiceUnavailable(service: "Ollama service not configured")
-        }
-
-        // Test connection first
-        let isConnected = await service.testConnection()
-        guard isConnected else {
-            throw SummarizationError.aiServiceUnavailable(service: "Cannot connect to Ollama server")
-        }
-
-        // Simple test to see what Ollama returns
-        let testText = "I need to call John tomorrow and buy groceries. Don't forget the meeting at 3pm."
-
-        do {
-            let result = try await service.extractTasksAndReminders(from: testText)
-            let summary = "Successfully parsed \(result.tasks.count) tasks and \(result.reminders.count) reminders"
-            AppLog.shared.networking("LocalLLMEngine: JSON parsing test successful")
-            return summary
-        } catch {
-            let errorMessage = "JSON parsing test failed: \(error.localizedDescription)"
-            AppLog.shared.networking("LocalLLMEngine: \(errorMessage)", level: .error)
-            throw SummarizationError.aiServiceUnavailable(service: errorMessage)
-        }
-    }
-
 }
 
 // MARK: - Google AI Studio Engine
@@ -1276,14 +1213,6 @@ class AIEngineFactory {
             return MLXSwiftEngine()
         case .appleNative:
             return AppleNativeEngine()
-        }
-    }
-
-    @MainActor
-    static func getAvailableEngines() -> [AIEngineType] {
-        return AIEngineType.availableCases.filter { type in
-            let engine = createEngine(type: type)
-            return engine.isAvailable
         }
     }
 

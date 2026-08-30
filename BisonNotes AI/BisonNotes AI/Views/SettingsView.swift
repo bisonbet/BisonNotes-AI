@@ -18,7 +18,6 @@ struct SettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
-    @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @StateObject private var importManager = FileImportManager()
     @State private var showingTranscriptionSettings = false
@@ -1207,17 +1206,6 @@ struct SettingsView: View {
     }
 
     // MARK: - iCloud Sync Functions
-
-    private func syncAllSummaries() async {
-        do {
-            try await iCloudManager.syncAllSummaries()
-        } catch {
-            AppLog.shared.log("Sync error: \(error)", level: .error, category: .general)
-            await MainActor.run {
-                errorHandler.handle(AppError.from(error, context: "iCloud Sync"), context: "Sync", showToUser: true)
-            }
-        }
-    }
 
     private func backupAllDataToiCloud() async {
         await MainActor.run {

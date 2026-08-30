@@ -297,11 +297,6 @@ class SummaryManager: ObservableObject {
         return iCloudManager
     }
 
-    func showUnsupportedDeviceAlert() {
-        let error = AppError.system(.configurationError(message: "The selected AI engine is not supported on this device. Please select another AI engine in Settings."))
-        handleError(error, context: "Unsupported Device")
-    }
-
     // MARK: - Engine Management
 
     func initializeEngines() {

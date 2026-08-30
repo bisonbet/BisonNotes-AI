@@ -16,10 +16,8 @@ final class ErrorHandler: ObservableObject {
 
     @Published var currentError: AppError?
     @Published var showingErrorAlert = false
-    @Published var errorHistory: [ErrorLogEntry] = []
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.bisonnotes.app", category: "ErrorHandler")
-    private let maxHistoryCount = 100
 
     // MARK: - Error Handling Methods
 
@@ -28,9 +26,6 @@ final class ErrorHandler: ObservableObject {
 
         // Log the error
         logError(appError, context: context)
-
-        // Add to history
-        addToHistory(appError, context: context)
 
         // Show to user if requested
         if showToUser {
@@ -84,11 +79,6 @@ final class ErrorHandler: ObservableObject {
         }
 
         // Add warnings for potential issues (only for transcripts longer than 50 words)
-        if wordCount > 10000 {
-            warnings.append(.longTranscript(wordCount: wordCount))
-            AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
-        }
-
         if wordCount > 10000 {
             warnings.append(.longTranscript(wordCount: wordCount))
             AppLog.shared.errorRecovery("Long transcript warning: \(wordCount) words", level: .debug)
@@ -184,21 +174,6 @@ final class ErrorHandler: ObservableObject {
             logger.error("\(logMessage)")
         case .critical:
             logger.fault("\(logMessage)")
-        }
-    }
-
-    private func addToHistory(_ error: AppError, context: String) {
-        let entry = ErrorLogEntry(
-            error: error,
-            context: context,
-            timestamp: Date()
-        )
-
-        errorHistory.insert(entry, at: 0)
-
-        // Limit history size
-        if errorHistory.count > maxHistoryCount {
-            errorHistory.removeLast()
         }
     }
 
@@ -640,22 +615,6 @@ enum SummaryImprovement: Sendable {
         case .slowProcessing(let time):
             return "Processing took \(String(format: "%.1f", time))s, consider shorter content"
         }
-    }
-}
-
-// MARK: - Error Log Entry
-
-struct ErrorLogEntry: Identifiable {
-    let id = UUID()
-    let error: AppError
-    let context: String
-    let timestamp: Date
-
-    var formattedTimestamp: String {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .short
-        formatter.timeStyle = .medium
-        return formatter.string(from: timestamp)
     }
 }
 
