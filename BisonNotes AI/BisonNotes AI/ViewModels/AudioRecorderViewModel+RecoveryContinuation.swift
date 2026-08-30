@@ -15,7 +15,7 @@ extension AudioRecorderViewModel {
 	func startContinuationRecording(
 		for request: AudioRecoveryRequest
 	) async -> AudioRecoveryExecutionResult {
-		guard recoveryCoordinator.accepts(request), recordingIntentActive else {
+		guard isCurrentAudioRecovery(request) else {
 			return .cancelled
 		}
 
@@ -37,7 +37,11 @@ extension AudioRecorderViewModel {
 			audioRecorder = recorder
 			try await recoverySleeper.sleep(for: 0.15)
 
-			guard recoveryCoordinator.accepts(request), recordingIntentActive else {
+			// The full recovery fence, not just request/session intent: a new
+			// interruption can arrive during the wait above, and marking the
+			// continuation started would clear that interruption's state while
+			// the higher-priority session still owns the microphone.
+			guard isCurrentAudioRecovery(request) else {
 				stopAndReleaseRecoveryRecorder(continuationRecorder, at: newSegmentURL)
 				return .cancelled
 			}
@@ -294,6 +298,65 @@ extension AudioRecorderViewModel {
 		}
 	}
 
+	/// The still-present segments a deferred recovery parked, resolved against
+	/// the current Documents container.
+	@MainActor
+	private func parkedDeferredRecoverySegments() -> (segments: [URL], mainURL: URL)? {
+		guard let snapshotURL = Self.deferredRecoverySnapshotURL,
+			  let data = try? Data(contentsOf: snapshotURL),
+			  let snapshot = try? JSONDecoder().decode(DeferredRecoverySnapshot.self, from: data),
+			  let documentsPath = FileManager.default
+				.urls(for: .documentDirectory, in: .userDomainMask).first else {
+			return nil
+		}
+
+		let segments = snapshot.segmentFilenames
+			.map { documentsPath.appendingPathComponent($0) }
+			.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard let firstSegment = segments.first else { return nil }
+		let mainURL = snapshot.mainRecordingFilename
+			.map { documentsPath.appendingPathComponent($0) } ?? firstSegment
+		return (segments, mainURL)
+	}
+
+	/// Persist the audio a deferred recovery parked, before a new session
+	/// replaces the state that still points at it.
+	///
+	/// `deferAudioRecovery` sets `isRecording = false`, so the user can start
+	/// another capture long before foreground reconciliation runs. The snapshot
+	/// is the only durable pointer to those segments and `setupRecording()` is
+	/// about to overwrite `recordingSegments` and `mainRecordingURL`, so the
+	/// deferred audio is reclaimed here instead of dropped. The reclaim never
+	/// owns live recording state: the session starting now does.
+	@MainActor
+	func reclaimDeferredRecoverySegmentsForSupersededSession() {
+		guard let parked = parkedDeferredRecoverySegments() else {
+			clearDeferredRecoverySnapshot()
+			return
+		}
+		clearDeferredRecoverySnapshot()
+
+		AppLog.shared.audioSession(
+			"A new recording superseded a deferred recovery; persisting its \(parked.segments.count) segment(s)"
+		)
+		Task { @MainActor [weak self] in
+			guard let self else { return }
+			if parked.segments.count > 1 {
+				await self.mergeRecordingSegments(
+					segments: parked.segments,
+					mainURL: parked.mainURL,
+					ownsLiveRecordingState: false
+				)
+			} else {
+				await self.recoverInterruptedRecording(
+					url: parked.segments[0],
+					reason: "A new recording started before the deferred recovery resumed",
+					ownsLiveRecordingState: false
+				)
+			}
+		}
+	}
+
 	@MainActor
 	func clearDeferredRecoverySnapshot() {
 		guard let snapshotURL = Self.deferredRecoverySnapshotURL,
@@ -312,39 +375,43 @@ extension AudioRecorderViewModel {
 	func reclaimDeferredRecoverySegmentsIfNeeded() async -> Bool {
 		guard recordingURL == nil,
 			  !recordingIntentActive,
-			  !recordingBeingProcessed,
-			  let snapshotURL = Self.deferredRecoverySnapshotURL,
-			  let data = try? Data(contentsOf: snapshotURL),
-			  let snapshot = try? JSONDecoder().decode(DeferredRecoverySnapshot.self, from: data),
-			  let documentsPath = FileManager.default
-				.urls(for: .documentDirectory, in: .userDomainMask).first else {
+			  !recordingBeingProcessed else {
 			return false
 		}
-
-		let segments = snapshot.segmentFilenames
-			.map { documentsPath.appendingPathComponent($0) }
-			.filter { FileManager.default.fileExists(atPath: $0.path) }
-		guard !segments.isEmpty else {
+		guard let parked = parkedDeferredRecoverySegments() else {
 			clearDeferredRecoverySnapshot()
 			return false
 		}
 
+		let segments = parked.segments
 		AppLog.shared.audioSession(
 			"Reclaiming \(segments.count) segment(s) from a deferred recovery that never resumed"
 		)
 		recordingSegments = segments
-		mainRecordingURL = snapshot.mainRecordingFilename
-			.map { documentsPath.appendingPathComponent($0) } ?? segments.first
+		mainRecordingURL = parked.mainURL
 		currentSegmentIndex = max(segments.count - 1, 0)
 		recordingURL = segments.last
-		clearDeferredRecoverySnapshot()
 
-		if segments.count > 1 {
-			// The merge persists the combined recording itself.
-			await mergeRecordingSegments()
-			return false
+		guard segments.count > 1 else {
+			clearDeferredRecoverySnapshot()
+			return true
 		}
-		return true
+
+		// The merge persists the combined recording itself, but it swallows an
+		// export failure and returns; `recordingURL` is then the last segment
+		// alone. Keep the trail until the merge has actually cleared the segment
+		// list, so a failed pass cannot lose everything captured before it.
+		await mergeRecordingSegments()
+		if recordingSegments.isEmpty {
+			clearDeferredRecoverySnapshot()
+		} else {
+			persistRecoverySnapshot(
+				segments: existingRecordingSegments(),
+				mainRecordingURL: mainRecordingURL,
+				currentSegmentIndex: currentSegmentIndex
+			)
+		}
+		return false
 	}
 
 	@MainActor

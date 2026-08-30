@@ -12,6 +12,11 @@ import AVFoundation
 
 enum AudioRecoveryTrigger: String, Equatable, Sendable {
     case interruptionEnded
+    /// An `.ended` event iOS did not tag with `.shouldResume`.
+    ///
+    /// The system has not authorized reacquiring the microphone, so this
+    /// trigger preserves the finalized segment and waits instead of activating.
+    case interruptionEndedWithoutResume
     case unexpectedBackgroundStop
     case foregroundReconciliation
 }
@@ -122,19 +127,21 @@ final class AudioInterruptionRecoveryCoordinator {
         activeTask = Task { @MainActor [weak self, operation] in
             guard let self else { return }
 
-			var currentRequest = request
-			var result = await operation(currentRequest)
+            var currentRequest = request
+            var result = await operation(currentRequest)
 
-			while result == .deferredUntilForeground, !Task.isCancelled {
-				self.phase = .deferredUntilForeground
-				guard let followUp = self.takeForegroundFollowUp(for: currentRequest) else {
-					break
-				}
-				self.operationCount += 1
-				self.activeRequestID = followUp.id
-				currentRequest = followUp
-				result = await operation(currentRequest)
-			}
+            while !Task.isCancelled {
+                if result == .deferredUntilForeground {
+                    self.phase = .deferredUntilForeground
+                }
+                guard let followUp = self.takeFollowUp(after: result, for: currentRequest) else {
+                    break
+                }
+                self.operationCount += 1
+                self.activeRequestID = followUp.id
+                currentRequest = followUp
+                result = await operation(currentRequest)
+            }
 
             self.complete(currentRequestID: currentRequest.id, result: result)
         }
@@ -179,23 +186,50 @@ final class AudioInterruptionRecoveryCoordinator {
         recordingSessionID = nil
     }
 
+    /// Whether a request that arrived mid-flight is worth retaining.
+    ///
+    /// A foreground request is the bounded follow-up for a deferral. An ended
+    /// interruption is retained too: a second interruption makes the active
+    /// operation yield, and coalescing its `.ended` event away would leave the
+    /// recording interrupted with nothing left to restart it.
     private func shouldKeepAsFollowUp(_ request: AudioRecoveryRequest) -> Bool {
-        request.trigger == .foregroundReconciliation
+        switch request.trigger {
+        case .foregroundReconciliation,
+             .interruptionEnded,
+             .interruptionEndedWithoutResume:
+            return true
+        case .unexpectedBackgroundStop:
+            return false
+        }
     }
 
-    private func takeForegroundFollowUp(
+    /// The one follow-up this result authorizes, if such a request is held.
+    ///
+    /// A foreground request only follows a deferral; an ended interruption also
+    /// follows an operation that yielded to the interruption that produced it.
+    /// A recovered or terminated operation takes no follow-up, and the pending
+    /// slot is always emptied so a retained request can run at most once.
+    private func takeFollowUp(
+        after result: AudioRecoveryExecutionResult,
         for request: AudioRecoveryRequest
     ) -> AudioRecoveryRequest? {
-        guard phase == .deferredUntilForeground,
-              let pendingRequest,
-              pendingRequest.recordingSessionID == request.recordingSessionID,
-              pendingRequest.trigger == .foregroundReconciliation else {
-            self.pendingRequest = nil
+        let retained = pendingRequest
+        pendingRequest = nil
+        guard let retained,
+              retained.recordingSessionID == request.recordingSessionID else {
             return nil
         }
 
-        self.pendingRequest = nil
-        return pendingRequest
+        switch retained.trigger {
+        case .foregroundReconciliation:
+            return result == .deferredUntilForeground ? retained : nil
+        case .interruptionEnded, .interruptionEndedWithoutResume:
+            return result == .deferredUntilForeground || result == .cancelled
+                ? retained
+                : nil
+        case .unexpectedBackgroundStop:
+            return nil
+        }
     }
 
     private func complete(
@@ -310,6 +344,14 @@ struct AudioActivationFailure: Error, Equatable, LocalizedError, Sendable {
     /// than restating the number.
     static let maximumActivationAttempts = 10
 
+    /// The activation retry budget for an error code this app does not map.
+    ///
+    /// An unmapped code is no evidence that waiting helps, so it may not spend
+    /// the call-length budget above: one retry absorbs a transient race, and
+    /// anything past that preserves the segment instead of reactivating an
+    /// unsupported or contract-violating session another eight times.
+    static let maximumUnknownActivationAttempts = 2
+
     static func disposition(
         for category: AudioActivationFailureCategory,
         attempt: Int,
@@ -321,11 +363,16 @@ struct AudioActivationFailure: Error, Equatable, LocalizedError, Sendable {
             return appIsBackgrounding
                 ? .deferUntilForeground
                 : (attempt < maximumAttempts ? .retry : .fail)
-        // An unmapped error code is not evidence that the session is
-        // permanently unavailable, so it retries with the rest rather than
-        // terminating the recording on the first attempt.
-        case .busy, .mediaServicesReset, .transient, .unknown:
+        case .busy, .mediaServicesReset, .transient:
             return attempt < maximumAttempts ? .retry : .fail
+        // An unmapped error code is not evidence that the session is
+        // permanently unavailable, so it is not terminal on the first attempt.
+        // It is not evidence that the session will recover either, so it gets
+        // its own short bound rather than the full transient budget.
+        case .unknown:
+            return attempt < min(maximumAttempts, maximumUnknownActivationAttempts)
+                ? .retry
+                : .fail
         case .permanent:
             return .fail
         }

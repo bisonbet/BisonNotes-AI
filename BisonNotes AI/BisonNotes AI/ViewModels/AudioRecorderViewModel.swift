@@ -728,8 +728,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		callInterruptionTracker.removeAll()
 		interruptionEndHandled = false
 		recoveryFinalizedSegmentURLs.removeAll()
+		// A recovery cancelled mid-finalization can still be suspended inside
+		// RecordingFinalizationPolicy.inspect with this latch set, and its defer
+		// only runs when that resumes. Left alone, it swallows the delegate
+		// completion of the recording starting here and that recording is never
+		// saved, so the latch is scoped to one session by clearing it.
+		isFinalizingRecoverySegment = false
 		stopInterruptionWatchdog()
-		clearDeferredRecoverySnapshot()
+		reclaimDeferredRecoverySegmentsForSupersededSession()
 		#endif
 		// A stranded flag from a superseded recovery would otherwise disable
 		// interruption handling for the rest of the session.
@@ -894,6 +900,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	func stopRecording() {
 	#if os(iOS)
 		let stoppingRecordingSessionID = recordingSessionID
+		// Captured here, not inside the merge below: the merge is scheduled
+		// asynchronously, and a recording started before it runs replaces
+		// `recordingSegments` and `mainRecordingURL` with its own.
+		let stoppingSegments = recordingSegments
+		let stoppingMainRecordingURL = mainRecordingURL
 		let finalizedSegmentToPersist = recordingURL.flatMap { url in
 			recoveryFinalizedSegmentURLs.contains(url.standardizedFileURL) ? url : nil
 		}
@@ -940,7 +951,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			AppLog.shared.recording("Recording has \(recordingSegments.count) segments, merging")
 			Task {
 				#if os(iOS)
-				await mergeRecordingSegments(expectedRecordingSessionID: stoppingRecordingSessionID)
+				await mergeRecordingSegments(
+					segments: stoppingSegments,
+					mainURL: stoppingMainRecordingURL,
+					expectedRecordingSessionID: stoppingRecordingSessionID
+				)
 				#else
 				await mergeRecordingSegments()
 				#endif
@@ -1058,9 +1073,19 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			errorMessage = "Recording stopped: \(reason). Saving the audio captured so far..."
 		}
 
+		// Stopping the service is only the start of the work: it exports the
+		// capture, the export is validated, and Core Data is written, all after
+		// the audio engine has stopped. Hold one assertion across all of it —
+		// ending it here would let iOS suspend the app mid-export.
+		beginBackgroundTask()
 		Task { @MainActor [weak self] in
 			let (url, transcript) = await service.stop()
 			guard let self else { return }
+			// Only this session may release the assertion; once a newer recording
+			// has begun, the assertion is that recording's to end.
+			defer {
+				if isCurrentSession() { self.endBackgroundTask() }
+			}
 			if let savedURL = url {
 				if isCurrentSession() {
 					self.recordingURL = savedURL
@@ -1087,7 +1112,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		}
 
 		stopBackgroundTimeMonitoring()
-		endBackgroundTask()
 		return true
 	}
 

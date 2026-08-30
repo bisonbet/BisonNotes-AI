@@ -301,6 +301,148 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertEqual(state.events, ["stop", "finalize", "activate", "create-continuation"])
     }
 
+    func testEndedInterruptionIsRetainedAsFollowUpWhenTheActiveRecoveryYields() async {
+        let coordinator = AudioInterruptionRecoveryCoordinator()
+        let gate = RecoveryGate()
+        let sessionID = UUID()
+        coordinator.beginRecordingSession(sessionID)
+        let recordingURL = URL(fileURLWithPath: "/tmp/recording.m4a")
+        let first = AudioRecoveryRequest(
+            recordingSessionID: sessionID,
+            trigger: .interruptionEnded,
+            recordingURL: recordingURL
+        )
+        let second = AudioRecoveryRequest(
+            recordingSessionID: sessionID,
+            trigger: .interruptionEnded,
+            recordingURL: recordingURL
+        )
+        let state = RecoveryTestState()
+        let operation: AudioInterruptionRecoveryCoordinator.Operation = { request in
+            state.operationTriggers.append(request.trigger)
+            guard request.id == first.id else { return .recovered }
+            // A second interruption took the microphone, so the active
+            // operation yields instead of burning its activation budget.
+            await gate.wait()
+            return .cancelled
+        }
+
+        XCTAssertEqual(coordinator.request(first, operation: operation), .started(first.id))
+        XCTAssertEqual(coordinator.request(second, operation: operation), .coalesced(first.id))
+        gate.release()
+        await coordinator.waitForCompletion()
+
+        XCTAssertEqual(state.operationTriggers, [.interruptionEnded, .interruptionEnded])
+        XCTAssertEqual(coordinator.operationCount, 2)
+        XCTAssertEqual(coordinator.phase, .stoppedOrRecovered)
+    }
+
+    func testUnexpectedBackgroundStopIsNeverRetainedAsAFollowUp() async {
+        let coordinator = AudioInterruptionRecoveryCoordinator()
+        let gate = RecoveryGate()
+        let sessionID = UUID()
+        coordinator.beginRecordingSession(sessionID)
+        let recordingURL = URL(fileURLWithPath: "/tmp/recording.m4a")
+        let ended = AudioRecoveryRequest(
+            recordingSessionID: sessionID,
+            trigger: .interruptionEnded,
+            recordingURL: recordingURL
+        )
+        let backgroundStop = AudioRecoveryRequest(
+            recordingSessionID: sessionID,
+            trigger: .unexpectedBackgroundStop,
+            recordingURL: recordingURL
+        )
+        let state = RecoveryTestState()
+        let operation: AudioInterruptionRecoveryCoordinator.Operation = { request in
+            state.operationTriggers.append(request.trigger)
+            await gate.wait()
+            return .cancelled
+        }
+
+        _ = coordinator.request(ended, operation: operation)
+        XCTAssertEqual(coordinator.request(backgroundStop, operation: operation), .coalesced(ended.id))
+        gate.release()
+        await coordinator.waitForCompletion()
+
+        XCTAssertEqual(state.operationTriggers, [.interruptionEnded])
+        XCTAssertEqual(coordinator.operationCount, 1)
+    }
+
+    func testUnknownActivationErrorsUseTheirOwnShortBound() {
+        let unmapped = NSError(domain: audioSessionErrorDomain, code: -99999)
+        XCTAssertEqual(AudioActivationFailure.category(for: unmapped), .unknown)
+        XCTAssertLessThan(
+            AudioActivationFailure.maximumUnknownActivationAttempts,
+            AudioActivationFailure.maximumActivationAttempts
+        )
+        XCTAssertEqual(
+            AudioActivationFailure.disposition(
+                for: .unknown,
+                attempt: 1,
+                appIsBackgrounding: false
+            ),
+            .retry
+        )
+        XCTAssertEqual(
+            AudioActivationFailure.disposition(
+                for: .unknown,
+                attempt: AudioActivationFailure.maximumUnknownActivationAttempts,
+                appIsBackgrounding: false
+            ),
+            .fail
+        )
+        // The transient budget is deliberately longer, so the short bound is
+        // the unknown category's own and not a shared cap.
+        XCTAssertEqual(
+            AudioActivationFailure.disposition(
+                for: .transient,
+                attempt: AudioActivationFailure.maximumUnknownActivationAttempts,
+                appIsBackgrounding: false
+            ),
+            .retry
+        )
+    }
+
+    func testEndedWithoutResumeOptionRequestsPreservationInsteadOfReacquisition() {
+        XCTAssertEqual(
+            AudioRecorderViewModel.recoveryTrigger(forInterruptionEndedWithResumeOption: true),
+            .interruptionEnded
+        )
+        XCTAssertEqual(
+            AudioRecorderViewModel.recoveryTrigger(forInterruptionEndedWithResumeOption: false),
+            .interruptionEndedWithoutResume
+        )
+    }
+
+    func testStalledInterruptionWatchdogStaysDeferredWhileACallIsActive() async {
+        let manager = EnhancedAudioSessionManager()
+        let viewModel = AudioRecorderViewModel(audioSessionManager: manager)
+        let sessionID = UUID()
+        let startedAt = Date()
+        let recordingURL = URL(fileURLWithPath: "/tmp/recording.m4a")
+        viewModel.recordingSessionID = sessionID
+        viewModel.recoveryCoordinator.beginRecordingSession(sessionID)
+        viewModel.recordingIntentActive = true
+        viewModel.isInInterruption = true
+        viewModel.interruptionEndHandled = false
+        viewModel.interruptionRecordingURL = recordingURL
+        viewModel.recordingState = .interrupted(reason: .phoneCall, startedAt: startedAt)
+        viewModel.callInterruptionTracker.observeStart(id: UUID(), at: startedAt)
+
+        await viewModel.reconcileStalledInterruption(startedAt: startedAt)
+        viewModel.stopInterruptionWatchdog()
+
+        XCTAssertTrue(viewModel.isInInterruption)
+        XCTAssertFalse(viewModel.interruptionEndHandled)
+        XCTAssertTrue(viewModel.callInterruptionTracker.hasActiveCalls)
+        if case .interrupted = viewModel.recordingState {
+            // The recording stays parked until the call actually ends.
+        } else {
+            XCTFail("The watchdog reconciled a recording while a call was still active")
+        }
+    }
+
     func testCallKitCorrelationClearsOnlyMatchingUUIDAndFallsBackToInterruptionTime() {
         var tracker = CallInterruptionTracker()
         let firstID = UUID()

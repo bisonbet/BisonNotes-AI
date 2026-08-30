@@ -25,6 +25,9 @@ extension AudioRecorderViewModel {
 	/// Merge multiple recording segments into a single file after interruptions
 	@MainActor
 	func mergeRecordingSegments(
+		segments capturedSegments: [URL]? = nil,
+		mainURL capturedMainURL: URL? = nil,
+		ownsLiveRecordingState: Bool = true,
 		expectedRecordingSessionID: UUID? = nil,
 		expectedRecoveryRequestID: UUID? = nil
 	) async {
@@ -48,11 +51,28 @@ extension AudioRecorderViewModel {
 			#endif
 		}
 
-		guard recoveryIsCurrent(), recordingSegments.count > 1, let mainURL = mainRecordingURL else {
+		// A caller that handed over its own segment list is persisting a
+		// recording that is already over, so abandoning the merge would only
+		// strand its audio; the live properties belong to whoever owns them now
+		// and are gated separately below.
+		let mergeShouldContinue: () -> Bool = {
+			ownsLiveRecordingState ? recoveryIsCurrent() : !Task.isCancelled
+		}
+
+		// Read before the fence, never after it. A user stop schedules this
+		// merge asynchronously, so a recording started in between has already
+		// replaced `recordingSegments` and `mainRecordingURL` — returning first
+		// would leave the stopped recording's segments with nothing pointing at
+		// them at all.
+		let segments = capturedSegments ?? recordingSegments
+		guard segments.count > 1, let mainURL = capturedMainURL ?? mainRecordingURL else {
 			AppLog.shared.recording("No segments to merge", level: .debug)
 			return
 		}
-		let segments = recordingSegments
+		guard mergeShouldContinue() else {
+			preserveSupersededMergeSegments(segments, mainURL: mainURL)
+			return
+		}
 
 		// Derived before the asset loads and export suspend. This recording is
 		// already stopped; re-deriving its name, date and location after those
@@ -92,7 +112,7 @@ extension AudioRecorderViewModel {
 
 			// Add each segment to the composition
 			for (index, segmentURL) in segments.enumerated() {
-				guard recoveryIsCurrent() else {
+				guard mergeShouldContinue() else {
 					preserveSupersededMergeSegments(segments, mainURL: mainURL)
 					return
 				}
@@ -103,14 +123,14 @@ extension AudioRecorderViewModel {
 					AppLog.shared.recording("Segment \(index + 1) has no audio track, skipping")
 					continue
 				}
-				guard recoveryIsCurrent() else {
+				guard mergeShouldContinue() else {
 					preserveSupersededMergeSegments(segments, mainURL: mainURL)
 					return
 				}
 
 				// Get the duration of this segment
 				let duration = try await asset.load(.duration)
-				guard recoveryIsCurrent() else {
+				guard mergeShouldContinue() else {
 					preserveSupersededMergeSegments(segments, mainURL: mainURL)
 					return
 				}
@@ -141,7 +161,7 @@ extension AudioRecorderViewModel {
 
 			// Use the modern export API (iOS 18+)
 			try await exportSession.export(to: tempURL, as: .m4a)
-			guard recoveryIsCurrent() else {
+			guard mergeShouldContinue() else {
 				preserveSupersededMergeSegments(segments, mainURL: mainURL)
 				return
 			}
@@ -150,7 +170,7 @@ extension AudioRecorderViewModel {
 			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
 			let finalization = await RecordingFinalizationPolicy.inspect(url: tempURL, delegateSucceeded: true)
-			guard recoveryIsCurrent() else {
+			guard mergeShouldContinue() else {
 				preserveSupersededMergeSegments(segments, mainURL: mainURL)
 				return
 			}
@@ -161,7 +181,9 @@ extension AudioRecorderViewModel {
 						level: .error
 					)
 					removeOwnedRecordingAttemptArtifact(at: tempURL)
-					errorMessage = rejection.userMessage
+					if ownsLiveRecordingState {
+						errorMessage = rejection.userMessage
+					}
 				}
 				return
 			}
@@ -203,7 +225,7 @@ extension AudioRecorderViewModel {
 			// the state writes below — never the save. The merged file exists and
 			// its sources are gone, so returning here would leave the whole
 			// recording on disk with no Core Data row.
-			let stillCurrent = recoveryIsCurrent()
+			let stillCurrent = ownsLiveRecordingState && recoveryIsCurrent()
 			if !stillCurrent {
 				AppLog.shared.recording(
 					"A newer recording superseded this merge; persisting the merged file without touching live state",

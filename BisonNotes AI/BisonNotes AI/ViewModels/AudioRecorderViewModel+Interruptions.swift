@@ -136,6 +136,20 @@ extension AudioRecorderViewModel {
 			return
 		}
 
+		// A call that outlasts the timeout has not ended: CallKit still reports
+		// it active, so the Phone app still owns the microphone and the long-call
+		// resume prompt has not been offered yet. Reconciling here would clear the
+		// tracker and burn the activation budget against an ongoing call, then
+		// terminate the recording before it. Stay interrupted and re-arm instead.
+		guard !callInterruptionTracker.hasActiveCalls else {
+			AppLog.shared.audioSession(
+				"Interruption watchdog fired while a CallKit call is still active; staying interrupted",
+				level: .debug
+			)
+			startInterruptionWatchdog(for: startedAt)
+			return
+		}
+
 		AppLog.shared.audioSession(
 			"Interruption produced no ended event after \(Int(Self.interruptionStallTimeout))s; reconciling the recording",
 			level: .error
@@ -145,6 +159,17 @@ extension AudioRecorderViewModel {
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
 		await requestAudioRecovery(trigger: .foregroundReconciliation, recordingURL: url)
+	}
+
+	/// The recovery an `.ended` interruption authorizes.
+	///
+	/// Without `.shouldResume` iOS has not authorized this app to take the
+	/// microphone back, so the recovery preserves the finalized segment and
+	/// waits for an event that does, instead of reacquiring the input.
+	static func recoveryTrigger(
+		forInterruptionEndedWithResumeOption shouldResume: Bool
+	) -> AudioRecoveryTrigger {
+		shouldResume ? .interruptionEnded : .interruptionEndedWithoutResume
 	}
 
 	private func handleAudioInterruptionEnded(shouldResume: Bool) {
@@ -183,12 +208,13 @@ extension AudioRecorderViewModel {
 		deferredCallDuration = nil
 		isInInterruption = false
 		interruptionEndHandled = true
+		let trigger = Self.recoveryTrigger(forInterruptionEndedWithResumeOption: shouldResume)
 		AppLog.shared.audioSession(
-			"Audio interruption ended (shouldResume: \(shouldResume)); requesting coordinated recovery"
+			"Audio interruption ended (shouldResume: \(shouldResume)); requesting \(trigger.rawValue) recovery"
 		)
 		Task { @MainActor [weak self] in
 			await self?.requestAudioRecovery(
-				trigger: .interruptionEnded,
+				trigger: trigger,
 				recordingURL: url
 			)
 		}
@@ -415,6 +441,7 @@ extension AudioRecorderViewModel {
 
 		#if os(iOS)
 		let terminalRecordingSessionID = recordingSessionID
+		let terminalMainRecordingURL = mainRecordingURL
 		recordingIntentActive = false
 		recoveryCoordinator.invalidateRecordingSession(reason: "terminal interruption: \(reason)")
 		callInterruptionTracker.removeAll()
@@ -452,6 +479,8 @@ extension AudioRecorderViewModel {
 				#if os(iOS)
 				if segmentsToPersist.count > 1 {
 					await mergeRecordingSegments(
+						segments: segmentsToPersist,
+						mainURL: terminalMainRecordingURL,
 						expectedRecordingSessionID: terminalRecordingSessionID
 					)
 					await MainActor.run { self.recordingBeingProcessed = false }
@@ -497,14 +526,24 @@ extension AudioRecorderViewModel {
 		// Background task will be managed by recoverInterruptedRecording
 	}
 
+	/// Persist one finalized recording segment.
+	///
+	/// Every caller reaches this after its recording is over — a terminal
+	/// interruption, a user stop during recovery, a deferral superseded by a new
+	/// capture — so the save is unconditional: a recording that finished is not
+	/// less finished because the user started another one while its container
+	/// was being inspected. `setupRecording()` replaces `recordingSessionID`, so
+	/// gating the save on session identity is what orphaned finalized audio on
+	/// disk. Only writes to live recording state are gated here.
 	func recoverInterruptedRecording(
 		url: URL,
 		reason: String,
+		ownsLiveRecordingState: Bool = true,
 		expectedRecordingSessionID: UUID? = nil,
 		expectedRecoveryRequestID: UUID? = nil
 	) async {
-		let recoveryIsCurrent: () -> Bool = {
-			guard !Task.isCancelled else { return false }
+		let ownsLiveState: @MainActor () -> Bool = {
+			guard ownsLiveRecordingState, !Task.isCancelled else { return false }
 			#if os(iOS)
 			if let expectedRecordingSessionID,
 			   self.recordingSessionID != expectedRecordingSessionID {
@@ -522,26 +561,28 @@ extension AudioRecorderViewModel {
 			return true
 			#endif
 		}
-
-		// Every early return below must release recordingBeingProcessed. The flag
-		// was set by the caller before this work was spawned, and nothing else
-		// clears it, so leaking it silently disables interruption handling and
-		// the unprocessed-recording check for the rest of the session.
-		guard recoveryIsCurrent() else {
-			await MainActor.run { self.recordingBeingProcessed = false }
-			return
+		// The caller set `recordingBeingProcessed` before spawning this work and
+		// nothing else clears it, so every exit releases it — but only while this
+		// session still owns the flag; a newer recording owns its own.
+		let releaseProcessingFlag: @MainActor () -> Void = {
+			if ownsLiveState() {
+				self.recordingBeingProcessed = false
+			}
 		}
+
 		AppLog.shared.audioSession("Attempting to recover interrupted recording")
+
+		// Reads live location state, so it is only this recording's while this
+		// session is still the current one; the row below uses the snapshot.
+		let capturedLocation = ownsLiveState() ? recordingLocationSnapshot() : nil
 
 		// Start background task to protect file recovery and Core Data save operations
 		beginBackgroundTask()
-		defer { endBackgroundTask() }
+		defer {
+			if ownsLiveState() { endBackgroundTask() }
+		}
 
 		let finalization = await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true)
-		guard recoveryIsCurrent() else {
-			await MainActor.run { self.recordingBeingProcessed = false }
-			return
-		}
 		guard case .usable(let fileSize, let duration) = finalization else {
 			let rejection: RecordingFinalizationRejection
 			if case .rejected(let value) = finalization {
@@ -553,90 +594,91 @@ extension AudioRecorderViewModel {
 				"Interrupted recording was not usable: \(rejection)",
 				level: .error
 			)
-			rejectRecordingFinalization(at: url, rejection: rejection)
+			if ownsLiveState() {
+				rejectRecordingFinalization(at: url, rejection: rejection)
+			}
 			// Rejecting the current segment must not discard the earlier ones it
-			// continued from; those already passed the finalization policy.
-			let survivingSegments = recordingSegments
+			// continued from; those already passed the finalization policy. They
+			// are only reachable through live state, so a superseded pass has
+			// nothing left to fall back to.
+			let survivingSegments = ownsLiveState() ? recordingSegments : []
 			if survivingSegments.count > 1 {
 				await mergeRecordingSegments(
 					expectedRecordingSessionID: expectedRecordingSessionID,
 					expectedRecoveryRequestID: expectedRecoveryRequestID
 				)
+				releaseProcessingFlag()
 			} else if let survivor = survivingSegments.first {
 				await recoverInterruptedRecording(
 					url: survivor,
 					reason: reason,
+					ownsLiveRecordingState: ownsLiveRecordingState,
 					expectedRecordingSessionID: expectedRecordingSessionID,
 					expectedRecoveryRequestID: expectedRecoveryRequestID
 				)
 			} else {
 				await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+				releaseProcessingFlag()
 			}
 			return
 		}
 
 		AppLog.shared.audioSession("Recording has meaningful content: \(fileSize) bytes, \(duration)s")
 
-		// Save location data if available
-		guard recoveryIsCurrent() else {
-			await MainActor.run { self.recordingBeingProcessed = false }
-			return
+		if ownsLiveState() {
+			saveLocationData(for: url)
 		}
-		saveLocationData(for: url)
 
-		// Add the recording using workflow manager for proper UUID consistency
-		if let workflowManager = workflowManager {
-			guard recoveryIsCurrent() else {
-				await MainActor.run { self.recordingBeingProcessed = false }
-				return
-			}
-			let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-			// Use original filename for recording name to maintain consistency
-			let originalFilename = url.deletingPathExtension().lastPathComponent
-			let displayName = "\(originalFilename) (interrupted)"
-
-			// Core Data operations should happen on main thread
-			await MainActor.run {
-				guard recoveryIsCurrent() else {
-					self.recordingBeingProcessed = false
-					return
-				}
-				// Create recording entry using original URL to maintain file consistency
-					let recordingId = workflowManager.createRecording(
-						url: url,
-						name: displayName,
-						date: currentRecordingDate(for: url),
-						fileSize: fileSize,
-						duration: duration,
-						quality: quality,
-						locationData: recordingLocationSnapshot()
-					)
-
-					AppLog.shared.audioSession("Interrupted recording recovered with workflow manager, ID: \(recordingId)")
-
-					// Post notification to refresh UI
-					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-
-					// Reset processing flag
-					recordingBeingProcessed = false
-					resetRecordingLocation()
-					recordingStartedAt = nil
-					resetRecordingAttemptArtifacts()
-
-				}
-
-			// Don't send additional notification - already sent immediate notification
-
-		} else {
+		guard let workflowManager = workflowManager else {
 			AppLog.shared.audioSession("WorkflowManager not set - interrupted recording not saved to database", level: .error)
 			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
-
-			// Reset processing flag even on failure
-			await MainActor.run {
-				recordingBeingProcessed = false
-			}
+			releaseProcessingFlag()
+			return
 		}
+
+		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+
+		// Use original filename for recording name to maintain consistency
+		let originalFilename = url.deletingPathExtension().lastPathComponent
+		let displayName = "\(originalFilename) (interrupted)"
+
+		// An unconditional save has to be an idempotent one: a superseded pass and
+		// the unprocessed-recording check can both reach the same finalized file.
+		if let appCoordinator, appCoordinator.getRecording(url: url) != nil {
+			AppLog.shared.audioSession(
+				"Interrupted recording is already in the database; not creating a second row",
+				level: .debug
+			)
+		} else {
+			let recordingId = workflowManager.createRecording(
+				url: url,
+				name: displayName,
+				date: currentRecordingDate(for: url),
+				fileSize: fileSize,
+				duration: duration,
+				quality: quality,
+				locationData: capturedLocation
+			)
+
+			AppLog.shared.audioSession("Interrupted recording recovered with workflow manager, ID: \(recordingId)")
+
+			// Post notification to refresh UI
+			NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+		}
+
+		// Don't send additional notification - already sent immediate notification
+
+		guard ownsLiveState() else {
+			AppLog.shared.audioSession(
+				"A newer recording superseded this recovery; saved its audio without touching live state",
+				level: .debug
+			)
+			return
+		}
+		recordingBeingProcessed = false
+		resetRecordingLocation()
+		recordingStartedAt = nil
+		resetRecordingAttemptArtifacts()
 	}
 
 	func checkForUnprocessedRecording() async {

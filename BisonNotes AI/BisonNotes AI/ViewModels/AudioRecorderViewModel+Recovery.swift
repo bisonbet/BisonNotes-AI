@@ -127,6 +127,17 @@ extension AudioRecorderViewModel {
 			return await terminateForFailedFinalization(finalization, request: request)
 		}
 
+		// iOS ended the interruption without `.shouldResume`, so it has not
+		// authorized this app to take the microphone back. Preserve the
+		// finalized segment and wait for an event that does, rather than
+		// activating against an owner the system never released to us.
+		if request.trigger == .interruptionEndedWithoutResume {
+			return await deferAudioRecovery(
+				request,
+				reason: "The interruption ended without authorizing resumption"
+			)
+		}
+
 		// An unexplained recorder stop while backgrounded is intentionally a
 		// preservation/defer event. Known interruption-ended events may attempt
 		// activation, which will be classified below if iOS still owns the mic.
@@ -141,7 +152,7 @@ extension AudioRecorderViewModel {
 	}
 
 	@MainActor
-	private func isCurrentAudioRecovery(_ request: AudioRecoveryRequest) -> Bool {
+	func isCurrentAudioRecovery(_ request: AudioRecoveryRequest) -> Bool {
 		recoveryCoordinator.accepts(request)
 			&& recordingIntentActive
 			// A fresh interruption that began while this recovery was in flight
