@@ -328,33 +328,80 @@ extension AudioRecorderViewModel {
 	/// about to overwrite `recordingSegments` and `mainRecordingURL`, so the
 	/// deferred audio is reclaimed here instead of dropped. The reclaim never
 	/// owns live recording state: the session starting now does.
+	///
+	/// The snapshot is deliberately kept until the save lands. Persistence below
+	/// is asynchronous, so clearing it up front would strand the segments if iOS
+	/// suspends the app before the task runs or a multi-segment export fails —
+	/// with nothing on disk left for a later unprocessed-recording pass to find.
 	@MainActor
 	func reclaimDeferredRecoverySegmentsForSupersededSession() {
 		guard let parked = parkedDeferredRecoverySegments() else {
 			clearDeferredRecoverySnapshot()
 			return
 		}
-		clearDeferredRecoverySnapshot()
 
 		AppLog.shared.audioSession(
 			"A new recording superseded a deferred recovery; persisting its \(parked.segments.count) segment(s)"
 		)
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			// The merge writes its output over mainURL and creates the row for it;
+			// a single segment is saved under its own URL.
+			let persistedURL: URL
 			if parked.segments.count > 1 {
+				persistedURL = parked.mainURL
 				await self.mergeRecordingSegments(
 					segments: parked.segments,
 					mainURL: parked.mainURL,
 					ownsLiveRecordingState: false
 				)
 			} else {
+				persistedURL = parked.segments[0]
 				await self.recoverInterruptedRecording(
-					url: parked.segments[0],
+					url: persistedURL,
 					reason: "A new recording started before the deferred recovery resumed",
 					ownsLiveRecordingState: false
 				)
 			}
+			self.releaseReclaimedRecoverySnapshot(for: parked, persistedURL: persistedURL)
 		}
+	}
+
+	/// Drop the reclaimed snapshot only once its audio is in the database.
+	///
+	/// The database row is the success signal: a merge swallows export failures
+	/// and both persistence helpers can be superseded. When the save did not
+	/// land, the trail is rewritten so the next pass can retry — but never over a
+	/// snapshot a newer session has parked in the meantime.
+	@MainActor
+	private func releaseReclaimedRecoverySnapshot(
+		for parked: (segments: [URL], mainURL: URL),
+		persistedURL: URL
+	) {
+		if let appCoordinator, appCoordinator.getRecording(url: persistedURL) != nil {
+			// Clear this reclaim's own trail only. The session that superseded it
+			// may have deferred and parked a snapshot of its own by now.
+			if let current = parkedDeferredRecoverySegments(),
+			   current.mainURL.standardizedFileURL != parked.mainURL.standardizedFileURL {
+				return
+			}
+			clearDeferredRecoverySnapshot()
+			return
+		}
+
+		let survivors = parked.segments.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard !survivors.isEmpty, parkedDeferredRecoverySegments() == nil else {
+			return
+		}
+		AppLog.shared.audioSession(
+			"Reclaimed recovery did not persist; keeping \(survivors.count) segment(s) for the next pass",
+			level: .error
+		)
+		persistRecoverySnapshot(
+			segments: survivors,
+			mainRecordingURL: parked.mainURL,
+			currentSegmentIndex: max(survivors.count - 1, 0)
+		)
 	}
 
 	@MainActor

@@ -162,6 +162,16 @@ Wrap `AVAudioSession` behind an injectable protocol so tests can script activati
 
 Do not retain the current blind three-stream, ten-attempt pattern. If a bounded retry count remains, justify its delays with device evidence and log the terminal error code.
 
+#### Accepted deviation: unmapped error codes retry twice
+
+`AudioActivationFailure.disposition` treats `.unknown` as `retry`, not `fail`, against the bullet above. This is a recorded decision, not an oversight, and it is bounded separately from the transient budget:
+
+- An unmapped code is not evidence that the session is permanently unavailable. iOS returns codes this app does not classify, and failing on attempt 1 discards a recording that a single retry would have resumed.
+- It is not evidence the session will recover either, so `.unknown` does **not** get the ten-attempt call-length budget. `AudioActivationFailure.maximumUnknownActivationAttempts` bounds it at 2: one retry absorbs a transient race, and the second failure preserves the segment and terminates with the error's domain and code logged.
+- `.permanent` — the codes this app does classify as terminal — still fails immediately, so the plan's intent (no blind retry storm against a contract error) holds.
+
+Revisit this if device evidence shows a real unmapped code retrying uselessly. The bound has one owner, `AudioActivationFailure.maximumUnknownActivationAttempts`, and is covered by `AudioInterruptionRecoveryTests.testUnknownActivationErrorsUseTheirOwnShortBound`.
+
 ### 5.5 Background policy
 
 Ordinary lock-screen recording should continue without any restore path. If it stops unexpectedly:

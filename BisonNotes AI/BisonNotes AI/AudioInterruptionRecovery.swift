@@ -350,6 +350,12 @@ struct AudioActivationFailure: Error, Equatable, LocalizedError, Sendable {
     /// the call-length budget above: one retry absorbs a transient race, and
     /// anything past that preserves the segment instead of reactivating an
     /// unsupported or contract-violating session another eight times.
+    ///
+    /// This is a deliberate, recorded deviation from the recovery plan's §5.4,
+    /// which groups unknown with permanent errors: see "Accepted deviation:
+    /// unmapped error codes retry twice" in
+    /// docs/ios-audio-interruption-recovery-delegation-plan.md. Change both
+    /// together, or neither.
     static let maximumUnknownActivationAttempts = 2
 
     static func disposition(
