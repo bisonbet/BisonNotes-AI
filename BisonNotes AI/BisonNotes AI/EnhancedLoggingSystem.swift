@@ -34,6 +34,130 @@ enum LogCategory: String, CaseIterable, Sendable {
     case general = "General"
 }
 
+// MARK: - Persisted Log Budgets
+
+/// Budget rules for the rolling files that survive a crash.
+///
+/// A line-count cap alone does not bound a log file. A single message can be a
+/// model response, a decoded payload, or a CloudKit error description, and one
+/// 350 KB line was enough to push a 500-line error log past 4 MB — which then
+/// cost a 4 MB read and a 4 MB rewrite on *every* subsequent log call. So each
+/// line is clamped first and the file carries a byte ceiling as well.
+///
+/// Pure so the budgets can be tested without touching the filesystem.
+enum LogTrimPolicy {
+    /// Clamps one line so a single huge message cannot consume the whole budget.
+    /// Keeps the head, which is where the message and the first frames live.
+    static func clamp(_ line: String, maxBytes: Int) -> String {
+        let flattened = line.replacingOccurrences(of: "\n", with: "⏎")
+        guard flattened.utf8.count > maxBytes else { return flattened }
+
+        let marker = "…[truncated]"
+        let budget = max(0, maxBytes - marker.utf8.count)
+        var kept = String()
+        var used = 0
+        for character in flattened {
+            let width = String(character).utf8.count
+            if used + width > budget { break }
+            kept.append(character)
+            used += width
+        }
+        return kept + marker
+    }
+
+    /// Drops the oldest lines until the joined text fits both budgets.
+    /// Always keeps at least the newest line, so a log call is never a no-op.
+    static func trim(lines: [String], maxLines: Int, maxBytes: Int) -> [String] {
+        var kept = lines.count > maxLines ? Array(lines.suffix(maxLines)) : lines
+        var total = kept.reduce(0) { $0 + $1.utf8.count + 1 }
+        var firstKept = 0
+        while total > maxBytes, firstKept < kept.count - 1 {
+            total -= kept[firstKept].utf8.count + 1
+            firstKept += 1
+        }
+        if firstKept > 0 { kept = Array(kept.dropFirst(firstKept)) }
+        return kept
+    }
+}
+
+// MARK: - Rolling Log File
+
+/// One rolling file that survives a crash.
+///
+/// Split out of `AppLog` so the append-and-compact behavior can be exercised
+/// against a real file. The budgets in `LogTrimPolicy` are pure and were already
+/// covered, but they cannot catch a file handle opened in the wrong mode — which
+/// is exactly the defect this type was extracted to make testable.
+struct PersistentLogFile: Sendable {
+    let url: URL
+    let maxLines: Int
+    let maxBytes: Int
+    /// Compaction rewrites the file, so it must not run on every line. Appending is
+    /// cheap; the rewrite happens only once the file crosses its ceiling, and then
+    /// takes it well under, leaving room for many more appends before the next one.
+    var compactionTargetFraction = 0.75
+
+    /// Appends one already-clamped line, compacting only once the file is over budget.
+    func append(_ line: String) {
+        guard let sizeAfterAppend = appendToExistingFile(line) else {
+            // No file yet, or it was removed under us — create it.
+            try? (line + "\n").write(to: url, atomically: true, encoding: .utf8)
+            AppFileProtection.apply(to: url)
+            return
+        }
+
+        guard sizeAfterAppend > UInt64(maxBytes) else { return }
+        compact(toByteBudget: Int(Double(maxBytes) * compactionTargetFraction))
+    }
+
+    /// Appends and returns the file's new size, or `nil` when there is no file to
+    /// append to so `append` can create one.
+    ///
+    /// Two things here are easy to get wrong, and both were:
+    ///
+    /// The handle is opened for *updating* rather than writing, because the
+    /// separator check reads a byte and a write-only descriptor fails that read
+    /// with EBADF. When it did, this reported failure and `append` replaced the
+    /// whole log with the single newest line, losing all history on every call.
+    ///
+    /// The new size comes from the handle rather than `URL.resourceValues`, which
+    /// caches the first value it reads for the lifetime of the `URL`. `AppLog`
+    /// holds one URL per log for the whole process, so a cached size froze at
+    /// whatever the file measured first and the byte ceiling never fired.
+    ///
+    /// Files written by earlier versions end without a trailing newline, so the
+    /// separator is added when the existing content lacks one; otherwise the first
+    /// append after an upgrade would run onto the end of the last line.
+    private func appendToExistingFile(_ line: String) -> UInt64? {
+        guard let handle = try? FileHandle(forUpdating: url) else { return nil }
+        defer { try? handle.close() }
+        do {
+            let end = try handle.seekToEnd()
+            var needsSeparator = false
+            if end > 0 {
+                try handle.seek(toOffset: end - 1)
+                needsSeparator = try handle.read(upToCount: 1) != Data([0x0A])
+                try handle.seek(toOffset: end)
+            }
+            guard let data = ((needsSeparator ? "\n" : "") + line + "\n").data(using: .utf8) else {
+                return end
+            }
+            try handle.write(contentsOf: data)
+            return try handle.offset()
+        } catch {
+            return nil
+        }
+    }
+
+    private func compact(toByteBudget budget: Int) {
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let lines = existing.components(separatedBy: "\n").filter { !$0.isEmpty }
+        let kept = LogTrimPolicy.trim(lines: lines, maxLines: maxLines, maxBytes: budget)
+        try? (kept.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        AppFileProtection.apply(to: url)
+    }
+}
+
 // MARK: - App Logger
 
 final class AppLog: Sendable {
@@ -73,6 +197,11 @@ final class AppLog: Sendable {
     private let bufferQueue = DispatchQueue(label: "com.bisonnotes.logbuffer", qos: .utility)
     private static let maxBufferLines = 500
     private static let maxBreadcrumbLines = 750
+    /// Byte ceilings. See ``LogTrimPolicy`` for why the line counts above are not
+    /// enough on their own. Sized so a full export stays small enough to email.
+    private static let maxErrorLogBytes = 512 * 1024
+    private static let maxBreadcrumbLogBytes = 256 * 1024
+    private static let maxPersistedLineBytes = 8 * 1024
     private static let cleanShutdownKey = "AppLog_CleanShutdown"
     private let sessionId = UUID().uuidString
     private struct LifecycleState {
@@ -131,26 +260,25 @@ final class AppLog: Sendable {
         (try? String(contentsOf: persistentBreadcrumbURL, encoding: .utf8)) ?? ""
     }
 
-    private func persistLine(_ line: String, to url: URL, maxLines: Int) {
-        bufferQueue.async {
-            let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-            var lines = existing.components(separatedBy: "\n").filter { !$0.isEmpty }
-            lines.append(line)
-            // Keep only the last N lines
-            if lines.count > maxLines {
-                lines = Array(lines.suffix(maxLines))
-            }
-            try? lines.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
-            AppFileProtection.apply(to: url)
-        }
+    private func persistLine(_ line: String, to file: PersistentLogFile) {
+        let clamped = LogTrimPolicy.clamp(line, maxBytes: Self.maxPersistedLineBytes)
+        bufferQueue.async { file.append(clamped) }
     }
 
     private func persistErrorLine(_ line: String) {
-        persistLine(line, to: persistentLogURL, maxLines: Self.maxBufferLines)
+        persistLine(line, to: PersistentLogFile(
+            url: persistentLogURL,
+            maxLines: Self.maxBufferLines,
+            maxBytes: Self.maxErrorLogBytes
+        ))
     }
 
     private func persistBreadcrumbLine(_ line: String) {
-        persistLine(line, to: persistentBreadcrumbURL, maxLines: Self.maxBreadcrumbLines)
+        persistLine(line, to: PersistentLogFile(
+            url: persistentBreadcrumbURL,
+            maxLines: Self.maxBreadcrumbLines,
+            maxBytes: Self.maxBreadcrumbLogBytes
+        ))
     }
 
     private func lifecycleBreadcrumb(_ message: String) {

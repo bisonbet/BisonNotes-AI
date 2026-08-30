@@ -195,6 +195,7 @@ extension AudioRecorderViewModel {
         macScratchSegmentURLs = []
         macSystemAudioURL = nil
         macMicrophoneStartOffset = 0
+        macInputDeviceID = nil
         resetRecordingAttemptArtifacts()
     }
 

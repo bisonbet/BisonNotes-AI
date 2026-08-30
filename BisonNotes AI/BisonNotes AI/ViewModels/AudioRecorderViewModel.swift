@@ -11,6 +11,9 @@ import SwiftUI
 import Combine
 import CoreLocation
 import UserNotifications
+#if os(macOS)
+import CoreAudio
+#endif
 #if canImport(CallKit) && os(iOS)
 import CallKit
 #endif
@@ -141,6 +144,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var macCaptureHealthTimer: Timer?
 	var macAutomaticRecoveryAttempts = 0
 	var macAwaitingRecoveryBuffer = false
+	/// The Core Audio input used by the current/last Mac capture segment. Keep
+	/// this across a failed restart so the next recovery can exclude that route
+	/// and try a newly registered virtual meeting input instead.
+	var macInputDeviceID: AudioDeviceID?
 	#if os(macOS)
 	var macInputDeviceChangeTask: Task<Void, Never>?
 	var isRecoveringMacInput = false

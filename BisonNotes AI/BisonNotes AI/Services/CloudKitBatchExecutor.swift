@@ -301,6 +301,31 @@ final class CloudKitBatchExecutor {
         attempt: Int,
         into outcome: inout CloudKitModifyOutcome
     ) async throws {
+        // Halving the two lists independently makes no progress when a chunk
+        // holds one save and one delete: each half comes back whole, so the
+        // first recursion is handed the identical chunk and the split repeats
+        // for as long as CloudKit keeps rejecting it. Separating the two kinds
+        // is what shrinks such a chunk, and it shrinks any mixed chunk.
+        if !records.isEmpty, !recordIDs.isEmpty {
+            try await modifyChunk(
+                saving: records,
+                deleting: [],
+                savePolicy: savePolicy,
+                attempt: attempt,
+                into: &outcome
+            )
+            try await modifyChunk(
+                saving: [],
+                deleting: recordIDs,
+                savePolicy: savePolicy,
+                attempt: attempt,
+                into: &outcome
+            )
+            return
+        }
+
+        // One kind only, and a chunk is split only when it holds more than one
+        // record, so both halves are strictly smaller than what was rejected.
         let saveHalves = Self.halved(records)
         let deleteHalves = Self.halved(recordIDs)
         try await modifyChunk(

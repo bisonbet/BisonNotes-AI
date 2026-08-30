@@ -425,6 +425,150 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertEqual(manager.pendingCloudDeletionCount, 1)
     }
 
+    func testExplicitImportedAudioRemovalClearsExistingCloudAssetBeforeRestore() async throws {
+        let (recordingId, summaryId) = try createImportedRecordingWithSummary(
+            named: "Imported cleanup"
+        )
+        let cloudAudioURL = tempDirectory.appendingPathComponent("old-cloud-audio.m4a")
+        try Data("old cloud placeholder".utf8).write(to: cloudAudioURL)
+
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        let summaryRecordName = "backup_summary_\(summaryId.uuidString)"
+        let cloudTimestamp = Date().addingTimeInterval(-3_600)
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Imported cleanup",
+                    "recordingDate": cloudTimestamp,
+                    "createdAt": cloudTimestamp,
+                    "lastModified": cloudTimestamp,
+                    "recordingURL": "old-cloud-audio.m4a",
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.completed.rawValue,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "summaryId": summaryId.uuidString,
+                    "audioAsset": CKAsset(fileURL: cloudAudioURL),
+                    "audioFileName": "old-cloud-audio.m4a",
+                    "audioByteCount": Int64("old cloud placeholder".utf8.count),
+                    "audioSignature": "old-signature",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupSummary",
+                name: summaryRecordName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "summary": "Retained summary",
+                    "aiMethod": "fixture",
+                    "generatedAt": cloudTimestamp,
+                    "lastModified": cloudTimestamp,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        let previousAudioSetting = UserDefaults.standard.object(forKey: "iCloudBackupIncludeAudioFiles")
+        UserDefaults.standard.set(true, forKey: "iCloudBackupIncludeAudioFiles")
+        defer {
+            if let previousAudioSetting {
+                UserDefaults.standard.set(previousAudioSetting, forKey: "iCloudBackupIncludeAudioFiles")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "iCloudBackupIncludeAudioFiles")
+            }
+        }
+
+        manager.enqueueImportedAudioRemovalFromiCloud(recordingId: recordingId)
+        let result = try await runReconcile()
+
+        let cloudRecording = try XCTUnwrap(transport.record(named: recordingRecordName))
+        XCTAssertNil(cloudRecording["audioAsset"])
+        XCTAssertNil(cloudRecording["audioFileName"])
+        XCTAssertNil(cloudRecording["audioByteCount"])
+        XCTAssertNil(cloudRecording["audioSignature"])
+        XCTAssertNil(cloudRecording["recordingURL"])
+        XCTAssertNil(cloudRecording["transcriptId"])
+        XCTAssertEqual(manager.pendingImportedAudioRemovalCountForTesting, 0)
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+        XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+        XCTAssertEqual(result.restoreResult.audioFilesRestored, 0)
+    }
+
+    func testImportedAudioRemovalPreservesNewerCloudMetadata() async throws {
+        let (recordingId, summaryId) = try createImportedRecordingWithSummary(
+            named: "Imported metadata arbitration"
+        )
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let localDeletionDate = Date().addingTimeInterval(-3_600)
+        let cloudEditDate = Date().addingTimeInterval(3_600)
+        let remoteTranscriptId = UUID()
+        recording.lastModified = localDeletionDate
+        try appCoordinator.coreDataManager.saveContext()
+
+        let cloudAudioURL = tempDirectory.appendingPathComponent("newer-cloud-audio.m4a")
+        try Data("newer cloud placeholder".utf8).write(to: cloudAudioURL)
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        let summaryRecordName = "backup_summary_\(summaryId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Edited on another device",
+                    "recordingDate": cloudEditDate,
+                    "createdAt": cloudEditDate,
+                    "lastModified": cloudEditDate,
+                    "recordingURL": "newer-cloud-audio.m4a",
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.completed.rawValue,
+                    "transcriptId": remoteTranscriptId.uuidString,
+                    "summaryId": summaryId.uuidString,
+                    "audioAsset": CKAsset(fileURL: cloudAudioURL),
+                    "audioFileName": "newer-cloud-audio.m4a",
+                    "audioByteCount": Int64("newer cloud placeholder".utf8.count),
+                    "audioSignature": "newer-signature",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupSummary",
+                name: summaryRecordName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "summary": "Retained summary",
+                    "aiMethod": "fixture",
+                    "generatedAt": cloudEditDate,
+                    "lastModified": cloudEditDate,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        manager.enqueueImportedAudioRemovalFromiCloud(
+            recordingId: recordingId,
+            requestedAt: localDeletionDate
+        )
+        _ = try await runReconcile()
+
+        let cloudRecording = try XCTUnwrap(transport.record(named: recordingRecordName))
+        XCTAssertNil(cloudRecording["audioAsset"])
+        XCTAssertEqual(cloudRecording["recordingName"] as? String, "Edited on another device")
+        XCTAssertEqual(cloudRecording["transcriptId"] as? String, remoteTranscriptId.uuidString)
+        XCTAssertEqual(
+            cloudRecording["transcriptionStatus"] as? String,
+            ProcessingStatus.completed.rawValue
+        )
+        XCTAssertEqual(cloudRecording["lastModified"] as? Date, cloudEditDate)
+    }
+
     func testABackoffStopsRoutineTriggersFromStartingWork() async throws {
         try createCompleteRecording(named: "Throttled")
         transport.fetchFailures = [CloudKitTestError.ckError(.requestRateLimited, retryAfter: 600)]
@@ -614,6 +758,30 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             duration: 30,
             quality: .whisperOptimized
         )
+    }
+
+    private func createImportedRecordingWithSummary(named name: String) throws -> (recordingId: UUID, summaryId: UUID) {
+        let recordingId = try createRecordingOnlyForConflict(named: name)
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let summaryId = UUID()
+
+        recording.audioQuality = "imported"
+        recording.recordingURL = nil
+        recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+
+        let summary = SummaryEntry(context: context)
+        summary.id = summaryId
+        summary.recording = recording
+        summary.recordingId = recordingId
+        summary.summary = "Retained summary for \(name)"
+        summary.aiMethod = "fixture"
+        summary.generatedAt = Date()
+        recording.summary = summary
+        recording.summaryId = summaryId
+        try context.save()
+
+        return (recordingId, summaryId)
     }
 
     /// The refetch that pulls a recording's full record also pulls a fresh change

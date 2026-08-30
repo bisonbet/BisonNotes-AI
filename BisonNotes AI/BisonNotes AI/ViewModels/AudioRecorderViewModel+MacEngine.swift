@@ -13,6 +13,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 import CoreGraphics
+import CoreAudio
 
 /// Builds the AVAudioEngine tap outside `AudioRecorderViewModel`'s MainActor
 /// isolation. AVAudioEngine invokes this block on its real-time audio queue;
@@ -75,6 +76,7 @@ extension AudioRecorderViewModel {
 		macCaptureHealth.resetSession()
 		cancelMacSystemAudioStartupGate()
 		macMicrophoneStartOffset = 0
+		macInputDeviceID = nil
 		macSystemAudioCapture = nil
 		macSystemAudioURL = nil
 
@@ -108,12 +110,15 @@ extension AudioRecorderViewModel {
 			// Mac: drive microphone recording with AVAudioEngine + AVAudioFile
 			// so we bypass AVAudioRecorder's broken converter setup. The scratch
 			// file is exported to M4A when recording stops.
-			try startMacEngineRecording(at: url)
+			try await startMacEngineRecordingWithAutomaticInputFallback(at: url)
 
 			if let systemAudioError {
 				errorMessage = "Meeting audio could not be captured: \(systemAudioError.localizedDescription). Recording microphone audio only."
 			}
 		} catch {
+			if continueMacSystemAudioWithoutMicrophone(after: error) {
+				return
+			}
 			cancelMacSystemAudioStartupGate()
 			if let capture = macSystemAudioCapture {
 				if let abandonedSystemAudioURL = try? await capture.stop() {
@@ -128,17 +133,99 @@ extension AudioRecorderViewModel {
 		}
 	}
 
+	/// Try the remembered/default input first, then every live input exposed by
+	/// Core Audio. Zoom and similar meeting apps can register a virtual input
+	/// after BisonNotes launched; selecting that device in Settings should not
+	/// be required just to make a new recording start.
+	@MainActor
+	private func startMacEngineRecordingWithAutomaticInputFallback(at url: URL) async throws {
+		var attemptedDeviceIDs = Set<AudioDeviceID>()
+		var lastError: Error?
+
+		for refreshIndex in 0..<2 {
+			let candidates = enhancedAudioSessionManager.recordingInputCandidates()
+			for deviceID in candidates where attemptedDeviceIDs.insert(deviceID).inserted {
+				do {
+					try startMacEngineRecording(at: url, inputDeviceID: deviceID)
+					if attemptedDeviceIDs.count > 1 {
+						let inputName = enhancedAudioSessionManager.getAvailableInputs()
+							.first(where: { $0.audioDeviceID == deviceID })?.portName ?? "available input"
+						AppLog.shared.audioSession(
+							"Mac recording started after automatic microphone fallback to \(inputName)"
+						)
+					}
+					return
+				} catch {
+					lastError = error
+					AppLog.shared.audioSession(
+						"Mac microphone startup failed for device \(deviceID): \(error.localizedDescription)",
+						level: .error
+					)
+				}
+			}
+
+			guard refreshIndex == 0 else { break }
+			// A meeting application's HAL driver may be visible to Core Audio a
+			// moment after its first device-list notification. Give that registration
+			// one bounded opportunity to settle before falling back to system audio.
+			do {
+				try await Task.sleep(for: .milliseconds(250))
+			} catch {
+				throw error
+			}
+		}
+
+		if let lastError {
+			throw lastError
+		}
+		try startMacEngineRecording(at: url)
+	}
+
+	/// A failed microphone engine must not discard an otherwise valid meeting
+	/// capture. Keep ScreenCaptureKit running, expose the recording as waiting
+	/// for a microphone, and let the normal device monitor reconnect it later.
+	@MainActor
+	@discardableResult
+	func continueMacSystemAudioWithoutMicrophone(after error: Error) -> Bool {
+		guard isStartingRecording || isRecording, macSystemAudioCapture != nil else { return false }
+
+		let didReleaseStartupGate = releaseMacSystemAudioStartupGate(reason: .safetyTimeout)
+		if !didReleaseStartupGate {
+			macSystemAudioContinuesWithoutMicrophone = true
+			macSystemAudioCapture?.setPaused(false)
+		}
+		if !isStartingRecording {
+			macSystemAudioContinuesWithoutMicrophone = true
+			macSystemAudioCapture?.setPaused(false)
+			if !isPaused {
+				startRecordingTimer()
+			}
+		}
+		let waitingSince = Date()
+		recordingState = .waitingForMicrophone(disconnectedAt: waitingSince)
+		errorMessage = "Microphone could not be started (\(error.localizedDescription)). " +
+			"Recording meeting audio while the microphone reconnects."
+		startNativeMacInputRecoveryMonitoring()
+		AppLog.shared.audioSession(
+			"Mac microphone startup failed; continuing with system audio while waiting for an input",
+			level: .error
+		)
+		return true
+	}
+
 	/// Start recording on Mac using AVAudioEngine. Writes native PCM
 	/// into a temporary CAF file, which is exported to the caller's M4A URL in
 	/// `finalizeMacRecording(at:)`.
-	func startMacEngineRecording(at url: URL) throws {
+	func startMacEngineRecording(at url: URL, inputDeviceID: AudioDeviceID? = nil) throws {
 		// Tear down any leftover engine state from a previous run.
 		stopMacEngineRecording(closingFile: false)
+		let deviceID = inputDeviceID ?? enhancedAudioSessionManager.resolvedInputDeviceID()
 
 		// Native macOS uses Core Audio directly. AVAudioSession is an iOS API
 		// and the Mac-only fallback must never run here.
 		do {
-			try startMacEnginePipeline(at: url)
+			try startMacEnginePipeline(at: url, inputDeviceID: deviceID)
+			macInputDeviceID = deviceID
 		} catch {
 			// The pipeline assigns its engine/file/scratch URL before the final start
 			// call. If that call fails, release the partial state before the next retry.
@@ -150,11 +237,12 @@ extension AudioRecorderViewModel {
 	private func startMacEnginePipeline(
 		at url: URL,
 		scratchURL suppliedScratchURL: URL? = nil,
-		removingFinalOutput: Bool = true
+		removingFinalOutput: Bool = true,
+		inputDeviceID: AudioDeviceID? = nil
 	) throws {
 		let engine = AVAudioEngine()
 		#if os(macOS)
-		try enhancedAudioSessionManager.configureInputDevice(for: engine)
+		try enhancedAudioSessionManager.configureInputDevice(for: engine, deviceID: inputDeviceID)
 		#endif
 		let inputNode = engine.inputNode
 		// Apple documents the input-scope format as the hardware-availability
@@ -297,24 +385,60 @@ extension AudioRecorderViewModel {
 
 	/// Starts the next PCM segment on the currently resolved Core Audio input.
 	/// The original final URL is retained for the normal stop/finalize flow.
-	func startMacContinuation(at finalURL: URL) throws {
+	func startMacContinuation(
+		at finalURL: URL,
+		inputDeviceID: AudioDeviceID? = nil
+	) throws {
 		let segmentIndex = macScratchSegmentURLs.count + 1
 		let scratchURL = Self.macScratchURL(for: finalURL, segmentIndex: segmentIndex)
 		registerRecordingAttemptArtifact(at: scratchURL)
+		let deviceID = inputDeviceID ?? enhancedAudioSessionManager.resolvedInputDeviceID()
 		try startMacEnginePipeline(
 			at: finalURL,
 			scratchURL: scratchURL,
-			removingFinalOutput: false
+			removingFinalOutput: false,
+			inputDeviceID: deviceID
+		)
+		macInputDeviceID = deviceID
+	}
+
+	/// Rebuild a continuation on any live input other than the route that just
+	/// failed. A failed AudioUnit setup is cheap to discard, so try all current
+	/// candidates before leaving the recording in the waiting state.
+	@MainActor
+	func startMacContinuationWithAutomaticInputFallback(
+		at finalURL: URL,
+		excluding failedInputDeviceID: AudioDeviceID?
+	) throws {
+		var lastError: Error?
+		for deviceID in enhancedAudioSessionManager
+			.recordingInputCandidates(excluding: failedInputDeviceID) {
+			do {
+				try startMacContinuation(at: finalURL, inputDeviceID: deviceID)
+				return
+			} catch {
+				lastError = error
+				discardFailedMacCaptureState()
+				AppLog.shared.audioSession(
+					"Mac microphone continuation failed for device \(deviceID): \(error.localizedDescription)",
+					level: .error
+				)
+			}
+		}
+
+		if let lastError {
+			throw lastError
+		}
+		throw NSError(
+			domain: "AudioRecorderViewModel.Mac",
+			code: -10,
+			userInfo: [NSLocalizedDescriptionKey: "No alternate microphone is available."]
 		)
 	}
 
 	#if os(macOS)
 	func sealNativeMacScratchSegment() {
 		sealMacScratchSegment()
-	}
-
-	func startNativeMacContinuation(at finalURL: URL) throws {
-		try startMacContinuation(at: finalURL)
 	}
 	#endif
 

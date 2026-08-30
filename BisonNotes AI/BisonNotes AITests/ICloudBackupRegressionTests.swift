@@ -216,6 +216,93 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingTranscriptRemovalCountForTesting, 1)
     }
 
+    func testDeletingUnavailableImportedTranscriptClearsStaleLinksAndQueuesCloudCleanup() async throws {
+        let recordingId = try createRecordingOnly(named: "Unavailable Imported Transcript")
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let orphanedTranscriptId = UUID()
+        let summaryId = UUID()
+
+        recording.audioQuality = "imported"
+        recording.transcriptId = orphanedTranscriptId
+        recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+
+        let summary = SummaryEntry(context: context)
+        summary.id = summaryId
+        summary.recording = recording
+        summary.recordingId = recordingId
+        summary.transcriptId = orphanedTranscriptId
+        summary.summary = "A retained summary for an imported item whose transcript row is gone."
+        summary.aiMethod = "fixture"
+        summary.generatedAt = Date()
+        recording.summary = summary
+        recording.summaryId = summaryId
+        try context.save()
+
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        try await appCoordinator.deleteImportedTranscriptPreservingSummary(recordingId: recordingId)
+
+        let remainingRecording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let remainingSummary = try XCTUnwrap(appCoordinator.getSummary(for: recordingId))
+        XCTAssertNil(remainingRecording.recordingURL)
+        XCTAssertNil(remainingRecording.transcript)
+        XCTAssertNil(remainingRecording.transcriptId)
+        XCTAssertEqual(remainingRecording.transcriptionStatus, ProcessingStatus.notStarted.rawValue)
+        XCTAssertNil(remainingSummary.transcript)
+        XCTAssertNil(remainingSummary.transcriptId)
+        XCTAssertEqual(remainingSummary.id, summaryId)
+        XCTAssertEqual(iCloudManager.pendingTranscriptRemovalCountForTesting, 1)
+        XCTAssertEqual(iCloudManager.pendingImportedAudioRemovalCountForTesting, 1)
+    }
+
+    func testDeletingImportedTranscriptRemovesEveryLinkedLocalTranscriptRow() async throws {
+        let recordingId = try createRecordingOnly(named: "Duplicate imported transcript")
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let currentTranscriptId = UUID()
+        let staleTranscriptId = UUID()
+
+        recording.audioQuality = "imported"
+        recording.transcriptId = currentTranscriptId
+        recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+
+        let currentTranscript = TranscriptEntry(context: context)
+        currentTranscript.id = currentTranscriptId
+        currentTranscript.recording = recording
+        currentTranscript.recordingId = recordingId
+        currentTranscript.segments = "[]"
+        currentTranscript.createdAt = Date()
+        currentTranscript.lastModified = Date()
+
+        let staleTranscript = TranscriptEntry(context: context)
+        staleTranscript.id = staleTranscriptId
+        staleTranscript.recordingId = recordingId
+        staleTranscript.segments = "[]"
+        staleTranscript.createdAt = Date().addingTimeInterval(-60)
+        staleTranscript.lastModified = Date().addingTimeInterval(-60)
+
+        let summary = SummaryEntry(context: context)
+        summary.id = UUID()
+        summary.recording = recording
+        summary.recordingId = recordingId
+        summary.transcriptId = staleTranscriptId
+        summary.summary = "Retained summary"
+        summary.aiMethod = "fixture"
+        summary.generatedAt = Date()
+        recording.summary = summary
+        recording.summaryId = summary.id
+        try context.save()
+
+        try await appCoordinator.deleteImportedTranscriptPreservingSummary(
+            recordingId: recordingId,
+            transcriptId: currentTranscriptId
+        )
+
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: currentTranscriptId))
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: staleTranscriptId))
+        XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+    }
+
     func testDeletionMarkerNamesRemainDistinctForEachContentKind() throws {
         let manager = iCloudStorageManager()
         let recordingId = UUID()

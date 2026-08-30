@@ -60,15 +60,24 @@ extension AudioRecorderViewModel {
 			guard enhancedAudioSessionManager.recordingInputNeedsRecovery() else { return }
 			await recoverNativeMacInput(keepPaused: isPaused)
 		case .waitingForMicrophone:
+			guard !macAwaitingRecoveryBuffer else { return }
 			guard enhancedAudioSessionManager.resolvedInputDeviceID() != nil else { return }
-			await recoverNativeMacInput(keepPaused: false)
+			// A device became available while we were waiting, so the input we were
+			// last bound to is no longer evidence of a bad device — Core Audio may
+			// have handed the reconnected microphone the same ID. See
+			// `MacRecordingInputSelection.excludedDeviceID`.
+			await recoverNativeMacInput(keepPaused: false, trigger: .deviceBecameAvailable)
 		default:
 			break
 		}
 	}
 
 	@MainActor
-	func recoverNativeMacInput(keepPaused: Bool, forceRestart: Bool = false) async {
+	func recoverNativeMacInput(
+		keepPaused: Bool,
+		forceRestart: Bool = false,
+		trigger: MacInputRecoveryTrigger = .currentInputFailed
+	) async {
 		guard !isRecoveringMacInput, isRecording, let finalURL = recordingURL else { return }
 		isRecoveringMacInput = true
 		defer { isRecoveringMacInput = false }
@@ -93,13 +102,14 @@ extension AudioRecorderViewModel {
 			sealNativeMacScratchSegment()
 		}
 
-		guard enhancedAudioSessionManager.resolvedInputDeviceID() != nil else {
-			await waitForNativeMacInput(disconnectedAt: disconnectedAt, notify: !wasAlreadyWaiting)
-			return
-		}
-
 		do {
-			try startNativeMacContinuation(at: finalURL)
+			try startMacContinuationWithAutomaticInputFallback(
+				at: finalURL,
+				excluding: MacRecordingInputSelection.excludedDeviceID(
+					currentInputDeviceID: macInputDeviceID,
+					trigger: trigger
+				)
+			)
 			macAwaitingRecoveryBuffer = true
 			pendingMacInputRecovery = PendingMacInputRecovery(
 				keepPaused: keepPaused,
@@ -109,10 +119,12 @@ extension AudioRecorderViewModel {
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Microphone connected. Confirming that audio is being received…"
 		} catch {
-			discardFailedMacCaptureState()
 			pendingMacInputRecovery = nil
 			macAwaitingRecoveryBuffer = false
 			AppLog.shared.audioSession("Mac input recovery failed: \(error.localizedDescription)", level: .error)
+			if !keepPaused, continueMacSystemAudioWithoutMicrophone(after: error) {
+				return
+			}
 			recordingState = .waitingForMicrophone(disconnectedAt: disconnectedAt)
 			errorMessage = "Could not use the available microphone: \(error.localizedDescription)"
 			startNativeMacInputRecoveryMonitoring()

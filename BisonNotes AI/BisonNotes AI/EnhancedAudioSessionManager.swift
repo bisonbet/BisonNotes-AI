@@ -464,6 +464,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     private var preferredInputDeviceID: AudioDeviceID?
     private var configuredInputDeviceID: AudioDeviceID?
+    private var configuredInputIsAutomaticFallback = false
     private var inputDeviceMonitor: MacInputDeviceMonitor?
 
     deinit {
@@ -511,20 +512,13 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
 
         preferredInputDeviceID = input.audioDeviceID
+        configuredInputIsAutomaticFallback = false
         AppLog.shared.audioSession("Preferred Mac input set to: \(input.portName) (\(input.uid))")
     }
 
     func clearPreferredInput() async throws {
         preferredInputDeviceID = nil
         AppLog.shared.audioSession("Preferred Mac input cleared; using the system default microphone")
-    }
-
-    /// True when a recording would be explicitly bound to a user-selected
-    /// input rather than the current macOS default. Startup recovery can use
-    /// this to try the default route after a selected USB device produces no
-    /// input buffers, without forgetting the persisted user preference.
-    func hasPreferredInput() -> Bool {
-        preferredInputDeviceID != nil
     }
 
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
@@ -580,16 +574,43 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         return Self.defaultInputDeviceID()
     }
 
+    /// Returns the inputs that can be tried for a new engine, in preference
+    /// order. A meeting app can register a virtual input after this app was
+    /// launched, so callers must use this live list rather than only the
+    /// remembered input or the current default.
+    func recordingInputCandidates() -> [AudioDeviceID] {
+        let inputs = getAvailableInputs()
+        return MacRecordingInputSelection.orderedDeviceIDs(
+            preferredDeviceID: preferredInputDeviceID,
+            defaultDeviceID: Self.defaultInputDeviceID(),
+            available: inputs.map {
+                MacRecordingInputCandidate(deviceID: $0.audioDeviceID, name: $0.portName)
+            }
+        )
+    }
+
+    /// Returns currently available inputs other than the one that just failed.
+    /// The list is intentionally rebuilt for every retry because virtual audio
+    /// drivers may appear while the meeting application is starting.
+    func recordingInputCandidates(excluding deviceID: AudioDeviceID?) -> [AudioDeviceID] {
+        recordingInputCandidates().filter { $0 != deviceID }
+    }
+
     /// True when the engine is still bound to the device the current preference
     /// resolves to. Device-list and default-input listeners use this to ignore
     /// unrelated audio-device changes.
     func recordingInputNeedsRecovery() -> Bool {
         guard let configuredInputDeviceID else { return false }
+        if configuredInputIsAutomaticFallback {
+            let availableDeviceIDs = Set(getAvailableInputs().map(\.audioDeviceID))
+            return !availableDeviceIDs.contains(configuredInputDeviceID)
+        }
         return configuredInputDeviceID != resolvedInputDeviceID()
     }
 
     func clearConfiguredInputDevice() {
         configuredInputDeviceID = nil
+        configuredInputIsAutomaticFallback = false
     }
 
     /// Watches both the system default input and the complete Core Audio device
@@ -608,8 +629,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Applies the selected Mac input to this engine without changing the
     /// user's system-wide default input device.
-    func configureInputDevice(for engine: AVAudioEngine) throws {
-        guard let deviceID = resolvedInputDeviceID() else {
+    func configureInputDevice(
+        for engine: AVAudioEngine,
+        deviceID requestedDeviceID: AudioDeviceID? = nil
+    ) throws {
+        guard let deviceID = requestedDeviceID ?? resolvedInputDeviceID() else {
             let error = AudioProcessingError.audioSessionConfigurationFailed("No microphone is available.")
             lastError = error
             throw error
@@ -640,6 +664,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             throw error
         }
         configuredInputDeviceID = deviceID
+        configuredInputIsAutomaticFallback = requestedDeviceID != nil && deviceID != resolvedInputDeviceID()
 
         let inputName = getAvailableInputs()
             .first(where: { $0.audioDeviceID == deviceID })?

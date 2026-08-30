@@ -820,6 +820,7 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
+                    CacheMaintenanceService.shared.pruneCachesIfDue()
                     appCoordinator.observeNetworkRestorationForiCloud()
                     appCoordinator.reconcileiCloudIfEnabled(reason: .appLaunch, force: true)
                 }
@@ -848,6 +849,10 @@ struct BisonNotesAIApp: App {
                     // Repair any files left at .complete protection by v1.11.0.
                     migrateFileProtectionForExistingFiles()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
+                    // Throttled internally: a Mac can stay open for days, so a
+                    // launch-only sweep would never run on the machine that
+                    // accumulates the most.
+                    CacheMaintenanceService.shared.pruneCachesIfDue()
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.

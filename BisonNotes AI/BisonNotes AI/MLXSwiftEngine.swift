@@ -18,6 +18,7 @@ enum MLXSwiftSettingsKeys {
     static let topK = "mlxSwiftTopK"
     static let topP = "mlxSwiftTopP"
     static let repetitionPenalty = "mlxSwiftRepeatPenalty"
+    static let inFlightDownloadModelID = "mlxSwiftInFlightDownloadModelID"
 
     static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
     static let defaultModelId = "prism-ml/Ternary-Bonsai-4B-mlx-2bit"
@@ -103,6 +104,8 @@ final class MLXSwiftDownloadManager: ObservableObject {
     @Published private(set) var isModelDownloaded = false
 
     private var downloadTask: Task<Void, Never>?
+    private var isCacheMaintenanceInProgress = false
+    private var downloadRequestedDuringCacheMaintenance = false
 
     var modelId: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -125,14 +128,48 @@ final class MLXSwiftDownloadManager: ObservableObject {
         #endif
     }
 
+    /// Reserves the Hub cache for the off-main maintenance sweep. Both this
+    /// method and `startDownload()` run on the main actor, so acquisition and
+    /// download startup are mutually exclusive rather than a check followed by
+    /// an unprotected filesystem operation.
+    @discardableResult
+    func beginCacheMaintenance() -> Bool {
+        guard !isDownloading, !isCacheMaintenanceInProgress else { return false }
+        isCacheMaintenanceInProgress = true
+        return true
+    }
+
+    /// Releases the cache reservation after the detached filesystem sweep has
+    /// finished. A download requested while the sweep was running starts now.
+    func endCacheMaintenance() {
+        guard isCacheMaintenanceInProgress else { return }
+        isCacheMaintenanceInProgress = false
+        guard downloadRequestedDuringCacheMaintenance else { return }
+        downloadRequestedDuringCacheMaintenance = false
+        startDownload()
+    }
+
     func startDownload() {
         guard !isDownloading else { return }
+        if isCacheMaintenanceInProgress {
+            downloadRequestedDuringCacheMaintenance = true
+            return
+        }
+        let id = modelId
         isDownloading = true
         downloadError = nil
         downloadProgress = 0
+        UserDefaults.standard.set(id, forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
 
         downloadTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                self.isDownloading = false
+                self.downloadTask = nil
+                if UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID) == id {
+                    UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+                }
+            }
             do {
                 #if canImport(MLXLLM) && canImport(MLXLMCommon)
                 try await self.performDownload()
@@ -140,13 +177,12 @@ final class MLXSwiftDownloadManager: ObservableObject {
                 throw NSError(domain: "MLXSwift", code: -1,
                               userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
                 #endif
-                self.isDownloading = false
+                guard !Task.isCancelled else { return }
                 self.isModelDownloaded = true
                 AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(self.modelId)")
             } catch {
                 if !Task.isCancelled {
                     self.downloadError = error.localizedDescription
-                    self.isDownloading = false
                     AppLog.shared.summarization("[MLXSwift] Download failed: \(error.localizedDescription)", level: .error)
                 }
             }
@@ -155,8 +191,6 @@ final class MLXSwiftDownloadManager: ObservableObject {
 
     func cancelDownload() {
         downloadTask?.cancel()
-        downloadTask = nil
-        isDownloading = false
         downloadProgress = 0
         downloadError = nil
     }
@@ -351,6 +385,27 @@ extension MLXSwiftDownloadManager {
                 self?.downloadProgress = progress.fractionCompleted
             }
         }
+
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies the result into its `downloadBase`, so a finished model sits on disk
+        // twice — 15.8 GB for a 7.9 GB model.
+        //
+        // The blobs are only useful *during* a download: everything that resumes an
+        // interrupted one lives in that cache, which is why disabling it outright is
+        // the wrong fix. Once the materialized copy is complete they are dead weight,
+        // so they go here rather than waiting for the next maintenance sweep.
+        //
+        // Gated on the model actually being usable: if the download was interrupted
+        // after config.json landed, the blobs are what a retry resumes from and must
+        // survive, and the manager must not report a partial model as downloaded.
+        guard checkModelExists(modelId: id) else {
+            throw NSError(
+                domain: "MLXSwift",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "The model download did not finish materializing its weights."]
+            )
+        }
+        removeHubBlobCache(for: id)
     }
 
     func checkModelExists() -> Bool {
@@ -360,8 +415,7 @@ extension MLXSwiftDownloadManager {
     func checkModelExists(modelId: String) -> Bool {
         let config = ModelConfiguration(id: modelId)
         let dir = config.modelDirectory(hub: defaultHubApi)
-        let configFile = dir.appendingPathComponent("config.json")
-        return FileManager.default.fileExists(atPath: configFile.path)
+        return CacheMaintenancePolicy.isMaterializedModelComplete(at: dir)
     }
 
     func removeModelFiles() throws {
@@ -369,6 +423,35 @@ extension MLXSwiftDownloadManager {
         let dir = config.modelDirectory(hub: defaultHubApi)
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
+        }
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies into its `downloadBase`, so the directory above is only half of what
+        // the model occupies. Removing just it left a full second copy behind — two
+        // "deleted" models were still costing 3.3 GB. `CacheMaintenanceService` also
+        // sweeps these, but a delete the user asked for should free the space now.
+        removeHubBlobCache(for: modelId)
+    }
+
+    private func removeHubBlobCache(for modelId: String) {
+        guard let hubRepo = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent(
+                CacheMaintenancePolicy.hubRepoDirectoryName(forModelID: modelId),
+                isDirectory: true
+            ),
+            FileManager.default.fileExists(atPath: hubRepo.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: hubRepo)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Could not remove blob cache for \(modelId): \(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 }

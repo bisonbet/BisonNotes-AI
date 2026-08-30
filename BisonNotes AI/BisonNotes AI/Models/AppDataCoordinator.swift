@@ -257,6 +257,123 @@ class AppDataCoordinator: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Removes an imported transcript placeholder while retaining its recording
+    /// metadata and summary. Unlike an ordinary missing-file cleanup, this is an
+    /// explicit user deletion: its cloud audio removal and any stale transcript
+    /// identity must survive until CloudKit accepts them.
+    func deleteImportedTranscriptPreservingSummary(
+        recordingId: UUID,
+        transcriptId: UUID? = nil
+    ) async throws {
+        guard let initialRecording = coreDataManager.getRecording(id: recordingId) else {
+            throw NSError(
+                domain: "AppDataCoordinator",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
+            )
+        }
+
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        let initialSummary = coreDataManager.getSummary(for: recordingId) ?? initialRecording.summary
+        let transcriptIds = Set([
+            transcriptId,
+            initialRecording.transcriptId,
+            initialRecording.transcript?.id,
+            initialSummary?.transcriptId,
+            initialSummary?.transcript?.id
+        ].compactMap { $0 })
+
+        // Persist both removal intents before touching anything locally, the same
+        // way `deleteSummary` and `setCloudSyncDisabled` do. Queuing them after the
+        // save left a window where a termination between the two would take the
+        // transcript and audio away locally with nothing durable telling the other
+        // devices — and the next sync would restore exactly what the user deleted,
+        // which is the resurrection this method exists to prevent. Withdrawn below
+        // if the local work does not commit.
+        //
+        // `deletionDate` is when the user asked, which is also what the markers must
+        // carry: a marker that reaches CloudKit days later must not erase newer work.
+        let deletionDate = Date()
+        for transcriptId in transcriptIds {
+            iCloudManager.enqueueTranscriptRemovalFromiCloud(
+                transcriptId: transcriptId,
+                recordingId: recordingId,
+                requestedAt: deletionDate
+            )
+        }
+        iCloudManager.enqueueImportedAudioRemovalFromiCloud(
+            recordingId: recordingId,
+            requestedAt: deletionDate
+        )
+
+        // `deleteTranscript` commits a save of its own, so its rows can be durably
+        // gone even when the work below fails. Withdrawing a marker for one of those
+        // would leave the transcript deleted locally with nothing telling the other
+        // devices — the resurrection this method exists to prevent — so only intents
+        // whose mutation has not committed are taken back.
+        var committedTranscriptIds: Set<UUID> = []
+
+        func withdrawUncommittedRemovals() {
+            for transcriptId in transcriptIds where !committedTranscriptIds.contains(transcriptId) {
+                iCloudManager.clearPendingTranscriptRemoval(transcriptId: transcriptId)
+            }
+            // `recordingURL` is only cleared by the `saveContext()` below, so if that
+            // did not land the audio is still referenced locally and its intent goes.
+            iCloudManager.clearPendingImportedAudioRemoval(recordingId: recordingId)
+        }
+
+        do {
+            for transcriptId in transcriptIds {
+                // The marker is already queued; this only removes the local row.
+                // Remove every identity collected above, including stale ids from
+                // the recording and summary relationships. Otherwise backup can
+                // select an older remaining row and recreate the deleted transcript.
+                try coreDataManager.deleteTranscript(id: transcriptId, enqueueCloudDeletion: false)
+                committedTranscriptIds.insert(transcriptId)
+            }
+
+            guard let recording = coreDataManager.getRecording(id: recordingId) else {
+                throw NSError(
+                    domain: "AppDataCoordinator",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
+                )
+            }
+
+            let currentTranscriptId = recording.transcriptId ?? recording.transcript?.id
+            if currentTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                recording.transcript = nil
+                recording.transcriptId = nil
+                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            }
+
+            if let summary = coreDataManager.getSummary(for: recordingId) ?? recording.summary {
+                let currentSummaryTranscriptId = summary.transcriptId ?? summary.transcript?.id
+                if currentSummaryTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                    summary.transcript = nil
+                    summary.transcriptId = nil
+                }
+            }
+
+            recording.recordingURL = nil
+            recording.lastModified = deletionDate
+            try coreDataManager.saveContext()
+        } catch {
+            withdrawUncommittedRemovals()
+            throw error
+        }
+
+        do {
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
+        } catch {
+            AppLog.shared.coreData(
+                "Imported transcript cleanup saved locally; queued iCloud removal for retry: \(error)",
+                level: .error
+            )
+        }
+        objectWillChange.send()
+    }
+
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         let summary = coreDataManager.getSummary(id: id)
