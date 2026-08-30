@@ -274,6 +274,13 @@ extension AudioRecorderViewModel {
 
 				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
 
+				// The row exists, so any trail parking these segments has done its
+				// job. Retiring it earlier is what strands audio when an export
+				// fails or the app dies mid-save.
+				#if os(iOS)
+				clearDeferredRecoverySnapshotEntries(containing: mainURL)
+				#endif
+
 				if stillCurrent {
 					self.resetRecordingLocation()
 					self.recordingStartedAt = nil

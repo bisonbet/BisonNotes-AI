@@ -446,7 +446,6 @@ extension AudioRecorderViewModel {
 		recoveryCoordinator.invalidateRecordingSession(reason: "terminal interruption: \(reason)")
 		callInterruptionTracker.removeAll()
 		stopInterruptionWatchdog()
-		clearDeferredRecoverySnapshotForCurrentRecording()
 		#endif
 		recordingBeingProcessed = true
 
@@ -644,6 +643,13 @@ extension AudioRecorderViewModel {
 
 		// An unconditional save has to be an idempotent one: a superseded pass and
 		// the unprocessed-recording check can both reach the same finalized file.
+		// Either way the row exists once this block is done, which is the only
+		// point at which a trail parking this file can safely be retired.
+		defer {
+			#if os(iOS)
+			clearDeferredRecoverySnapshotEntries(containing: url)
+			#endif
+		}
 		if let appCoordinator, appCoordinator.getRecording(url: url) != nil {
 			AppLog.shared.audioSession(
 				"Interrupted recording is already in the database; not creating a second row",

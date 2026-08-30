@@ -194,6 +194,11 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 					AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
 
+					// The row exists; only now may a trail parking this file go.
+					#if os(iOS)
+					clearDeferredRecoverySnapshotEntries(containing: resolvedRecordingURL)
+					#endif
+
 					if stillCurrent {
 						// Watch audio integration removed
 						self.resetRecordingLocation()
