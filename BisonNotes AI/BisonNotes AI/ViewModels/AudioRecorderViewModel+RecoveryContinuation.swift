@@ -86,6 +86,7 @@ extension AudioRecorderViewModel {
 		url: URL,
 		segmentIndex: Int
 	) {
+		clearDeferredRecoverySnapshot()
 		currentSegmentIndex = segmentIndex
 		recordingSegments.append(url)
 		recordingURL = url
@@ -124,7 +125,12 @@ extension AudioRecorderViewModel {
 		}
 
 		recoveryCoordinator.updatePhase(.deferredUntilForeground, for: request.id)
-		interruptionEndHandled = true
+		// Deliberately do NOT latch interruptionEndHandled here. A deferral is
+		// waiting for exactly the event that latch would discard: the system's
+		// own .ended/.shouldResume is what authorizes reacquiring the
+		// microphone, and swallowing it strands the recording until the user
+		// happens to foreground the app.
+		interruptionEndHandled = false
 		isRecording = false
 		stopRecordingTimer()
 		audioRecorder = nil
@@ -133,6 +139,10 @@ extension AudioRecorderViewModel {
 		recorderStoppedUnexpectedlyTime = nil
 		recordingState = .interrupted(reason: .systemInterruption, startedAt: Date())
 		errorMessage = "Recording paused. Bring BisonNotes AI to the foreground to continue."
+		// A deferred recording holds no audio session, so iOS may terminate the
+		// app before it is ever resumed. Persist the segment bookkeeping so the
+		// next launch can reclaim the captured audio instead of orphaning it.
+		persistDeferredRecoverySnapshot()
 		AppLog.shared.audioSession(
 			"Deferred audio recovery \(request.id.uuidString) until foreground: \(reason)"
 		)
@@ -152,6 +162,7 @@ extension AudioRecorderViewModel {
 		}
 
 		recoveryCoordinator.updatePhase(.stoppedOrRecovered, for: request.id)
+		clearDeferredRecoverySnapshot()
 		resetRecordingStateAfterRecoveryFailure(reason: reason)
 
 		recordingSegments = existingRecordingSegments()
@@ -213,6 +224,110 @@ extension AudioRecorderViewModel {
 				expectedRecoveryRequestID: request.id
 			)
 		}
+	}
+
+	// MARK: - Deferred Recovery Persistence
+
+	/// The on-disk record of a recording parked by `deferAudioRecovery`.
+	///
+	/// Only file names are stored: the Documents container is relocated between
+	/// launches, so an absolute URL captured today does not resolve tomorrow.
+	private struct DeferredRecoverySnapshot: Codable {
+		let mainRecordingFilename: String?
+		let segmentFilenames: [String]
+		let currentSegmentIndex: Int
+		let deferredAt: Date
+	}
+
+	private static var deferredRecoverySnapshotURL: URL? {
+		FileManager.default
+			.urls(for: .documentDirectory, in: .userDomainMask)
+			.first?
+			.appendingPathComponent("deferred-recovery.json")
+	}
+
+	@MainActor
+	func persistDeferredRecoverySnapshot() {
+		guard let snapshotURL = Self.deferredRecoverySnapshotURL else { return }
+		let segments = existingRecordingSegments()
+		guard !segments.isEmpty else {
+			clearDeferredRecoverySnapshot()
+			return
+		}
+
+		let snapshot = DeferredRecoverySnapshot(
+			mainRecordingFilename: mainRecordingURL?.lastPathComponent,
+			segmentFilenames: segments.map { $0.lastPathComponent },
+			currentSegmentIndex: currentSegmentIndex,
+			deferredAt: Date()
+		)
+		do {
+			let data = try JSONEncoder().encode(snapshot)
+			try data.write(to: snapshotURL, options: .atomic)
+			AppFileProtection.apply(to: snapshotURL)
+			AppLog.shared.audioSession(
+				"Persisted deferred recovery snapshot for \(segments.count) segment(s)",
+				level: .debug
+			)
+		} catch {
+			AppLog.shared.audioSession(
+				"Could not persist deferred recovery snapshot: \(error.localizedDescription)",
+				level: .error
+			)
+		}
+	}
+
+	@MainActor
+	func clearDeferredRecoverySnapshot() {
+		guard let snapshotURL = Self.deferredRecoverySnapshotURL,
+			  FileManager.default.fileExists(atPath: snapshotURL.path) else {
+			return
+		}
+		try? FileManager.default.removeItem(at: snapshotURL)
+	}
+
+	/// Restore the segments of a deferred recording that never resumed, so the
+	/// normal unprocessed-recording path can persist them.
+	///
+	/// Returns `true` when in-memory state was restored and the caller should
+	/// continue with its recovery check.
+	@MainActor
+	func reclaimDeferredRecoverySegmentsIfNeeded() async -> Bool {
+		guard recordingURL == nil,
+			  !recordingIntentActive,
+			  !recordingBeingProcessed,
+			  let snapshotURL = Self.deferredRecoverySnapshotURL,
+			  let data = try? Data(contentsOf: snapshotURL),
+			  let snapshot = try? JSONDecoder().decode(DeferredRecoverySnapshot.self, from: data),
+			  let documentsPath = FileManager.default
+				.urls(for: .documentDirectory, in: .userDomainMask).first else {
+			return false
+		}
+
+		let segments = snapshot.segmentFilenames
+			.map { documentsPath.appendingPathComponent($0) }
+			.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard !segments.isEmpty else {
+			clearDeferredRecoverySnapshot()
+			return false
+		}
+
+		AppLog.shared.audioSession(
+			"Reclaiming \(segments.count) segment(s) from a deferred recovery that never resumed"
+		)
+		recordingSegments = segments
+		mainRecordingURL = snapshot.mainRecordingFilename
+			.map { documentsPath.appendingPathComponent($0) } ?? segments.first
+		currentSegmentIndex = max(segments.count - 1, 0)
+		recordingURL = segments.last
+		clearDeferredRecoverySnapshot()
+
+		if segments.count > 1 {
+			// The merge persists the combined recording itself.
+			await mergeRecordingSegments()
+			return false
+		}
+		return true
 	}
 
 	@MainActor

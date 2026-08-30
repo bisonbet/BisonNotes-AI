@@ -40,6 +40,19 @@ extension AudioRecorderViewModel {
 			return
 		}
 
+		// This pipeline owns the AVAudioRecorder backend only. A live
+		// transcription session has no AVAudioRecorder and writes its .m4a at
+		// stop(), so every branch below would misread it as a missing segment
+		// and terminate the session while LiveTranscriptionService kept its
+		// AVAudioEngine tap — and the microphone — running.
+		guard !isUsingLiveTranscription else {
+			AppLog.shared.audioSession(
+				"Ignoring \(trigger.rawValue) recovery for a live transcription session",
+				level: .debug
+			)
+			return
+		}
+
 		let standardizedRecordingURL = recordingURL.standardizedFileURL
 		guard let currentRecordingURL = self.recordingURL,
 			  currentRecordingURL.standardizedFileURL == standardizedRecordingURL else {
@@ -131,6 +144,11 @@ extension AudioRecorderViewModel {
 	private func isCurrentAudioRecovery(_ request: AudioRecoveryRequest) -> Bool {
 		recoveryCoordinator.accepts(request)
 			&& recordingIntentActive
+			// A fresh interruption that began while this recovery was in flight
+			// means iOS has handed the microphone to someone else. Yield instead
+			// of burning the activation budget against an owner we cannot
+			// preempt; the new interruption's ended event starts a new recovery.
+			&& !isInInterruption
 			&& recordingSessionID == request.recordingSessionID
 			&& recordingURL?.standardizedFileURL == request.recordingURL.standardizedFileURL
 	}
@@ -265,7 +283,7 @@ extension AudioRecorderViewModel {
 			if failure.category == .mediaServicesReset {
 				enhancedAudioSessionManager.resetPreparedSessionAfterMediaServicesReset()
 			}
-			guard failure.attempt < 3 else {
+			guard failure.attempt < AudioActivationFailure.maximumActivationAttempts else {
 				_ = await terminateAudioRecovery(
 					request,
 					reason: failure.errorDescription ?? "Audio session activation failed",

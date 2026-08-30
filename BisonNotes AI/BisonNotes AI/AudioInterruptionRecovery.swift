@@ -301,20 +301,32 @@ struct AudioActivationFailure: Error, Equatable, LocalizedError, Sendable {
         }
     }
 
+    /// The activation retry budget for one recovery.
+    ///
+    /// The Phone app can hold the audio session for many seconds after CallKit
+    /// reports the call ended, so the budget deliberately spans ~15s of bounded
+    /// backoff. Giving up sooner terminates a recording that would have resumed.
+    /// This is the single owner of the bound: call sites must read it rather
+    /// than restating the number.
+    static let maximumActivationAttempts = 10
+
     static func disposition(
         for category: AudioActivationFailureCategory,
         attempt: Int,
         appIsBackgrounding: Bool,
-        maximumAttempts: Int = 3
+        maximumAttempts: Int = AudioActivationFailure.maximumActivationAttempts
     ) -> AudioActivationDisposition {
         switch category {
         case .insufficientPriority:
             return appIsBackgrounding
                 ? .deferUntilForeground
                 : (attempt < maximumAttempts ? .retry : .fail)
-        case .busy, .mediaServicesReset, .transient:
+        // An unmapped error code is not evidence that the session is
+        // permanently unavailable, so it retries with the rest rather than
+        // terminating the recording on the first attempt.
+        case .busy, .mediaServicesReset, .transient, .unknown:
             return attempt < maximumAttempts ? .retry : .fail
-        case .permanent, .unknown:
+        case .permanent:
             return .fail
         }
     }

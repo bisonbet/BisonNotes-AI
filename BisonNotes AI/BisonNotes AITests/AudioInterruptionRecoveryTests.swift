@@ -233,7 +233,7 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertEqual(
             AudioActivationFailure.disposition(
                 for: .insufficientPriority,
-                attempt: 3,
+                attempt: AudioActivationFailure.maximumActivationAttempts,
                 appIsBackgrounding: false
             ),
             .fail
@@ -250,7 +250,7 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertEqual(
             AudioActivationFailure.disposition(
                 for: .transient,
-                attempt: 3,
+                attempt: AudioActivationFailure.maximumActivationAttempts,
                 appIsBackgrounding: false
             ),
             .fail

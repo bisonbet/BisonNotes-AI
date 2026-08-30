@@ -2406,6 +2406,18 @@ class BackgroundProcessingManager: ObservableObject {
 
         guard !backgroundAudioKeepAliveActive else { return }
 
+        // This manager shares EnhancedAudioSessionManager.shared with the
+        // recorder. Reconfiguring it while a recording owns it discards the
+        // configuration that recovery's activatePreparedSession() requires,
+        // which surfaces as a bogus activation failure that stops the recording.
+        guard audioSessionManager.currentConfiguration?.backgroundRecording != true else {
+            AppLog.shared.backgroundProcessing(
+                "Recording owns the shared audio session; skipping keep-alive audio",
+                level: .debug
+            )
+            return
+        }
+
         do {
             try await audioSessionManager.configureBackgroundProcessingSession()
 
@@ -2437,6 +2449,17 @@ class BackgroundProcessingManager: ObservableObject {
 
         stopKeepAliveAudio()
         backgroundAudioKeepAliveActive = false
+
+        // If a recording took the shared session over while keep-alive was
+        // running, tearing it down here would clear the configuration out from
+        // under the recorder's recovery. Release only the keep-alive player.
+        guard audioSessionManager.currentConfiguration?.backgroundRecording != true else {
+            AppLog.shared.backgroundProcessing(
+                "Recording owns the shared audio session; leaving it active",
+                level: .debug
+            )
+            return
+        }
 
         do {
             try await audioSessionManager.deactivateSession()

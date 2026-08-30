@@ -101,14 +101,28 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 		if callDuration < SHORT_CALL_THRESHOLD {
 			// Short call (< 3 minutes) - auto resume
 			AppLog.shared.audioSession("Short call detected (<3 min), auto-resuming recording")
-			interruptionEndHandled = true
 			if let url = interruptionRecordingURL ?? recordingURL {
 				await resumeRecordingAfterInterruption(url: url)
+			}
+			// Latch only once the resume actually left the interrupted state.
+			// CallKit reports the call ended before AVAudioSession releases the
+			// microphone, so a resume attempted here can be ignored or fail;
+			// latching first would discard the system's own .ended/.shouldResume,
+			// the event that actually authorizes reacquiring the microphone.
+			if case .interrupted = recordingState {
+				AppLog.shared.audioSession(
+					"CallKit resume did not take effect; leaving the interruption-ended event usable",
+					level: .debug
+				)
+			} else {
+				interruptionEndHandled = true
+				stopInterruptionWatchdog()
 			}
 		} else {
 			// Long call (≥ 3 minutes) - ask user
 			AppLog.shared.audioSession("Long call detected (>=3 min), asking user whether to resume")
 			interruptionEndHandled = true
+			stopInterruptionWatchdog()
 			isInInterruption = false
 			recordingState = .waitingForUserDecision(callDuration: callDuration)
 			await promptUserForResumeDecision(callDuration: callDuration)

@@ -92,6 +92,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var isFinalizingRecoverySegment = false
 	var recoveryFinalizedSegmentURLs: Set<URL> = []
 	var interruptionEndHandled = false
+	/// Bounded failsafe for an interruption that never delivers its `.ended`
+	/// event; the recording timer is stopped for the duration of one.
+	var interruptionWatchdogTimer: Timer?
 	var lastRouteChangeReason = "none"
 	private(set) var audioSessionObserverRegistrationCount = 0
 	private(set) var routeObserverRegistrationCount = 0
@@ -418,13 +421,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 						self.deferredCallDuration = nil
 						if deferredCallDuration >= self.SHORT_CALL_THRESHOLD {
 							self.interruptionEndHandled = true
+							self.stopInterruptionWatchdog()
 							self.recordingState = .waitingForUserDecision(callDuration: deferredCallDuration)
 							Task { @MainActor [weak self] in
 								await self?.promptUserForResumeDecision(callDuration: deferredCallDuration)
 							}
+							self.endBackgroundTask()
 							return
 						}
 						self.interruptionEndHandled = true
+						self.stopInterruptionWatchdog()
 						if let url = self.interruptionRecordingURL ?? self.recordingURL {
 							await self.resumeRecordingAfterInterruption(url: url)
 						}
@@ -433,10 +439,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					}
 					#endif
 					AppLog.shared.recording("Interruption is still active - waiting for its ended event")
+					self.endBackgroundTask()
 					return
 				}
 				if case .waitingForUserDecision = self.recordingState {
 					AppLog.shared.recording("Waiting for the user's interruption-resume decision")
+					self.endBackgroundTask()
 					return
 				}
 
@@ -710,7 +718,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		callInterruptionTracker.removeAll()
 		interruptionEndHandled = false
 		recoveryFinalizedSegmentURLs.removeAll()
+		stopInterruptionWatchdog()
+		clearDeferredRecoverySnapshot()
 		#endif
+		// A stranded flag from a superseded recovery would otherwise disable
+		// interruption handling for the rest of the session.
+		recordingBeingProcessed = false
 		resetRecordingAttemptArtifacts()
 		registerRecordingAttemptArtifact(at: audioFilename)
 		recordingURL = audioFilename
@@ -878,6 +891,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		recoveryCoordinator.invalidateRecordingSession(reason: "user stop")
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
+		stopInterruptionWatchdog()
+		clearDeferredRecoverySnapshot()
 		#endif
 		finishRecordingStartup()
 		// Handle live transcription path

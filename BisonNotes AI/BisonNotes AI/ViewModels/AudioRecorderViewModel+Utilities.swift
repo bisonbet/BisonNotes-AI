@@ -68,84 +68,108 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 			defer { endBackgroundTask() }
 
 			recordingBeingProcessed = true // Set flag to prevent duplicate processing
+
+			// Inspecting the container suspends. Capture what this callback owns
+			// so the work after the await can prove it still applies: without
+			// this, a recording the user started during the inspection would be
+			// torn down (or have its audio session deactivated) by the previous
+			// recording's completion.
+			#if os(iOS)
+			let finalizationSessionID = recordingSessionID
+			#endif
+			let finalizationIsCurrent: @MainActor (URL) -> Bool = { url in
+				#if os(iOS)
+				guard self.recordingSessionID == finalizationSessionID else { return false }
+				#endif
+				return self.recordingURL?.standardizedFileURL == url.standardizedFileURL
+			}
+
+			guard let resolvedRecordingURL = recordingURL,
+				  resolvedRecordingURL.standardizedFileURL == finishedURL.standardizedFileURL else {
+				AppLog.shared.recording("Recorder finished for an unexpected recording URL; ignoring callback", level: .error)
+				recordingBeingProcessed = false
+				return
+			}
+
 			if flag {
 				if appIsBackgrounding {
 					AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
 				} else {
 					AppLog.shared.recording("Recording finished successfully")
 				}
-
-				guard let resolvedRecordingURL = recordingURL,
-					  resolvedRecordingURL.standardizedFileURL == finishedURL.standardizedFileURL else {
-					AppLog.shared.recording("Recorder finished for an unexpected recording URL; ignoring callback", level: .error)
-					recordingBeingProcessed = false
-					return
-				}
-
-				switch await RecordingFinalizationPolicy.inspect(
-					url: resolvedRecordingURL,
-					delegateSucceeded: true
-				) {
-				case .rejected(let rejection):
-					AppLog.shared.recording(
-						"Recording finalization rejected the captured file: \(rejection)",
-						level: .error
-					)
-					rejectRecordingFinalization(at: resolvedRecordingURL, rejection: rejection)
-				case .usable(let fileSize, let duration):
-					saveLocationData(for: resolvedRecordingURL)
-
-					// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
-					AppLog.shared.recording("Recording saved in Whisper-optimized format")
-
-					// Add recording using workflow manager for proper UUID consistency
-					if let workflowManager = workflowManager {
-						let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-						// Create display name for phone recording
-						let displayName = generateAppRecordingDisplayName()
-
-						// Create recording
-						let recordingId = workflowManager.createRecording(
-							url: resolvedRecordingURL,
-							name: displayName,
-							date: currentRecordingDate(for: resolvedRecordingURL),
-							fileSize: fileSize,
-							duration: duration,
-							quality: quality,
-							locationData: recordingLocationSnapshot()
-						)
-
-						AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
-
-						// Watch audio integration removed
-						self.resetRecordingLocation()
-						self.recordingStartedAt = nil
-						self.resetRecordingAttemptArtifacts()
-					} else {
-						AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
-					}
-				}
-
-				recordingBeingProcessed = false
 			} else {
-				guard let currentURL = recordingURL,
-					  currentURL.standardizedFileURL == finishedURL.standardizedFileURL else {
-					AppLog.shared.recording(
-						"Ignoring an unsuccessful recorder callback for a non-current recording URL",
-						level: .debug
-					)
-					recordingBeingProcessed = false
-					return
-				}
-
-				let rejection = RecordingFinalizationRejection.delegateReportedFailure
-				AppLog.shared.recording("Recording delegate reported an unsuccessful finalization", level: .error)
-				rejectRecordingFinalization(at: finishedURL, rejection: rejection)
+				// The delegate's flag describes the encoder, not the container.
+				// Discarding the file on it alone throws away however many
+				// minutes actually reached disk, so let the finalization policy
+				// judge what was captured.
+				AppLog.shared.recording("Recording delegate reported an unsuccessful finalization; inspecting the captured file", level: .error)
 			}
 
+			let finalization = await RecordingFinalizationPolicy.inspect(
+				url: resolvedRecordingURL,
+				delegateSucceeded: true
+			)
+			guard finalizationIsCurrent(resolvedRecordingURL) else {
+				AppLog.shared.recording(
+					"A newer recording superseded this completion during finalization; leaving it untouched",
+					level: .debug
+				)
+				recordingBeingProcessed = false
+				return
+			}
+
+			switch finalization {
+			case .rejected(let rejection):
+				AppLog.shared.recording(
+					"Recording finalization rejected the captured file: \(rejection)",
+					level: .error
+				)
+				rejectRecordingFinalization(at: resolvedRecordingURL, rejection: rejection)
+			case .usable(let fileSize, let duration):
+				saveLocationData(for: resolvedRecordingURL)
+
+				// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
+				AppLog.shared.recording("Recording saved in Whisper-optimized format")
+
+				// Add recording using workflow manager for proper UUID consistency
+				if let workflowManager = workflowManager {
+					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+
+					// Create display name for phone recording
+					let displayName = generateAppRecordingDisplayName()
+
+					// Create recording
+					let recordingId = workflowManager.createRecording(
+						url: resolvedRecordingURL,
+						name: displayName,
+						date: currentRecordingDate(for: resolvedRecordingURL),
+						fileSize: fileSize,
+						duration: duration,
+						quality: quality,
+						locationData: recordingLocationSnapshot()
+					)
+
+					AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
+
+					// Watch audio integration removed
+					self.resetRecordingLocation()
+					self.recordingStartedAt = nil
+					self.resetRecordingAttemptArtifacts()
+
+					if !flag {
+						errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
+					}
+				} else {
+					AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
+				}
+			}
+
+			recordingBeingProcessed = false
+
 			// Deactivate audio session after either a successful save or a rejected
-			// current-attempt artifact.
+			// current-attempt artifact — but never out from under a recording that
+			// started while this completion was being finalized.
+			guard !isRecording, !isStartingRecording else { return }
 			try? await self.enhancedAudioSessionManager.deactivateSession()
 		}
 	}
@@ -337,6 +361,17 @@ extension AudioRecorderViewModel {
 		if let url {
 			removeOwnedRecordingAttemptArtifact(at: url)
 		}
+
+		// Only the rejected segment is discarded. Earlier segments of a
+		// multi-segment recording already passed the finalization policy, so
+		// wiping the whole segment list here would strand minutes of usable
+		// audio on disk with nothing pointing at it.
+		let rejectedURL = url?.standardizedFileURL
+		let survivingSegments = recordingSegments.filter { segment in
+			segment.standardizedFileURL != rejectedURL
+				&& FileManager.default.fileExists(atPath: segment.path)
+		}
+
 		isRecording = false
 		isStartingRecording = false
 		stopBackgroundTimeMonitoring()
@@ -345,18 +380,20 @@ extension AudioRecorderViewModel {
 		stopRecordingTimer()
 		audioRecorder = nil
 		liveTranscriptText = ""
-		recordingURL = nil
-		recordingSegments = []
-		mainRecordingURL = nil
-		currentSegmentIndex = 0
+		recordingSegments = survivingSegments
+		recordingURL = survivingSegments.last
+		mainRecordingURL = survivingSegments.first
+		currentSegmentIndex = max(survivingSegments.count - 1, 0)
 		isInInterruption = false
 		interruptionRecordingURL = nil
 		recorderStoppedUnexpectedlyTime = nil
 		recordingBeingProcessed = false
 		resetRecordingLocation()
-		recordingStartedAt = nil
 		errorMessage = rejection.userMessage
-		resetRecordingAttemptArtifacts()
+		if survivingSegments.isEmpty {
+			recordingStartedAt = nil
+			resetRecordingAttemptArtifacts()
+		}
 	}
 
 	func getFileSize(url: URL) -> Int64 {
