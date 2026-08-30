@@ -416,6 +416,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 				if self.isInInterruption {
 					#if os(iOS)
+					// With overlapping calls the first call's end stored a
+					// duration while a second call still owns audio. Consuming it
+					// here would prompt the user or burn the activation budget
+					// against a microphone we cannot take; stay deferred until the
+					// correlated end event for the remaining call arrives.
+					if self.callInterruptionTracker.hasActiveCalls {
+						AppLog.shared.recording("A correlated call is still active - leaving the interruption deferred")
+						self.endBackgroundTask()
+						return
+					}
 					if let deferredCallDuration = self.deferredCallDuration {
 						self.isInInterruption = false
 						self.deferredCallDuration = nil
