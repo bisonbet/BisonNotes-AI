@@ -903,44 +903,56 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			stopRecordingTimer()
 			liveTranscriptText = ""
 
+			// This task is the only remaining owner of `service`, and
+			// LiveTranscriptionService has no deinit: if stop() were skipped its
+			// AVAudioEngine tap would keep running and holding the microphone,
+			// and the captured audio would never be exported. So stop() is
+			// unconditional, and so is persisting whatever it produced — a
+			// recording that finished is not less finished because the user
+			// started another one, and stop()'s export runs for seconds on a
+			// long recording. Only writes to live recording state are gated.
+			let capturedName = generateAppRecordingDisplayName()
+			let capturedDate = currentRecordingDate(for: recordingURL)
+			let capturedLocation = recordingLocationSnapshot()
+			let capturedRecordingURL = recordingURL
+
 			#if os(iOS)
+			let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+				guard let self else { return false }
+				return self.recordingSessionID == stoppingRecordingSessionID
+					&& !self.recordingIntentActive
+			}
+			#else
+			let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+				guard let self else { return false }
+				return !self.isRecording && !self.isStartingRecording
+			}
+			#endif
+
 			Task { @MainActor [weak self] in
-				guard let self,
-					  self.recordingSessionID == stoppingRecordingSessionID,
-					  !self.recordingIntentActive else { return }
 				let (url, transcript) = await service.stop()
-				guard self.recordingSessionID == stoppingRecordingSessionID,
-					  !self.recordingIntentActive else { return }
+				guard let self else { return }
 				if let savedURL = url {
-					self.recordingURL = savedURL
-					await self.saveLiveTranscriptionRecording(url: savedURL, transcript: transcript)
-				} else {
+					if isCurrentSession() {
+						self.recordingURL = savedURL
+					}
+					await self.saveLiveTranscriptionRecording(
+						url: savedURL,
+						transcript: transcript,
+						capturedName: capturedName,
+						capturedDate: capturedDate,
+						capturedLocation: capturedLocation,
+						isCurrentSession: isCurrentSession
+					)
+				} else if isCurrentSession() {
 					self.rejectRecordingFinalization(
-						at: self.recordingURL,
+						at: capturedRecordingURL,
 						rejection: .invalidContainer
 					)
 				}
-				guard self.recordingSessionID == stoppingRecordingSessionID,
-					  !self.recordingIntentActive else { return }
+				guard isCurrentSession() else { return }
 				try? await self.enhancedAudioSessionManager.deactivateSession()
 			}
-			#else
-			Task {
-				let (url, transcript) = await service.stop()
-				if let savedURL = url {
-					await MainActor.run { self.recordingURL = savedURL }
-					await saveLiveTranscriptionRecording(url: savedURL, transcript: transcript)
-				} else {
-					await MainActor.run {
-						self.rejectRecordingFinalization(
-							at: self.recordingURL,
-							rejection: .invalidContainer
-						)
-					}
-				}
-				try? await enhancedAudioSessionManager.deactivateSession()
-			}
-			#endif
 
 			stopBackgroundTimeMonitoring()
 			endBackgroundTask()
@@ -1033,8 +1045,23 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	/// Saves a recording and optional transcript created via live transcription mode.
+	///
+	/// The name, date, location and `isCurrentSession` predicate are captured by
+	/// the stop that produced this file. `LiveTranscriptionService.stop()` exports
+	/// the capture, which takes seconds on a long recording, so by the time this
+	/// runs the user may already have started another one. Persistence is
+	/// therefore unconditional — deriving the name and date from live state here
+	/// would stamp this recording with the next one's — while every write to live
+	/// recording state is gated on this session still being the current one.
 	@MainActor
-	private func saveLiveTranscriptionRecording(url: URL, transcript: String) async {
+	private func saveLiveTranscriptionRecording(
+		url: URL,
+		transcript: String,
+		capturedName: String,
+		capturedDate: Date,
+		capturedLocation: LocationData?,
+		isCurrentSession: @MainActor () -> Bool
+	) async {
 		let finalization = await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true)
 		guard case .usable(let fileSize, let duration) = finalization else {
 			if case .rejected(let rejection) = finalization {
@@ -1042,31 +1069,41 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					"Live recording finalization rejected the captured file: \(rejection)",
 					level: .error
 				)
-				rejectRecordingFinalization(at: url, rejection: rejection)
+				if isCurrentSession() {
+					rejectRecordingFinalization(at: url, rejection: rejection)
+				} else {
+					AppLog.shared.recording(
+						"A newer recording superseded this live capture; leaving the rejected artifact untouched",
+						level: .debug
+					)
+				}
 			}
-			endBackgroundTask()
+			if isCurrentSession() { endBackgroundTask() }
 			return
 		}
 
-		saveLocationData(for: url)
+		// Reads live location state, so it is only meaningful while this session
+		// is still the current one; the row below uses the captured snapshot.
+		if isCurrentSession() {
+			saveLocationData(for: url)
+		}
 
 		guard let workflowManager = workflowManager else {
 			AppLog.shared.recording("WorkflowManager not set - live transcription recording not saved", level: .error)
-			endBackgroundTask()
+			if isCurrentSession() { endBackgroundTask() }
 			return
 		}
 
 		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-		let displayName = generateAppRecordingDisplayName()
 
 		let recordingId = workflowManager.createRecording(
 			url: url,
-			name: displayName,
-			date: currentRecordingDate(for: url),
+			name: capturedName,
+			date: capturedDate,
 			fileSize: fileSize,
 			duration: duration,
 			quality: quality,
-			locationData: recordingLocationSnapshot()
+			locationData: capturedLocation
 		)
 
 		AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
@@ -1091,6 +1128,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
 		}
 
+		guard isCurrentSession() else { return }
 		resetRecordingLocation()
 		recordingStartedAt = nil
 		resetRecordingAttemptArtifacts()
