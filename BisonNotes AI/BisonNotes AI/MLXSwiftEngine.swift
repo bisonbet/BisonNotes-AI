@@ -351,6 +351,20 @@ extension MLXSwiftDownloadManager {
                 self?.downloadProgress = progress.fractionCompleted
             }
         }
+
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies the result into its `downloadBase`, so a finished model sits on disk
+        // twice — 15.8 GB for a 7.9 GB model.
+        //
+        // The blobs are only useful *during* a download: everything that resumes an
+        // interrupted one lives in that cache, which is why disabling it outright is
+        // the wrong fix. Once the materialized copy is complete they are dead weight,
+        // so they go here rather than waiting for the next maintenance sweep.
+        //
+        // Gated on the model actually being usable: if the download somehow did not
+        // materialize, the blobs are what a retry resumes from and must survive.
+        guard checkModelExists(modelId: id) else { return }
+        removeHubBlobCache(for: id)
     }
 
     func checkModelExists() -> Bool {

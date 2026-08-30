@@ -18,6 +18,11 @@
 //      it, so a single sync of 570 recordings left a second full copy of the
 //      user's audio library on disk.
 //
+//  `MLXSwiftDownloadManager` now drops a model's blobs as soon as the download
+//  materializes, and again when the user deletes the model, so the blob sweep here
+//  is a backstop rather than the primary fix: it collects what a killed download
+//  left behind and what earlier versions of the app already accumulated.
+//
 //  Both are caches in the strict sense: the app reads neither of them, and both
 //  are rebuilt on demand. The rules for what may be removed are pure static
 //  functions on `CacheMaintenancePolicy` and are covered by
