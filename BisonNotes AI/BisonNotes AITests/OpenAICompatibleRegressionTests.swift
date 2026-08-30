@@ -31,6 +31,11 @@ final class OpenAICompatibleRegressionTests: XCTestCase {
         XCTAssertEqual(engine.engineType, AIEngineType.openAICompatible.rawValue)
     }
 
+    func testEmptyCompatibleBaseURLUsesSafeStringFormatWithoutConfiguration() {
+        XCTAssertEqual(MessageFormatDetector.detectFormat(for: " \n\t "), .string)
+        XCTAssertEqual(MessageFormatDetector.detectFormatWithoutOverride(for: " \n\t "), .string)
+    }
+
     // MARK: - Double-Encoded Text
 
     func testDoubleEncodedMarkdownIsStillUnescaped() {

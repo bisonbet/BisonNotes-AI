@@ -1,4 +1,7 @@
 import XCTest
+#if os(iOS)
+@preconcurrency import AVFoundation
+#endif
 @testable import BisonNotes_AI
 
 @MainActor
@@ -31,4 +34,104 @@ final class AudioRecorderFallbackTests: XCTestCase {
         XCTAssertNotNil(viewModel.routeChangeObserver)
         #endif
     }
+
+    func testRejectedFinalizationRemovesOnlyOwnedCurrentAttemptArtifact() throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(directory) }
+
+        let ownedURL = directory.appendingPathComponent("owned.m4a")
+        let viewModel = AudioRecorderViewModel()
+        viewModel.registerRecordingAttemptArtifact(at: ownedURL)
+        FileManager.default.createFile(atPath: ownedURL.path, contents: Data([1]))
+        viewModel.rejectRecordingFinalization(
+            at: ownedURL,
+            rejection: .invalidDuration
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ownedURL.path))
+
+        let preexistingURL = directory.appendingPathComponent("preexisting.m4a")
+        FileManager.default.createFile(atPath: preexistingURL.path, contents: Data([1]))
+        viewModel.registerRecordingAttemptArtifact(at: preexistingURL)
+        viewModel.removeOwnedRecordingAttemptArtifact(at: preexistingURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: preexistingURL.path))
+
+        let unregisteredURL = directory.appendingPathComponent("unregistered.m4a")
+        FileManager.default.createFile(atPath: unregisteredURL.path, contents: Data([1]))
+        viewModel.removeOwnedRecordingAttemptArtifact(at: unregisteredURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unregisteredURL.path))
+    }
+
+    func testCrashRecoveryFailsOnlyNonTerminalJobs() {
+        let message = BackgroundProcessingCrashRecoveryPolicy.failureMessage
+        let nonTerminalStatuses: [JobProcessingStatus] = [
+            .ready,
+            .queued,
+            .processing,
+            .interrupted("background")
+        ]
+
+        for status in nonTerminalStatuses {
+            XCTAssertEqual(
+                BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                    status: status,
+                    previousSessionCrashed: true
+                ),
+                .failed(message)
+            )
+        }
+
+        let terminalStatuses: [JobProcessingStatus] = [
+            .completed,
+            .failed("old failure"),
+            .cancelled
+        ]
+        for status in terminalStatuses {
+            XCTAssertEqual(
+                BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                    status: status,
+                    previousSessionCrashed: true
+                ),
+                status
+            )
+        }
+
+        XCTAssertEqual(
+            BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                status: .processing,
+                previousSessionCrashed: false
+            ),
+            .processing
+        )
+    }
+
+    func testCrashRecoveryIsOneShotAndAllowsNewJobsAfterReconciliation() {
+        var state = BackgroundProcessingLaunchRecoveryState(previousSessionCrashed: true)
+        XCTAssertFalse(state.allowsAutomaticRecovery)
+
+        state.markReconciliationCompleted()
+
+        XCTAssertTrue(state.allowsAutomaticRecovery)
+        XCTAssertEqual(
+            BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                status: .queued,
+                previousSessionCrashed: false
+            ),
+            .queued
+        )
+    }
+
+    #if os(iOS)
+    func testAudioSessionObserversAreOwnedAndIdempotentAtViewModelBoundary() throws {
+        let viewModel = AudioRecorderViewModel()
+        let initialInterruptionObserver = try XCTUnwrap(viewModel.interruptionObserver)
+        let initialRouteObserver = try XCTUnwrap(viewModel.routeChangeObserver)
+
+        viewModel.setupNotificationObservers()
+
+        XCTAssertTrue(initialInterruptionObserver === viewModel.interruptionObserver)
+        XCTAssertTrue(initialRouteObserver === viewModel.routeChangeObserver)
+        XCTAssertEqual(viewModel.audioSessionObserverRegistrationCount, 1)
+        XCTAssertEqual(viewModel.routeObserverRegistrationCount, 1)
+    }
+    #endif
 }

@@ -16,6 +16,68 @@ import UIKit
 #endif
 
 #if os(iOS)
+@MainActor
+protocol AudioSessionControlling: AnyObject {
+    var category: AVAudioSession.Category { get }
+    var categoryOptions: AVAudioSession.CategoryOptions { get }
+    var availableInputs: [AVAudioSessionPortDescription] { get }
+    var preferredInput: AVAudioSessionPortDescription? { get }
+    var currentInput: AVAudioSessionPortDescription? { get }
+    var currentOutputTypes: [String] { get }
+
+    func setCategory(
+        _ category: AVAudioSession.Category,
+        mode: AVAudioSession.Mode,
+        options: AVAudioSession.CategoryOptions
+    ) throws
+    func setPreferredSampleRate(_ sampleRate: Double) throws
+    func setPreferredIOBufferDuration(_ duration: TimeInterval) throws
+    func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws
+    func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws
+}
+
+@MainActor
+final class SystemAudioSessionController: AudioSessionControlling {
+    private let session: AVAudioSession
+
+    init(session: AVAudioSession = AVAudioSession.sharedInstance()) {
+        self.session = session
+    }
+
+    var category: AVAudioSession.Category { session.category }
+    var categoryOptions: AVAudioSession.CategoryOptions { session.categoryOptions }
+    var availableInputs: [AVAudioSessionPortDescription] { session.availableInputs ?? [] }
+    var preferredInput: AVAudioSessionPortDescription? { session.preferredInput }
+    var currentInput: AVAudioSessionPortDescription? { session.currentRoute.inputs.first }
+    var currentOutputTypes: [String] {
+        session.currentRoute.outputs.map(\.portType.rawValue)
+    }
+
+    func setCategory(
+        _ category: AVAudioSession.Category,
+        mode: AVAudioSession.Mode,
+        options: AVAudioSession.CategoryOptions
+    ) throws {
+        try session.setCategory(category, mode: mode, options: options)
+    }
+
+    func setPreferredSampleRate(_ sampleRate: Double) throws {
+        try session.setPreferredSampleRate(sampleRate)
+    }
+
+    func setPreferredIOBufferDuration(_ duration: TimeInterval) throws {
+        try session.setPreferredIOBufferDuration(duration)
+    }
+
+    func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws {
+        try session.setPreferredInput(input)
+    }
+
+    func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
+        try session.setActive(active, options: options)
+    }
+}
+
 /// Enhanced audio session manager for recording, playback, and background operations.
 @MainActor
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
@@ -28,11 +90,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     @Published var lastError: AudioProcessingError?
 
     // MARK: - Private Properties
-    private lazy var session = AVAudioSession.sharedInstance()
-    /// Held outside actor isolation so the nonisolated Swift 6 deinit can still
-    /// unregister them. The weak captures in the observer blocks prevent a
-    /// retain cycle but do not remove the registrations themselves.
-    private let sessionObservers = LifecycleObserverTokens()
+    private let audioSessionController: any AudioSessionControlling
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -68,17 +126,16 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     }
 
     // MARK: - Initialization
-    override init() {
+    static let shared = EnhancedAudioSessionManager()
+
+    init(audioSessionController: any AudioSessionControlling) {
+        self.audioSessionController = audioSessionController
         super.init()
-        // Defer notification observer setup to avoid potential crashes during init
-        DispatchQueue.main.async { [weak self] in
-            self?.setupNotificationObservers()
-        }
     }
 
-	deinit {
-		sessionObservers.removeAll()
-	}
+    override convenience init() {
+        self.init(audioSessionController: SystemAudioSessionController())
+    }
 
     // MARK: - Public Methods
 
@@ -137,46 +194,45 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
 
-    /// Restore audio session to previous configuration (useful after interruptions)
-    func restoreAudioSession() async throws {
-        guard let config = currentConfiguration else {
-            AppLog.shared.audioSession("No audio session configuration to restore; leaving session inactive", level: .debug)
-            return
+    /// Reapply the recording category without activating it.
+    ///
+    /// Recovery calls this after the old recorder has been stopped and its
+    /// segment has been finalized. Keeping preparation separate from activation
+    /// lets the recovery coordinator classify the real activation error without
+    /// deactivating the session as a retry prelude.
+    func prepareBackgroundRecordingForRecovery() async throws {
+        guard await checkBackgroundAudioPermission() else {
+            let error = AudioProcessingError.backgroundRecordingNotPermitted
+            lastError = error
+            throw error
         }
 
-        // Try to restore the session with retry logic for phone call scenarios
-        // We need to be patient - phone calls can take time to fully release the audio session
-        // We'll try up to 10 times with increasing delays (total ~20 seconds)
-        var lastAttemptError: Error?
-        let maxAttempts = 10
+        try prepareConfiguration(AudioSessionConfig.backgroundRecording)
+    }
 
-        for attempt in 1...maxAttempts {
-            do {
-                try? session.setActive(false, options: .notifyOthersOnDeactivation)
-
-                // Wait with exponential backoff, capped at 2 seconds per attempt
-                // Attempt 1: 0.5s, 2: 1s, 3: 1.5s, 4: 2s, 5-10: 2s each
-                let delaySeconds = min(Double(attempt) * 0.5, 2.0)
-                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-
-                // Now try to reactivate with the previous configuration
-                try await applyConfiguration(config)
-                AppLog.shared.audioSession("Audio session restored successfully on attempt \(attempt)")
-                return
-
-            } catch {
-                lastAttemptError = error
-                AppLog.shared.audioSession("Failed to restore audio session on attempt \(attempt): \(error.localizedDescription)", level: .error)
-                if attempt < maxAttempts {
-                    AppLog.shared.audioSession("Retrying session restoration...", level: .debug)
-                }
-            }
+    /// Activate the configuration prepared for recording recovery.
+    ///
+    /// This method intentionally throws the underlying session error unchanged;
+    /// the recovery coordinator records its NSError domain and code before it
+    /// applies a retry/defer/fail disposition.
+    func activatePreparedSession() throws {
+        guard currentConfiguration != nil else {
+            throw AudioSessionRecoveryError.missingConfiguration
         }
 
-        // If all attempts failed, throw the last error
-        let audioError = AudioProcessingError.audioSessionConfigurationFailed("Session restoration failed after \(maxAttempts) attempts: \(lastAttemptError?.localizedDescription ?? "unknown error")")
-        lastError = audioError
-        throw audioError
+        try audioSessionController.setActive(true, options: [])
+        isConfigured = true
+    }
+
+    /// Discard manager-side state after iOS reports that media services were
+    /// reset. The next recovery attempt reapplies category and preferred I/O
+    /// settings before activating; it never deactivates the shared session as
+    /// a retry prelude.
+    func resetPreparedSessionAfterMediaServicesReset() {
+        isConfigured = false
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+        currentConfiguration = nil
     }
 
     /// Configure standard recording session (fallback for compatibility)
@@ -204,8 +260,8 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// then `deactivateSession()` notifies interrupted audio apps to resume.
     func configurePlaybackSession() async throws {
         do {
-            try session.setCategory(.playback, mode: .default, options: [])
-            try session.setActive(true)
+            try audioSessionController.setCategory(.playback, mode: .default, options: [])
+            try audioSessionController.setActive(true, options: [])
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
             lastError = audioError
@@ -229,8 +285,8 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
 
         do {
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
+            try audioSessionController.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSessionController.setActive(true, options: [])
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background processing configuration failed: \(error.localizedDescription)")
             lastError = audioError
@@ -246,7 +302,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Set preferred audio input device
     func setPreferredInput(_ input: AVAudioSessionPortDescription) async throws {
         do {
-            try session.setPreferredInput(input)
+            try audioSessionController.setPreferredInput(input)
             AppLog.shared.audioSession("Preferred input set to: \(input.portName) (\(input.portType.rawValue))")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to set preferred input: \(error.localizedDescription)")
@@ -258,7 +314,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Clear the preferred input to let iOS use its default microphone
     func clearPreferredInput() async throws {
         do {
-            try session.setPreferredInput(nil)
+            try audioSessionController.setPreferredInput(nil)
             AppLog.shared.audioSession("Preferred input cleared, iOS will use default microphone")
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to clear preferred input: \(error.localizedDescription)")
@@ -269,28 +325,34 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Get available audio inputs
     func getAvailableInputs() -> [AVAudioSessionPortDescription] {
-        return session.availableInputs ?? []
+        return audioSessionController.availableInputs
     }
 
     /// Get the currently active or preferred input
     func getActiveInput() -> AVAudioSessionPortDescription? {
-        if let preferredInput = session.preferredInput {
+        if let preferredInput = audioSessionController.preferredInput {
             return preferredInput
         }
 
-        return session.currentRoute.inputs.first
+        return audioSessionController.currentInput
+    }
+
+    /// Returns route types for recovery diagnostics without exposing the
+    /// concrete AVAudioSession controller to recording policy code.
+    func currentOutputTypesForDiagnostics() -> [String] {
+        audioSessionController.currentOutputTypes
     }
 
     /// Check if mixed audio recording is currently supported
     func isMixedAudioSupported() -> Bool {
-        return session.category == .playAndRecord &&
-               session.categoryOptions.contains(.mixWithOthers)
+        return audioSessionController.category == .playAndRecord &&
+               audioSessionController.categoryOptions.contains(.mixWithOthers)
     }
 
     /// Deactivate audio session
     func deactivateSession() async throws {
         do {
-            try session.setActive(false, options: .notifyOthersOnDeactivation)
+            try audioSessionController.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError
@@ -306,18 +368,25 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Private Methods
 
     private func applyConfiguration(_ config: AudioSessionConfig) async throws {
-        try session.setCategory(config.category, mode: config.mode, options: config.options)
-
-        if config.category == .playAndRecord {
-            try? session.setPreferredSampleRate(16000)
-            try? session.setPreferredIOBufferDuration(0.1)
-        }
-
-        try session.setActive(true, options: [])
+        try prepareConfiguration(config)
+        try activatePreparedSession()
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()
         }
+    }
+
+    private func prepareConfiguration(_ config: AudioSessionConfig) throws {
+        try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
+
+        if config.category == .playAndRecord {
+            try? audioSessionController.setPreferredSampleRate(16000)
+            try? audioSessionController.setPreferredIOBufferDuration(0.1)
+        }
+
+        currentConfiguration = config
+        isMixedAudioEnabled = config.allowMixedAudio
+        isBackgroundRecordingEnabled = config.backgroundRecording
     }
 
     private func checkBackgroundAudioPermission() async -> Bool {
@@ -334,114 +403,8 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     private func requestBackgroundAudioCapability() async throws {
         // This would typically involve requesting background app refresh permission
         // For now, we'll just verify the configuration is correct
-        guard session.category == .playAndRecord else {
+        guard audioSessionController.category == .playAndRecord else {
             throw AudioProcessingError.backgroundRecordingNotPermitted
-        }
-    }
-
-    private func setupNotificationObservers() {
-        // AVAudioSession Mach port handlers don't exist on Mac — skip to avoid
-        // flooding the log with "cannot add handler" messages.
-        // Audio interruption observer
-        sessionObservers.add(NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification,
-            object: session,
-            queue: .main
-        ) { [weak self] notification in
-            let interruptionTypeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
-
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let interruptionTypeValue,
-                      let interruptionType = AVAudioSession.InterruptionType(rawValue: interruptionTypeValue) else { return }
-                self.handleAudioInterruption(type: interruptionType)
-            }
-        })
-
-        // Route change observer
-        sessionObservers.add(NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification,
-            object: session,
-            queue: .main
-        ) { [weak self] notification in
-            let routeChangeReasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
-
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let routeChangeReasonValue,
-                      let routeChangeReason = AVAudioSession.RouteChangeReason(rawValue: routeChangeReasonValue) else { return }
-                self.handleRouteChange(reason: routeChangeReason)
-                if routeChangeReason == .newDeviceAvailable {
-                    // Prefer Bluetooth HFP when it becomes available
-                    await self.autoSelectBestInput()
-                }
-            }
-        })
-    }
-
-    // MARK: - Notification Handlers
-
-    func handleAudioInterruption(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: typeValue) else {
-            return
-        }
-
-        handleAudioInterruption(type: type)
-    }
-
-    private func handleAudioInterruption(type: AVAudioSession.InterruptionType) {
-
-        switch type {
-        case .began:
-            EnhancedLogger.shared.logAudioSessionInterruption(type)
-            // Audio session was interrupted (e.g., phone call)
-            // Recording will be automatically paused by the system
-
-        case .ended:
-            EnhancedLogger.shared.logAudioSessionInterruption(type)
-            // Attempt to restore audio session
-            Task { [weak self] in
-                guard let self = self else { return }
-                do {
-                    try await self.restoreAudioSession()
-                    EnhancedLogger.shared.logAudioSession("Audio session restored after interruption", level: .info)
-                } catch {
-                    EnhancedLogger.shared.logAudioSession("Failed to restore audio session after interruption: \(error.localizedDescription)", level: .error)
-					EnhancedErrorHandler().handleAudioProcessingError(.audioSessionConfigurationFailed(error.localizedDescription), context: "Interruption Recovery")
-                }
-            }
-
-        @unknown default:
-            break
-        }
-    }
-
-    private func handleRouteChange(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else {
-            return
-        }
-
-        handleRouteChange(reason: reason)
-    }
-
-    private func handleRouteChange(reason: AVAudioSession.RouteChangeReason) {
-
-        switch reason {
-        case .newDeviceAvailable:
-            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-
-        case .oldDeviceUnavailable:
-            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-
-        case .categoryChange:
-            EnhancedLogger.shared.logAudioSessionRouteChange(reason)
-
-        default:
-            EnhancedLogger.shared.logAudioSession("Audio route changed: \(reason)", level: .info)
         }
     }
 
@@ -450,13 +413,13 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Selects Bluetooth HFP input if available, otherwise falls back to built-in mic
     @MainActor
     private func autoSelectBestInput() async {
-        guard let inputs = session.availableInputs else { return }
+        let inputs = audioSessionController.availableInputs
         if let bluetoothHFP = inputs.first(where: { $0.portType == .bluetoothHFP }) {
-            do { try session.setPreferredInput(bluetoothHFP) } catch { /* best-effort */ }
+            do { try audioSessionController.setPreferredInput(bluetoothHFP) } catch { /* best-effort */ }
             return
         }
         if let builtInMic = inputs.first(where: { $0.portType == .builtInMic }) {
-            do { try session.setPreferredInput(builtInMic) } catch { /* best-effort */ }
+            do { try audioSessionController.setPreferredInput(builtInMic) } catch { /* best-effort */ }
         }
     }
 }
@@ -492,6 +455,8 @@ final class AVAudioSessionPortDescription: NSObject {
 
 @MainActor
 class EnhancedAudioSessionManager: NSObject, ObservableObject {
+    static let shared = EnhancedAudioSessionManager()
+
     @Published var isConfigured = false
     @Published var isMixedAudioEnabled = false
     @Published var isBackgroundRecordingEnabled = false
@@ -529,8 +494,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isMixedAudioEnabled = true
         isBackgroundRecordingEnabled = false
     }
-
-    func restoreAudioSession() async throws {}
 
     func deactivateSession() async throws {
         isConfigured = false
@@ -760,7 +723,6 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func handleAudioInterruption(_ notification: Notification) {}
 }
 
 #endif

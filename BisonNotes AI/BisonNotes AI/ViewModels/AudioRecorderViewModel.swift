@@ -15,6 +15,11 @@ import UserNotifications
 import CallKit
 #endif
 
+struct RecordingAttemptArtifact: Equatable {
+	let url: URL
+	let existedBeforeAttempt: Bool
+}
+
 @MainActor
 class AudioRecorderViewModel: NSObject, ObservableObject {
 
@@ -55,6 +60,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	var willEnterForegroundObserver: NSObjectProtocol?
 	var didEnterBackgroundObserver: NSObjectProtocol?
 	var checkForUnprocessedRecordingsObserver: NSObjectProtocol?
+	private let lifecycleObservers = LifecycleObserverTokens()
 	private var notificationObserversConfigured = false
 	let preferredInputDefaultsKey = "PreferredAudioInputUID"
 
@@ -65,14 +71,38 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Flag to prevent duplicate recording creation
 	var recordingBeingProcessed = false
 
+	// Files registered by the current capture attempt. Rejected finalization
+	// may remove only an artifact that this attempt created.
+	var recordingAttemptArtifacts: [RecordingAttemptArtifact] = []
+
 	// Flag to track if app is backgrounding (to avoid false positive interruptions)
 	var appIsBackgrounding = false
 
 	// Flag to track if we're currently in an interruption (e.g., incoming phone call)
 	var isInInterruption = false
 
-	// Guard against concurrent resume attempts from CallKit / interruption handler / foreground handler
-	var isResuming = false
+	// The user intent remains active while iOS has stopped the current recorder
+	// and the recovery coordinator is deciding whether it can continue.
+	var recordingIntentActive = false
+
+	#if os(iOS)
+	let recoveryCoordinator = AudioInterruptionRecoveryCoordinator()
+	let recoverySleeper: any AudioRecoverySleeping
+	var recordingSessionID: UUID?
+	var isFinalizingRecoverySegment = false
+	var recoveryFinalizedSegmentURLs: Set<URL> = []
+	var interruptionEndHandled = false
+	/// Bounded failsafe for an interruption that never delivers its `.ended`
+	/// event; the recording timer is stopped for the duration of one.
+	var interruptionWatchdogTimer: Timer?
+	var lastRouteChangeReason = "none"
+	private(set) var audioSessionObserverRegistrationCount = 0
+	private(set) var routeObserverRegistrationCount = 0
+	private(set) var interruptionTransitionCount = 0
+	func recordInterruptionTransition() {
+		interruptionTransitionCount += 1
+	}
+	#endif
 
 	// Store the recording URL when interruption begins, in case we need to recover
 	var interruptionRecordingURL: URL?
@@ -136,8 +166,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Call interruption intelligence (Phase 1)
 	#if os(iOS)
 	var callObserver: CXCallObserver?
+	var callInterruptionTracker = CallInterruptionTracker()
 	#endif
-	var callInterruptionStartTime: Date?
 	var deferredCallDuration: TimeInterval? // Set when CallKit defers during background
 	let SHORT_CALL_THRESHOLD: TimeInterval = 180 // 3 minutes
 
@@ -203,11 +233,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// MARK: - Initialization
 
-	override init() {
-		// Initialize the managers first
-		self.enhancedAudioSessionManager = EnhancedAudioSessionManager()
+	#if os(iOS)
+	init(
+		audioSessionManager: EnhancedAudioSessionManager,
+		recoverySleeper: any AudioRecoverySleeping = TaskAudioRecoverySleeper()
+	) {
+		self.enhancedAudioSessionManager = audioSessionManager
+		self.recoverySleeper = recoverySleeper
 		self.locationManager = LocationManager()
-
 		super.init()
 
 		// Load location tracking setting from UserDefaults
@@ -228,6 +261,32 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		setupCallObserver()
 		#endif
 	}
+	#else
+	init(audioSessionManager: EnhancedAudioSessionManager) {
+		// Initialize the managers first
+		self.enhancedAudioSessionManager = audioSessionManager
+		self.locationManager = LocationManager()
+		super.init()
+
+		// Load location tracking setting from UserDefaults
+		self.isLocationTrackingEnabled = UserDefaults.standard.bool(forKey: "isLocationTrackingEnabled")
+		self.isMacSystemAudioCaptureEnabled = UserDefaults.standard.bool(forKey: Self.macSystemAudioCaptureEnabledKey)
+
+		setupLocationObservers()
+		setupNotificationObservers()
+		setupMacInputDeviceMonitoring()
+	}
+	#endif
+
+	#if os(iOS)
+	override convenience init() {
+		self.init(audioSessionManager: EnhancedAudioSessionManager.shared)
+	}
+	#else
+	override convenience init() {
+		self.init(audioSessionManager: EnhancedAudioSessionManager.shared)
+	}
+	#endif
 
 	/// Set the app coordinator reference
 	func setAppCoordinator(_ coordinator: AppDataCoordinator) {
@@ -288,49 +347,53 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// AVAudioSession interruption/route notifications use Mach ports that don't
 		// exist on Mac — registering for them floods the log with "cannot add handler".
 		// Phone-call interruptions and Bluetooth routing don't apply on Mac anyway.
-		interruptionObserver = NotificationCenter.default.addObserver(
+		let interruptionObserverToken = NotificationCenter.default.addObserver(
 			forName: AVAudioSession.interruptionNotification,
 			object: nil,
 			queue: .main
 		) { [weak self] notification in
-			// Capture ALL userInfo before entering Task - including InterruptionOptionKey
-			// which contains .shouldResume (critical for declined call detection)
-			var capturedUserInfo: [String: Any] = [:]
-			if let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt {
-				capturedUserInfo[AVAudioSessionInterruptionTypeKey] = typeValue
-			}
-			if let optionsValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt {
-				capturedUserInfo[AVAudioSessionInterruptionOptionKey] = optionsValue
-			}
+			let interruptionTypeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+			let interruptionOptionsValue = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt
 
 			Task { @MainActor in
-				guard let self = self, !capturedUserInfo.isEmpty else { return }
-				let newNotification = Notification(name: AVAudioSession.interruptionNotification, object: nil, userInfo: capturedUserInfo)
-				self.handleAudioInterruption(newNotification)
+				guard let self,
+					  let interruptionTypeValue,
+					  let type = AVAudioSession.InterruptionType(rawValue: interruptionTypeValue) else { return }
+				let shouldResume = interruptionOptionsValue
+					.map { AVAudioSession.InterruptionOptions(rawValue: $0).contains(.shouldResume) }
+					?? false
+				self.handleAudioInterruption(type: type, shouldResume: shouldResume)
 			}
 		}
+		interruptionObserver = interruptionObserverToken
+		lifecycleObservers.add(interruptionObserverToken)
+		audioSessionObserverRegistrationCount += 1
 
 		// Route change observer (e.g., Bluetooth mic disconnects)
-		routeChangeObserver = NotificationCenter.default.addObserver(
+		let routeChangeObserverToken = NotificationCenter.default.addObserver(
 			forName: AVAudioSession.routeChangeNotification,
 			object: nil,
 			queue: .main
 		) { [weak self] notification in
 			let userInfo = notification.userInfo
-			let routeChangeReason = userInfo?[AVAudioSessionRouteChangeReasonKey] as? AVAudioSession.RouteChangeReason
+			let routeChangeReasonValue = userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+			let wasUsingMicrophone = (userInfo?[AVAudioSessionRouteChangePreviousRouteKey]
+				as? AVAudioSessionRouteDescription)?.inputs.isEmpty == false
 
 			Task { @MainActor in
 				guard let self = self else { return }
-				if let reason = routeChangeReason {
-					let newUserInfo: [String: Any] = [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
-					let newNotification = Notification(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: newUserInfo)
-					self.handleRouteChange(newNotification)
+				if let routeChangeReasonValue,
+				   let reason = AVAudioSession.RouteChangeReason(rawValue: routeChangeReasonValue) {
+					self.handleRouteChange(reason: reason, wasUsingMicrophone: wasUsingMicrophone)
 				}
 			}
 		}
+		routeChangeObserver = routeChangeObserverToken
+		lifecycleObservers.add(routeChangeObserverToken)
+		routeObserverRegistrationCount += 1
 		#endif
 
-		willEnterForegroundObserver = NotificationCenter.default.addObserver(
+		let foregroundObserverToken = NotificationCenter.default.addObserver(
 			forName: PlatformLifecycle.willEnterForegroundNotification,
 			object: nil,
 			queue: .main
@@ -341,38 +404,61 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 				EnhancedLogger.shared.logAudioSession("App foregrounded, checking audio session state")
 
-				// If actively recording and the recorder is still running, don't touch the session.
-				// Deactivating/reactivating would kill a perfectly good background recording.
-				// Stop background monitoring now that we're in the foreground
+				// Stop background monitoring now that we're in the foreground.
 				self.stopBackgroundTimeMonitoring()
 
 				if self.isRecording, let recorder = self.audioRecorder, recorder.isRecording {
-					AppLog.shared.recording("Recorder still active after backgrounding - no session restoration needed")
+					AppLog.shared.recording("Recorder still active after backgrounding - no recovery needed")
 					self.recorderStoppedUnexpectedlyTime = nil
 					self.endBackgroundTask()
 					return
 				}
 
-				// If we're in a phone call interruption, the Phone app owns the audio session.
-				// Don't try to restore — it will fail repeatedly and waste time.
-				// The interruption .ended notification will fire when the call ends and handle resume.
 				if self.isInInterruption {
-					if case .interrupted(.phoneCall, _) = self.recordingState {
-						AppLog.shared.recording("Phone call still active - skipping session restoration, will resume when call ends")
-					} else {
-						AppLog.shared.recording("In interruption - skipping session restoration, will resume when interruption ends")
+					#if os(iOS)
+					// With overlapping calls the first call's end stored a
+					// duration while a second call still owns audio. Consuming it
+					// here would prompt the user or burn the activation budget
+					// against a microphone we cannot take; stay deferred until the
+					// correlated end event for the remaining call arrives.
+					if self.callInterruptionTracker.hasActiveCalls {
+						AppLog.shared.recording("A correlated call is still active - leaving the interruption deferred")
+						self.endBackgroundTask()
+						return
 					}
+					if let deferredCallDuration = self.deferredCallDuration {
+						self.isInInterruption = false
+						self.deferredCallDuration = nil
+						if deferredCallDuration >= self.SHORT_CALL_THRESHOLD {
+							self.interruptionEndHandled = true
+							self.stopInterruptionWatchdog()
+							self.recordingState = .waitingForUserDecision(callDuration: deferredCallDuration)
+							Task { @MainActor [weak self] in
+								await self?.promptUserForResumeDecision(callDuration: deferredCallDuration)
+							}
+							self.endBackgroundTask()
+							return
+						}
+						self.interruptionEndHandled = true
+						self.stopInterruptionWatchdog()
+						if let url = self.interruptionRecordingURL ?? self.recordingURL {
+							await self.resumeRecordingAfterInterruption(url: url)
+						}
+						self.endBackgroundTask()
+						return
+					}
+					#endif
+					AppLog.shared.recording("Interruption is still active - waiting for its ended event")
+					self.endBackgroundTask()
 					return
 				}
-
-				// Recorder is NOT active — but if another handler is already resuming, let it finish
-				if self.isResuming {
-					AppLog.shared.recording("Resume already in progress from another handler, skipping foreground restore", level: .debug)
+				if case .waitingForUserDecision = self.recordingState {
+					AppLog.shared.recording("Waiting for the user's interruption-resume decision")
 					self.endBackgroundTask()
 					return
 				}
 
-				guard self.isRecording else {
+				guard self.recordingIntentActive, let url = self.recordingURL else {
 					AppLog.shared.recording("App foregrounded without active recording - leaving audio session inactive", level: .debug)
 					if !self.isPlaying {
 						try? await self.enhancedAudioSessionManager.deactivateSession()
@@ -381,34 +467,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 					return
 				}
 
-				// Restore the session and try to resume
-				EnhancedLogger.shared.logAudioSession("Recorder stopped during background, restoring audio session")
-				try? await self.enhancedAudioSessionManager.restoreAudioSession()
-
-				if self.isRecording, let recorder = self.audioRecorder {
-					if !recorder.isRecording {
-						AppLog.shared.recording("Recorder stopped during background, resuming after session restore")
-						recorder.record()
-
-						// Verify it actually started
-						try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-						if let r = self.audioRecorder, r.isRecording {
-							AppLog.shared.recording("Recorder successfully resumed after foreground restore")
-							self.recordingState = .recording
-						} else {
-							AppLog.shared.recording("Recorder.record() didn't start, attempting full resume")
-							await self.attemptResumeAfterUnexpectedStop()
-						}
-						self.recorderStoppedUnexpectedlyTime = nil
-					}
-				}
-
+				AppLog.shared.recording("Foregrounded with an inactive recorder; requesting one coordinated reconciliation")
+				#if os(iOS)
+				await self.requestAudioRecovery(trigger: .foregroundReconciliation, recordingURL: url)
+				#endif
 				self.endBackgroundTask()
 			}
 		}
+		willEnterForegroundObserver = foregroundObserverToken
+		lifecycleObservers.add(foregroundObserverToken)
 
 		// Add observer for app backgrounding
-		didEnterBackgroundObserver = NotificationCenter.default.addObserver(
+		let backgroundObserverToken = NotificationCenter.default.addObserver(
 			forName: PlatformLifecycle.didEnterBackgroundNotification,
 			object: nil,
 			queue: .main
@@ -419,15 +489,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// Start a background task as a safety net while recording in the background.
 				// UIBackgroundModes:audio keeps the app alive for active audio, but this gives
 				// extra time for recovery if the recorder is interrupted (e.g., declined call).
-				if self.isRecording {
+				if self.recordingIntentActive {
 					self.beginBackgroundTask()
 					self.startBackgroundTimeMonitoring()
 				}
 			}
 		}
+		didEnterBackgroundObserver = backgroundObserverToken
+		lifecycleObservers.add(backgroundObserverToken)
 
 		// Listen for BackgroundProcessingManager's request to check for unprocessed recordings
-		checkForUnprocessedRecordingsObserver = NotificationCenter.default.addObserver(
+		let unprocessedObserverToken = NotificationCenter.default.addObserver(
 			forName: NSNotification.Name("CheckForUnprocessedRecordings"),
 			object: nil,
 			queue: .main
@@ -437,9 +509,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				await self.checkForUnprocessedRecording()
 			}
 		}
+		checkForUnprocessedRecordingsObserver = unprocessedObserverToken
+		lifecycleObservers.add(unprocessedObserverToken)
 	}
 
 	func removeNotificationObservers() {
+		lifecycleObservers.removeAll()
 		let observers = [
 			interruptionObserver,
 			routeChangeObserver,
@@ -642,6 +717,31 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 		let audioFilename = documentsPath.appendingPathComponent(generateAppRecordingFilename())
 		let recordingStartDate = Date()
+		#if os(iOS)
+		recordingIntentActive = true
+		let newRecordingSessionID = UUID()
+		recordingSessionID = newRecordingSessionID
+		recoveryCoordinator.beginRecordingSession(newRecordingSessionID)
+		isInInterruption = false
+		interruptionRecordingURL = nil
+		deferredCallDuration = nil
+		callInterruptionTracker.removeAll()
+		interruptionEndHandled = false
+		recoveryFinalizedSegmentURLs.removeAll()
+		// A recovery cancelled mid-finalization can still be suspended inside
+		// RecordingFinalizationPolicy.inspect with this latch set, and its defer
+		// only runs when that resumes. Left alone, it swallows the delegate
+		// completion of the recording starting here and that recording is never
+		// saved, so the latch is scoped to one session by clearing it.
+		isFinalizingRecoverySegment = false
+		stopInterruptionWatchdog()
+		reclaimDeferredRecoverySegmentsForSupersededSession()
+		#endif
+		// A stranded flag from a superseded recovery would otherwise disable
+		// interruption handling for the rest of the session.
+		recordingBeingProcessed = false
+		resetRecordingAttemptArtifacts()
+		registerRecordingAttemptArtifact(at: audioFilename)
 		recordingURL = audioFilename
 		recordingStartedAt = (url: audioFilename, date: recordingStartDate)
 		persistRecordingCapturedAt(recordingStartDate, for: audioFilename)
@@ -700,6 +800,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			#endif
 
 		} catch {
+			#if os(iOS)
+			recordingIntentActive = false
+			recoveryCoordinator.invalidateRecordingSession(reason: "recorder startup failed")
+			#endif
 			finishRecordingStartup()
 			#if targetEnvironment(simulator)
 			errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone in simulator menu, or test on a physical device."
@@ -712,6 +816,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	func markRecordingStarted() {
 		finishRecordingStartup()
+		#if os(iOS)
+		recordingIntentActive = true
+		#endif
 		isRecording = true
 		recordingState = .recording
 		recordingTime = 0
@@ -791,26 +898,25 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	}
 
 	func stopRecording() {
+	#if os(iOS)
+		let stoppingRecordingSessionID = recordingSessionID
+		// Captured here, not inside the merge below: the merge is scheduled
+		// asynchronously, and a recording started before it runs replaces
+		// `recordingSegments` and `mainRecordingURL` with its own.
+		let stoppingSegments = recordingSegments
+		let stoppingMainRecordingURL = mainRecordingURL
+		let finalizedSegmentToPersist = recordingURL.flatMap { url in
+			recoveryFinalizedSegmentURLs.contains(url.standardizedFileURL) ? url : nil
+		}
+		recordingIntentActive = false
+		recoveryCoordinator.invalidateRecordingSession(reason: "user stop")
+		deferredCallDuration = nil
+		callInterruptionTracker.removeAll()
+		stopInterruptionWatchdog()
+		#endif
 		finishRecordingStartup()
 		// Handle live transcription path
-		if isUsingLiveTranscription, let service = liveTranscriptionService {
-			isUsingLiveTranscription = false
-			liveTranscriptionService = nil
-			isRecording = false
-			stopRecordingTimer()
-			liveTranscriptText = ""
-
-			Task {
-				let (url, transcript) = await service.stop()
-				if let savedURL = url {
-					await MainActor.run { self.recordingURL = savedURL }
-					await saveLiveTranscriptionRecording(url: savedURL, transcript: transcript)
-				}
-				try? await enhancedAudioSessionManager.deactivateSession()
-			}
-
-			stopBackgroundTimeMonitoring()
-			endBackgroundTask()
+		if finalizeLiveTranscriptionRecording(reason: nil) {
 			return
 		}
 
@@ -843,7 +949,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		if recordingSegments.count > 1 {
 			AppLog.shared.recording("Recording has \(recordingSegments.count) segments, merging")
 			Task {
+				#if os(iOS)
+				await mergeRecordingSegments(
+					segments: stoppingSegments,
+					mainURL: stoppingMainRecordingURL,
+					expectedRecordingSessionID: stoppingRecordingSessionID
+				)
+				#else
 				await mergeRecordingSegments()
+				#endif
 			}
 		} else {
 			#if os(macOS)
@@ -860,13 +974,33 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			}
 			#else
 			AppLog.shared.recording("Recording has single segment, no merge needed", level: .debug)
+			#if os(iOS)
+			if let finalizedSegmentToPersist {
+				Task { @MainActor in
+					await self.recoverInterruptedRecording(
+						url: finalizedSegmentToPersist,
+						reason: "Recording stopped by user during recovery",
+						expectedRecordingSessionID: stoppingRecordingSessionID
+					)
+				}
+			}
+			#endif
 			#endif
 		}
 
-		// Deactivate audio session to restore high-quality music playback
+		// Deactivate audio session to restore high-quality music playback.
+		#if os(iOS)
+		Task { @MainActor [weak self] in
+			guard let self,
+				  self.recordingSessionID == stoppingRecordingSessionID,
+				  !self.recordingIntentActive else { return }
+			try? await self.enhancedAudioSessionManager.deactivateSession()
+		}
+		#else
 		Task {
 			try? await enhancedAudioSessionManager.deactivateSession()
 		}
+		#endif
 
 		// Phase 4: Stop background monitoring and task
 		stopBackgroundTimeMonitoring()
@@ -875,29 +1009,171 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		// Notify watch of recording state change
 	}
 
-	/// Saves a recording and optional transcript created via live transcription mode.
+	/// Tear down the live transcription service and persist whatever it captured.
+	///
+	/// Shared by a user stop and by an audio interruption. LiveTranscriptionService
+	/// owns an AVAudioEngine that nothing restarts once iOS takes the microphone,
+	/// so an interruption is terminal for a live session: parking it in
+	/// `.interrupted` would leave the recording stuck with no path back and no
+	/// saved audio. Pass a `reason` to surface why the capture ended.
+	///
+	/// Returns true when a live session was finalized.
 	@MainActor
-	private func saveLiveTranscriptionRecording(url: URL, transcript: String) async {
-		saveLocationData(for: url)
+	@discardableResult
+	func finalizeLiveTranscriptionRecording(reason: String?) -> Bool {
+		guard isUsingLiveTranscription, let service = liveTranscriptionService else {
+			return false
+		}
 
-		guard let workflowManager = workflowManager else {
-			AppLog.shared.recording("WorkflowManager not set - live transcription recording not saved", level: .error)
+		#if os(iOS)
+		let finalizingSessionID = recordingSessionID
+		recordingIntentActive = false
+		recoveryCoordinator.invalidateRecordingSession(reason: reason ?? "live transcription stopped")
+		callInterruptionTracker.removeAll()
+		stopInterruptionWatchdog()
+		clearDeferredRecoverySnapshotForCurrentRecording()
+		#endif
+
+		isUsingLiveTranscription = false
+		liveTranscriptionService = nil
+		isRecording = false
+		isInInterruption = false
+		interruptionRecordingURL = nil
+		recordingState = .idle
+		stopRecordingTimer()
+		liveTranscriptText = ""
+
+		// The task below is the only remaining owner of `service`, and
+		// LiveTranscriptionService has no deinit: if stop() were skipped its
+		// AVAudioEngine tap would keep running and holding the microphone, and the
+		// captured audio would never be exported. So stop() is unconditional, and
+		// so is persisting whatever it produced — a recording that finished is not
+		// less finished because the user started another one, and stop()'s export
+		// runs for seconds on a long recording. Only live-state writes are gated.
+		let capturedName = generateAppRecordingDisplayName()
+		let capturedDate = currentRecordingDate(for: recordingURL)
+		let capturedLocation = recordingLocationSnapshot()
+		let capturedRecordingURL = recordingURL
+
+		#if os(iOS)
+		let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return self.recordingSessionID == finalizingSessionID
+				&& !self.recordingIntentActive
+		}
+		#else
+		let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return !self.isRecording && !self.isStartingRecording
+		}
+		#endif
+
+		if let reason {
+			errorMessage = "Recording stopped: \(reason). Saving the audio captured so far..."
+		}
+
+		// Stopping the service is only the start of the work: it exports the
+		// capture, the export is validated, and Core Data is written, all after
+		// the audio engine has stopped. Hold one assertion across all of it —
+		// ending it here would let iOS suspend the app mid-export.
+		beginBackgroundTask()
+		Task { @MainActor [weak self] in
+			let (url, transcript) = await service.stop()
+			guard let self else { return }
+			// Only this session may release the assertion; once a newer recording
+			// has begun, the assertion is that recording's to end.
+			defer {
+				if isCurrentSession() { self.endBackgroundTask() }
+			}
+			if let savedURL = url {
+				if isCurrentSession() {
+					self.recordingURL = savedURL
+				}
+				await self.saveLiveTranscriptionRecording(
+					url: savedURL,
+					transcript: transcript,
+					capturedName: capturedName,
+					capturedDate: capturedDate,
+					capturedLocation: capturedLocation,
+					isCurrentSession: isCurrentSession
+				)
+				if reason != nil, isCurrentSession() {
+					self.errorMessage = "Recording stopped by an interruption. The audio captured so far was saved."
+				}
+			} else if isCurrentSession() {
+				self.rejectRecordingFinalization(
+					at: capturedRecordingURL,
+					rejection: .invalidContainer
+				)
+			}
+			guard isCurrentSession() else { return }
+			try? await self.enhancedAudioSessionManager.deactivateSession()
+		}
+
+		stopBackgroundTimeMonitoring()
+		return true
+	}
+
+	/// Saves a recording and optional transcript created via live transcription mode.
+	///
+	/// The name, date, location and `isCurrentSession` predicate are captured by
+	/// the stop that produced this file. `LiveTranscriptionService.stop()` exports
+	/// the capture, which takes seconds on a long recording, so by the time this
+	/// runs the user may already have started another one. Persistence is
+	/// therefore unconditional — deriving the name and date from live state here
+	/// would stamp this recording with the next one's — while every write to live
+	/// recording state is gated on this session still being the current one.
+	@MainActor
+	private func saveLiveTranscriptionRecording(
+		url: URL,
+		transcript: String,
+		capturedName: String,
+		capturedDate: Date,
+		capturedLocation: LocationData?,
+		isCurrentSession: @MainActor () -> Bool
+	) async {
+		let finalization = await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true)
+		guard case .usable(let fileSize, let duration) = finalization else {
+			if case .rejected(let rejection) = finalization {
+				AppLog.shared.recording(
+					"Live recording finalization rejected the captured file: \(rejection)",
+					level: .error
+				)
+				if isCurrentSession() {
+					rejectRecordingFinalization(at: url, rejection: rejection)
+				} else {
+					AppLog.shared.recording(
+						"A newer recording superseded this live capture; leaving the rejected artifact untouched",
+						level: .debug
+					)
+				}
+			}
+			if isCurrentSession() { endBackgroundTask() }
 			return
 		}
 
-		let fileSize = getFileSize(url: url)
-		let duration = getRecordingDuration(url: url)
+		// Reads live location state, so it is only meaningful while this session
+		// is still the current one; the row below uses the captured snapshot.
+		if isCurrentSession() {
+			saveLocationData(for: url)
+		}
+
+		guard let workflowManager = workflowManager else {
+			AppLog.shared.recording("WorkflowManager not set - live transcription recording not saved", level: .error)
+			if isCurrentSession() { endBackgroundTask() }
+			return
+		}
+
 		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-		let displayName = generateAppRecordingDisplayName()
 
 		let recordingId = workflowManager.createRecording(
 			url: url,
-			name: displayName,
-			date: currentRecordingDate(for: url),
+			name: capturedName,
+			date: capturedDate,
 			fileSize: fileSize,
 			duration: duration,
 			quality: quality,
-			locationData: recordingLocationSnapshot()
+			locationData: capturedLocation
 		)
 
 		AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
@@ -922,8 +1198,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
 		}
 
+		guard isCurrentSession() else { return }
 		resetRecordingLocation()
 		recordingStartedAt = nil
+		resetRecordingAttemptArtifacts()
 		endBackgroundTask()
 	}
 
@@ -978,7 +1256,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				// Trust that record() succeeded and only stop on explicit user action.
 				self.performSmartCheckpoint()
 				#else
-				if self.isRecording, let recorder = self.audioRecorder, !recorder.isRecording {
+				if self.recordingIntentActive, let recorder = self.audioRecorder, !recorder.isRecording {
 					if self.isInInterruption {
 						// We're in an interruption - wait for it to end rather than trying to resume now
 						if self.recorderStoppedUnexpectedlyTime != nil {
@@ -990,7 +1268,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 							self.recorderStoppedUnexpectedlyTime = Date()
 							AppLog.shared.recording("Detected recorder stopped - waiting for interruption notification (grace period: 5s)", level: .debug)
 						} else if let stoppedTime = self.recorderStoppedUnexpectedlyTime, Date().timeIntervalSince(stoppedTime) >= 5.0 {
-							AppLog.shared.recording("No interruption notification received after 5s - attempting to resume recording")
+							AppLog.shared.recording("No interruption notification received after 5s - requesting coordinated recovery")
 							self.recorderStoppedUnexpectedlyTime = nil
 							Task { @MainActor [weak self] in
 								guard let self else { return }
