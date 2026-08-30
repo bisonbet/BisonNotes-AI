@@ -1,0 +1,201 @@
+<!-- BisonNotes AI v2.4 - WordPress Release and Upgrade Guide -->
+<!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
+<!-- Keep the CSS inside the style tag on one line: WordPress auto-paragraph formatting can break multi-line CSS. -->
+<!-- Publish this snapshot at /bisonnotes-ai-v2-4/ and keep the v2.3 and v2.2 pages available for older builds. -->
+<!-- The in-app "Learn More About Processing Options" button opens #bn24-ai on this page; do not rename that id. -->
+
+<style>.bn24 *,.bn24 *::before,.bn24 *::after{box-sizing:border-box}.bn24{max-width:960px;margin:0 auto;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + .35vw,19px);line-height:1.7;color:#1a1a1a;overflow-wrap:anywhere}.entry-content>.bn24,.post-inner .bn24,.page-content .bn24,.section-inner .bn24,.wp-block-post-content .bn24,.entry-content .bn24{max-width:960px!important;width:100%!important}.entry-content>*:has(.bn24),.post-inner:has(.bn24),.section-inner:has(.bn24){max-width:none!important;width:100%!important}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none!important}.bn24 h2{font-size:1.35rem;font-weight:750;margin:2.2rem 0 .75rem;padding-bottom:.35rem;border-bottom:2px solid #c0392b;color:#111}.bn24 h3{font-size:1.1rem;font-weight:700;margin:1.4rem 0 .45rem;color:#222}.bn24 p{margin:.55rem 0}.bn24 ul,.bn24 ol{margin:.4rem 0 .75rem;padding-left:1.4rem}.bn24 li{margin:.3rem 0}.bn24 a{color:#b33125;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.13em}.bn24 code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:.88em;word-break:break-all}.bn24-hero{text-align:center;padding:1.7rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 52%,#0f3460 100%);color:#fff;border-radius:12px;margin-bottom:1.4rem}.bn24-hero h1{color:#fff!important;font-size:1.65rem;line-height:1.25;margin:0;border:0!important;padding:0!important}.bn24-hero p{margin:.3rem 0 0;color:#fff;opacity:.88}.bn24-badge{display:inline-block;margin-top:.7rem;padding:.18rem .7rem;border-radius:999px;background:#c0392b;color:#fff;font-size:.78rem;font-weight:750}.bn24-toc{background:#f7f8f9;border:1px solid #dde1e5;border-radius:9px;padding:.9rem 1rem;margin:0 0 1.7rem}.bn24-toc strong{display:block;margin-bottom:.25rem}.bn24-toc ol{margin:0}.bn24-card,.bn24-info,.bn24-ok,.bn24-warn{border-radius:8px;padding:.85rem 1rem;margin:.8rem 0}.bn24-card{background:#f7f8f9;border:1px solid #dde1e5}.bn24-info{background:#eaf3fc;border-left:4px solid #2563eb}.bn24-ok{background:#eaf7ec;border-left:4px solid #238b45}.bn24-warn{background:#fef7e0;border-left:4px solid #d5960b}.bn24-grid{display:grid;grid-template-columns:1fr;gap:.75rem;margin:.8rem 0}.bn24-grid>div{background:#fff;border:1px solid #dde1e5;border-radius:9px;padding:.85rem 1rem}.bn24-grid h3{margin:0 0 .3rem}.bn24-grid p,.bn24-grid ul{font-size:.94rem}.bn24-steps{counter-reset:step;list-style:none;padding-left:0!important}.bn24-steps>li{counter-increment:step;position:relative;padding-left:2.4rem;margin:.8rem 0}.bn24-steps>li::before{content:counter(step);position:absolute;left:0;top:.05rem;width:1.65rem;height:1.65rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#c0392b;color:#fff;font-weight:750;font-size:.82rem}.bn24 small{font-size:.84rem;color:#555}@media(min-width:620px){.bn24-grid{grid-template-columns:1fr 1fr}}@media(max-width:619px){.bn24{padding:.7rem}.bn24-hero{padding:1.35rem .75rem}.bn24-hero h1{font-size:1.4rem}.bn24 h2{font-size:1.25rem}}</style>
+
+<div class="bn24">
+
+<div class="bn24-hero">
+  <h1>BisonNotes AI v2.4</h1>
+  <p>Release and Upgrade Guide for iPhone, iPad, Apple Watch, and Mac</p>
+  <span class="bn24-badge">Faster iCloud sync &bull; recording recovery &bull; reclaimed storage</span>
+</div>
+
+<div class="bn24-toc">
+  <strong>On this page</strong>
+  <ol>
+    <li><a href="#bn24-overview">Release overview</a></li>
+    <li><a href="#bn24-icloud">Faster iCloud sync</a></li>
+    <li><a href="#bn24-recording">Recording interruption recovery</a></li>
+    <li><a href="#bn24-mac">Mac meeting audio and imports</a></li>
+    <li><a href="#bn24-storage">Storage and cache cleanup</a></li>
+    <li><a href="#bn24-ai">AI engines and summary controls</a></li>
+    <li><a href="#bn24-upgrade">Upgrade checklist</a></li>
+    <li><a href="#bn24-help">Troubleshooting and help</a></li>
+  </ol>
+</div>
+
+<h2 id="bn24-overview">Release Overview</h2>
+
+<p>Version 2.4 is a reliability, performance, and storage release. It does not change where your library lives, which engines are available, or how recordings, transcripts, and summaries are stored. Everything described in the v2.3 guide continues to apply; this page covers what changed on top of it.</p>
+
+<div class="bn24-grid">
+  <div>
+    <h3>Sync in seconds</h3>
+    <p>Routine iCloud sync now reads and writes in batched requests instead of one record at a time, so a normal pass finishes in a fraction of the time it used to take.</p>
+  </div>
+  <div>
+    <h3>One sync at a time</h3>
+    <p>A backup or restore you start while a sync is already running waits its turn and says so, instead of returning an empty result that looks like success.</p>
+  </div>
+  <div>
+    <h3>Interruption recovery</h3>
+    <p>A phone call or an unexpected background stop now produces one coordinated recovery, and the completed part of the recording is always preserved.</p>
+  </div>
+  <div>
+    <h3>Mac microphone fallback</h3>
+    <p>If the microphone cannot start for a meeting recording, BisonNotes retries the input and keeps system-audio capture running instead of failing the recording.</p>
+  </div>
+  <div>
+    <h3>Reclaimed storage</h3>
+    <p>On-device model downloads and iCloud&rsquo;s own copies of uploaded audio no longer accumulate without limit inside the app&rsquo;s cache.</p>
+  </div>
+  <div>
+    <h3>Deletions stay deleted</h3>
+    <p>Deleting an imported transcript no longer leaves anything behind for a later sync to restore.</p>
+  </div>
+  <div>
+    <h3>Honest progress</h3>
+    <p>Work that iCloud defers, or that finished only partly, is reported as deferred or incomplete rather than as a completed sync.</p>
+  </div>
+  <div>
+    <h3>Version-aware help</h3>
+    <p>In-app <strong>Learn More</strong> links now open the guide that matches the installed version, at the section that answers the question.</p>
+  </div>
+</div>
+
+<p>v2.4 also fixes the Mac audio import picker, lets a microphone that reconnects mid-recording rejoin its own recovery, bounds the diagnostic error log, and refuses to treat a partly downloaded multi-part on-device model as ready.</p>
+
+<h2 id="bn24-icloud">Faster iCloud Sync</h2>
+
+<p>The library behind this work held 161 synced records. A full metadata backup took about 3 minutes 14 seconds, followed by roughly another 28 seconds of restore enumeration, with iCloud throttling and index conflicts along the way. The cause was request volume: BisonNotes asked iCloud for one record at a time. v2.4 rebuilds the sync legs around batched requests so routine metadata sync runs in seconds rather than minutes. Actual times still depend on library size, network conditions, and iCloud availability.</p>
+
+<ul>
+  <li><strong>Batched reads and writes:</strong> A routine pass fetches the whole dataset in a small number of batched requests and issues one batched save and one batched delete, instead of a request per record.</li>
+  <li><strong>Deletions planned once:</strong> Deletion markers from other devices are worked out together and applied as a single operation, rather than re-reading iCloud once for every deletion you have ever made.</li>
+  <li><strong>Throttling is respected:</strong> When iCloud asks BisonNotes to wait, it waits exactly that long. If the requested wait is long, the run is recorded as deferred and retried later instead of holding up the app.</li>
+  <li><strong>Two devices stop fighting:</strong> The shared index of synced content is updated as a change rather than rewritten wholesale, so two devices syncing at the same time no longer remove each other&rsquo;s entries.</li>
+  <li><strong>Audio does not hold up metadata:</strong> Recording details sync without waiting on audio files, and audio transfer is tracked separately from metadata.</li>
+  <li><strong>One operation at a time:</strong> Sync requests that arrive during a run join it or collapse into a single follow-up. A backup or restore you start yourself shows <em>Waiting for the sync already in progress</em> until it can begin.</li>
+</ul>
+
+<div class="bn24-ok"><strong>Nothing about your data changed.</strong> The iCloud container, record types, newest-edit-wins arbitration, deletion markers, the 60-second delete-versus-edit grace period, <strong>Keep on This Device</strong> exclusions, <strong>Review iCloud Items</strong>, and the <strong>Include audio files in backup</strong> setting all behave as they did in v2.3.</div>
+
+<div class="bn24-info"><strong>iCloud reminders:</strong> All devices must use the same Apple ID and the same CloudKit environment. Local Debug builds use CloudKit development; TestFlight and App Store builds use production, so records do not cross between them. BisonNotes AI and its iCloud sync are not HIPAA-compliant.</div>
+
+<h2 id="bn24-recording">Recording Interruption Recovery</h2>
+
+<p>On iPhone and iPad, a phone call used to trigger several overlapping attempts to restart the audio session, each retrying until it gave up, and one of them could report success without having restored anything. v2.4 replaces that with a single coordinated recovery.</p>
+
+<ul>
+  <li><strong>One owner, one recovery:</strong> An interruption produces one state change and one recovery attempt, not three competing ones.</li>
+  <li><strong>Completed audio is preserved:</strong> If the recorder stops while the app is in the background and iOS will not hand the microphone back, BisonNotes seals and keeps the finished segment and defers recovery until you bring the app forward, instead of retrying in a loop.</li>
+  <li><strong>No false success:</strong> A recovery that restored nothing is now reported as a failure with the underlying reason, not as a successful restore.</li>
+  <li><strong>No duplicate or empty recordings:</strong> Continuation after an interruption cannot create an empty extra recording or lose the segment it was continuing.</li>
+  <li><strong>Calls do not strand a recording:</strong> A recording associated with a system call is finalized and saved rather than left parked, and a recording that finishes while a newer session starts is still persisted.</li>
+  <li><strong>Live Transcription stops when you stop:</strong> Pressing stop always ends the live transcription service, even if the recorder was already interrupted.</li>
+  <li><strong>Recovered work is held until it is safe:</strong> A parked recovery entry is kept until its audio has actually been written and its library row created.</li>
+</ul>
+
+<div class="bn24-warn"><strong>Always confirm the recording state before leaving a recording unattended.</strong> Calls, alarms, other audio apps, Bluetooth devices, and operating-system policy remain outside BisonNotes&rsquo; control. For an important recording on unfamiliar hardware, make a short test, stop it, and play it back first.</div>
+
+<h2 id="bn24-mac">Mac Meeting Audio and Imports</h2>
+
+<ul>
+  <li><strong>Automatic microphone fallback:</strong> When a meeting recording starts and the selected microphone is unavailable, BisonNotes refreshes the live input list, retries virtual meeting devices, and keeps capturing system audio rather than failing the whole recording.</li>
+  <li><strong>Reconnected microphones:</strong> An input that disappears and comes back mid-recording is allowed back into its own recovery instead of being ignored for the rest of the session.</li>
+  <li><strong>Failed microphone segments are sealed:</strong> A microphone track that fails part-way is closed cleanly so the usable audio is still saved.</li>
+  <li><strong>Import picker fixed:</strong> Choosing an audio file through the Mac import picker works again.</li>
+</ul>
+
+<p>Everything else in the native Mac app &mdash; windows, Settings, menus and shortcuts, the Share extension, desktop widgets, archive bookmarks, RTF/PDF export, selectable inputs, and the Screen &amp; System Audio Recording permission flow &mdash; is unchanged from v2.3.</p>
+
+<h2 id="bn24-storage">Storage and Cache Cleanup</h2>
+
+<p>On one Mac, the app&rsquo;s cache directory had grown to 51 GB. Three separate caches had nothing that removed old entries, and v2.4 bounds all three. This happens automatically in the background; your recordings, transcripts, summaries, attachments, and archived audio are never touched.</p>
+
+<ul>
+  <li><strong>Local AI models were stored twice.</strong> A model was downloaded into a staging cache and then copied into place, so a 7.9 GB model occupied 15.8 GB. The staging copy is now released as soon as the model is fully in place.</li>
+  <li><strong>Deleting a model reclaims all of it.</strong> Previously only the installed copy was removed and the download cache was left behind.</li>
+  <li><strong>iCloud&rsquo;s audio copies are bounded.</strong> iCloud keeps its own copy of every audio file it transfers and never reclaims it. BisonNotes now sweeps that cache by size, and never removes anything less than an hour old, anything still in use, or anything whose age it cannot determine.</li>
+  <li><strong>Interrupted model downloads resume.</strong> A multi-part model interrupted mid-copy is now recognized as incomplete, so its download cache is kept and Settings no longer offers it as ready.</li>
+  <li><strong>The diagnostic log is bounded.</strong> The persistent error log no longer grows without limit.</li>
+</ul>
+
+<div class="bn24-info"><strong>First launch after updating:</strong> If a large cache had accumulated, the first sweep has a lot to delete. It runs in the background and may take more than one launch to finish, so free space can keep increasing for a while after the update.</div>
+
+<h2 id="bn24-ai">AI Engines and Summary Controls</h2>
+
+<p>Engine choices and summary controls are unchanged in v2.4. Choose the engine that fits the device, privacy needs, and workflow: MLX Swift on-device summarization and Apple Native where supported, plus Mistral AI, Google AI Studio, Compatible API, and Ollama in the native Mac app.</p>
+
+<div class="bn24-info"><strong>Existing settings:</strong> Older OpenAI selections move to Compatible API when their saved endpoint can be reused. Removed local llama.cpp selections move to the closest supported MLX model when possible, and old GGUF files and settings are cleaned up. If no replacement is ready, BisonNotes leaves the engine unconfigured or chooses a configured fallback rather than silently sending data to a new provider.</div>
+
+<h3>Summary detail and thinking</h3>
+<ul>
+  <li><strong>Brief:</strong> Key points, decisions, and deadlines in a compact summary.</li>
+  <li><strong>Balanced:</strong> A practical mix of the main ideas and supporting context.</li>
+  <li><strong>Detailed:</strong> More facts, context, nuance, and conclusions from the transcript.</li>
+  <li><strong>Thinking:</strong> Off sends no thinking override. Light requests a short reasoning pass only for models with a known safe control. Thinking text is removed from the visible summary and does not change factual tasks, reminders, titles, or content type.</li>
+</ul>
+
+<p>Models that reason internally are given room for that reasoning on top of the answer length you configure. If a response is still cut short by the provider&rsquo;s limit, BisonNotes retries once with a larger allowance and then reports the truncation plainly instead of showing a partial summary.</p>
+
+<h3>Local Speaker Labels</h3>
+<p>Turn on <strong>Local Speaker Labels</strong> in On Device settings, then explicitly prepare the speaker model. Labels run after a completed Parakeet recording, imported audio file, or transcript re-run; they do not run during Live Transcription, do not silently download, and keep audio on the device.</p>
+<ul>
+  <li><strong>Offline VBx &mdash; Recommended:</strong> Estimates the speaker count without an app-side two- or three-speaker cap.</li>
+  <li><strong>LS-EEND &mdash; Experimental:</strong> Uses the DIHARD3 500 ms model for up to 10 speakers and complete files up to one hour; labels may be over-segmented or less stable.</li>
+  <li><strong>Safe fallback:</strong> If the model is missing, the duration or speaker limit is reached, or alignment fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a warning.</li>
+  <li><strong>Rename speakers:</strong> Open the completed transcript, edit its speaker controls, and save the mapping for speaker-aware transcript and summary views.</li>
+</ul>
+
+<h2 id="bn24-upgrade">Upgrade Checklist</h2>
+
+<ol class="bn24-steps">
+  <li><strong>Let current work finish.</strong> Complete active recordings, transcriptions, summaries, and iCloud jobs before installing the update.</li>
+  <li><strong>Keep a copy of critical audio.</strong> Export any irreplaceable meeting recording before a major app or operating-system update.</li>
+  <li><strong>Install v2.4 normally.</strong> Install over the existing app on every device; do not delete the app&rsquo;s container or support files.</li>
+  <li><strong>Open the library first.</strong> Confirm that expected recordings, transcripts, summaries, settings, and Keep on This Device states are present.</li>
+  <li><strong>Let the first sync finish.</strong> The first pass after updating may still have a backlog to reconcile. Leave BisonNotes in the foreground until it reports a completed sync.</li>
+  <li><strong>Update your other devices.</strong> Devices on the same Apple ID sync best when they are on the same version.</li>
+  <li><strong>Run a short recording test.</strong> Record speech, stop, play the result back, and check the duration before relying on the setup for a long meeting. On Mac, test meeting audio as well if you use it.</li>
+  <li><strong>Check free space after a day.</strong> If caches had grown large, storage keeps being reclaimed in the background across the first launches.</li>
+</ol>
+
+<h2 id="bn24-help">Troubleshooting and Help</h2>
+
+<h3>A backup I started says it is waiting</h3>
+<p>That is expected in v2.4. An automatic sync was already running, so your request starts as soon as that run finishes rather than being silently dropped or returning zero counts. Leave the app open and it will begin on its own.</p>
+
+<h3>Sync says it was deferred</h3>
+<p>iCloud asked BisonNotes to wait before sending more requests, and the wait was long enough that blocking the app would not have been reasonable. The work is kept and retried; nothing queued is lost. This is most common right after a large first sync.</p>
+
+<h3>My recording was interrupted by a phone call</h3>
+<p>The completed portion is preserved and appears in Recordings. If iOS would not return the microphone while BisonNotes was in the background, recovery is deferred until you bring the app forward; open the app to let it finish, then start a new recording if you still need one.</p>
+
+<h3>A Mac meeting recording has system audio but no microphone</h3>
+<p>The microphone could not be started or was lost during capture, and BisonNotes deliberately saved the usable track instead of discarding the recording. Check macOS System Settings &gt; Privacy &amp; Security &gt; Microphone, confirm the intended input in Transcription Settings, reconnect USB or Bluetooth devices, and make a short test recording.</p>
+
+<h3>Storage did not drop right away</h3>
+<p>The cache sweep is deliberately conservative and runs in the background: it never removes an in-flight download, anything under an hour old, or anything whose age it cannot read. A very large backlog can take more than one launch to clear.</p>
+
+<h3>An on-device model shows as not ready after an interrupted download</h3>
+<p>A multi-part model that was interrupted mid-copy is now correctly reported as incomplete. Open Settings and start the model setup again; the retained download cache lets it resume rather than start over.</p>
+
+<h3>An imported transcript I deleted came back</h3>
+<p>This was fixed in v2.4. If you still see it on a device that has not been updated, update that device and delete the item once more so the removal reaches iCloud.</p>
+
+<div class="bn24-info"><strong>Need more detail?</strong> See the complete BisonNotes AI User Guide for engine setup, transcription, summaries, iCloud, privacy, archiving, playback, Watch features, and advanced workflows.</div>
+
+<div class="bn24-card">
+  <strong>Support</strong>
+  <p>When reporting a problem, include the device model, OS version, BisonNotes version, the feature being used, and exported diagnostic logs when safe to share. Do not include private meeting audio or credentials.</p>
+  <p><a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">Report an issue on GitHub</a></p>
+</div>
+
+<p style="text-align:center"><small>Last updated for BisonNotes AI v2.4. Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
+
+</div>
