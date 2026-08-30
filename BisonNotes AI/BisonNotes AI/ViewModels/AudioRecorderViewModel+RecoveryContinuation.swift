@@ -248,8 +248,25 @@ extension AudioRecorderViewModel {
 
 	@MainActor
 	func persistDeferredRecoverySnapshot() {
+		persistRecoverySnapshot(
+			segments: existingRecordingSegments(),
+			mainRecordingURL: mainRecordingURL,
+			currentSegmentIndex: currentSegmentIndex
+		)
+	}
+
+	/// Write the trail that lets a later pass reclaim these segments.
+	///
+	/// Used both when a recovery is deferred and when an in-flight merge is
+	/// superseded: in either case nothing in memory points at the segments any
+	/// more, so without this they are untracked files on disk.
+	@MainActor
+	func persistRecoverySnapshot(
+		segments: [URL],
+		mainRecordingURL: URL?,
+		currentSegmentIndex: Int
+	) {
 		guard let snapshotURL = Self.deferredRecoverySnapshotURL else { return }
-		let segments = existingRecordingSegments()
 		guard !segments.isEmpty else {
 			clearDeferredRecoverySnapshot()
 			return

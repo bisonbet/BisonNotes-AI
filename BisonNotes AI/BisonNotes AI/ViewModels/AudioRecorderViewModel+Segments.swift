@@ -54,6 +54,13 @@ extension AudioRecorderViewModel {
 		}
 		let segments = recordingSegments
 
+		// Derived before the asset loads and export suspend. This recording is
+		// already stopped; re-deriving its name, date and location after those
+		// awaits would stamp it with whatever session is current by then.
+		let capturedName = generateAppRecordingDisplayName()
+		let capturedDate = currentRecordingDate(for: mainURL)
+		let capturedLocation = recordingLocationSnapshot()
+
 		AppLog.shared.recording("Merging \(segments.count) segments")
 
 		// Start background task to protect file merging and Core Data save operations
@@ -85,7 +92,10 @@ extension AudioRecorderViewModel {
 
 			// Add each segment to the composition
 			for (index, segmentURL) in segments.enumerated() {
-				guard recoveryIsCurrent() else { return }
+				guard recoveryIsCurrent() else {
+					preserveSupersededMergeSegments(segments, mainURL: mainURL)
+					return
+				}
 				let asset = AVURLAsset(url: segmentURL)
 
 				// Get the audio track from the segment
@@ -93,11 +103,17 @@ extension AudioRecorderViewModel {
 					AppLog.shared.recording("Segment \(index + 1) has no audio track, skipping")
 					continue
 				}
-				guard recoveryIsCurrent() else { return }
+				guard recoveryIsCurrent() else {
+					preserveSupersededMergeSegments(segments, mainURL: mainURL)
+					return
+				}
 
 				// Get the duration of this segment
 				let duration = try await asset.load(.duration)
-				guard recoveryIsCurrent() else { return }
+				guard recoveryIsCurrent() else {
+					preserveSupersededMergeSegments(segments, mainURL: mainURL)
+					return
+				}
 
 				// Insert the segment at the current time
 				let timeRange = CMTimeRange(start: .zero, duration: duration)
@@ -125,13 +141,19 @@ extension AudioRecorderViewModel {
 
 			// Use the modern export API (iOS 18+)
 			try await exportSession.export(to: tempURL, as: .m4a)
-			guard recoveryIsCurrent() else { return }
+			guard recoveryIsCurrent() else {
+				preserveSupersededMergeSegments(segments, mainURL: mainURL)
+				return
+			}
 			AppFileProtection.apply(to: tempURL)
 
 			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
 			let finalization = await RecordingFinalizationPolicy.inspect(url: tempURL, delegateSucceeded: true)
-			guard recoveryIsCurrent() else { return }
+			guard recoveryIsCurrent() else {
+				preserveSupersededMergeSegments(segments, mainURL: mainURL)
+				return
+			}
 			guard case .usable(let fileSize, let duration) = finalization else {
 				if case .rejected(let rejection) = finalization {
 					AppLog.shared.recording(
@@ -172,13 +194,23 @@ extension AudioRecorderViewModel {
 
 			// The merged output is now safe. Remove only the superseded segments;
 			// never delete the new file at mainURL.
-			guard recoveryIsCurrent() else { return }
 			let obsoleteSegments = segments.filter {
 				$0.standardizedFileURL != mainURL.standardizedFileURL
 			}
 			deleteSegmentFiles(obsoleteSegments)
-			guard recoveryIsCurrent() else { return }
-			if segmentURLTrackingMatches(segments) {
+
+			// A newer session may own the live recording state by now. That gates
+			// the state writes below — never the save. The merged file exists and
+			// its sources are gone, so returning here would leave the whole
+			// recording on disk with no Core Data row.
+			let stillCurrent = recoveryIsCurrent()
+			if !stillCurrent {
+				AppLog.shared.recording(
+					"A newer recording superseded this merge; persisting the merged file without touching live state",
+					level: .debug
+				)
+			}
+			if stillCurrent, segmentURLTrackingMatches(segments) {
 				recordingSegments = []
 				mainRecordingURL = nil
 				currentSegmentIndex = 0
@@ -186,11 +218,13 @@ extension AudioRecorderViewModel {
 
 			AppLog.shared.recording("Successfully merged all segments")
 
-			// Update the recordingURL to point to the merged file
-			recordingURL = mainURL
+			if stillCurrent {
+				// Update the recordingURL to point to the merged file
+				recordingURL = mainURL
 
-			// Save the merged recording to the database
-			saveLocationData(for: mainURL)
+				// Reads live location state, so it only applies while current.
+				saveLocationData(for: mainURL)
+			}
 
 			AppLog.shared.recording("Merged recording saved in Whisper-optimized format")
 
@@ -198,25 +232,24 @@ extension AudioRecorderViewModel {
 			if let workflowManager = workflowManager {
 				let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
-				// Create display name for phone recording
-				let displayName = generateAppRecordingDisplayName()
-
 				// Create recording
 				let recordingId = workflowManager.createRecording(
 					url: mainURL,
-					name: displayName,
-					date: currentRecordingDate(for: mainURL),
+					name: capturedName,
+					date: capturedDate,
 					fileSize: fileSize,
 					duration: duration,
 					quality: quality,
-					locationData: recordingLocationSnapshot()
+					locationData: capturedLocation
 				)
 
 				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
 
-				self.resetRecordingLocation()
-				self.recordingStartedAt = nil
-				self.resetRecordingAttemptArtifacts()
+				if stillCurrent {
+					self.resetRecordingLocation()
+					self.recordingStartedAt = nil
+					self.resetRecordingAttemptArtifacts()
+				}
 			} else {
 				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
 			}
@@ -224,6 +257,31 @@ extension AudioRecorderViewModel {
 		} catch {
 			AppLog.shared.recording("Error merging segments: \(error.localizedDescription)", level: .error)
 		}
+	}
+
+	/// Keep a superseded merge's segments reachable.
+	///
+	/// A merge abandoned mid-flight has not produced its output yet, and
+	/// `setupRecording()` has already replaced `recordingSegments` and
+	/// `mainRecordingURL` — so without a trail on disk the stopped recording's
+	/// segments become untracked files that nothing ever persists. Writing the
+	/// recovery snapshot lets the next unprocessed-recording pass reclaim and
+	/// merge them.
+	@MainActor
+	func preserveSupersededMergeSegments(_ segments: [URL], mainURL: URL) {
+		#if os(iOS)
+		let survivors = segments.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard !survivors.isEmpty else { return }
+		persistRecoverySnapshot(
+			segments: survivors,
+			mainRecordingURL: mainURL,
+			currentSegmentIndex: max(survivors.count - 1, 0)
+		)
+		AppLog.shared.recording(
+			"Merge superseded by a newer session; preserved \(survivors.count) segment(s) for reclamation",
+			level: .error
+		)
+		#endif
 	}
 
 	/// Clean up individual segment files after successful merge

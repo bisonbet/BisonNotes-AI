@@ -52,6 +52,17 @@ extension AudioRecorderViewModel {
 			AppLog.shared.audioSession("Ignoring duplicate interruption begin", level: .debug)
 			return
 		}
+		// An interruption is terminal for a live transcription session: it has no
+		// AVAudioRecorder for recovery to continue and nothing restarts its
+		// AVAudioEngine, so entering .interrupted would wedge the recording with
+		// its audio unsaved. Finalize the capture instead.
+		if isUsingLiveTranscription {
+			AppLog.shared.audioSession(
+				"Audio interruption began during live transcription; finalizing the capture"
+			)
+			finalizeLiveTranscriptionRecording(reason: "An interruption took the microphone")
+			return
+		}
 		// A user-paused recording has already yielded the microphone on purpose.
 		// Overwriting .paused with .interrupted would make recovery seal the
 		// segment and start a new one, silently resuming capture the user asked

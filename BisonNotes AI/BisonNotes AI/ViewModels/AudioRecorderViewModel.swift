@@ -896,66 +896,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		#endif
 		finishRecordingStartup()
 		// Handle live transcription path
-		if isUsingLiveTranscription, let service = liveTranscriptionService {
-			isUsingLiveTranscription = false
-			liveTranscriptionService = nil
-			isRecording = false
-			stopRecordingTimer()
-			liveTranscriptText = ""
-
-			// This task is the only remaining owner of `service`, and
-			// LiveTranscriptionService has no deinit: if stop() were skipped its
-			// AVAudioEngine tap would keep running and holding the microphone,
-			// and the captured audio would never be exported. So stop() is
-			// unconditional, and so is persisting whatever it produced — a
-			// recording that finished is not less finished because the user
-			// started another one, and stop()'s export runs for seconds on a
-			// long recording. Only writes to live recording state are gated.
-			let capturedName = generateAppRecordingDisplayName()
-			let capturedDate = currentRecordingDate(for: recordingURL)
-			let capturedLocation = recordingLocationSnapshot()
-			let capturedRecordingURL = recordingURL
-
-			#if os(iOS)
-			let isCurrentSession: @MainActor () -> Bool = { [weak self] in
-				guard let self else { return false }
-				return self.recordingSessionID == stoppingRecordingSessionID
-					&& !self.recordingIntentActive
-			}
-			#else
-			let isCurrentSession: @MainActor () -> Bool = { [weak self] in
-				guard let self else { return false }
-				return !self.isRecording && !self.isStartingRecording
-			}
-			#endif
-
-			Task { @MainActor [weak self] in
-				let (url, transcript) = await service.stop()
-				guard let self else { return }
-				if let savedURL = url {
-					if isCurrentSession() {
-						self.recordingURL = savedURL
-					}
-					await self.saveLiveTranscriptionRecording(
-						url: savedURL,
-						transcript: transcript,
-						capturedName: capturedName,
-						capturedDate: capturedDate,
-						capturedLocation: capturedLocation,
-						isCurrentSession: isCurrentSession
-					)
-				} else if isCurrentSession() {
-					self.rejectRecordingFinalization(
-						at: capturedRecordingURL,
-						rejection: .invalidContainer
-					)
-				}
-				guard isCurrentSession() else { return }
-				try? await self.enhancedAudioSessionManager.deactivateSession()
-			}
-
-			stopBackgroundTimeMonitoring()
-			endBackgroundTask()
+		if finalizeLiveTranscriptionRecording(reason: nil) {
 			return
 		}
 
@@ -1042,6 +983,102 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		endBackgroundTask()
 
 		// Notify watch of recording state change
+	}
+
+	/// Tear down the live transcription service and persist whatever it captured.
+	///
+	/// Shared by a user stop and by an audio interruption. LiveTranscriptionService
+	/// owns an AVAudioEngine that nothing restarts once iOS takes the microphone,
+	/// so an interruption is terminal for a live session: parking it in
+	/// `.interrupted` would leave the recording stuck with no path back and no
+	/// saved audio. Pass a `reason` to surface why the capture ended.
+	///
+	/// Returns true when a live session was finalized.
+	@MainActor
+	@discardableResult
+	func finalizeLiveTranscriptionRecording(reason: String?) -> Bool {
+		guard isUsingLiveTranscription, let service = liveTranscriptionService else {
+			return false
+		}
+
+		#if os(iOS)
+		let finalizingSessionID = recordingSessionID
+		recordingIntentActive = false
+		recoveryCoordinator.invalidateRecordingSession(reason: reason ?? "live transcription stopped")
+		callInterruptionTracker.removeAll()
+		stopInterruptionWatchdog()
+		clearDeferredRecoverySnapshot()
+		#endif
+
+		isUsingLiveTranscription = false
+		liveTranscriptionService = nil
+		isRecording = false
+		isInInterruption = false
+		interruptionRecordingURL = nil
+		recordingState = .idle
+		stopRecordingTimer()
+		liveTranscriptText = ""
+
+		// The task below is the only remaining owner of `service`, and
+		// LiveTranscriptionService has no deinit: if stop() were skipped its
+		// AVAudioEngine tap would keep running and holding the microphone, and the
+		// captured audio would never be exported. So stop() is unconditional, and
+		// so is persisting whatever it produced — a recording that finished is not
+		// less finished because the user started another one, and stop()'s export
+		// runs for seconds on a long recording. Only live-state writes are gated.
+		let capturedName = generateAppRecordingDisplayName()
+		let capturedDate = currentRecordingDate(for: recordingURL)
+		let capturedLocation = recordingLocationSnapshot()
+		let capturedRecordingURL = recordingURL
+
+		#if os(iOS)
+		let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return self.recordingSessionID == finalizingSessionID
+				&& !self.recordingIntentActive
+		}
+		#else
+		let isCurrentSession: @MainActor () -> Bool = { [weak self] in
+			guard let self else { return false }
+			return !self.isRecording && !self.isStartingRecording
+		}
+		#endif
+
+		if let reason {
+			errorMessage = "Recording stopped: \(reason). Saving the audio captured so far..."
+		}
+
+		Task { @MainActor [weak self] in
+			let (url, transcript) = await service.stop()
+			guard let self else { return }
+			if let savedURL = url {
+				if isCurrentSession() {
+					self.recordingURL = savedURL
+				}
+				await self.saveLiveTranscriptionRecording(
+					url: savedURL,
+					transcript: transcript,
+					capturedName: capturedName,
+					capturedDate: capturedDate,
+					capturedLocation: capturedLocation,
+					isCurrentSession: isCurrentSession
+				)
+				if reason != nil, isCurrentSession() {
+					self.errorMessage = "Recording stopped by an interruption. The audio captured so far was saved."
+				}
+			} else if isCurrentSession() {
+				self.rejectRecordingFinalization(
+					at: capturedRecordingURL,
+					rejection: .invalidContainer
+				)
+			}
+			guard isCurrentSession() else { return }
+			try? await self.enhancedAudioSessionManager.deactivateSession()
+		}
+
+		stopBackgroundTimeMonitoring()
+		endBackgroundTask()
+		return true
 	}
 
 	/// Saves a recording and optional transcript created via live transcription mode.

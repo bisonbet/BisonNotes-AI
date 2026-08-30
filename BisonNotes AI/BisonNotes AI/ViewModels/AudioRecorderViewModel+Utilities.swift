@@ -65,7 +65,13 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 			// Start background task to protect file validation and Core Data save operations.
 			beginBackgroundTask()
-			defer { endBackgroundTask() }
+			// Never end the assertion out from under a recording that started
+			// while this completion was being finalized.
+			defer {
+				if !self.isRecording, !self.isStartingRecording {
+					self.endBackgroundTask()
+				}
+			}
 
 			recordingBeingProcessed = true // Set flag to prevent duplicate processing
 
@@ -91,6 +97,14 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				return
 			}
 
+			// Derived before the inspection suspends. This recording is finished;
+			// persisting it must not depend on still being the current session, but
+			// re-deriving its name, date and location afterwards would stamp it
+			// with the next recording's.
+			let capturedName = generateAppRecordingDisplayName()
+			let capturedDate = currentRecordingDate(for: resolvedRecordingURL)
+			let capturedLocation = recordingLocationSnapshot()
+
 			if flag {
 				if appIsBackgrounding {
 					AppLog.shared.recording("Recording finished successfully during backgrounding - processing normally")
@@ -109,13 +123,16 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				url: resolvedRecordingURL,
 				delegateSucceeded: true
 			)
-			guard finalizationIsCurrent(resolvedRecordingURL) else {
+			// A newer session may own the live recording state by now. That gates
+			// the state writes below — never the save: abandoning it here is what
+			// would leave the finished audio on disk with no Core Data row and no
+			// in-memory reference, since setupRecording has replaced them all.
+			let stillCurrent = finalizationIsCurrent(resolvedRecordingURL)
+			if !stillCurrent {
 				AppLog.shared.recording(
-					"A newer recording superseded this completion during finalization; leaving it untouched",
+					"A newer recording superseded this completion during finalization; persisting it without touching live state",
 					level: .debug
 				)
-				recordingBeingProcessed = false
-				return
 			}
 
 			switch finalization {
@@ -124,9 +141,19 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 					"Recording finalization rejected the captured file: \(rejection)",
 					level: .error
 				)
-				rejectRecordingFinalization(at: resolvedRecordingURL, rejection: rejection)
+				if stillCurrent {
+					rejectRecordingFinalization(at: resolvedRecordingURL, rejection: rejection)
+				} else {
+					AppLog.shared.recording(
+						"Leaving the rejected artifact of a superseded session untouched",
+						level: .debug
+					)
+				}
 			case .usable(let fileSize, let duration):
-				saveLocationData(for: resolvedRecordingURL)
+				if stillCurrent {
+					// Reads live location state, so it only applies while current.
+					saveLocationData(for: resolvedRecordingURL)
+				}
 
 				// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
 				AppLog.shared.recording("Recording saved in Whisper-optimized format")
@@ -135,36 +162,37 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				if let workflowManager = workflowManager {
 					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
-					// Create display name for phone recording
-					let displayName = generateAppRecordingDisplayName()
-
 					// Create recording
 					let recordingId = workflowManager.createRecording(
 						url: resolvedRecordingURL,
-						name: displayName,
-						date: currentRecordingDate(for: resolvedRecordingURL),
+						name: capturedName,
+						date: capturedDate,
 						fileSize: fileSize,
 						duration: duration,
 						quality: quality,
-						locationData: recordingLocationSnapshot()
+						locationData: capturedLocation
 					)
 
 					AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
 
-					// Watch audio integration removed
-					self.resetRecordingLocation()
-					self.recordingStartedAt = nil
-					self.resetRecordingAttemptArtifacts()
+					if stillCurrent {
+						// Watch audio integration removed
+						self.resetRecordingLocation()
+						self.recordingStartedAt = nil
+						self.resetRecordingAttemptArtifacts()
 
-					if !flag {
-						errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
+						if !flag {
+							errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
+						}
 					}
 				} else {
 					AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
 				}
 			}
 
-			recordingBeingProcessed = false
+			if stillCurrent {
+				recordingBeingProcessed = false
+			}
 
 			// Deactivate audio session after either a successful save or a rejected
 			// current-attempt artifact — but never out from under a recording that
