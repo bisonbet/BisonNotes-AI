@@ -60,6 +60,37 @@ enum CacheMaintenancePolicy {
         return "\(namespace)/\(repository)"
     }
 
+    /// A materialized model is usable only when its configuration and at least
+    /// one non-empty weight file have landed. `config.json` can be copied before
+    /// the download is interrupted, so it is not a completion marker by itself.
+    static func isMaterializedModelComplete(at directory: URL) -> Bool {
+        let fileManager = FileManager.default
+        let configURL = directory.appendingPathComponent("config.json")
+        let configValues = try? configURL.resourceValues(
+            forKeys: [.isRegularFileKey, .fileSizeKey]
+        )
+        guard configValues?.isRegularFile == true, (configValues?.fileSize ?? 0) > 0 else {
+            return false
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+
+        while let file = enumerator.nextObject() as? URL {
+            guard file.pathExtension.lowercased() == "safetensors" else { continue }
+            let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            if values?.isRegularFile == true, (values?.fileSize ?? 0) > 0 {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Why a hub repository directory is being removed. Only used for reporting —
     /// both cases are equally safe to delete — but the two mean very different
     /// things when reading the log, so they are counted apart.
@@ -141,7 +172,7 @@ enum CacheMaintenancePolicy {
 
 // MARK: - Report
 
-struct CacheMaintenanceReport: Equatable {
+struct CacheMaintenanceReport: Equatable, Sendable {
     var duplicateModelBlobBytes: Int64 = 0
     var orphanedModelBlobBytes: Int64 = 0
     var cloudKitAssetBytes: Int64 = 0
@@ -185,6 +216,11 @@ final class CacheMaintenanceService {
     /// isolated, and handed to the sweep as a value.
     func pruneCachesIfDue(now: Date = Date()) {
         if let lastSweep, now.timeIntervalSince(lastSweep) < Self.sweepInterval { return }
+
+        // Reserve the shared Hub cache before leaving the main actor. The
+        // filesystem sweep is deliberately off-main, so a point-in-time
+        // `isDownloading` read cannot protect the interval before removeItem.
+        guard MLXSwiftDownloadManager.shared.beginCacheMaintenance() else { return }
         lastSweep = now
 
         Task.detached(priority: .utility) {
@@ -195,14 +231,17 @@ final class CacheMaintenanceService {
             let report = await CacheMaintenanceSweep().run {
                 await MainActor.run { MLXSwiftDownloadManager.shared.isDownloading }
             }
-            guard report.didReclaimAnything else { return }
-            AppLog.shared.fileManagement(
-                "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "
-                + "model blobs: \(report.formattedDuplicateModelBlobBytes) duplicate, "
-                + "\(report.formattedOrphanedModelBlobBytes) orphaned; "
-                + "CloudKit assets: \(report.formattedCloudKitAssetBytes) "
-                + "across \(report.cloudKitAssetCount) file(s)"
-            )
+            await MainActor.run {
+                MLXSwiftDownloadManager.shared.endCacheMaintenance()
+                guard report.didReclaimAnything else { return }
+                AppLog.shared.fileManagement(
+                    "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "
+                    + "model blobs: \(report.formattedDuplicateModelBlobBytes) duplicate, "
+                    + "\(report.formattedOrphanedModelBlobBytes) orphaned; "
+                    + "CloudKit assets: \(report.formattedCloudKitAssetBytes) "
+                    + "across \(report.cloudKitAssetCount) file(s)"
+                )
+            }
         }
     }
 }
@@ -266,11 +305,20 @@ struct CacheMaintenanceSweep {
 
         for directory in directChildren(of: hubCacheRoot) {
             guard isDirectory(directory),
-                  CacheMaintenancePolicy.modelID(
+                  let modelID = CacheMaintenancePolicy.modelID(
                       forHubRepoDirectoryName: directory.lastPathComponent
-                  ) != nil else {
+                  ) else {
                 continue
             }
+
+            // A process can die between two file copies, after a complete blob
+            // has been promoted, or with only config.json materialized. Keep the
+            // durable resume state until a complete materialized model exists.
+            guard !shouldKeepRepositoryForResume(
+                directory,
+                modelID: modelID,
+                materializedModelsRoot: materializedModelsRoot
+            ) else { continue }
 
             // Sizing walks the whole repository, which for a multi-gigabyte model is
             // far from instant. Nothing slow may sit between the download check and
@@ -303,21 +351,72 @@ struct CacheMaintenanceSweep {
         }
     }
 
-    /// A model counts as installed only once its `config.json` is present — the
-    /// same check `MLXSwiftDownloadManager` uses to decide a model is usable. A
-    /// half-materialized directory is treated as not installed, which at worst
-    /// files its blobs under "orphaned"; either way they are safe to remove,
-    /// because a download is not in flight.
+    /// A model counts as installed only once its configuration and weights are
+    /// present. A half-materialized directory must not make its blob cache look
+    /// like a duplicate or make the download manager report a usable model.
     private func installedModelIDs(under root: URL) -> Set<String> {
         var ids = Set<String>()
         for namespace in directChildren(of: root) where isDirectory(namespace) {
             for repository in directChildren(of: namespace) where isDirectory(repository) {
-                let configURL = repository.appendingPathComponent("config.json")
-                guard fileManager.fileExists(atPath: configURL.path) else { continue }
+                guard CacheMaintenancePolicy.isMaterializedModelComplete(at: repository) else { continue }
                 ids.insert("\(namespace.lastPathComponent)/\(repository.lastPathComponent)")
             }
         }
         return ids
+    }
+
+    private func shouldKeepRepositoryForResume(
+        _ directory: URL,
+        modelID: String,
+        materializedModelsRoot: URL
+    ) -> Bool {
+        if let materializedDirectory = materializedModelDirectory(
+            for: modelID,
+            under: materializedModelsRoot
+        ) {
+            if CacheMaintenancePolicy.isMaterializedModelComplete(at: materializedDirectory) {
+                return false
+            }
+            if isDirectory(materializedDirectory) {
+                return true
+            }
+        }
+
+        if containsIncompleteBlob(in: directory) {
+            return true
+        }
+
+        // This marker survives a crash or force-quit. It covers the small window
+        // after a blob is promoted but before the corresponding materialized file
+        // is copied, when neither the `.incomplete` file nor config.json is enough.
+        return UserDefaults.standard.string(
+            forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID
+        ) == modelID
+    }
+
+    private func materializedModelDirectory(for modelID: String, under root: URL) -> URL? {
+        let components = modelID.split(separator: "/", maxSplits: 1)
+        guard components.count == 2 else { return nil }
+        return root
+            .appendingPathComponent(String(components[0]), isDirectory: true)
+            .appendingPathComponent(String(components[1]), isDirectory: true)
+    }
+
+    private func containsIncompleteBlob(in repository: URL) -> Bool {
+        let blobs = repository.appendingPathComponent("blobs", isDirectory: true)
+        guard let enumerator = fileManager.enumerator(
+            at: blobs,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return false
+        }
+
+        while let file = enumerator.nextObject() as? URL {
+            guard file.pathExtension == "incomplete" else { continue }
+            if isRegularFile(file) { return true }
+        }
+        return false
     }
 
     // MARK: CloudKit asset cache

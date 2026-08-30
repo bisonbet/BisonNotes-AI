@@ -12,6 +12,16 @@ import XCTest
 
 final class CacheMaintenanceTests: XCTestCase {
 
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+    }
+
+    override func tearDownWithError() throws {
+        UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+        try super.tearDownWithError()
+    }
+
     // MARK: - Hub repository directory naming
 
     func testHubRepoDirectoryNameMatchesHuggingFaceLayout() {
@@ -212,7 +222,9 @@ final class CacheMaintenanceTests: XCTestCase {
     /// materialized copies, the two layouts `defaultHubApi` writes.
     private func makeCachesRoot(
         hubRepos: [String],
-        installedModels: [String]
+        installedModels: [String],
+        partialModels: [String] = [],
+        incompleteHubRepos: [String] = []
     ) throws -> URL {
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("SweepTests-\(UUID().uuidString)", isDirectory: true)
@@ -226,9 +238,22 @@ final class CacheMaintenanceTests: XCTestCase {
             try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
             try Data(repeating: 0x62, count: 1_024)
                 .write(to: blobs.appendingPathComponent("blob0"))
+            if incompleteHubRepos.contains(repo) {
+                try Data(repeating: 0x63, count: 128)
+                    .write(to: blobs.appendingPathComponent("blob1.incomplete"))
+            }
         }
 
         for model in installedModels {
+            let dir = root.appendingPathComponent("models", isDirectory: true)
+                .appendingPathComponent(model, isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+            try Data(repeating: 0x64, count: 128)
+                .write(to: dir.appendingPathComponent("model.safetensors"))
+        }
+
+        for model in partialModels {
             let dir = root.appendingPathComponent("models", isDirectory: true)
                 .appendingPathComponent(model, isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -284,6 +309,39 @@ final class CacheMaintenanceTests: XCTestCase {
 
         XCTAssertTrue(hubRepoExists("models--org--installed", in: root))
         XCTAssertTrue(hubRepoExists("models--org--deleted", in: root))
+        XCTAssertEqual(report.removedDirectoryCount, 0)
+    }
+
+    func testIncompleteMaterializedModelRetainsItsResumeCache() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--partial"],
+            installedModels: [],
+            partialModels: ["org/partial"],
+            incompleteHubRepos: ["models--org--partial"]
+        )
+        let partialDirectory = root.appendingPathComponent("models/org/partial", isDirectory: true)
+
+        XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: partialDirectory))
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+
+        XCTAssertTrue(hubRepoExists("models--org--partial", in: root))
+        XCTAssertEqual(report.removedDirectoryCount, 0)
+    }
+
+    func testPersistedInFlightModelRetainsBlobCacheAfterRelaunch() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--marked"],
+            installedModels: []
+        )
+        UserDefaults.standard.set(
+            "org/marked",
+            forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID
+        )
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+
+        XCTAssertTrue(hubRepoExists("models--org--marked", in: root))
         XCTAssertEqual(report.removedDirectoryCount, 0)
     }
 

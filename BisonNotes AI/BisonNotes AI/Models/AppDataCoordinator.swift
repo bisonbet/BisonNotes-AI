@@ -323,9 +323,11 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            if let transcriptId {
+            for transcriptId in transcriptIds {
                 // The marker is already queued; this only removes the local row.
-                // Works when the request's relationship is stale, too.
+                // Remove every identity collected above, including stale ids from
+                // the recording and summary relationships. Otherwise backup can
+                // select an older remaining row and recreate the deleted transcript.
                 try coreDataManager.deleteTranscript(id: transcriptId, enqueueCloudDeletion: false)
                 committedTranscriptIds.insert(transcriptId)
             }

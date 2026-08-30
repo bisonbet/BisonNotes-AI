@@ -5732,20 +5732,42 @@ extension iCloudStorageManager {
 
         var changed = false
         clearAudioBackupFields(on: record, changed: &changed)
-        updateStringField(Self.fieldRecordingURL, value: nil, on: record, changed: &changed)
-        updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &changed)
-        updateStringField(
-            Self.fieldTranscriptionStatus,
-            value: ProcessingStatus.notStarted.rawValue,
-            on: record,
-            changed: &changed
+
+        // The audio removal is an explicit destructive intent, but it must not
+        // turn a newer edit into an older record just because this device's
+        // deletion marker arrived late. Preserve newer metadata and only clear
+        // the audio fields in that case; the normal backup arbitration then keeps
+        // the newer cloud relationships and processing state as well.
+        let cloudTimestamp = backupRecordContentTimestamp(
+            record,
+            keys: Self.recordingContentTimestampKeys
         )
-        updateDateField(
-            Self.fieldLastModified,
-            value: pendingRemoval.requestedAt,
-            on: record,
-            changed: &changed
+        let shouldApplyRemovalMetadata = Self.shouldUploadLocalVersion(
+            localTimestamp: pendingRemoval.requestedAt,
+            cloudTimestamp: cloudTimestamp
         )
+        if shouldApplyRemovalMetadata {
+            updateStringField(Self.fieldRecordingURL, value: nil, on: record, changed: &changed)
+            updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &changed)
+            updateStringField(
+                Self.fieldTranscriptionStatus,
+                value: ProcessingStatus.notStarted.rawValue,
+                on: record,
+                changed: &changed
+            )
+            updateDateField(
+                Self.fieldLastModified,
+                value: pendingRemoval.requestedAt,
+                on: record,
+                changed: &changed
+            )
+        } else {
+            AppLog.shared.iCloudSync(
+                "Preserved newer cloud metadata while removing imported audio for " +
+                    "\(pendingRemoval.recordingId.uuidString)",
+                level: .debug
+            )
+        }
         markBackupRecordActive(record, changed: &changed)
 
         guard changed else {

@@ -181,6 +181,11 @@ extension AudioRecorderViewModel {
                 reason: "The selected microphone did not provide any audio after automatic recovery."
             )
         } else {
+            // The failed engine still owns the current scratch segment. Seal it
+            // before switching to system-only capture; otherwise a later
+            // reconnect treats this as an already-waiting recording and replaces
+            // the engine without ever adding this segment to the finalization set.
+            sealMacScratchSegment()
             if continueMacSystemAudioWithoutMicrophone(
                 after: NSError(
                     domain: "AudioRecorderViewModel.Mac",
