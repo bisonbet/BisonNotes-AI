@@ -913,7 +913,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
 		stopInterruptionWatchdog()
-		clearDeferredRecoverySnapshot()
+		clearDeferredRecoverySnapshotForCurrentRecording()
 		#endif
 		finishRecordingStartup()
 		// Handle live transcription path
@@ -1032,7 +1032,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 		recoveryCoordinator.invalidateRecordingSession(reason: reason ?? "live transcription stopped")
 		callInterruptionTracker.removeAll()
 		stopInterruptionWatchdog()
-		clearDeferredRecoverySnapshot()
+		clearDeferredRecoverySnapshotForCurrentRecording()
 		#endif
 
 		isUsingLiveTranscription = false

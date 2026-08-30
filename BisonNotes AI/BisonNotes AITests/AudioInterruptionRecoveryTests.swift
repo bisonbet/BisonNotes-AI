@@ -443,6 +443,70 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         }
     }
 
+    func testParkedRecoverySnapshotsDoNotOverwriteEachOther() throws {
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let snapshotURL = documents.appendingPathComponent("deferred-recovery.json")
+        let firstMain = documents.appendingPathComponent("test-parked-a.m4a")
+        let secondMain = documents.appendingPathComponent("test-parked-b.m4a")
+        for url in [firstMain, secondMain] {
+            try Data("audio".utf8).write(to: url)
+        }
+        defer {
+            for url in [firstMain, secondMain, snapshotURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+
+        let manager = EnhancedAudioSessionManager()
+        let viewModel = AudioRecorderViewModel(audioSessionManager: manager)
+        try? FileManager.default.removeItem(at: snapshotURL)
+
+        // Session A parks its segment, then session B — which superseded it —
+        // parks its own. B's write must not erase A's only durable pointer.
+        viewModel.persistRecoverySnapshot(
+            segments: [firstMain],
+            mainRecordingURL: firstMain,
+            currentSegmentIndex: 0
+        )
+        viewModel.persistRecoverySnapshot(
+            segments: [secondMain],
+            mainRecordingURL: secondMain,
+            currentSegmentIndex: 0
+        )
+
+        XCTAssertEqual(
+            try parkedMainFilenames(at: snapshotURL),
+            ["test-parked-a.m4a", "test-parked-b.m4a"]
+        )
+
+        // Retiring one entry leaves the other reachable.
+        viewModel.clearDeferredRecoverySnapshot(forKey: "test-parked-a.m4a")
+        XCTAssertEqual(try parkedMainFilenames(at: snapshotURL), ["test-parked-b.m4a"])
+
+        viewModel.clearDeferredRecoverySnapshotEntries(containing: secondMain)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshotURL.path))
+    }
+
+    private func parkedMainFilenames(at snapshotURL: URL) throws -> [String] {
+        let data = try Data(contentsOf: snapshotURL)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let entries = try XCTUnwrap(object?["entries"] as? [[String: Any]])
+        return entries.compactMap { $0["mainRecordingFilename"] as? String }.sorted()
+    }
+
+    func testReclaimedRecordingIsNamedFromItsOwnCaptureDate() {
+        let captured = Date(timeIntervalSince1970: 1_700_000_000)
+        let name = AudioRecorderViewModel.appRecordingDisplayName(capturedAt: captured)
+        XCTAssertTrue(name.hasPrefix("apprecording-"))
+        // The successor session's start time must not be able to produce this.
+        XCTAssertNotEqual(
+            name,
+            AudioRecorderViewModel.appRecordingDisplayName(capturedAt: Date())
+        )
+    }
+
     func testCallKitCorrelationClearsOnlyMatchingUUIDAndFallsBackToInterruptionTime() {
         var tracker = CallInterruptionTracker()
         let firstID = UUID()

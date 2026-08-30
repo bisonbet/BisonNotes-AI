@@ -196,8 +196,16 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 
 			// Deactivate audio session after either a successful save or a rejected
 			// current-attempt artifact — but never out from under a recording that
-			// started while this completion was being finalized.
+			// started while this completion was being finalized. The UI flags are
+			// not enough: a newer session in coordinated recovery has both
+			// `isRecording` and `isStartingRecording` false while it finalizes and
+			// activates, and deactivating there fails its continuation.
+			#if os(iOS)
+			guard self.recordingSessionID == finalizationSessionID,
+				  !self.recordingIntentActive else { return }
+			#else
 			guard !isRecording, !isStartingRecording else { return }
+			#endif
 			try? await self.enhancedAudioSessionManager.deactivateSession()
 		}
 	}
@@ -508,10 +516,18 @@ extension AudioRecorderViewModel {
 
 	/// Generates a standardized display name for app-created recordings
 	func generateAppRecordingDisplayName() -> String {
+		Self.appRecordingDisplayName(capturedAt: recordingStartedAt?.date ?? Date())
+	}
+
+	/// The same display name for a recording whose own capture date is known.
+	///
+	/// A reclaimed recording is persisted while a newer session owns
+	/// `recordingStartedAt`, so it must be named from its own timestamp rather
+	/// than from whatever live state happens to be current.
+	static func appRecordingDisplayName(capturedAt date: Date) -> String {
 		let formatter = DateFormatter()
 		formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-		let timestamp = formatter.string(from: recordingStartedAt?.date ?? Date())
-		return "apprecording-\(timestamp)"
+		return "apprecording-\(formatter.string(from: date))"
 	}
 
 	/// Creates a standardized name for imported files

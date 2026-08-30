@@ -77,9 +77,16 @@ extension AudioRecorderViewModel {
 		// Derived before the asset loads and export suspend. This recording is
 		// already stopped; re-deriving its name, date and location after those
 		// awaits would stamp it with whatever session is current by then.
-		let capturedName = generateAppRecordingDisplayName()
+		//
+		// A reclaim runs after the successor session has replaced that state
+		// outright, so it takes its date from the recording's own sidecar and its
+		// name from that date, and carries no location rather than the new
+		// session's.
 		let capturedDate = currentRecordingDate(for: mainURL)
-		let capturedLocation = recordingLocationSnapshot()
+		let capturedName = ownsLiveRecordingState
+			? generateAppRecordingDisplayName()
+			: Self.appRecordingDisplayName(capturedAt: capturedDate)
+		let capturedLocation = ownsLiveRecordingState ? recordingLocationSnapshot() : nil
 
 		AppLog.shared.recording("Merging \(segments.count) segments")
 

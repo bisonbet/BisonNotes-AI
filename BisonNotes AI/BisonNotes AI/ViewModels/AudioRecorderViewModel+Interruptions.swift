@@ -446,7 +446,7 @@ extension AudioRecorderViewModel {
 		recoveryCoordinator.invalidateRecordingSession(reason: "terminal interruption: \(reason)")
 		callInterruptionTracker.removeAll()
 		stopInterruptionWatchdog()
-		clearDeferredRecoverySnapshot()
+		clearDeferredRecoverySnapshotForCurrentRecording()
 		#endif
 		recordingBeingProcessed = true
 
@@ -753,6 +753,9 @@ extension AudioRecorderViewModel {
 			AppLog.shared.audioSession("Recording already exists in database: \(existingRecordingName)", level: .debug)
 			AppLog.shared.audioSession("Recording already processed, clearing recording URL", level: .debug)
 			await MainActor.run {
+				#if os(iOS)
+				self.clearDeferredRecoverySnapshotEntries(containing: recordingURL)
+				#endif
 				self.recordingURL = nil // Clear so we don't keep checking
 			}
 			return
@@ -810,7 +813,11 @@ extension AudioRecorderViewModel {
 					// Post notification to refresh UI
 					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
 
-					// Clear the recording URL since it's now processed
+					// Clear the recording URL since it's now processed, along with
+					// any deferred-recovery trail this file was parked under.
+					#if os(iOS)
+					self.clearDeferredRecoverySnapshotEntries(containing: url)
+					#endif
 					self.recordingURL = nil
 					self.recordingBeingProcessed = false
 					self.resetRecordingLocation()
