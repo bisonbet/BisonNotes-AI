@@ -29,6 +29,23 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 		}
 	}
 
+	/// Whether a finished recording's completion may release the shared session.
+	///
+	/// Deactivate after either a successful save or a rejected current-attempt
+	/// artifact — but never out from under a recording that started while this
+	/// completion was being finalized. The UI flags alone are not enough: a newer
+	/// session in coordinated recovery has both `isRecording` and
+	/// `isStartingRecording` false while it finalizes and activates, and
+	/// deactivating there fails its continuation.
+	@MainActor
+	func canDeactivateSession(afterFinalizing finalizationSessionID: UUID?) -> Bool {
+		#if os(iOS)
+		return recordingSessionID == finalizationSessionID && !recordingIntentActive
+		#else
+		return !isRecording && !isStartingRecording
+		#endif
+	}
+
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
 		let finishedURL = recorder.url
 		Task { @MainActor [weak self] in
@@ -81,7 +98,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 			// torn down (or have its audio session deactivated) by the previous
 			// recording's completion.
 			#if os(iOS)
-			let finalizationSessionID = recordingSessionID
+			let finalizationSessionID: UUID? = recordingSessionID
+			#else
+			let finalizationSessionID: UUID? = nil
 			#endif
 			let finalizationIsCurrent: @MainActor (URL) -> Bool = { url in
 				#if os(iOS)
@@ -194,18 +213,7 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				recordingBeingProcessed = false
 			}
 
-			// Deactivate audio session after either a successful save or a rejected
-			// current-attempt artifact — but never out from under a recording that
-			// started while this completion was being finalized. The UI flags are
-			// not enough: a newer session in coordinated recovery has both
-			// `isRecording` and `isStartingRecording` false while it finalizes and
-			// activates, and deactivating there fails its continuation.
-			#if os(iOS)
-			guard self.recordingSessionID == finalizationSessionID,
-				  !self.recordingIntentActive else { return }
-			#else
-			guard !isRecording, !isStartingRecording else { return }
-			#endif
+			guard canDeactivateSession(afterFinalizing: finalizationSessionID) else { return }
 			try? await self.enhancedAudioSessionManager.deactivateSession()
 		}
 	}

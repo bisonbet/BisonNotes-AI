@@ -385,11 +385,18 @@ extension AudioRecorderViewModel {
 		writeDeferredRecoveryEntries(survivors)
 	}
 
+	/// One recording parked on disk, resolved against the current container.
+	private struct ParkedRecovery {
+		let key: String
+		let segments: [URL]
+		let mainURL: URL
+	}
+
 	/// Every parked recording whose audio is still on disk, oldest first.
 	///
 	/// Entries whose files have all gone are pruned as they are read.
 	@MainActor
-	private func parkedDeferredRecoveries() -> [(key: String, segments: [URL], mainURL: URL)] {
+	private func parkedDeferredRecoveries() -> [ParkedRecovery] {
 		guard let documentsPath = FileManager.default
 			.urls(for: .documentDirectory, in: .userDomainMask).first else {
 			return []
@@ -397,7 +404,7 @@ extension AudioRecorderViewModel {
 
 		let entries = loadDeferredRecoveryEntries()
 		var survivingEntries: [DeferredRecoverySnapshot] = []
-		var parked: [(key: String, segments: [URL], mainURL: URL)] = []
+		var parked: [ParkedRecovery] = []
 		for entry in entries.sorted(by: { $0.deferredAt < $1.deferredAt }) {
 			let segments = entry.segmentFilenames
 				.map { documentsPath.appendingPathComponent($0) }
@@ -406,7 +413,7 @@ extension AudioRecorderViewModel {
 			survivingEntries.append(entry)
 			let mainURL = entry.mainRecordingFilename
 				.map { documentsPath.appendingPathComponent($0) } ?? firstSegment
-			parked.append((key, segments, mainURL))
+			parked.append(ParkedRecovery(key: key, segments: segments, mainURL: mainURL))
 		}
 		if survivingEntries.count != entries.count {
 			writeDeferredRecoveryEntries(survivingEntries)
@@ -468,7 +475,7 @@ extension AudioRecorderViewModel {
 	/// land, the surviving segments are written back so the next pass can retry.
 	@MainActor
 	private func releaseReclaimedRecoverySnapshot(
-		for parked: (key: String, segments: [URL], mainURL: URL),
+		for parked: ParkedRecovery,
 		persistedURL: URL
 	) {
 		if let appCoordinator, appCoordinator.getRecording(url: persistedURL) != nil {
