@@ -1467,24 +1467,19 @@ struct TranscriptsView: View {
             if shouldDeleteImportedRecording {
                 appCoordinator.deleteRecording(id: request.recordingId)
                 AppLog.shared.transcription("Deleted imported transcript and its recording entry")
-            } else if let transcriptId = request.transcriptId {
-                try await appCoordinator.deleteTranscript(id: transcriptId)
-                if request.imported {
-                    recording.recordingURL = nil
-                    recording.lastModified = Date()
-                    try? appCoordinator.coreDataManager.saveContext()
+            } else if request.imported {
+                try await appCoordinator.deleteImportedTranscriptPreservingSummary(
+                    recordingId: request.recordingId,
+                    transcriptId: request.transcriptId
+                )
+                if request.transcriptId != nil {
                     AppLog.shared.transcription("Deleted imported transcript, preserved summary")
                 } else {
-                    AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
+                    AppLog.shared.transcription("Removed unavailable imported transcript, preserved summary")
                 }
-            } else if request.imported {
-                // There is no transcript row to delete, but a summary may still be
-                // anchored to this imported recording. Preserve that summary while
-                // removing the temporary audio relationship.
-                recording.recordingURL = nil
-                recording.lastModified = Date()
-                try? appCoordinator.coreDataManager.saveContext()
-                AppLog.shared.transcription("Removed unavailable imported transcript, preserved summary")
+            } else if let transcriptId = request.transcriptId {
+                try await appCoordinator.deleteTranscript(id: transcriptId)
+                AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
             } else {
                 AppLog.shared.transcription("Cannot delete transcript: no transcript ID", level: .error)
             }

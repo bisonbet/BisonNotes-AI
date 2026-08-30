@@ -2776,6 +2776,7 @@ extension iCloudStorageManager {
     private static let pendingLocalOnlyRemovalsKey = "iCloudPendingLocalOnlyRemovalsV1"
     private static let pendingSummaryRemovalsKey = "iCloudPendingSummaryRemovalsV1"
     private static let pendingTranscriptRemovalsKey = "iCloudPendingTranscriptRemovalsV1"
+    private static let pendingImportedAudioRemovalsKey = "iCloudPendingImportedAudioRemovalsV1"
     private static let backupRecordingRecordPrefix = "backup_recording_"
     private static let backupTranscriptRecordPrefix = "backup_transcript_"
     private static let backupSummaryRecordPrefix = "backup_summary_"
@@ -2804,6 +2805,11 @@ extension iCloudStorageManager {
     private struct PendingSummaryCloudRemoval: Codable, Equatable {
         let summaryId: UUID
         var recordingId: UUID?
+        let requestedAt: Date
+    }
+
+    private struct PendingImportedAudioRemoval: Codable, Equatable {
+        let recordingId: UUID
         let requestedAt: Date
     }
 
@@ -3242,6 +3248,7 @@ extension iCloudStorageManager {
             options: options
         )
         if activeManifestMigrationCompleted,
+           pendingImportedAudioRemovals.isEmpty,
            UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) == currentBackupStateSignature {
             let hasCloudContentBackup = try await cloudHasAnyContentBackupRecord()
             if hasCloudContentBackup {
@@ -3318,8 +3325,12 @@ extension iCloudStorageManager {
                 recordName: makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
             )
             let existingRecord = snapshot.recordings[recordID]
+            let hasPendingImportedAudioRemoval = pendingImportedAudioRemovals.contains {
+                $0.recordingId == recordingId
+            }
 
             if let existingRecord,
+               !hasPendingImportedAudioRemoval,
                !Self.shouldUploadLocalVersion(
                    localTimestamp: localRecordingContentTimestamp(recording),
                    cloudTimestamp: backupRecordContentTimestamp(
@@ -3348,6 +3359,9 @@ extension iCloudStorageManager {
             let probe = existingRecord
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: recordID)
             applyRecordingFields(recording, to: probe, changed: &changed)
+            if hasPendingImportedAudioRemoval {
+                clearAudioBackupFields(on: probe, changed: &changed)
+            }
             if changed {
                 recordingsNeedingUpload.append((recording, recordID))
             } else if options.includeAudioFiles, existingRecord?[Self.fieldAudioSignature] == nil {
@@ -3456,6 +3470,9 @@ extension iCloudStorageManager {
         var remoteWinnersFoundWhileWriting: [CKRecord] = []
 
         for entry in recordingsNeedingUpload {
+            let hasPendingImportedAudioRemoval = entry.recording.id.map { recordingId in
+                pendingImportedAudioRemovals.contains { $0.recordingId == recordingId }
+            } ?? false
             let record = recordingRecordsToWrite[entry.recordID]
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: entry.recordID)
 
@@ -3465,6 +3482,7 @@ extension iCloudStorageManager {
             // it, because the tag we hold is the one that edit produced. Arbitrate
             // once more against what actually came back.
             if let refetched = recordingRecordsToWrite[entry.recordID],
+               !hasPendingImportedAudioRemoval,
                !Self.shouldUploadLocalVersion(
                    localTimestamp: localRecordingContentTimestamp(entry.recording),
                    cloudTimestamp: backupRecordContentTimestamp(
@@ -3496,6 +3514,9 @@ extension iCloudStorageManager {
                     result.audioFilesBackedUp += 1
                 }
             }
+            if hasPendingImportedAudioRemoval {
+                clearAudioBackupFields(on: record, changed: &changed)
+            }
             recordsToSave.append(record)
         }
 
@@ -3513,6 +3534,10 @@ extension iCloudStorageManager {
                 changed: &changed
             ) {
                 result.audioFilesBackedUp += 1
+            }
+            if let recordingId = entry.recording.id,
+               pendingImportedAudioRemovals.contains(where: { $0.recordingId == recordingId }) {
+                clearAudioBackupFields(on: record, changed: &changed)
             }
             if changed {
                 recordsToSave.append(record)
@@ -3586,6 +3611,19 @@ extension iCloudStorageManager {
         // record that failed to upload, and never keeps one that was deleted.
         let settledManifest = try await applyManifestDelta(manifestDelta)
         recorder?.endPhase()
+
+        let settledRecordsByID = Dictionary(uniqueKeysWithValues: settledRecords.map { ($0.recordID, $0) })
+        for pendingRemoval in pendingImportedAudioRemovals {
+            let recordID = CKRecord.ID(
+                recordName: makeBackupRecordName(
+                    prefix: Self.backupRecordingRecordPrefix,
+                    id: pendingRemoval.recordingId
+                )
+            )
+            guard let settledRecord = settledRecordsByID[recordID],
+                  !hasAudioBackupFields(settledRecord) else { continue }
+            clearPendingImportedAudioRemoval(recordingId: pendingRemoval.recordingId)
+        }
 
         // The settled manifest, not this run's arithmetic on a snapshot that may
         // already be stale: where another device added or removed an entry while
@@ -5500,6 +5538,11 @@ extension iCloudStorageManager {
         set { Self.storePendingCloudMutations(newValue, key: Self.pendingTranscriptRemovalsKey) }
     }
 
+    private var pendingImportedAudioRemovals: [PendingImportedAudioRemoval] {
+        get { Self.decodePendingCloudMutations(PendingImportedAudioRemoval.self, key: Self.pendingImportedAudioRemovalsKey) }
+        set { Self.storePendingCloudMutations(newValue, key: Self.pendingImportedAudioRemovalsKey) }
+    }
+
     private static func decodePendingCloudMutations<T: Decodable>(_ type: T.Type, key: String) -> [T] {
         guard let data = UserDefaults.standard.data(forKey: key) else {
             return []
@@ -5545,6 +5588,7 @@ extension iCloudStorageManager {
             ))
         }
         pendingCloudDeletionMarkers = queue
+        pendingImportedAudioRemovals.removeAll { $0.recordingId == recordingId }
         let deletedSummaryIds = Set(summaryIds)
         pendingSyncQueue.removeAll { summary in
             summary.recordingId == recordingId || deletedSummaryIds.contains(summary.id)
@@ -5607,6 +5651,22 @@ extension iCloudStorageManager {
         publishMaintenanceMessage("Deleted transcripts will be removed from iCloud sync records when iCloud sync is available.")
     }
 
+    /// Records an explicit user request to remove an imported recording's temporary
+    /// audio while retaining its summary. A missing local file is otherwise treated
+    /// as an environmental condition and must not clear a healthy cloud asset.
+    func enqueueImportedAudioRemovalFromiCloud(
+        recordingId: UUID,
+        requestedAt: Date = Date()
+    ) {
+        var queue = pendingImportedAudioRemovals
+        if !queue.contains(where: { $0.recordingId == recordingId }) {
+            queue.append(PendingImportedAudioRemoval(recordingId: recordingId, requestedAt: requestedAt))
+            pendingImportedAudioRemovals = queue
+        }
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        publishMaintenanceMessage("Deleted imported audio will be removed from iCloud sync records when iCloud sync is available.")
+    }
+
     func clearPendingLocalOnlyCloudRemoval(recordingId: UUID) {
         pendingLocalOnlyCloudRemovals.removeAll { $0.recordingId == recordingId }
     }
@@ -5619,8 +5679,75 @@ extension iCloudStorageManager {
         pendingTranscriptCloudRemovals.removeAll { $0.transcriptId == transcriptId }
     }
 
+    func clearPendingImportedAudioRemoval(recordingId: UUID) {
+        pendingImportedAudioRemovals.removeAll { $0.recordingId == recordingId }
+    }
+
     func clearPendingRecordingDeletion(recordingId: UUID) {
         pendingCloudDeletionMarkers.removeAll { $0.recordingId == recordingId }
+    }
+
+    /// Removes the cloud audio and placeholder relationships for an imported item
+    /// after the user explicitly deleted its temporary audio. This is deliberately
+    /// separate from `CloudAudioAssetPolicy.skippedMissingSource`: an absent file
+    /// can be an ordinary device condition, while this queue is an intentional
+    /// destructive action that must survive an offline period.
+    private func markImportedAudioRemovedInCloud(
+        _ pendingRemoval: PendingImportedAudioRemoval
+    ) async throws {
+        let recordID = CKRecord.ID(
+            recordName: makeBackupRecordName(
+                prefix: Self.backupRecordingRecordPrefix,
+                id: pendingRemoval.recordingId
+            )
+        )
+        let fetchOutcome = try await cloudExecutor.fetch([recordID])
+        recordMetrics(fetch: fetchOutcome)
+        try fetchOutcome.throwIfIncomplete()
+
+        guard let record = fetchOutcome.records[recordID] else {
+            // The recording was already removed from CloudKit. There is no asset
+            // left for this intent to clear, so the durable work is complete.
+            clearPendingImportedAudioRemoval(recordingId: pendingRemoval.recordingId)
+            return
+        }
+
+        var changed = false
+        clearAudioBackupFields(on: record, changed: &changed)
+        updateStringField(Self.fieldRecordingURL, value: nil, on: record, changed: &changed)
+        updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &changed)
+        updateStringField(
+            Self.fieldTranscriptionStatus,
+            value: ProcessingStatus.notStarted.rawValue,
+            on: record,
+            changed: &changed
+        )
+        updateDateField(
+            Self.fieldLastModified,
+            value: pendingRemoval.requestedAt,
+            on: record,
+            changed: &changed
+        )
+        markBackupRecordActive(record, changed: &changed)
+
+        guard changed else {
+            clearPendingImportedAudioRemoval(recordingId: pendingRemoval.recordingId)
+            return
+        }
+
+        let saveOutcome = try await saveBackupRecords([record])
+        let settledRecord = saveOutcome.settledRecords.first { $0.recordID == recordID }
+        guard let settledRecord, !hasAudioBackupFields(settledRecord) else {
+            // Do not report completion until a server winner without the old asset
+            // has been observed. The next sync will retry the durable intent.
+            throw CloudSyncUnsettledRecordsError(recordCount: 1)
+        }
+
+        clearPendingImportedAudioRemoval(recordingId: pendingRemoval.recordingId)
+        AppLog.shared.iCloudSync(
+            "Recorded imported audio removal for \(pendingRemoval.recordingId.uuidString)",
+            level: .debug
+        )
     }
 
     private static func mergedUUIDs(_ lhs: [UUID], _ rhs: [UUID]) -> [UUID] {
@@ -5661,6 +5788,7 @@ extension iCloudStorageManager {
         var flushedLocalOnlyRemovals = 0
         var flushedSummaryRemovals = 0
         var flushedTranscriptRemovals = 0
+        var flushedImportedAudioRemovals = 0
 
         for pendingDeletion in pendingCloudDeletionMarkers {
             try await markRecordingDeletedIniCloud(
@@ -5707,13 +5835,20 @@ extension iCloudStorageManager {
             flushedLocalOnlyRemovals += 1
         }
 
+        for pendingRemoval in pendingImportedAudioRemovals {
+            try await markImportedAudioRemovedInCloud(pendingRemoval)
+            flushedImportedAudioRemovals += 1
+        }
+
         if flushedDeletions > 0 || flushedLocalOnlyRemovals > 0 ||
-            flushedTranscriptRemovals > 0 || flushedSummaryRemovals > 0 {
+            flushedTranscriptRemovals > 0 || flushedSummaryRemovals > 0 ||
+            flushedImportedAudioRemovals > 0 {
             AppLog.shared.iCloudSync(
                 "Flushed pending iCloud mutations - deletions: \(flushedDeletions), " +
                     "local-only removals: \(flushedLocalOnlyRemovals), " +
                     "transcript removals: \(flushedTranscriptRemovals), " +
-                    "summary removals: \(flushedSummaryRemovals)",
+                    "summary removals: \(flushedSummaryRemovals), " +
+                    "imported audio removals: \(flushedImportedAudioRemovals)",
                 level: .debug
             )
         }
@@ -5727,7 +5862,8 @@ extension iCloudStorageManager {
         pendingCloudDeletionMarkers.count +
             pendingTranscriptCloudRemovals.count +
             pendingSummaryCloudRemovals.count +
-            pendingLocalOnlyCloudRemovals.count
+            pendingLocalOnlyCloudRemovals.count +
+            pendingImportedAudioRemovals.count
     }
 
     #if DEBUG
@@ -5747,6 +5883,10 @@ extension iCloudStorageManager {
         pendingTranscriptCloudRemovals.count
     }
 
+    var pendingImportedAudioRemovalCountForTesting: Int {
+        pendingImportedAudioRemovals.count
+    }
+
     func pendingCloudDeletionRequestedAtForTesting(recordingId: UUID) -> Date? {
         pendingCloudDeletionMarkers.first { $0.recordingId == recordingId }?.requestedAt
     }
@@ -5756,6 +5896,7 @@ extension iCloudStorageManager {
         pendingLocalOnlyCloudRemovals = []
         pendingSummaryCloudRemovals = []
         pendingTranscriptCloudRemovals = []
+        pendingImportedAudioRemovals = []
     }
     #endif
 
@@ -6686,6 +6827,30 @@ extension iCloudStorageManager {
             record[key] = value as CKRecordValue?
             changed = true
         }
+    }
+
+    private func clearRecordField(
+        _ key: String,
+        on record: CKRecord,
+        changed: inout Bool
+    ) {
+        guard record[key] != nil else { return }
+        record[key] = nil
+        changed = true
+    }
+
+    private func clearAudioBackupFields(on record: CKRecord, changed: inout Bool) {
+        clearRecordField(Self.fieldAudioAsset, on: record, changed: &changed)
+        clearRecordField(Self.fieldAudioFileName, on: record, changed: &changed)
+        clearRecordField(Self.fieldAudioByteCount, on: record, changed: &changed)
+        clearRecordField(Self.fieldAudioSignature, on: record, changed: &changed)
+    }
+
+    private func hasAudioBackupFields(_ record: CKRecord) -> Bool {
+        record[Self.fieldAudioAsset] != nil ||
+            record[Self.fieldAudioFileName] != nil ||
+            record[Self.fieldAudioByteCount] != nil ||
+            record[Self.fieldAudioSignature] != nil
     }
 
     private func updateDateField(
