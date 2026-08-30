@@ -166,13 +166,26 @@ extension AudioRecorderViewModel {
 		}
 
 		recoveryCoordinator.updatePhase(.stoppedOrRecovered, for: request.id)
-		clearDeferredRecoverySnapshotForCurrentRecording()
 		resetRecordingStateAfterRecoveryFailure(reason: reason)
 
 		recordingSegments = existingRecordingSegments()
 		recordingURL = recordingSegments.last
 		let hasPreservedAudio = !recordingSegments.isEmpty
+		// Captured before persistence, which clears both on a successful merge.
+		// This recording may have been parked by an earlier deferral, making its
+		// snapshot the only durable index of these segments, so the entry is
+		// retired below on the database row rather than up front.
+		let preservedSegments = recordingSegments
+		let preservedMainURL = mainRecordingURL ?? preservedSegments.first
+		let persistedURL = preservedSegments.count > 1
+			? preservedMainURL
+			: preservedSegments.first
 		await persistTerminatedRecoverySegments(for: request, reason: reason)
+		releaseTerminatedRecoverySnapshot(
+			segments: preservedSegments,
+			mainURL: preservedMainURL,
+			persistedURL: persistedURL
+		)
 		guard recoveryCoordinator.accepts(request),
 			  recordingSessionID == request.recordingSessionID else {
 			return .cancelled
@@ -193,6 +206,42 @@ extension AudioRecorderViewModel {
 			"Terminated audio recovery \(request.id.uuidString); preservedSegments=\(recordingSegments.count)"
 		)
 		return .stopped
+	}
+
+	/// Retire this recording's parked entry only once its audio is saved.
+	///
+	/// A terminal recovery can be the end of a session that was deferred earlier,
+	/// so its snapshot may be the only durable index of these segments. The merge
+	/// swallows export failures and the app can be killed mid-save, so the entry
+	/// is dropped on the database row and rewritten on anything else.
+	@MainActor
+	private func releaseTerminatedRecoverySnapshot(
+		segments: [URL],
+		mainURL: URL?,
+		persistedURL: URL?
+	) {
+		let key = mainURL?.lastPathComponent ?? segments.first?.lastPathComponent
+		if let persistedURL,
+		   let appCoordinator,
+		   appCoordinator.getRecording(url: persistedURL) != nil {
+			clearDeferredRecoverySnapshot(forKey: key)
+			return
+		}
+
+		let survivors = segments.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard let mainURL, !survivors.isEmpty else {
+			clearDeferredRecoverySnapshot(forKey: key)
+			return
+		}
+		AppLog.shared.audioSession(
+			"Terminated recovery did not persist; keeping \(survivors.count) segment(s) for the next pass",
+			level: .error
+		)
+		persistRecoverySnapshot(
+			segments: survivors,
+			mainRecordingURL: mainURL,
+			currentSegmentIndex: max(survivors.count - 1, 0)
+		)
 	}
 
 	@MainActor
