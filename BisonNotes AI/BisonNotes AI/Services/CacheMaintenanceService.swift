@@ -216,6 +216,14 @@ final class CacheMaintenanceService {
 struct CacheMaintenanceSweep {
 
     private let fileManager = FileManager()
+    private let cachesRootOverride: URL?
+
+    /// - Parameter cachesRoot: overrides the container's `Library/Caches`. Only tests
+    ///   pass this; it is what lets the deletion behavior be exercised against a real
+    ///   directory tree rather than only through the pure policy.
+    init(cachesRoot: URL? = nil) {
+        self.cachesRootOverride = cachesRoot
+    }
 
     /// - Parameter isDownloadInFlight: consulted again before every model-cache
     ///   deletion, so a download that starts mid-sweep still protects its blobs.
@@ -227,7 +235,7 @@ struct CacheMaintenanceSweep {
     }
 
     private var cachesRoot: URL? {
-        fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
+        cachesRootOverride ?? fileManager.urls(for: .cachesDirectory, in: .userDomainMask).first
     }
 
     // MARK: Hugging Face blob cache
@@ -257,16 +265,27 @@ struct CacheMaintenanceSweep {
         let installed = installedModelIDs(under: materializedModelsRoot)
 
         for directory in directChildren(of: hubCacheRoot) {
-            guard isDirectory(directory) else { continue }
-            // Re-read per directory. Deleting a repo a download is actively writing
-            // would break both the download and the resume state it depends on.
+            guard isDirectory(directory),
+                  CacheMaintenancePolicy.modelID(
+                      forHubRepoDirectoryName: directory.lastPathComponent
+                  ) != nil else {
+                continue
+            }
+
+            // Sizing walks the whole repository, which for a multi-gigabyte model is
+            // far from instant. Nothing slow may sit between the download check and
+            // the delete it authorizes, so the traversal happens first and the check
+            // is read immediately before the removal — a download that starts while
+            // this is measuring is still seen. Re-read per directory, because a
+            // single reading taken before the sweep goes stale the moment it is used.
+            let size = directorySize(directory)
+
             guard let reason = CacheMaintenancePolicy.hubPruneReason(
                 directoryName: directory.lastPathComponent,
                 installedModelIDs: installed,
                 isDownloadInFlight: await isDownloadInFlight()
             ) else { continue }
 
-            let size = directorySize(directory)
             do {
                 try fileManager.removeItem(at: directory)
                 report.removedDirectoryCount += 1

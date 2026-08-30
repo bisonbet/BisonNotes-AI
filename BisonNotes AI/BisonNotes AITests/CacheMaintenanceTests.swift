@@ -206,6 +206,120 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(LogTrimPolicy.trim(lines: lines, maxLines: 100, maxBytes: 10_000), lines)
     }
 
+    // MARK: - Blob sweep, against a real directory tree
+
+    /// Builds `<caches>/huggingface/hub/models--…` blobs and `<caches>/models/…`
+    /// materialized copies, the two layouts `defaultHubApi` writes.
+    private func makeCachesRoot(
+        hubRepos: [String],
+        installedModels: [String]
+    ) throws -> URL {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("SweepTests-\(UUID().uuidString)", isDirectory: true)
+        let hub = root.appendingPathComponent("huggingface/hub", isDirectory: true)
+        try FileManager.default.createDirectory(at: hub, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+
+        for repo in hubRepos {
+            let blobs = hub.appendingPathComponent(repo, isDirectory: true)
+                .appendingPathComponent("blobs", isDirectory: true)
+            try FileManager.default.createDirectory(at: blobs, withIntermediateDirectories: true)
+            try Data(repeating: 0x62, count: 1_024)
+                .write(to: blobs.appendingPathComponent("blob0"))
+        }
+
+        for model in installedModels {
+            let dir = root.appendingPathComponent("models", isDirectory: true)
+                .appendingPathComponent(model, isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: dir.appendingPathComponent("config.json"))
+        }
+
+        return root
+    }
+
+    private func hubRepoExists(_ repo: String, in root: URL) -> Bool {
+        FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("huggingface/hub/\(repo)").path
+        )
+    }
+
+    func testSweepRemovesDuplicateAndOrphanedBlobs() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--installed", "models--org--deleted"],
+            installedModels: ["org/installed"]
+        )
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+
+        XCTAssertFalse(hubRepoExists("models--org--installed", in: root))
+        XCTAssertFalse(hubRepoExists("models--org--deleted", in: root))
+        XCTAssertEqual(report.removedDirectoryCount, 2)
+        XCTAssertGreaterThan(report.duplicateModelBlobBytes, 0)
+        XCTAssertGreaterThan(report.orphanedModelBlobBytes, 0)
+    }
+
+    /// The materialized copy is the one the app reads; the sweep must never touch it.
+    func testSweepLeavesTheMaterializedModelAlone() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--installed"],
+            installedModels: ["org/installed"]
+        )
+
+        _ = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("models/org/installed/config.json").path
+        ))
+    }
+
+    /// The blob cache is a running download's resume state.
+    func testSweepRemovesNothingWhileADownloadIsInFlight() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--installed", "models--org--deleted"],
+            installedModels: ["org/installed"]
+        )
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run { true }
+
+        XCTAssertTrue(hubRepoExists("models--org--installed", in: root))
+        XCTAssertTrue(hubRepoExists("models--org--deleted", in: root))
+        XCTAssertEqual(report.removedDirectoryCount, 0)
+    }
+
+    /// The check is re-read per directory rather than sampled once for the sweep: a
+    /// download starting mid-sweep must protect the repositories not yet reached.
+    /// A single sampled reading deleted the repository a download was writing.
+    func testDownloadCheckIsConsultedForEveryDirectory() async throws {
+        let root = try makeCachesRoot(
+            hubRepos: ["models--org--a", "models--org--b", "models--org--c"],
+            installedModels: []
+        )
+
+        let callCount = Counter()
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run {
+            // Reports "a download started" from the second directory onward.
+            await callCount.increment() > 1
+        }
+
+        let surviving = ["models--org--a", "models--org--b", "models--org--c"]
+            .filter { hubRepoExists($0, in: root) }
+        let observedCalls = await callCount.value
+        XCTAssertEqual(observedCalls, 3, "every candidate must re-read the check")
+        XCTAssertEqual(report.removedDirectoryCount, 1)
+        XCTAssertEqual(surviving.count, 2, "directories reached after the download began must survive")
+    }
+
+    func testSweepIgnoresNonModelDirectories() async throws {
+        let root = try makeCachesRoot(hubRepos: [".metadata", "datasets--org--set"], installedModels: [])
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+
+        XCTAssertTrue(hubRepoExists(".metadata", in: root))
+        XCTAssertTrue(hubRepoExists("datasets--org--set", in: root))
+        XCTAssertEqual(report.removedDirectoryCount, 0)
+    }
+
     // MARK: - Rolling log file, against real files
 
     private func makeTempLogURL() -> URL {
@@ -292,5 +406,16 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertFalse(LogExporter.isExportFileName("BisonNotes-Logs-2026-08-30T18-15-13.m4a"))
         XCTAssertFalse(LogExporter.isExportFileName("recording.txt"))
         XCTAssertFalse(LogExporter.isExportFileName("apprecording-1787583442.caf"))
+    }
+}
+
+/// Actor so the sweep's `@Sendable` check closure can count its calls.
+private actor Counter {
+    private(set) var value = 0
+
+    @discardableResult
+    func increment() -> Int {
+        value += 1
+        return value
     }
 }
