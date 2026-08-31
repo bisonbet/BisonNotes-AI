@@ -94,6 +94,8 @@ extension AudioRecorderViewModel {
 		beginBackgroundTask()
 		var temporaryURL: URL?
 		var mergeCompleted = false
+		var mergeStage = "preflight"
+		var mergeSegmentDescription = "none"
 		defer {
 			if !mergeCompleted, let temporaryURL,
 			   FileManager.default.fileExists(atPath: temporaryURL.path) {
@@ -103,6 +105,40 @@ extension AudioRecorderViewModel {
 		}
 
 		do {
+			// A route change can leave a header-only startup fragment next to a
+			// healthy continuation. One unusable fragment must not prevent the
+			// usable audio from being merged and persisted.
+			var usableSegments: [URL] = []
+			for (index, segmentURL) in segments.enumerated() {
+				guard mergeShouldContinue() else {
+					preserveSupersededMergeSegments(segments, mainURL: mainURL)
+					return
+				}
+				mergeStage = "validating segment"
+				mergeSegmentDescription = "\(index + 1)/\(segments.count) \(segmentURL.lastPathComponent)"
+				switch await RecordingFinalizationPolicy.inspect(url: segmentURL, delegateSucceeded: true) {
+				case .usable(let fileSize, let duration):
+					usableSegments.append(segmentURL)
+					AppLog.shared.recording(
+						"Validated merge segment \(index + 1): \(fileSize) bytes, \(duration)s",
+						level: .debug
+					)
+				case .rejected(let rejection):
+					AppLog.shared.recording(
+						"Skipping unusable merge segment \(index + 1) (\(segmentURL.lastPathComponent)): \(rejection)",
+						level: .error
+					)
+				}
+			}
+			guard !usableSegments.isEmpty else {
+				AppLog.shared.recording("No usable recording segments remained after validation", level: .error)
+				preserveFailedMergeSegments(segments, mainURL: mainURL)
+				if ownsLiveRecordingState {
+					errorMessage = "The recording segments could not be read. They were preserved for recovery."
+				}
+				return
+			}
+
 			// Create AVAsset for each segment
 			let composition = AVMutableComposition()
 
@@ -112,17 +148,20 @@ extension AudioRecorderViewModel {
 				preferredTrackID: kCMPersistentTrackID_Invalid
 			) else {
 				AppLog.shared.recording("Failed to create composition audio track", level: .error)
+				preserveFailedMergeSegments(segments, mainURL: mainURL)
 				return
 			}
 
 			var currentTime = CMTime.zero
 
 			// Add each segment to the composition
-			for (index, segmentURL) in segments.enumerated() {
+			for (index, segmentURL) in usableSegments.enumerated() {
 				guard mergeShouldContinue() else {
 					preserveSupersededMergeSegments(segments, mainURL: mainURL)
 					return
 				}
+				mergeStage = "loading audio track"
+				mergeSegmentDescription = "\(index + 1)/\(usableSegments.count) \(segmentURL.lastPathComponent)"
 				let asset = AVURLAsset(url: segmentURL)
 
 				// Get the audio track from the segment
@@ -136,6 +175,7 @@ extension AudioRecorderViewModel {
 				}
 
 				// Get the duration of this segment
+				mergeStage = "loading duration"
 				let duration = try await asset.load(.duration)
 				guard mergeShouldContinue() else {
 					preserveSupersededMergeSegments(segments, mainURL: mainURL)
@@ -143,10 +183,14 @@ extension AudioRecorderViewModel {
 				}
 
 				// Insert the segment at the current time
+				mergeStage = "inserting time range"
 				let timeRange = CMTimeRange(start: .zero, duration: duration)
 				try compositionAudioTrack.insertTimeRange(timeRange, of: assetTrack, at: currentTime)
 
-				AppLog.shared.recording("Added segment \(index + 1) at \(currentTime.seconds)s, duration: \(duration.seconds)s", level: .debug)
+				AppLog.shared.recording(
+					"Added segment \(index + 1) at \(currentTime.seconds)s, duration: \(duration.seconds)s",
+					level: .debug
+				)
 
 				// Move forward for the next segment
 				currentTime = CMTimeAdd(currentTime, duration)
@@ -158,6 +202,7 @@ extension AudioRecorderViewModel {
 				presetName: AVAssetExportPresetAppleM4A
 			) else {
 				AppLog.shared.recording("Failed to create export session", level: .error)
+				preserveFailedMergeSegments(segments, mainURL: mainURL)
 				return
 			}
 
@@ -167,6 +212,8 @@ extension AudioRecorderViewModel {
 			registerRecordingAttemptArtifact(at: tempURL)
 
 			// Use the modern export API (iOS 18+)
+			mergeStage = "exporting composition"
+			mergeSegmentDescription = "\(usableSegments.count) usable of \(segments.count) total"
 			try await exportSession.export(to: tempURL, as: .m4a)
 			guard mergeShouldContinue() else {
 				preserveSupersededMergeSegments(segments, mainURL: mainURL)
@@ -176,6 +223,7 @@ extension AudioRecorderViewModel {
 
 			AppLog.shared.recording("Successfully merged all segments to temporary file", level: .debug)
 
+			mergeStage = "validating merged output"
 			let finalization = await RecordingFinalizationPolicy.inspect(url: tempURL, delegateSucceeded: true)
 			guard mergeShouldContinue() else {
 				preserveSupersededMergeSegments(segments, mainURL: mainURL)
@@ -192,6 +240,7 @@ extension AudioRecorderViewModel {
 						errorMessage = rejection.userMessage
 					}
 				}
+				preserveFailedMergeSegments(segments, mainURL: mainURL)
 				return
 			}
 
@@ -204,6 +253,7 @@ extension AudioRecorderViewModel {
 			registerRecordingAttemptArtifact(at: backupURL)
 			var originalMovedToBackup = false
 			do {
+				mergeStage = "replacing original with merged output"
 				if fileManager.fileExists(atPath: mainURL.path) {
 					try fileManager.moveItem(at: mainURL, to: backupURL)
 					originalMovedToBackup = true
@@ -291,8 +341,37 @@ extension AudioRecorderViewModel {
 			}
 
 		} catch {
-			AppLog.shared.recording("Error merging segments: \(error.localizedDescription)", level: .error)
+			let nsError = error as NSError
+			AppLog.shared.recording(
+				"Error merging segments during \(mergeStage) [\(mergeSegmentDescription)]: "
+					+ "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)",
+				level: .error
+			)
+			preserveFailedMergeSegments(segments, mainURL: mainURL)
+			if ownsLiveRecordingState {
+				errorMessage = "The recording could not be combined yet. Its segments were preserved for recovery."
+			}
 		}
+	}
+
+	/// Keep every surviving source reachable when composition or export fails.
+	/// The foreground recovery pass retries the complete set instead of saving
+	/// only the most recent continuation and losing the earlier audio.
+	@MainActor
+	func preserveFailedMergeSegments(_ segments: [URL], mainURL: URL) {
+		#if os(iOS)
+		let survivors = segments.filter { FileManager.default.fileExists(atPath: $0.path) }
+		guard !survivors.isEmpty else { return }
+		persistRecoverySnapshot(
+			segments: survivors,
+			mainRecordingURL: mainURL,
+			currentSegmentIndex: max(survivors.count - 1, 0)
+		)
+		AppLog.shared.recording(
+			"Merge failed; preserved \(survivors.count) segment(s) for a complete recovery retry",
+			level: .error
+		)
+		#endif
 	}
 
 	/// Keep a superseded merge's segments reachable.
@@ -416,7 +495,11 @@ extension AudioRecorderViewModel {
 			recorder.pause()
 			recorder.record()
 			lastCheckpointTime = now
-			AppLog.shared.recording("Checkpoint: Forced buffer flush at \(Int(recordingTime))s (no silence for \(Int(timeSinceLastCheckpoint))s)", level: .debug)
+			AppLog.shared.recording(
+				"Checkpoint: Forced buffer flush at \(Int(recordingTime))s "
+					+ "(no silence for \(Int(timeSinceLastCheckpoint))s)",
+				level: .debug
+			)
 		} else if isCurrentlySilent() {
 			recorder.pause()
 			recorder.record()

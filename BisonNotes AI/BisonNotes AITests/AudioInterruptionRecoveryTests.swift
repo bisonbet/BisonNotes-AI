@@ -132,6 +132,38 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         }
     }
 
+    func testCategoryChangeKeepsAnActiveRecordingOnItsCurrentRoute() {
+        let viewModel = AudioRecorderViewModel()
+        viewModel.isRecording = true
+        viewModel.recordingState = .recording
+
+        viewModel.handleRouteChange(reason: .categoryChange, wasUsingMicrophone: true)
+
+        XCTAssertTrue(viewModel.isRecording)
+        XCTAssertEqual(viewModel.recordingState, .recording)
+        XCTAssertNil(viewModel.recordingTimer)
+        XCTAssertTrue(
+            viewModel.lastRouteChangeReason.contains(
+                "raw: \(AVAudioSession.RouteChangeReason.categoryChange.rawValue)"
+            )
+        )
+    }
+
+    func testStartingRecordingTimerInvalidatesThePreviousTimer() throws {
+        let viewModel = AudioRecorderViewModel()
+        defer { viewModel.stopRecordingTimer() }
+
+        viewModel.startRecordingTimer()
+        let firstTimer = try XCTUnwrap(viewModel.recordingTimer)
+
+        viewModel.startRecordingTimer()
+        let replacementTimer = try XCTUnwrap(viewModel.recordingTimer)
+
+        XCTAssertFalse(firstTimer.isValid)
+        XCTAssertFalse(firstTimer === replacementTimer)
+        XCTAssertTrue(replacementTimer.isValid)
+    }
+
     func testManagerDoesNotReactToPostedInterruptionNotifications() {
         let controller = ScriptedAudioSessionController()
         let manager = EnhancedAudioSessionManager(audioSessionController: controller)

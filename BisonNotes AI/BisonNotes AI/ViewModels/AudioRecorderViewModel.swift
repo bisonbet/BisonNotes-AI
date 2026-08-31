@@ -1242,6 +1242,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// MARK: - Timer Management
 
 	func startRecordingTimer() {
+		// Recovery and route reconciliation can both conclude that an existing
+		// recorder should continue. Replacing this property without invalidating
+		// its timer leaves the old run-loop timer alive and doubles elapsed time.
+		stopRecordingTimer()
 		// The run loop retains a scheduled timer until it is invalidated, so a
 		// dropped property does not stop it. The nonisolated deinit cannot
 		// invalidate it either (invalidate() must run on the installing thread),

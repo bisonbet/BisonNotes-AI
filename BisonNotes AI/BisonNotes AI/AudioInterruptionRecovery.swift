@@ -17,6 +17,7 @@ enum AudioRecoveryTrigger: String, Equatable, Sendable {
     /// The system has not authorized reacquiring the microphone, so this
     /// trigger preserves the finalized segment and waits instead of activating.
     case interruptionEndedWithoutResume
+    case routeChange
     case unexpectedBackgroundStop
     case foregroundReconciliation
 }
@@ -198,7 +199,7 @@ final class AudioInterruptionRecoveryCoordinator {
              .interruptionEnded,
              .interruptionEndedWithoutResume:
             return true
-        case .unexpectedBackgroundStop:
+        case .routeChange, .unexpectedBackgroundStop:
             return false
         }
     }
@@ -227,7 +228,7 @@ final class AudioInterruptionRecoveryCoordinator {
             return result == .deferredUntilForeground || result == .cancelled
                 ? retained
                 : nil
-        case .unexpectedBackgroundStop:
+        case .routeChange, .unexpectedBackgroundStop:
             return nil
         }
     }

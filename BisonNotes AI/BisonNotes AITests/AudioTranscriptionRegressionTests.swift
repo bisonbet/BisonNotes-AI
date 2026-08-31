@@ -92,6 +92,36 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         XCTAssertGreaterThan(duration, 0)
     }
 
+    @MainActor
+    func testSegmentMergeSkipsHeaderOnlyFragmentAndPreservesUsableContinuation() async throws {
+        let startupFragmentURL = tempDirectory.appendingPathComponent("startup-fragment.caf")
+        let continuationURL = tempDirectory.appendingPathComponent("continuation.caf")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        _ = try AVAudioFile(forWriting: startupFragmentURL, settings: format.settings)
+        try createSilentAudioFixture(at: continuationURL, duration: 0.25)
+
+        let viewModel = AudioRecorderViewModel()
+        viewModel.recordingSegments = [startupFragmentURL, continuationURL]
+        viewModel.mainRecordingURL = startupFragmentURL
+        viewModel.recordingURL = continuationURL
+
+        await viewModel.mergeRecordingSegments(
+            segments: [startupFragmentURL, continuationURL],
+            mainURL: startupFragmentURL,
+            ownsLiveRecordingState: false
+        )
+
+        let result = await RecordingFinalizationPolicy.inspect(
+            url: startupFragmentURL,
+            delegateSucceeded: true
+        )
+        guard case .usable(_, let duration) = result else {
+            return XCTFail("Expected the usable continuation to survive merge, got \(result)")
+        }
+        XCTAssertGreaterThan(duration, 0.2)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: continuationURL.path))
+    }
+
     func testFailedRecorderDelegateRejectsEvenAValidAudioFile() async throws {
         let audioURL = tempDirectory.appendingPathComponent("delegate-failed.caf")
         try createSilentAudioFixture(at: audioURL, duration: 0.2)

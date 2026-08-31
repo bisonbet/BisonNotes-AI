@@ -272,13 +272,13 @@ extension AudioRecorderViewModel {
 		lastRouteChangeReason = "\(String(describing: reason)) (raw: \(reason.rawValue))"
 		switch reason {
 		case .oldDeviceUnavailable:
-			// Input device became unavailable (e.g., Bluetooth mic disconnected)
-			if isRecording {
-				if wasUsingMicrophone {
-					AppLog.shared.audioSession("Microphone disconnected during recording")
-					Task { @MainActor in
-						await handleMicrophoneDisconnected()
-					}
+			// iOS can fall back from a disconnected Bluetooth/headset input to the
+			// built-in microphone without stopping AVAudioRecorder. Reconcile the
+			// selected input first and only recover when the recorder actually stopped.
+			if isRecording, wasUsingMicrophone {
+				AppLog.shared.audioSession("A recording input became unavailable; checking the active route")
+				Task { @MainActor in
+					await handleMicrophoneUnavailableDuringRecording()
 				}
 			} else {
 				// Not recording, just update the selected input
@@ -288,25 +288,25 @@ extension AudioRecorderViewModel {
 			}
 
 		case .newDeviceAvailable:
-			// New audio device connected (Phase 2)
+			// Refresh the selected input. A continuation, if one is needed, is owned
+			// by the coordinated recovery path rather than a second polling loop.
 			AppLog.shared.audioSession("New audio device available")
-			let routeChangeNotification = Notification(
-				name: AVAudioSession.routeChangeNotification,
-				object: nil,
-				userInfo: [AVAudioSessionRouteChangeReasonKey: reason.rawValue]
-			)
 			Task { @MainActor in
-				await handleNewAudioDeviceAvailable(notification: routeChangeNotification)
+				await applySelectedInputToSession()
 			}
 
 		case .categoryChange:
-			// Category changed, check if we need to recover
-			if isRecording {
-				AppLog.shared.audioSession("Audio route changed - category change detected during recording")
-				Task { @MainActor in
-					await handleMicrophoneDisconnected()
-				}
-			}
+			// Setting the app's own playAndRecord category emits this reason. The
+			// notification can be delivered after setup marks the recorder active,
+			// but it is not evidence that any input disappeared.
+			let activeInput = enhancedAudioSessionManager.getActiveInput()
+			let inputDescription = activeInput.map {
+				"\($0.portName) (\($0.portType.rawValue))"
+			} ?? "none"
+			AppLog.shared.audioSession(
+				"Audio session category changed; keeping the current recording route (input: \(inputDescription))",
+				level: .debug
+			)
 		default:
 			break
 		}
@@ -315,115 +315,40 @@ extension AudioRecorderViewModel {
 	func handleRouteChange(_ notification: Notification) {}
 	#endif
 
+	#if os(iOS)
 	@MainActor
 	func handleMicrophoneUnavailableDuringRecording() async {
-		guard isRecording, let currentURL = recordingURL else { return }
+		guard isRecording, case .recording = recordingState, let currentURL = recordingURL else {
+			return
+		}
 
-		// Check if the preferred input is still available
+		await applySelectedInputToSession()
+		let activeInput = enhancedAudioSessionManager.getActiveInput()
 		let availableInputs = enhancedAudioSessionManager.getAvailableInputs()
-		let preferredInputUID = UserDefaults.standard.string(forKey: preferredInputDefaultsKey)
+		let availableDescription = availableInputs
+			.map { "\($0.portName) (\($0.portType.rawValue))" }
+			.joined(separator: ", ")
 
-		var preferredInputStillAvailable = false
-		if let storedUID = preferredInputUID {
-			preferredInputStillAvailable = availableInputs.contains(where: { $0.uid == storedUID })
+		if let recorder = audioRecorder, recorder.isRecording {
+			let activeDescription = activeInput.map {
+				"\($0.portName) (\($0.portType.rawValue))"
+			} ?? "system default"
+			AppLog.shared.audioSession(
+				"Recorder remained active after the route change; continuing on \(activeDescription)"
+			)
+			return
 		}
 
-		if !preferredInputStillAvailable {
-			AppLog.shared.audioSession("Preferred microphone no longer available, switching to iOS default")
-
-			// Switch to default microphone
-			do {
-				try await enhancedAudioSessionManager.clearPreferredInput()
-				UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
-				selectedInput = nil
-
-				// Check if recording is still active
-				if let recorder = audioRecorder, recorder.isRecording {
-					// Recording is still active, it should automatically use the default mic
-					AppLog.shared.audioSession("Recording continues with default microphone")
-					errorMessage = "Microphone switched to default (previous device disconnected)"
-				} else {
-					// Recording stopped, need to restart
-					AppLog.shared.audioSession("Recording stopped, restarting with default microphone")
-					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
-				}
-			} catch {
-				AppLog.shared.audioSession("Failed to switch to default microphone: \(error.localizedDescription)", level: .error)
-				// Try to continue anyway - iOS might have already switched
-				if let recorder = audioRecorder, !recorder.isRecording {
-					await restartRecordingWithDefaultMicrophone(currentURL: currentURL)
-				}
-			}
-		}
+		let activeName = activeInput?.portName ?? "none"
+		let availableNames = availableDescription.isEmpty ? "none" : availableDescription
+		AppLog.shared.audioSession(
+			"Recorder stopped after input loss; requesting coordinated recovery "
+				+ "(active: \(activeName), available: \(availableNames))",
+			level: .error
+		)
+		await requestAudioRecovery(trigger: .routeChange, recordingURL: currentURL)
 	}
-
-	@MainActor
-	func restartRecordingWithDefaultMicrophone(currentURL: URL) async {
-		// Stop current recording
-		audioRecorder?.stop()
-		stopRecordingTimer()
-
-		// Save the current recording segment
-		if FileManager.default.fileExists(atPath: currentURL.path) {
-			switch await RecordingFinalizationPolicy.inspect(url: currentURL, delegateSucceeded: true) {
-			case .rejected(let rejection):
-				AppLog.shared.audioSession(
-					"Current segment was not usable before microphone switch: \(rejection)",
-					level: .error
-				)
-				removeOwnedRecordingAttemptArtifact(at: currentURL)
-			case .usable(let fileSize, let duration):
-				AppLog.shared.audioSession("Saving current recording segment before switching microphones")
-				saveLocationData(for: currentURL)
-
-				// Process the current segment
-				if let workflowManager = workflowManager {
-					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-					let originalFilename = currentURL.deletingPathExtension().lastPathComponent
-					let recordingDate = currentRecordingDate(for: currentURL)
-
-					_ = workflowManager.createRecording(
-						url: currentURL,
-						name: originalFilename,
-						date: recordingDate,
-						fileSize: fileSize,
-						duration: duration,
-						quality: quality,
-						locationData: recordingStartLocationData
-					)
-					recordingStartedAt = nil
-					resetRecordingAttemptArtifacts()
-				}
-			}
-		}
-
-		// Clear the recording URL so we can start fresh
-		recordingURL = nil
-		recordingTime = 0
-
-		// Switch to default microphone
-		do {
-			try await enhancedAudioSessionManager.clearPreferredInput()
-			UserDefaults.standard.removeObject(forKey: preferredInputDefaultsKey)
-			selectedInput = nil
-
-			// Ensure recording resumes with exclusive audio so device playback
-			// does not bleed into the new segment.
-			try await enhancedAudioSessionManager.configureBackgroundRecording()
-
-			// Start new recording with default microphone
-			AppLog.shared.audioSession("Restarting recording with default microphone")
-			setupRecording()
-
-			// Update error message to inform user
-			errorMessage = "Recording continued with default microphone (previous device disconnected)"
-		} catch {
-			AppLog.shared.audioSession("Failed to restart recording: \(error.localizedDescription)", level: .error)
-			errorMessage = "Recording stopped: Failed to switch to default microphone"
-			isRecording = false
-			audioRecorder = nil
-		}
-	}
+	#endif
 
 	// MARK: - Interrupted Recording Recovery
 
@@ -709,12 +634,7 @@ extension AudioRecorderViewModel {
 			return
 		}
 
-		// Reclaim a recording that was deferred and then terminated before it
-		// could resume; the merge path persists multi-segment reclaims itself.
-		if await reclaimDeferredRecoverySegmentsIfNeeded() == false, recordingURL == nil {
-			AppLog.shared.audioSession("No recording URL to check", level: .debug)
-			return
-		}
+		guard await prepareCompleteRecordingForUnprocessedRecovery() else { return }
 		#endif
 
 		// Prevent duplicate recovery attempts (both flag and time-based)
@@ -770,11 +690,47 @@ extension AudioRecorderViewModel {
 		// Set flag to prevent duplicate processing
 		recordingBeingProcessed = true
 
-		AppLog.shared.audioSession("Found unprocessed recording from backgrounding, recovering it now")
+		AppLog.shared.audioSession("Found an unprocessed recording, recovering it now")
 
 		// Process the unprocessed recording
 		await recoverUnprocessedRecording(url: recordingURL)
 	}
+
+	#if os(iOS)
+	@MainActor
+	private func prepareCompleteRecordingForUnprocessedRecovery() async -> Bool {
+		// Retry an in-memory merge that failed at stop before considering any one
+		// continuation on its own. Saving only recordingURL here would lose every
+		// earlier usable segment.
+		if recordingSegments.count > 1, mainRecordingURL != nil {
+			AppLog.shared.audioSession("Retrying a preserved multi-segment recording before single-file recovery")
+			await mergeRecordingSegments()
+			guard recordingSegments.count <= 1 else {
+				AppLog.shared.audioSession(
+					"The complete segment merge is still pending; skipping partial recovery",
+					level: .error
+				)
+				return false
+			}
+		}
+
+		// Reclaim a recording that was deferred and then terminated before it
+		// could resume; the merge path persists multi-segment reclaims itself.
+		let reclaimedDeferredRecording = await reclaimDeferredRecoverySegmentsIfNeeded()
+		guard recordingSegments.count <= 1 else {
+			AppLog.shared.audioSession(
+				"A reclaimed multi-segment recording is still pending; skipping partial recovery",
+				level: .error
+			)
+			return false
+		}
+		if !reclaimedDeferredRecording, recordingURL == nil {
+			AppLog.shared.audioSession("No recording URL to check", level: .debug)
+			return false
+		}
+		return true
+	}
+	#endif
 
 	func recoverUnprocessedRecording(url: URL) async {
 		AppLog.shared.audioSession("Recovering unprocessed recording")
@@ -800,7 +756,7 @@ extension AudioRecorderViewModel {
 
 			// Use original filename for recording name
 			let originalFilename = url.deletingPathExtension().lastPathComponent
-			let displayName = "\(originalFilename) (recovered from background)"
+			let displayName = "\(originalFilename) (recovered)"
 
 			// Core Data operations should happen on main thread
 			await MainActor.run {
