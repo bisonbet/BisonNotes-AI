@@ -1299,6 +1299,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
                     "duration": 42.0,
                     "transcriptId": transcriptId.uuidString,
                     "summaryId": summaryId.uuidString,
+                    "summaryStatus": ProcessingStatus.notStarted.rawValue,
                     "syncLifecycle": "active",
                     "syncSchemaVersion": 2
                 ]
@@ -1342,5 +1343,10 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(recording.summaryId, summaryId)
         XCTAssertNotNil(recording.transcript, "The relationship, not just the id, has to be repaired")
         XCTAssertNotNil(recording.summary)
+        XCTAssertEqual(
+            recording.summaryStatus,
+            ProcessingStatus.completed.rawValue,
+            "An accepted summary must repair a stale recording status"
+        )
     }
 }

@@ -4910,9 +4910,9 @@ extension iCloudStorageManager {
                     ) {
                         recording.summary = entry
                         recording.summaryId = summaryId
-                        if recording.summaryStatus == nil || recording.summaryStatus?.isEmpty == true {
-                            recording.summaryStatus = ProcessingStatus.completed.rawValue
-                        }
+                        // A linked summary is authoritative even when a stale "Not Started"
+                        // cache arrives. Repair it so it cannot hide the accepted summary.
+                        recording.summaryStatus = ProcessingStatus.completed.rawValue
                     } else {
                         result.localItemsKeptAsNewer += 1
                     }

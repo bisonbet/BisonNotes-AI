@@ -1182,9 +1182,9 @@ struct TranscriptsView: View {
     private func summaryButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let recording = recordingData.recording
         let hasTranscript = recordingData.transcript != nil
-        // Read the cheap status attribute rather than faulting recording.summary on every row.
+        // Cheap ID/status metadata avoids faulting the relationship unless stale data needs a fallback.
         let status = recording.summaryStatus
-        let hasSummary = status == ProcessingStatus.completed.rawValue
+        let hasSummary = recording.hasStoredSummary
 
         if let recordingId = recording.id, hasTranscript, !hasSummary {
             let isGenerating = generatingSummaryRecordingIds.contains(recordingId)
