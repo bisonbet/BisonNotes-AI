@@ -127,8 +127,8 @@ enum ChatCompletionResponseParser {
     }
 
     /// Decodes the complete structured response and makes one narrow recovery
-    /// attempt for models that emit an invalid backslash escape inside a JSON
-    /// string (for example `\A`). Other malformed JSON remains a hard failure.
+    /// attempt for models that emit recoverable formatting errors inside a JSON
+    /// string. Other malformed JSON remains a hard failure.
     private static func decodeCompleteResponse(from json: String) throws -> CompleteResponse {
         guard let data = json.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
@@ -137,13 +137,13 @@ enum ChatCompletionResponseParser {
         do {
             return try decodeCompleteResponsePayload(from: data)
         } catch {
-            guard let repairedJSON = repairMalformedJSONEscapes(in: json),
+            guard let repairedJSON = repairMalformedJSON(in: json),
                   let repairedData = repairedJSON.data(using: .utf8) else {
                 throw error
             }
 
             AppLog.shared.networking(
-                "Repairing invalid JSON escape sequences in complete response",
+                "Repairing recoverable JSON string formatting in complete response",
                 level: .debug
             )
             return try decodeCompleteResponsePayload(from: repairedData)
@@ -473,4 +473,94 @@ enum ChatCompletionResponseParser {
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+}
+
+private extension ChatCompletionResponseParser {
+
+    /// Applies only the recoveries that are safe to attempt before strict
+    /// decoding. The decoder still enforces the complete response schema after
+    /// these repairs, so this cannot turn arbitrary text into metadata.
+    static func repairMalformedJSON(in json: String) -> String? {
+        let quoteRepairedJSON = repairMalformedJSONStringQuotes(in: json)
+        let candidateJSON = quoteRepairedJSON ?? json
+        let escapeRepairedJSON = repairMalformedJSONEscapes(in: candidateJSON)
+
+        return escapeRepairedJSON ?? quoteRepairedJSON
+    }
+
+    /// Escapes quotation marks that occur inside a JSON string but are not
+    /// followed by a JSON string terminator. Some local instruct models emit
+    /// prose such as `The phrase "tiny little things" matters` without escaping
+    /// the inner quotation marks. A quote followed by `,`, `}`, `]`, `:`, or the
+    /// end of the payload remains a structural quote; everything else is treated
+    /// as literal content and escaped.
+    static func repairMalformedJSONStringQuotes(in json: String) -> String? {
+        let characters = Array(json)
+        var repaired = String()
+        repaired.reserveCapacity(json.count)
+
+        var isInsideString = false
+        var isEscaped = false
+        var changed = false
+
+        for index in characters.indices {
+            let character = characters[index]
+
+            if isEscaped {
+                repaired.append(character)
+                isEscaped = false
+                continue
+            }
+
+            if isInsideString, character == "\\" {
+                repaired.append(character)
+                isEscaped = true
+                continue
+            }
+
+            guard character == "\"" else {
+                repaired.append(character)
+                continue
+            }
+
+            guard isInsideString else {
+                isInsideString = true
+                repaired.append(character)
+                continue
+            }
+
+            let nextCharacter = nextNonWhitespaceCharacter(
+                after: index,
+                in: characters
+            )
+            if isJSONStringTerminator(nextCharacter) {
+                isInsideString = false
+                repaired.append(character)
+            } else {
+                repaired.append("\\")
+                repaired.append(character)
+                changed = true
+            }
+        }
+
+        return changed ? repaired : nil
+    }
+
+    static func nextNonWhitespaceCharacter(
+        after index: Array<Character>.Index,
+        in characters: [Character]
+    ) -> Character? {
+        var nextIndex = characters.index(after: index)
+        while nextIndex < characters.endIndex, characters[nextIndex].isWhitespace {
+            nextIndex = characters.index(after: nextIndex)
+        }
+        return nextIndex < characters.endIndex ? characters[nextIndex] : nil
+    }
+
+    static func isJSONStringTerminator(_ character: Character?) -> Bool {
+        guard let character else {
+            return true
+        }
+        return character == "," || character == "}" || character == "]" || character == ":"
+    }
 }
