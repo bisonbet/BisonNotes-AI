@@ -475,6 +475,31 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         }
     }
 
+    /// A reclaim task is suspended across validation and export, and the parked
+    /// entry is deliberately left on disk until its save lands. A second
+    /// superseded session therefore reads the same entry again — and used to
+    /// launch a second task for it, merging the same segments twice and inserting
+    /// a duplicate row for one recording.
+    @MainActor
+    func testASecondPassCannotClaimAReclaimAlreadyInFlight() {
+        let viewModel = AudioRecorderViewModel()
+
+        XCTAssertTrue(viewModel.reserveReclaim(forKey: "parked.m4a"), "The first pass owns the reclaim")
+        XCTAssertFalse(
+            viewModel.reserveReclaim(forKey: "parked.m4a"),
+            "A second pass must leave the entry to the task already running"
+        )
+        XCTAssertTrue(
+            viewModel.reserveReclaim(forKey: "other.m4a"),
+            "A different parked recovery is independent"
+        )
+
+        // A reclaim that did not persist leaves its segments for the next pass,
+        // which has to be able to claim them.
+        viewModel.releaseReclaim(forKey: "parked.m4a")
+        XCTAssertTrue(viewModel.reserveReclaim(forKey: "parked.m4a"))
+    }
+
     func testParkedRecoverySnapshotsDoNotOverwriteEachOther() throws {
         let documents = try XCTUnwrap(
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first

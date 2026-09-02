@@ -298,6 +298,11 @@ class iCloudStorageManager: ObservableObject {
     /// lands a fraction early is refused by the same gate and buys nothing.
     private let deferredSyncRetryLeeway: TimeInterval = 5
 
+    /// How long to wait before looking again when the window opened while the
+    /// device was offline. Nothing else brings the retry back, so it re-arms
+    /// rather than being dropped.
+    private let deferredSyncRetryOfflineInterval: TimeInterval = 60
+
     // MARK: - Private Properties
 
     private static let sharedContainerIdentifier = "iCloud.Bison-Networking.BisonNotes-AI"
@@ -3453,6 +3458,14 @@ extension iCloudStorageManager {
         let staging = assetStagingFactory(recorder?.runIdentifier ?? UUID().uuidString)
         defer { staging.cleanUp() }
 
+        // Every staged copy is held until this run's `defer`, so the peak is the
+        // whole changed set unless something bounds it. Past the budget the
+        // remaining recordings upload metadata and leave the audio owed.
+        let stagingByteBudget = CloudAudioAssetPolicy.stagingByteBudget(
+            availableCapacity: availableStagingCapacity()
+        )
+        var stagedAudioBytes: Int64 = 0
+
         // Only records the cloud already holds need the full refetch; a recording
         // being uploaded for the first time has nothing to preserve.
         let recordIDsNeedingFullFetch = (recordingsNeedingUpload.map(\.recordID) +
@@ -3522,6 +3535,8 @@ extension iCloudStorageManager {
                     staging: staging,
                     includeAudioFiles: options.includeAudioFiles,
                     recorder: recorder,
+                    stagingByteBudget: stagingByteBudget,
+                    stagedBytes: &stagedAudioBytes,
                     result: &result,
                     changed: &changed
                 ) {
@@ -3544,6 +3559,8 @@ extension iCloudStorageManager {
                 staging: staging,
                 includeAudioFiles: options.includeAudioFiles,
                 recorder: recorder,
+                stagingByteBudget: stagingByteBudget,
+                stagedBytes: &stagedAudioBytes,
                 result: &result,
                 changed: &changed
             ) {
@@ -3658,8 +3675,9 @@ extension iCloudStorageManager {
 
         // Only a complete run may advance the signature; a partial failure threw
         // long before this line. Audio is the one thing that gets this far
-        // unfinished — CloudKit refused the asset, or no staging copy could be
-        // made of it. The metadata went either way, and recording the signature
+        // unfinished — CloudKit refused the asset, no staging copy could be made
+        // of it, or the run reached its staging budget before getting to it. The
+        // metadata went either way, and recording the signature
         // here would let every later run take the unchanged-since-last-backup
         // shortcut and never retry the upload.
         if saveOutcome.didDropAudioToSaveMetadata || result.audioFilesPendingRetry > 0 {
@@ -5147,21 +5165,40 @@ extension iCloudStorageManager {
         ) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.deferredSyncRetryTimer = nil
-                self.deferredSyncRetryTarget = nil
-                guard self.isEnabled, self.networkStatus.canSync else { return }
-                do {
-                    _ = try await self.reconcileAllDataWithiCloud(
-                        appCoordinator: appCoordinator,
-                        reason: reason
-                    )
-                } catch {
-                    AppLog.shared.iCloudSync(
-                        "Retry after a CloudKit backoff failed: \(error.localizedDescription)",
-                        level: .error
-                    )
-                }
+                await self.runDeferredSyncRetry(appCoordinator: appCoordinator, reason: reason)
             }
+        }
+    }
+
+    /// The body of an armed retry, kept out of the timer closure so the offline
+    /// path can be exercised.
+    ///
+    /// The window can open while the device is offline, and this is the only thing
+    /// that brings a `.changesOnly` device back: the periodic path runs no routine
+    /// reconcile in that mode, and the network-restored notification is posted only
+    /// when there is durable local work — which a run that was checking for remote
+    /// changes alone does not have. So an offline firing re-arms rather than
+    /// returning, which used to consume the only retry there was.
+    @MainActor
+    func runDeferredSyncRetry(appCoordinator: AppDataCoordinator, reason: CloudSyncReason) async {
+        deferredSyncRetryTimer = nil
+        deferredSyncRetryTarget = nil
+        guard isEnabled else { return }
+        guard networkStatus.canSync else {
+            scheduleDeferredSyncRetry(
+                until: Date().addingTimeInterval(deferredSyncRetryOfflineInterval),
+                appCoordinator: appCoordinator,
+                reason: reason
+            )
+            return
+        }
+        do {
+            _ = try await reconcileAllDataWithiCloud(appCoordinator: appCoordinator, reason: reason)
+        } catch {
+            AppLog.shared.iCloudSync(
+                "Retry after a CloudKit backoff failed: \(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 
@@ -6670,6 +6707,16 @@ extension iCloudStorageManager {
         return UUID(uuidString: uuidText)
     }
 
+    /// Room left on the volume holding the staging directory, or `nil` when it
+    /// will not say. `forImportantUsage` is the figure that accounts for what the
+    /// system would purge on demand, which is what a copy this size can rely on.
+    private func availableStagingCapacity() -> Int64? {
+        let values = try? FileManager.default.temporaryDirectory.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        )
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
     private func audioFileSignature(for url: URL) -> String {
         let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes?[.size] as? Int64) ?? 0
@@ -7476,6 +7523,8 @@ extension iCloudStorageManager {
         staging: any CloudAssetStaging,
         includeAudioFiles: Bool,
         recorder: CloudSyncRunRecorder?,
+        stagingByteBudget: Int64,
+        stagedBytes: inout Int64,
         result: inout CloudBackupResult,
         changed: inout Bool
     ) async -> Bool {
@@ -7494,7 +7543,9 @@ extension iCloudStorageManager {
             sourceExists: sourceExists,
             localSignature: signature,
             cloudSignature: record[Self.fieldAudioSignature] as? String,
-            byteCount: byteCount
+            byteCount: byteCount,
+            stagedBytesSoFar: stagedBytes,
+            stagingByteBudget: stagingByteBudget
         )
 
         switch decision {
@@ -7502,6 +7553,12 @@ extension iCloudStorageManager {
             result.audioFilesSkippedUnchanged += 1
             return false
         case .skippedDisabled, .skippedMissingSource:
+            return false
+        case .deferredOverStagingBudget:
+            // The audio is owed, not skipped: the signature is left alone, so the
+            // next run offers this file again rather than taking the
+            // nothing-changed shortcut past it.
+            result.audioFilesPendingRetry += 1
             return false
         case .upload(let uploadByteCount, let uploadSignature):
             guard let localURL, let stagedURL = await staging.stage(localURL) else {
@@ -7515,6 +7572,7 @@ extension iCloudStorageManager {
                 return false
             }
 
+            stagedBytes += uploadByteCount
             record[Self.fieldAudioAsset] = CKAsset(fileURL: stagedURL)
             changed = true
             updateStringField(Self.fieldAudioFileName, value: localURL.lastPathComponent, on: record, changed: &changed)

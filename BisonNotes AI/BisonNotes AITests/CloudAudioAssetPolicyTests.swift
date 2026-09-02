@@ -93,6 +93,92 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
         XCTAssertEqual(decision, .skippedMissingSource)
     }
 
+    // MARK: Staging budget
+
+    /// Staging copies every changed recording before the first save request goes
+    /// out, so the peak is the whole changed set unless a run stops somewhere.
+    func testAFileBeyondTheRunsStagingBudgetIsDeferredNotSkipped() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 600,
+            stagedBytesSoFar: 500,
+            stagingByteBudget: 1_000
+        )
+
+        XCTAssertEqual(decision, .deferredOverStagingBudget)
+        XCTAssertFalse(decision.uploads)
+    }
+
+    func testAFileThatStillFitsTheBudgetUploads() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 400,
+            stagedBytesSoFar: 500,
+            stagingByteBudget: 1_000
+        )
+
+        XCTAssertEqual(decision, .upload(byteCount: 400, signature: "new"))
+    }
+
+    /// A recording larger than the whole budget would otherwise never upload.
+    func testTheFirstFileOfARunIsStagedHoweverLarge() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: nil,
+            byteCount: 10_000,
+            stagedBytesSoFar: 0,
+            stagingByteBudget: 1_000
+        )
+
+        XCTAssertEqual(decision, .upload(byteCount: 10_000, signature: "new"))
+    }
+
+    /// Nothing is copied for an unchanged file, so it must not spend the budget.
+    func testAnUnchangedFileDoesNotSpendTheBudget() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "same",
+            cloudSignature: "same",
+            byteCount: 10_000,
+            stagedBytesSoFar: 999,
+            stagingByteBudget: 1_000
+        )
+
+        XCTAssertEqual(decision, .skippedUnchanged)
+    }
+
+    func testTheBudgetIsNeverMoreThanHalfOfWhatIsFree() {
+        XCTAssertEqual(CloudAudioAssetPolicy.stagingByteBudget(availableCapacity: 1_000), 500)
+    }
+
+    /// A disk that will not report its free space is not one to fill.
+    func testAnUnknownCapacityFallsBackToTheSmallBudget() {
+        XCTAssertEqual(
+            CloudAudioAssetPolicy.stagingByteBudget(availableCapacity: nil),
+            CloudAudioAssetPolicy.fallbackStagingByteBudget
+        )
+        XCTAssertEqual(
+            CloudAudioAssetPolicy.stagingByteBudget(availableCapacity: 0),
+            CloudAudioAssetPolicy.fallbackStagingByteBudget
+        )
+    }
+
+    func testTheBudgetIsCappedOnARoomyDisk() {
+        XCTAssertEqual(
+            CloudAudioAssetPolicy.stagingByteBudget(availableCapacity: 1_024 * 1_024 * 1_024 * 1_024),
+            CloudAudioAssetPolicy.maximumStagingByteBudget
+        )
+    }
+
     // MARK: Staging
 
     func testStagingCopiesTheSourceSoAnInFlightUploadCannotChange() async throws {

@@ -24,6 +24,9 @@ enum CloudAudioAssetDecision: Equatable {
     case skippedUnchanged
     /// Nothing readable on disk. Metadata still uploads.
     case skippedMissingSource
+    /// This run has staged as much as it may hold. Metadata uploads and the audio
+    /// stays owed, exactly as a failed copy leaves it.
+    case deferredOverStagingBudget
     case upload(byteCount: Int64, signature: String)
 
     var uploads: Bool {
@@ -33,19 +36,50 @@ enum CloudAudioAssetDecision: Equatable {
 }
 
 enum CloudAudioAssetPolicy {
+    /// Used when the volume will not say how much room is left. Small on purpose:
+    /// an unknown disk is not one to fill.
+    static let fallbackStagingByteBudget: Int64 = 512 * 1024 * 1024
+    /// Even a roomy disk gains nothing from staging more than this in one run.
+    static let maximumStagingByteBudget: Int64 = 8 * 1024 * 1024 * 1024
+
+    /// Peak temporary disk one run may hold in staged copies.
+    ///
+    /// Every changed recording is copied before the first save request goes out,
+    /// so without a bound the peak is the whole changed set — a first backup of a
+    /// large library, on a device that may not have room for a second copy of it.
+    /// Never more than half of what is free, so a backup cannot be the thing that
+    /// fills the disk.
+    static func stagingByteBudget(availableCapacity: Int64?) -> Int64 {
+        guard let availableCapacity, availableCapacity > 0 else {
+            return fallbackStagingByteBudget
+        }
+        return min(availableCapacity / 2, maximumStagingByteBudget)
+    }
+
     /// - Parameters:
     ///   - localSignature: signature of the file on disk, `nil` when unreadable.
     ///   - cloudSignature: signature stored on the existing cloud record.
+    ///   - stagedBytesSoFar: what this run has already copied into staging.
+    ///   - stagingByteBudget: the peak this run may hold, from `stagingByteBudget(availableCapacity:)`.
     static func decide(
         includeAudioFiles: Bool,
         sourceExists: Bool,
         localSignature: String?,
         cloudSignature: String?,
-        byteCount: Int64
+        byteCount: Int64,
+        stagedBytesSoFar: Int64 = 0,
+        stagingByteBudget: Int64 = maximumStagingByteBudget
     ) -> CloudAudioAssetDecision {
         guard includeAudioFiles else { return .skippedDisabled }
         guard sourceExists, let localSignature else { return .skippedMissingSource }
+        // An unchanged file is never copied, so it never spends the budget.
         guard localSignature != cloudSignature else { return .skippedUnchanged }
+        // The first file of a run always goes, however large. Deferring it on size
+        // alone would strand a recording bigger than the budget forever, and one
+        // copy is the smallest peak that makes any progress at all.
+        if stagedBytesSoFar > 0, stagedBytesSoFar + byteCount > stagingByteBudget {
+            return .deferredOverStagingBudget
+        }
         return .upload(byteCount: byteCount, signature: localSignature)
     }
 }

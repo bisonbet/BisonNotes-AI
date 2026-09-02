@@ -635,6 +635,24 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// The backoff window can open while the device is offline. The retry used to
+    /// clear itself and return, and nothing brought it back: in `.changesOnly` the
+    /// periodic path runs no routine reconcile, and the network-restored
+    /// notification is posted only when there is durable local work, which a run
+    /// checking for remote changes alone does not have.
+    func testARetryThatFiresOfflineArmsAnotherRatherThanVanishing() async throws {
+        manager.networkStatus = .unavailable
+
+        await manager.runDeferredSyncRetry(appCoordinator: appCoordinator, reason: .appLaunch)
+
+        let rearmed = try XCTUnwrap(
+            manager.deferredSyncRetryTarget,
+            "A retry that could not run must leave one behind"
+        )
+        XCTAssertGreaterThan(rearmed, Date(), "The replacement retry is in the future")
+        XCTAssertTrue(transport.ledger.isEmpty, "Nothing may be sent while the device is offline")
+    }
+
     /// The temporary directory can be full or momentarily unwritable. The metadata
     /// still goes, but the run has not done what it set out to do — and its
     /// signature already covers this file's unchanged contents, so stamping it

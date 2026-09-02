@@ -450,6 +450,24 @@ extension AudioRecorderViewModel {
 		writeDeferredRecoveryEntries(survivors)
 	}
 
+	/// Reserves a parked recovery for exactly one reclaim task, reporting whether
+	/// the caller won it. The entry stays on disk until its save lands, so a later
+	/// superseded session reads the same one again while the first task is still
+	/// suspended in validation or export; without the reservation both would merge
+	/// the same segments and insert a second row for one recording.
+	@MainActor
+	func reserveReclaim(forKey key: String) -> Bool {
+		reclaimsInFlight.insert(key).inserted
+	}
+
+	/// Releases a reservation once its task has finished, successfully or not. A
+	/// reclaim that did not persist leaves its segments on disk for the next pass,
+	/// and that pass has to be able to claim them.
+	@MainActor
+	func releaseReclaim(forKey key: String) {
+		reclaimsInFlight.remove(key)
+	}
+
 	/// One recording parked on disk, resolved against the current container.
 	private struct ParkedRecovery {
 		let key: String
@@ -505,11 +523,24 @@ extension AudioRecorderViewModel {
 		guard !parkedRecordings.isEmpty else { return }
 
 		for parked in parkedRecordings {
+			// The entry is deliberately left on disk until its save lands, so a
+			// second superseded session finds it again while the first reclaim is
+			// still suspended in validation or export. Reserving the key here is what
+			// stops that pass from merging the same segments a second time and
+			// inserting a duplicate row for the same URL.
+			guard reserveReclaim(forKey: parked.key) else {
+				AppLog.shared.audioSession(
+					"A reclaim for this deferred recovery is already running; leaving it to that pass",
+					level: .debug
+				)
+				continue
+			}
 			AppLog.shared.audioSession(
 				"A new recording superseded a deferred recovery; persisting its \(parked.segments.count) segment(s)"
 			)
 			Task { @MainActor [weak self] in
 				guard let self else { return }
+				defer { self.releaseReclaim(forKey: parked.key) }
 				// The merge writes its output over mainURL and creates the row for
 				// it; a single segment is saved under its own URL.
 				let persistedURL: URL

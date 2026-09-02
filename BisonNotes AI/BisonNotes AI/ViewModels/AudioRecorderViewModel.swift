@@ -74,6 +74,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Flag to prevent duplicate recording creation
 	var recordingBeingProcessed = false
 
+	// Parked recoveries whose reclaim task is already running. The snapshot stays
+	// on disk until that task's save lands, so a second superseded session reads
+	// the same entry again; without this, both tasks would merge the same segments
+	// and insert a second row for one recording.
+	var reclaimsInFlight: Set<String> = []
+
 	// Files registered by the current capture attempt. Rejected finalization
 	// may remove only an artifact that this attempt created.
 	var recordingAttemptArtifacts: [RecordingAttemptArtifact] = []
