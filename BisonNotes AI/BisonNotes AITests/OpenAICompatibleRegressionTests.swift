@@ -60,4 +60,57 @@ final class OpenAICompatibleRegressionTests: XCTestCase {
         XCTAssertEqual(ChatCompletionResponseParser.normalizeModelText(prose), prose)
     }
 
+    // MARK: - Unescaped inner quotes
+
+    private func decodedSummary(fromRepairing json: String) throws -> String? {
+        let repaired = try XCTUnwrap(
+            ChatCompletionResponseParser.repairMalformedJSON(in: json),
+            "The payload needed repair"
+        )
+        let object = try JSONSerialization.jsonObject(
+            with: Data(repaired.utf8)
+        ) as? [String: Any]
+        return object?["summary"] as? String
+    }
+
+    /// A quoted phrase followed by a comma reads exactly like the separator
+    /// before the next member. Closing the string there left the repair outside
+    /// it, misread every quote after it, and lost the whole summary to a decode
+    /// failure.
+    func testAQuotedPhraseFollowedByACommaStaysInsideTheString() throws {
+        let summary = try decodedSummary(
+            fromRepairing: "{\"summary\":\"Use \"foo\", then continue\"}"
+        )
+        XCTAssertEqual(summary, "Use \"foo\", then continue")
+    }
+
+    /// The other half: a comma that really does separate members still closes
+    /// the string.
+    func testACommaBeforeTheNextKeyStillClosesTheString() throws {
+        let json = "{\"summary\":\"He said \"hi\" loudly\",\"model\":\"local\"}"
+        let repaired = try XCTUnwrap(ChatCompletionResponseParser.repairMalformedJSON(in: json))
+        let object = try JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any]
+        XCTAssertEqual(object?["summary"] as? String, "He said \"hi\" loudly")
+        XCTAssertEqual(object?["model"] as? String, "local")
+    }
+
+    /// Non-string elements after a comma are values too, so an array that mixes
+    /// them keeps parsing the way it always did.
+    func testAMixedArrayIsUnaffected() throws {
+        let json = "{\"summary\":\"A \"quoted\" word\",\"items\":[\"a\", 2, true, null]}"
+        let repaired = try XCTUnwrap(ChatCompletionResponseParser.repairMalformedJSON(in: json))
+        let object = try JSONSerialization.jsonObject(with: Data(repaired.utf8)) as? [String: Any]
+        XCTAssertEqual(object?["summary"] as? String, "A \"quoted\" word")
+        XCTAssertEqual((object?["items"] as? [Any])?.count, 4)
+    }
+
+    /// `true` is a literal; `then` merely starts with the same letter.
+    func testALiteralIsMatchedAsAWholeTokenNotAPrefix() {
+        let characters = Array("true, x")
+        XCTAssertTrue(ChatCompletionResponseParser.matchesWholeToken("true", at: 0, in: characters))
+        XCTAssertFalse(
+            ChatCompletionResponseParser.matchesWholeToken("true", at: 0, in: Array("truely yours"))
+        )
+    }
+
 }
