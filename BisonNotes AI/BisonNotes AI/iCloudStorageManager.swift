@@ -2616,6 +2616,9 @@ struct CloudRestoreResult {
     var transcriptsRestored: Int = 0
     var summariesRestored: Int = 0
     var audioFilesRestored: Int = 0
+    /// Audio whose cached asset could not be copied. The metadata still restored;
+    /// the file did not, and one bad copy no longer fails the whole run.
+    var audioFilesFailedToRestore: Int = 0
     var settingsRestored: Bool = false
     var includedSensitiveSettings: Bool = false
     var itemsHeldForReview: Int = 0
@@ -4775,9 +4778,24 @@ extension iCloudStorageManager {
                         try? fileManager.removeItem(at: destinationURL)
                     }
 
-                    try fileManager.copyItem(at: assetURL, to: destinationURL)
-                    entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
-                    result.audioFilesRestored += 1
+                    // One unreadable asset must not take the rest of the restore
+                    // with it. CloudKit's asset cache is a `Caches` directory the
+                    // system may purge, and the maintenance sweep can reach a file
+                    // this loop has not copied yet, so the copy is genuinely
+                    // fallible. The metadata is already applied; leaving the audio
+                    // behind costs one file, while throwing here abandoned every
+                    // record after it in the run.
+                    do {
+                        try fileManager.copyItem(at: assetURL, to: destinationURL)
+                        entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
+                        result.audioFilesRestored += 1
+                    } catch {
+                        result.audioFilesFailedToRestore += 1
+                        AppLog.shared.iCloudSync(
+                            "Could not copy restored audio out of the CloudKit cache: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
                 } else if existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
                     entry.recordingURL = nil

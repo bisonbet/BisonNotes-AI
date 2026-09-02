@@ -261,9 +261,16 @@ final class CacheMaintenanceService {
             // once: the sweep can spend a long time enumerating and deleting tens
             // of gigabytes, and a download started in that window would otherwise
             // have the repository it is writing deleted out from under it.
-            let report = await CacheMaintenanceSweep().run {
-                await MainActor.run { MLXSwiftDownloadManager.shared.isDownloading }
-            }
+            let report = await CacheMaintenanceSweep().run(
+                isDownloadInFlight: {
+                    await MainActor.run { MLXSwiftDownloadManager.shared.isDownloading }
+                },
+                isCloudSyncActive: {
+                    await MainActor.run {
+                        SummaryManager.shared.getiCloudManager().operationCoordinator.isRunning
+                    }
+                }
+            )
             await MainActor.run {
                 MLXSwiftDownloadManager.shared.endCacheMaintenance()
                 guard report.didReclaimAnything else { return }
@@ -299,10 +306,17 @@ struct CacheMaintenanceSweep {
 
     /// - Parameter isDownloadInFlight: consulted again before every model-cache
     ///   deletion, so a download that starts mid-sweep still protects its blobs.
-    func run(isDownloadInFlight: @Sendable () async -> Bool) async -> CacheMaintenanceReport {
+    /// - Parameter isCloudSyncActive: consulted again before every CloudKit asset
+    ///   deletion. A restore fetches its assets and then copies them out of this
+    ///   cache one at a time; a sweep that reaches a file the copy has not got to
+    ///   yet takes that recording's audio with it.
+    func run(
+        isDownloadInFlight: @Sendable () async -> Bool,
+        isCloudSyncActive: @Sendable () async -> Bool
+    ) async -> CacheMaintenanceReport {
         var report = CacheMaintenanceReport()
         await pruneHuggingFaceBlobCache(into: &report, isDownloadInFlight: isDownloadInFlight)
-        pruneCloudKitAssetCache(into: &report)
+        await pruneCloudKitAssetCache(into: &report, isCloudSyncActive: isCloudSyncActive)
         return report
     }
 
@@ -454,7 +468,10 @@ struct CacheMaintenanceSweep {
 
     // MARK: CloudKit asset cache
 
-    private func pruneCloudKitAssetCache(into report: inout CacheMaintenanceReport) {
+    private func pruneCloudKitAssetCache(
+        into report: inout CacheMaintenanceReport,
+        isCloudSyncActive: @Sendable () async -> Bool
+    ) async {
         guard let cachesRoot else { return }
         let cloudKitRoot = cachesRoot.appendingPathComponent("CloudKit", isDirectory: true)
         let now = Date()
@@ -482,6 +499,13 @@ struct CacheMaintenanceSweep {
 
             for doomed in CacheMaintenancePolicy.assetsToPrune(entries, now: now) {
                 guard let url = urlsByIdentifier[doomed.identifier] else { continue }
+                // Read immediately before each deletion rather than sampled once,
+                // for the same reason the blob sweep does: enumerating and deleting
+                // takes long enough that a sync started in that window would
+                // otherwise have assets removed from under it. A restore that runs
+                // past the minimum age is exactly the case — its own files stop
+                // being too young to prune while it is still copying them out.
+                if await isCloudSyncActive() { return }
                 do {
                     try fileManager.removeItem(at: url)
                     report.cloudKitAssetCount += 1

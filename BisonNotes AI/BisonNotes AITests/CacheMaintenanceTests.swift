@@ -275,7 +275,7 @@ final class CacheMaintenanceTests: XCTestCase {
             installedModels: ["org/installed"]
         )
 
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { false }, isCloudSyncActive: { false })
 
         XCTAssertFalse(hubRepoExists("models--org--installed", in: root))
         XCTAssertFalse(hubRepoExists("models--org--deleted", in: root))
@@ -291,7 +291,7 @@ final class CacheMaintenanceTests: XCTestCase {
             installedModels: ["org/installed"]
         )
 
-        _ = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+        _ = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { false }, isCloudSyncActive: { false })
 
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: root.appendingPathComponent("models/org/installed/config.json").path
@@ -305,7 +305,7 @@ final class CacheMaintenanceTests: XCTestCase {
             installedModels: ["org/installed"]
         )
 
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run { true }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { true }, isCloudSyncActive: { false })
 
         XCTAssertTrue(hubRepoExists("models--org--installed", in: root))
         XCTAssertTrue(hubRepoExists("models--org--deleted", in: root))
@@ -323,7 +323,7 @@ final class CacheMaintenanceTests: XCTestCase {
 
         XCTAssertFalse(CacheMaintenancePolicy.isMaterializedModelComplete(at: partialDirectory))
 
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { false }, isCloudSyncActive: { false })
 
         XCTAssertTrue(hubRepoExists("models--org--partial", in: root))
         XCTAssertEqual(report.removedDirectoryCount, 0)
@@ -420,7 +420,7 @@ final class CacheMaintenanceTests: XCTestCase {
             forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID
         )
 
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { false }, isCloudSyncActive: { false })
 
         XCTAssertTrue(hubRepoExists("models--org--marked", in: root))
         XCTAssertEqual(report.removedDirectoryCount, 0)
@@ -436,10 +436,13 @@ final class CacheMaintenanceTests: XCTestCase {
         )
 
         let callCount = Counter()
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run {
-            // Reports "a download started" from the second directory onward.
-            await callCount.increment() > 1
-        }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(
+            isDownloadInFlight: {
+                // Reports "a download started" from the second directory onward.
+                await callCount.increment() > 1
+            },
+            isCloudSyncActive: { false }
+        )
 
         let surviving = ["models--org--a", "models--org--b", "models--org--c"]
             .filter { hubRepoExists($0, in: root) }
@@ -449,10 +452,52 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(surviving.count, 2, "directories reached after the download began must survive")
     }
 
+    /// A restore fetches its assets and then copies them out of this cache one at
+    /// a time. A sweep that reaches a file the copy has not got to yet takes that
+    /// recording's audio with it — and a long restore stops being protected by the
+    /// minimum-age rule while it is still running.
+    func testCloudKitAssetsSurviveWhileASyncIsRunning() async throws {
+        let root = try makeCachesRoot(hubRepos: [], installedModels: [])
+        let assets = root
+            .appendingPathComponent("CloudKit", isDirectory: true)
+            .appendingPathComponent("container", isDirectory: true)
+            .appendingPathComponent("Assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        let asset = assets.appendingPathComponent("asset0")
+        try Data(repeating: 0x65, count: 4_096).write(to: asset)
+        // Old enough that nothing but the sync gate is keeping it.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -60 * 60 * 48)],
+            ofItemAtPath: asset.path
+        )
+
+        let duringSync = await CacheMaintenanceSweep(cachesRoot: root).run(
+            isDownloadInFlight: { false },
+            isCloudSyncActive: { true }
+        )
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: asset.path),
+            "A sync in flight may be copying this asset out right now"
+        )
+        XCTAssertEqual(duringSync.cloudKitAssetCount, 0)
+
+        let whenIdle = await CacheMaintenanceSweep(cachesRoot: root).run(
+            isDownloadInFlight: { false },
+            isCloudSyncActive: { false }
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: asset.path),
+            "With no sync running the stale asset is still reclaimed"
+        )
+        XCTAssertEqual(whenIdle.cloudKitAssetCount, 1)
+    }
+
     func testSweepIgnoresNonModelDirectories() async throws {
         let root = try makeCachesRoot(hubRepos: [".metadata", "datasets--org--set"], installedModels: [])
 
-        let report = await CacheMaintenanceSweep(cachesRoot: root).run { false }
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(isDownloadInFlight: { false }, isCloudSyncActive: { false })
 
         XCTAssertTrue(hubRepoExists(".metadata", in: root))
         XCTAssertTrue(hubRepoExists("datasets--org--set", in: root))
