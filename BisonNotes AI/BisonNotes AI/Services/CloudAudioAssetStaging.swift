@@ -58,7 +58,11 @@ protocol CloudAssetStaging: AnyObject {
     /// Returns `nil` when no copy could be made — the source is gone, or the
     /// staging directory is full or unwritable. The caller keeps the metadata and
     /// leaves the audio owing.
-    func stage(_ sourceURL: URL) -> URL?
+    ///
+    /// Asynchronous because the copy is the one genuinely expensive thing a run
+    /// does on disk: a changed library is gigabytes, and doing it inline on the
+    /// main actor froze the app for as long as the copy took.
+    func stage(_ sourceURL: URL) async -> URL?
     /// Removes every staged file. Callers invoke this from `defer`, after CloudKit
     /// has reported a result for every record that referenced a staged asset.
     func cleanUp()
@@ -80,33 +84,32 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
 
     var stagedFileCount: Int { stagedURLs.count }
 
-    func stage(_ sourceURL: URL) -> URL? {
-        guard fileManager.fileExists(atPath: sourceURL.path) else { return nil }
+    func stage(_ sourceURL: URL) async -> URL? {
+        let destination = directory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(sourceURL.lastPathComponent)
 
-        do {
-            if !didCreateDirectory {
-                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-                didCreateDirectory = true
-            }
-            let destination = directory
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
-                .appendingPathComponent(sourceURL.lastPathComponent)
-            try fileManager.createDirectory(
-                at: destination.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try fileManager.copyItem(at: sourceURL, to: destination)
+        let copy = AssetStagingCopy(source: sourceURL, destination: destination)
+        let outcome = await Task.detached(priority: .utility) { copy.run() }.value
+        switch outcome {
+        case .copied:
+            didCreateDirectory = true
             stagedURLs.append(destination)
             return destination
-        } catch {
+        case .missingSource:
+            return nil
+        case .failed(let message):
             AppLog.shared.iCloudSync(
-                "Could not stage an audio file for upload: \(error.localizedDescription)",
+                "Could not stage an audio file for upload: \(message)",
                 level: .error
             )
             return nil
         }
     }
 
+    /// Stays synchronous: callers invoke it from `defer`, and unlinking the run
+    /// directory is metadata work, not the byte copying that had to move off the
+    /// main actor.
     func cleanUp() {
         for url in stagedURLs {
             try? fileManager.removeItem(at: url.deletingLastPathComponent())
@@ -115,6 +118,37 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
         if didCreateDirectory {
             try? fileManager.removeItem(at: directory)
             didCreateDirectory = false
+        }
+    }
+}
+
+/// The filesystem half of staging. Deliberately not main-actor isolated — it is
+/// the copy itself, which for a changed library is gigabytes. Following
+/// `CacheMaintenanceFileSweeper`, the `FileManager` is constructed inside the
+/// detached task, so nothing non-`Sendable` crosses an isolation boundary.
+private struct AssetStagingCopy: Sendable {
+    enum Outcome: Sendable {
+        case copied
+        /// The file went away between the decision to upload it and the copy.
+        case missingSource
+        case failed(String)
+    }
+
+    let source: URL
+    let destination: URL
+
+    func run() -> Outcome {
+        let fileManager = FileManager()
+        guard fileManager.fileExists(atPath: source.path) else { return .missingSource }
+        do {
+            try fileManager.createDirectory(
+                at: destination.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: source, to: destination)
+            return .copied
+        } catch {
+            return .failed(error.localizedDescription)
         }
     }
 }

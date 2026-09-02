@@ -95,14 +95,15 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
 
     // MARK: Staging
 
-    func testStagingCopiesTheSourceSoAnInFlightUploadCannotChange() throws {
+    func testStagingCopiesTheSourceSoAnInFlightUploadCannotChange() async throws {
         let source = temporaryDirectory.appendingPathComponent("recording.m4a")
         try Data("original".utf8).write(to: source)
 
         let staging = TemporaryDirectoryAssetStaging(runIdentifier: "test-run")
         defer { staging.cleanUp() }
 
-        let staged = try XCTUnwrap(staging.stage(source))
+        let stagedCopy = await staging.stage(source)
+        let staged = try XCTUnwrap(stagedCopy)
         XCTAssertNotEqual(staged, source)
         XCTAssertEqual(try Data(contentsOf: staged), Data("original".utf8))
 
@@ -115,7 +116,7 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
         )
     }
 
-    func testSourceRemovedAfterTheDecisionYieldsNoStagedCopy() throws {
+    func testSourceRemovedAfterTheDecisionYieldsNoStagedCopy() async throws {
         let source = temporaryDirectory.appendingPathComponent("gone.m4a")
         try Data("audio".utf8).write(to: source)
         try FileManager.default.removeItem(at: source)
@@ -123,18 +124,21 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
         let staging = TemporaryDirectoryAssetStaging(runIdentifier: "test-run")
         defer { staging.cleanUp() }
 
-        XCTAssertNil(staging.stage(source), "A file that vanished mid-run must not fail the whole batch")
+        let staged = await staging.stage(source)
+        XCTAssertNil(staged, "A file that vanished mid-run must not fail the whole batch")
     }
 
-    func testCleanUpRemovesEveryStagedFile() throws {
+    func testCleanUpRemovesEveryStagedFile() async throws {
         let first = temporaryDirectory.appendingPathComponent("one.m4a")
         let second = temporaryDirectory.appendingPathComponent("two.m4a")
         try Data("one".utf8).write(to: first)
         try Data("two".utf8).write(to: second)
 
         let staging = TemporaryDirectoryAssetStaging(runIdentifier: "cleanup-run")
-        let stagedFirst = try XCTUnwrap(staging.stage(first))
-        let stagedSecond = try XCTUnwrap(staging.stage(second))
+        let firstCopy = await staging.stage(first)
+        let stagedFirst = try XCTUnwrap(firstCopy)
+        let secondCopy = await staging.stage(second)
+        let stagedSecond = try XCTUnwrap(secondCopy)
         XCTAssertEqual(staging.stagedFileCount, 2)
 
         staging.cleanUp()

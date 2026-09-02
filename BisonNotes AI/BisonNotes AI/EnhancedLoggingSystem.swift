@@ -97,21 +97,38 @@ struct PersistentLogFile: Sendable {
     /// takes it well under, leaving room for many more appends before the next one.
     var compactionTargetFraction = 0.75
 
+    /// What one attempt to append to an existing file did. `noFile` and `failed`
+    /// are deliberately distinct: only the first may be answered by creating a new
+    /// file, because creating one replaces whatever the old file held.
+    enum AppendOutcome: Equatable {
+        case appended(size: UInt64)
+        case noFile
+        case failed
+    }
+
     /// Appends one already-clamped line, compacting only once the file is over budget.
     func append(_ line: String) {
-        guard let sizeAfterAppend = appendToExistingFile(line) else {
+        switch appendToExistingFile(line) {
+        case .appended(let sizeAfterAppend):
+            guard sizeAfterAppend > UInt64(maxBytes) else { return }
+            compact(toByteBudget: Int(Double(maxBytes) * compactionTargetFraction))
+        case .noFile:
             // No file yet, or it was removed under us — create it.
             try? (line + "\n").write(to: url, atomically: true, encoding: .utf8)
             AppFileProtection.apply(to: url)
+        case .failed:
+            // The file is there and could not be written: a short read, a
+            // momentary permission problem, a full disk. Dropping this one line
+            // costs a single log entry. Creating the file here would replace the
+            // whole history with that entry — an atomic write installs a new file
+            // over a read-only one — which is the data loss this type exists to
+            // prevent. The next call retries, and compaction still self-heals an
+            // oversized file once appending works again.
             return
         }
-
-        guard sizeAfterAppend > UInt64(maxBytes) else { return }
-        compact(toByteBudget: Int(Double(maxBytes) * compactionTargetFraction))
     }
 
-    /// Appends and returns the file's new size, or `nil` when there is no file to
-    /// append to so `append` can create one.
+    /// Appends and reports the file's new size, or why nothing was appended.
     ///
     /// Two things here are easy to get wrong, and both were:
     ///
@@ -128,8 +145,10 @@ struct PersistentLogFile: Sendable {
     /// Files written by earlier versions end without a trailing newline, so the
     /// separator is added when the existing content lacks one; otherwise the first
     /// append after an upgrade would run onto the end of the last line.
-    private func appendToExistingFile(_ line: String) -> UInt64? {
-        guard let handle = try? FileHandle(forUpdating: url) else { return nil }
+    private func appendToExistingFile(_ line: String) -> AppendOutcome {
+        guard let handle = try? FileHandle(forUpdating: url) else {
+            return FileManager.default.fileExists(atPath: url.path) ? .failed : .noFile
+        }
         defer { try? handle.close() }
         do {
             let end = try handle.seekToEnd()
@@ -140,12 +159,12 @@ struct PersistentLogFile: Sendable {
                 try handle.seek(toOffset: end)
             }
             guard let data = ((needsSeparator ? "\n" : "") + line + "\n").data(using: .utf8) else {
-                return end
+                return .appended(size: end)
             }
             try handle.write(contentsOf: data)
-            return try handle.offset()
+            return .appended(size: try handle.offset())
         } catch {
-            return nil
+            return .failed
         }
     }
 

@@ -524,6 +524,26 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertGreaterThan(size, 0, "compaction must not empty the file")
     }
 
+    /// An existing file that cannot be opened for appending must not be replaced.
+    /// A transient I/O failure used to be reported the same way a missing file was,
+    /// and the caller answered by writing a new file holding only the newest line —
+    /// an atomic write installs itself over a read-only file, so the whole history
+    /// went with it.
+    func testAppendFailureOnAnExistingFileKeepsItsHistory() throws {
+        let url = makeTempLogURL()
+        try "first\nsecond\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: url.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        }
+
+        PersistentLogFile(url: url, maxLines: 100, maxBytes: 1_000_000).append("third")
+
+        let lines = (try String(contentsOf: url, encoding: .utf8))
+            .components(separatedBy: "\n").filter { !$0.isEmpty }
+        XCTAssertEqual(lines, ["first", "second"], "A failed append must never truncate the log")
+    }
+
     /// Compaction keeps the newest entries, which are the ones a crash report needs.
     func testCompactionKeepsTheNewestLines() {
         let url = makeTempLogURL()

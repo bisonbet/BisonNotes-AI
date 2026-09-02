@@ -3515,7 +3515,7 @@ extension iCloudStorageManager {
             var changed = recordingRecordsToWrite[entry.recordID] == nil
             applyRecordingFields(entry.recording, to: record, changed: &changed)
             if options.includeAudioFiles {
-                if attachAudioBackupIfNeeded(
+                if await attachAudioBackupIfNeeded(
                     recording: entry.recording,
                     to: record,
                     appCoordinator: appCoordinator,
@@ -3537,7 +3537,7 @@ extension iCloudStorageManager {
         for entry in recordingsNeedingAudioOnly {
             guard let record = recordingRecordsToWrite[entry.recordID] else { continue }
             var changed = false
-            if attachAudioBackupIfNeeded(
+            if await attachAudioBackupIfNeeded(
                 recording: entry.recording,
                 to: record,
                 appCoordinator: appCoordinator,
@@ -7478,7 +7478,7 @@ extension iCloudStorageManager {
         recorder: CloudSyncRunRecorder?,
         result: inout CloudBackupResult,
         changed: inout Bool
-    ) -> Bool {
+    ) async -> Bool {
         let localURL = appCoordinator.getAbsoluteURL(for: recording)
         var sourceExists = false
         var signature: String?
@@ -7504,7 +7504,7 @@ extension iCloudStorageManager {
         case .skippedDisabled, .skippedMissingSource:
             return false
         case .upload(let uploadByteCount, let uploadSignature):
-            guard let localURL, let stagedURL = staging.stage(localURL) else {
+            guard let localURL, let stagedURL = await staging.stage(localURL) else {
                 // Either the file went away between the check and the copy, or the
                 // copy itself failed — a full or momentarily unwritable temporary
                 // directory. Metadata still uploads, but this run has not done what

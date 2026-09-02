@@ -424,7 +424,7 @@ final class RecordingAssetStaging: CloudAssetStaging {
     private(set) var cleanUpCount = 0
     var missingSources: Set<URL> = []
 
-    func stage(_ sourceURL: URL) -> URL? {
+    func stage(_ sourceURL: URL) async -> URL? {
         guard !missingSources.contains(sourceURL) else { return nil }
         stagedSources.append(sourceURL)
         return sourceURL.deletingLastPathComponent()
@@ -443,7 +443,7 @@ final class RecordingAssetStaging: CloudAssetStaging {
 final class UnwritableAssetStaging: CloudAssetStaging {
     private(set) var attemptedSources: [URL] = []
 
-    func stage(_ sourceURL: URL) -> URL? {
+    func stage(_ sourceURL: URL) async -> URL? {
         attemptedSources.append(sourceURL)
         return nil
     }

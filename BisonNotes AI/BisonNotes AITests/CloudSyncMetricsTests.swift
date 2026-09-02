@@ -119,6 +119,19 @@ final class CloudSyncMetricsTests: XCTestCase {
         XCTAssertTrue(report.logDescription.contains("result=deferred"))
     }
 
+    /// A run logged after its own deferral deadline had passed reported
+    /// `deferredFor=-5s`, which reads as a broken deferral rather than a stale line.
+    func testDeferredWaitIsNeverNegative() {
+        let recorder = makeRecorder()
+        var report = recorder.finish(.deferred)
+        report.deferredUntil = Date(timeIntervalSinceNow: -5)
+
+        XCTAssertTrue(
+            report.logDescription.contains("deferredFor=0s"),
+            "Expected a clamped wait, got: \(report.logDescription)"
+        )
+    }
+
     func testFailureIsReportedAsFailure() {
         let recorder = makeRecorder()
         let report = recorder.finish(.failed)

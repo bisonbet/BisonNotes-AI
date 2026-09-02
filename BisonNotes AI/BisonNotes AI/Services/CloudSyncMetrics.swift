@@ -105,7 +105,10 @@ struct CloudSyncRunReport: Equatable, Sendable {
             parts.append("deferredItems=\(deferredItemCount)")
         }
         if let deferredUntil {
-            parts.append(String(format: "deferredFor=%.0fs", deferredUntil.timeIntervalSinceNow))
+            // Clamped: a report logged after its own deadline has passed — or a
+            // clock that moved under it — would otherwise read `deferredFor=-5s`.
+            let wait = max(0, deferredUntil.timeIntervalSinceNow)
+            parts.append(String(format: "deferredFor=%.0fs", wait))
         }
         let phases = phaseOrder.map { phase in
             String(format: "%@=%.2fs", phase.rawValue, phaseSeconds[phase] ?? 0)
