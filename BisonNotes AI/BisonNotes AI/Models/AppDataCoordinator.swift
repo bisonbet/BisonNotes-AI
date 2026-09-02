@@ -552,7 +552,13 @@ class AppDataCoordinator: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
+            // `queue: .main` delivers on the main thread, and the main-actor check
+            // is a thread check, so `assumeIsolated` happened to hold here. It is
+            // still an assumption about how the notification is delivered rather
+            // than something the type system enforces, and getting it wrong is a
+            // trap at runtime. Hop explicitly instead: the work this schedules is
+            // asynchronous either way.
+            Task { @MainActor in
                 self?.reconcileiCloudIfEnabled(reason: .networkRestored, force: true)
             }
         }

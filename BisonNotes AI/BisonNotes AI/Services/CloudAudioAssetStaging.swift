@@ -107,7 +107,6 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
     private let fileManager: FileManager
     private let directory: URL
     private var stagedURLs: [URL] = []
-    private var didCreateDirectory = false
 
     init(runIdentifier: String, fileManager: FileManager = .default) {
         self.fileManager = fileManager
@@ -127,7 +126,6 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
         let outcome = await Task.detached(priority: .utility) { copy.run() }.value
         switch outcome {
         case .copied:
-            didCreateDirectory = true
             stagedURLs.append(destination)
             return destination
         case .missingSource:
@@ -144,15 +142,17 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
     /// Stays synchronous: callers invoke it from `defer`, and unlinking the run
     /// directory is metadata work, not the byte copying that had to move off the
     /// main actor.
+    ///
+    /// The run directory goes whether or not anything was staged into it. The copy
+    /// creates it before it can fail, so a run whose copies all failed — a disk
+    /// that filled partway through — still has a directory, and possibly a partial
+    /// file, that nothing else in this run will reclaim.
     func cleanUp() {
         for url in stagedURLs {
             try? fileManager.removeItem(at: url.deletingLastPathComponent())
         }
         stagedURLs.removeAll()
-        if didCreateDirectory {
-            try? fileManager.removeItem(at: directory)
-            didCreateDirectory = false
-        }
+        try? fileManager.removeItem(at: directory)
     }
 }
 
@@ -182,6 +182,11 @@ private struct AssetStagingCopy: Sendable {
             try fileManager.copyItem(at: source, to: destination)
             return .copied
         } catch {
+            // Reclaim the partial copy now rather than waiting for the run's
+            // `cleanUp`. The likeliest reason to fail here is a full disk, and the
+            // bytes this attempt managed to write are exactly what the next file
+            // in the run needs.
+            try? fileManager.removeItem(at: destination.deletingLastPathComponent())
             return .failed(error.localizedDescription)
         }
     }

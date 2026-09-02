@@ -235,6 +235,45 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: second.path))
     }
 
+    /// The copy creates the run directory before it can fail, so a run whose
+    /// copies all failed still has one to reclaim. `cleanUp` used to skip it
+    /// unless a copy had succeeded, leaving the directory and any partial file
+    /// behind until the temporary-file sweeper next ran.
+    func testCleanUpRemovesTheRunDirectoryEvenWhenEveryCopyFailed() async throws {
+        let source = temporaryDirectory.appendingPathComponent("unreadable.m4a")
+        try Data("audio".utf8).write(to: source)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o000],
+            ofItemAtPath: source.path
+        )
+        addTeardownBlock {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644],
+                ofItemAtPath: source.path
+            )
+        }
+
+        let runIdentifier = "failed-copy-run"
+        let runDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iCloudAudioStaging", isDirectory: true)
+            .appendingPathComponent(runIdentifier, isDirectory: true)
+        let staging = TemporaryDirectoryAssetStaging(runIdentifier: runIdentifier)
+
+        let staged = await staging.stage(source)
+        XCTAssertNil(staged, "An unreadable source cannot be copied")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: runDirectory.path),
+            "The copy creates the run directory before it fails"
+        )
+
+        staging.cleanUp()
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: runDirectory.path),
+            "A run whose copies all failed must still reclaim its staging directory"
+        )
+    }
+
     // MARK: Partial failure
 
     func testAnAssetFailureLeavesTheOtherRecordsMetadataInPlace() async throws {
