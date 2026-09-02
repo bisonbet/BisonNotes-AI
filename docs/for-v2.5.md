@@ -3,6 +3,17 @@
 Work deliberately deferred out of v2.4 (PR #124). Each item says what the defect
 is, why it was not fixed at the time, and what the change actually involves.
 
+Ordered by value, not by effort.
+
+| # | Item | Why it waited |
+| --- | --- | --- |
+| 1 | Atomic deletion outbox | Schema change; the bug it fixes is a narrow crash window |
+| 2 | Reserve the CloudKit asset cache during a sync | Needs a reservation primitive the sync coordinator does not have |
+| 3 | Retry audio a restore could not copy | Needs verification before it is worth building |
+| 4 | Staging budget cannot help a recording bigger than the disk | Rare, and the current behaviour is safe |
+| 5 | `iCloudStorageManager` size | Pure refactor; no defect |
+| 6 | Textual fork rebase | Separate repository |
+
 ---
 
 ## 1. Atomic deletion outbox
@@ -130,7 +141,99 @@ ordering is correct and must survive this refactor.
 
 ---
 
-## 2. Textual fork rebase
+## 2. Reserve the CloudKit asset cache for the duration of a sync
+
+**Status:** partially fixed in v2.4 (`6f71e6ae`); a residual window remains.
+
+`CacheMaintenanceSweep.pruneCloudKitAssetCache` now takes `isCloudSyncActive` and
+re-reads it immediately before every asset deletion, so a sync that starts
+mid-sweep protects the assets it has not copied out yet. That is the same shape
+as the `isDownloadInFlight` gate on the blob sweep.
+
+It is still a check, not a reservation. A sync that starts in the window between
+the check and `removeItem` is not seen. The blob sweep does not have this problem
+because `MLXSwiftDownloadManager.beginCacheMaintenance()` *reserves* the cache
+before the sweep leaves the main actor, so the download side can refuse to start.
+
+**The fix:** give `CloudSyncOperationCoordinator` the same pair —
+`beginCacheMaintenance()` / `endCacheMaintenance()`, refusing to hand out a
+maintenance reservation while an operation is running and refusing to start an
+operation while one is held. Then the sweep reserves once instead of polling.
+
+**Priority: low.** The residual window is microseconds, and the v2.4 restore-side
+fix (below) already means the consequence is one skipped audio file rather than a
+failed run. Worth doing when the coordinator is next touched, not on its own.
+
+---
+
+## 3. Retry audio that a restore could not copy
+
+**Status:** open question, verify before building.
+
+`performRestore` now counts `audioFilesFailedToRestore` and continues rather than
+throwing out of the whole run (`6f71e6ae`). Nothing explicitly schedules another
+attempt at those files.
+
+It may not need to. The restore leg overwrites a local row when the cloud
+timestamp is **at least** the local one, so a subsequent pass should decide
+`applyCloudRecording` again for the same record and retry the copy. That needs
+confirming against the record-selection path before anyone builds a retry
+mechanism — `recordingRecordsWithAudioAssets` only refetches assets for records
+it is about to write, so the question is really whether an unchanged record still
+enters that set.
+
+**Do this first:** write a test that fails one asset copy and asserts the audio
+arrives on the next restore. If it passes, close this item and keep the test. If
+it fails, the counter needs to feed something that forces the next pass, in the
+same spirit as `audioFilesPendingRetry` clearing the backup signature.
+
+---
+
+## 4. A recording larger than half the free disk still cannot stage
+
+**Status:** known limitation of the v2.4 staging budget (`876bd1f3`). Raised by
+Cursor's review of PR #124.
+
+`CloudAudioAssetPolicy.stagingByteBudget` caps a run's staging at half of
+available capacity. The "first file of a run always stages, however large" rule
+stops a recording bigger than the *budget* from being stranded forever — but it
+only bypasses the budget, not the physical space. A recording larger than the
+free disk itself will attempt its copy, fail on `ENOSPC`, count as
+`audioFilesPendingRetry`, and be attempted again on every later run.
+
+The behaviour is safe: metadata syncs, the signature is not stamped, and the
+partial copy is now reclaimed immediately (`0927dd98`). It is just futile, and it
+repeats.
+
+**Possible fix:** when a single file cannot fit in available capacity at all,
+skip it without attempting the copy and surface it once in the maintenance
+message, so the user learns the device is too full for that recording rather than
+watching every sync quietly retry it.
+
+Related: on a nearly-full device, audio now needs several passes to finish, since
+each run stages at most half of what is free. That is intended, but it means
+`audioFilesPendingRetry > 0` keeps clearing the backup-state signature, so every
+one of those runs does a full metadata pass. If that proves noisy in practice,
+the fix is to let the signature record metadata completeness separately from
+audio completeness.
+
+---
+
+## 5. `iCloudStorageManager` size
+
+~8,000 lines in one type. No defect, and it was not going to be split during a
+release wrap-up, but it is now the main obstacle to reasoning about the sync legs
+independently. The `Services/` extraction done in v2.4
+(`CloudKitTransport`, `CloudKitBatchExecutor`, `CloudContentIndexCoordinator`,
+`CloudSyncOperationCoordinator`, `CloudSyncMetrics`, `CloudAudioAssetStaging`)
+is the pattern to continue: the backup leg, the restore leg, and the deletion
+preflight are each plausible next extractions.
+
+Do this incrementally and behind the existing test suites, never as one commit.
+
+---
+
+## 6. Textual fork rebase
 
 `CLAUDE.md` notes that the historical Catalyst guards in the `bisonbet/textual`
 fork are no longer required by this app and can be dropped when that separate
