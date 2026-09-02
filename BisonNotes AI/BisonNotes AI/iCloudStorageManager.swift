@@ -3479,6 +3479,14 @@ extension iCloudStorageManager {
         var remoteWinnersFoundWhileWriting: [CKRecord] = []
 
         for entry in recordingsNeedingUpload {
+            guard Self.isLiveManagedObject(entry.recording) else {
+                dropDeletedRecordingFromRun(
+                    entry.recordID,
+                    manifestDelta: &manifestDelta,
+                    result: &result
+                )
+                continue
+            }
             let hasPendingImportedAudioRemoval = entry.recording.id.map { recordingId in
                 pendingImportedAudioRemovals.contains { $0.recordingId == recordingId }
             } ?? false
@@ -3550,6 +3558,14 @@ extension iCloudStorageManager {
         }
 
         for entry in recordingsNeedingAudioOnly {
+            guard Self.isLiveManagedObject(entry.recording) else {
+                dropDeletedRecordingFromRun(
+                    entry.recordID,
+                    manifestDelta: &manifestDelta,
+                    result: &result
+                )
+                continue
+            }
             guard let record = recordingRecordsToWrite[entry.recordID] else { continue }
             var changed = false
             if await attachAudioBackupIfNeeded(
@@ -6707,6 +6723,37 @@ extension iCloudStorageManager {
         return UUID(uuidString: uuidText)
     }
 
+    /// Takes a recording the user deleted mid-run back out of this run's plan.
+    ///
+    /// The planning pass counted it and put it in the manifest delta before the
+    /// write loops began. Leaving the addition in would let the manifest claim a
+    /// record this run never wrote — for a recording being uploaded for the first
+    /// time, one that does not exist in the cloud at all.
+    private func dropDeletedRecordingFromRun(
+        _ recordID: CKRecord.ID,
+        manifestDelta: inout ManifestDelta,
+        result: inout CloudBackupResult
+    ) {
+        manifestDelta.addRecordings.remove(recordID.recordName)
+        result.recordingsBackedUp = max(0, result.recordingsBackedUp - 1)
+        AppLog.shared.iCloudSync(
+            "A recording was deleted while this run was in flight; leaving it to the deletion flow",
+            level: .debug
+        )
+    }
+
+    /// Whether a managed object is still part of its context.
+    ///
+    /// The write loops await inside each iteration to stage audio, so the user can
+    /// delete a recording between one entry and the next. A deleted object is a
+    /// fault whose fields read back as nil or zero, and applying those to its
+    /// cloud record would overwrite good data with blanks. An entry that fails
+    /// this is dropped from the run and left to the deletion flow, which
+    /// tombstones it on this pass or the next.
+    static func isLiveManagedObject(_ object: NSManagedObject) -> Bool {
+        object.managedObjectContext != nil && !object.isDeleted
+    }
+
     /// Room left on the volume holding the staging directory, or `nil` when it
     /// will not say. `forImportantUsage` is the figure that accounts for what the
     /// system would purge on demand, which is what a copy this size can rely on.
@@ -7528,6 +7575,10 @@ extension iCloudStorageManager {
         result: inout CloudBackupResult,
         changed: inout Bool
     ) async -> Bool {
+        // Read before the staging copy suspends. The user can delete this
+        // recording while the copy runs, and a deleted managed object reports
+        // zero — which would be recorded as this file's duration.
+        let durationSeconds = recording.duration
         let localURL = appCoordinator.getAbsoluteURL(for: recording)
         var sourceExists = false
         var signature: String?
@@ -7578,7 +7629,7 @@ extension iCloudStorageManager {
             updateStringField(Self.fieldAudioFileName, value: localURL.lastPathComponent, on: record, changed: &changed)
             updateInt64Field(Self.fieldAudioByteCount, value: uploadByteCount, on: record, changed: &changed)
             updateStringField(Self.fieldAudioSignature, value: uploadSignature, on: record, changed: &changed)
-            recorder?.addAudio(fileCount: 1, byteCount: uploadByteCount, seconds: recording.duration)
+            recorder?.addAudio(fileCount: 1, byteCount: uploadByteCount, seconds: durationSeconds)
             return true
         }
     }

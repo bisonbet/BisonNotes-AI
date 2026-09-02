@@ -102,15 +102,18 @@ protocol CloudAssetStaging: AnyObject {
     func cleanUp()
 }
 
+/// There is deliberately no `FileManager` injection point. The copy runs off the
+/// main actor and has to construct its own — `FileManager` is not `Sendable` — so
+/// an injected one could only ever govern half of this type's filesystem work,
+/// which is worse than none: a test could pass a fake and still watch real bytes
+/// land on disk.
 @MainActor
 final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
-    private let fileManager: FileManager
     private let directory: URL
     private var stagedURLs: [URL] = []
 
-    init(runIdentifier: String, fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-        self.directory = fileManager.temporaryDirectory
+    init(runIdentifier: String) {
+        self.directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("iCloudAudioStaging", isDirectory: true)
             .appendingPathComponent(runIdentifier, isDirectory: true)
     }
@@ -148,6 +151,7 @@ final class TemporaryDirectoryAssetStaging: CloudAssetStaging {
     /// that filled partway through — still has a directory, and possibly a partial
     /// file, that nothing else in this run will reclaim.
     func cleanUp() {
+        let fileManager = FileManager.default
         for url in stagedURLs {
             try? fileManager.removeItem(at: url.deletingLastPathComponent())
         }

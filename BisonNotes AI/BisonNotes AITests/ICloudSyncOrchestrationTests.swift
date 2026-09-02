@@ -635,6 +635,30 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// The write loops await inside each iteration to stage audio, so the user can
+    /// delete a recording between one entry and the next. A deleted managed object
+    /// is a fault whose fields read back as nil or zero; applying those to its
+    /// cloud record would overwrite good data with blanks, so such an entry is
+    /// dropped from the run and left to the deletion flow.
+    func testARecordingDeletedMidRunIsNotTreatedAsLive() throws {
+        let recordingId = try createCompleteRecording(named: "Deleted while staging")
+        let recording = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllRecordings().first { $0.id == recordingId }
+        )
+
+        XCTAssertTrue(
+            iCloudStorageManager.isLiveManagedObject(recording),
+            "A recording still in its context is what the loop expects to write"
+        )
+
+        try appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+
+        XCTAssertFalse(
+            iCloudStorageManager.isLiveManagedObject(recording),
+            "A recording deleted mid-run must not have its blanked fields uploaded"
+        )
+    }
+
     /// The backoff window can open while the device is offline. The retry used to
     /// clear itself and return, and nothing brought it back: in `.changesOnly` the
     /// periodic path runs no routine reconcile, and the network-restored
