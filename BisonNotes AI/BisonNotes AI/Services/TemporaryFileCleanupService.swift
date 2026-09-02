@@ -155,7 +155,16 @@ final class TemporaryFileCleanupService {
         let stagingCutoff = min(cutoff, Date().addingTimeInterval(-Self.audioStagingMinimumAge))
         Task.detached(priority: .utility) {
             let sweep = AudioStagingCleanupSweep()
-            let result = sweep.run(cutoff: stagingCutoff)
+            // A backup stages every changed recording before its first upload
+            // batch goes out, so a large library on a slow connection can hold a
+            // run directory open for longer than the minimum age. Deleting it
+            // then takes the files the remaining batches still need. Read
+            // immediately before each removal, as the cache sweeps do.
+            let result = await sweep.run(cutoff: stagingCutoff) {
+                await MainActor.run {
+                    SummaryManager.shared.getiCloudManager().operationCoordinator.isRunning
+                }
+            }
 
             if result.deletedCount > 0 {
                 AppLog.shared.fileManagement(
@@ -274,7 +283,12 @@ struct AudioStagingCleanupSweep {
 
     private let fileManager = FileManager()
 
-    func run(cutoff: Date) -> Result {
+    /// - Parameter isCloudSyncActive: consulted again before every removal, so a
+    ///   backup that starts mid-sweep keeps the run directory it is uploading from.
+    func run(
+        cutoff: Date,
+        isCloudSyncActive: @Sendable () async -> Bool
+    ) async -> Result {
         var result = Result()
         let tempRoot = fileManager.temporaryDirectory
         let stagingRoot = tempRoot.appendingPathComponent("iCloudAudioStaging", isDirectory: true)
@@ -286,6 +300,8 @@ struct AudioStagingCleanupSweep {
                   ageDate < cutoff else {
                 continue
             }
+
+            if await isCloudSyncActive() { return result }
 
             let size = directorySize(runDirectory)
             do {

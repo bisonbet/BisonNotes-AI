@@ -500,6 +500,28 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertTrue(viewModel.reserveReclaim(forKey: "parked.m4a"))
     }
 
+    /// The foreground recovery check reads the same parked entry a superseded
+    /// session's reclaim is still working through — that pass keeps its snapshot
+    /// on disk until its save lands. Without sharing the reservation, both would
+    /// merge the same segments and insert the same recording twice.
+    @MainActor
+    func testTheForegroundReclaimYieldsToAnInFlightOne() async {
+        let viewModel = AudioRecorderViewModel()
+
+        XCTAssertTrue(
+            viewModel.reserveReclaim(forKey: "parked.m4a"),
+            "Stands in for the superseded-session pass already owning this entry"
+        )
+
+        let didReclaim = await viewModel.reclaimDeferredRecoverySegmentsIfNeeded()
+
+        XCTAssertFalse(didReclaim, "The foreground pass must leave a reserved entry alone")
+        XCTAssertTrue(
+            viewModel.reserveReclaim(forKey: "other.m4a"),
+            "Unrelated entries are still claimable"
+        )
+    }
+
     func testParkedRecoverySnapshotsDoNotOverwriteEachOther() throws {
         let documents = try XCTUnwrap(
             FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first

@@ -611,6 +611,26 @@ extension AudioRecorderViewModel {
 			return false
 		}
 
+		// A superseded-session reclaim keeps its entry on disk until its save
+		// lands, so its recording is still listed here while its task is midway
+		// through validation or export. Pointing live recording state at those
+		// files — and starting a second `mergeRecordingSegments()` over them —
+		// lets both passes replace and delete the same sources and insert the
+		// same recording twice, since `createRecording` does not dedupe on URL.
+		// The reservation is the same one that pass takes, so only one of them
+		// ever owns the entry.
+		guard reserveReclaim(forKey: parked.key) else {
+			AppLog.shared.audioSession(
+				"A reclaim for this deferred recovery is already running; leaving it to that pass",
+				level: .debug
+			)
+			return false
+		}
+		// Released on every exit: this owns the entry only while it is working on
+		// it. Where it returns true the caller's unprocessed-recording pass takes
+		// over, guarded by `recordingBeingProcessed` rather than by this.
+		defer { releaseReclaim(forKey: parked.key) }
+
 		let segments = parked.segments
 		AppLog.shared.audioSession(
 			"Reclaiming \(segments.count) segment(s) from a deferred recovery that never resumed"
