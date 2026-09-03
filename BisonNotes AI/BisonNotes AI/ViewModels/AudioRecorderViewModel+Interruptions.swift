@@ -622,6 +622,13 @@ extension AudioRecorderViewModel {
 		}
 
 		#if os(iOS)
+		// A reclaim below may hand this pass the reservation for the parked entry
+		// it restored. It is held for the whole of this function — the container
+		// inspection and the database lookup included, which is where a recording
+		// started in the meantime used to be able to claim the same segments —
+		// and released however this exits.
+		defer { releaseHandedOverReclaim() }
+
 		// isRecording alone is no longer enough: a coordinated recovery clears it
 		// for the whole finalize/activate/continue sequence. Persisting the
 		// segment it is mid-flight on would nil out recordingURL underneath it

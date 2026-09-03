@@ -1280,6 +1280,17 @@ class CoreDataManager: ObservableObject {
         try context.save()
     }
 
+    /// Discards every uncommitted change in the context.
+    ///
+    /// `saveContext()` deliberately leaves a failed save's edits staged, which is
+    /// fine for a caller that will retry — but not for one that answers the failure
+    /// by withdrawing durable intent elsewhere. Those callers must roll back first,
+    /// or a later unrelated `saveContext()` commits the edits they just disowned.
+    /// The private `save(committing:)` below does the same thing for delete paths.
+    func rollbackContext() {
+        context.rollback()
+    }
+
     /// Saves, then runs `effects`. On failure the context rolls back and the
     /// error propagates with nothing staged having run — which is the whole
     /// point of staging. Every delete path goes through here.

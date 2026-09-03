@@ -173,6 +173,18 @@ enum AudioAssetInspectionError: Error, Equatable, Sendable {
 
 enum AudioAssetInspector {
     static func inspect(url: URL) async throws -> AudioAssetInspection {
+        try await inspectWithAudioTrack(url: url).inspection
+    }
+
+    /// The inspection plus the audio track that was loaded to produce it.
+    ///
+    /// Kept separate from `inspect(url:)` because `AVAssetTrack` is not `Sendable`
+    /// and the finalization path only needs the sendable facts. Callers that go on
+    /// to read the track's format use this instead of opening the asset a second
+    /// time — for a long recording that is a whole extra demux of the same file.
+    static func inspectWithAudioTrack(
+        url: URL
+    ) async throws -> (inspection: AudioAssetInspection, audioTrack: AVAssetTrack) {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: url.path) else {
             throw AudioAssetInspectionError.fileMissing
@@ -199,14 +211,17 @@ enum AudioAssetInspector {
             }
 
             let tracks = try await asset.loadTracks(withMediaType: .audio)
-            guard !tracks.isEmpty else {
+            guard let audioTrack = tracks.first else {
                 throw AudioAssetInspectionError.missingAudioTrack
             }
 
-            return AudioAssetInspection(
-                fileSize: fileSize,
-                duration: duration,
-                hasAudioTrack: true
+            return (
+                AudioAssetInspection(
+                    fileSize: fileSize,
+                    duration: duration,
+                    hasAudioTrack: true
+                ),
+                audioTrack
             )
         } catch let error as AudioAssetInspectionError {
             throw error
@@ -319,9 +334,12 @@ struct AudioFileInfo {
         AppLog.shared.chunking("AudioFileInfo.create - Analyzing audio source", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
 
+        // One inspection, and it hands back the audio track it already loaded:
+        // re-opening the asset here meant demuxing the whole file twice.
         let inspection: AudioAssetInspection
+        let audioTrack: AVAssetTrack
         do {
-            inspection = try await AudioAssetInspector.inspect(url: url)
+            (inspection, audioTrack) = try await AudioAssetInspector.inspectWithAudioTrack(url: url)
         } catch {
             AppLog.shared.chunking(
                 "AudioFileInfo.create - Audio inspection failed: \(error)",
@@ -329,7 +347,6 @@ struct AudioFileInfo {
             )
             throw AudioChunkingError.invalidAudioFile
         }
-        let asset = AVURLAsset(url: url)
         let duration = inspection.duration
         AppLog.shared.chunking("AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)", level: .debug)
 
@@ -337,11 +354,6 @@ struct AudioFileInfo {
         AppLog.shared.chunking("AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)", level: .debug)
 
         // Get format information
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-        guard let audioTrack = tracks.first else {
-            AppLog.shared.chunking("AudioFileInfo.create - Audio track is unavailable", level: .error)
-            throw AudioChunkingError.invalidAudioFile
-        }
         var sampleRate: Double = 0
         var channels: Int = 0
 

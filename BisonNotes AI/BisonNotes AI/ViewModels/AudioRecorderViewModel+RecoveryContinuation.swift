@@ -468,6 +468,16 @@ extension AudioRecorderViewModel {
 		reclaimsInFlight.remove(key)
 	}
 
+	/// Releases a reservation `reclaimDeferredRecoverySegmentsIfNeeded` handed to
+	/// the unprocessed-recording pass. That pass calls this from a `defer`, so the
+	/// entry stays owned for the whole of it however it exits.
+	@MainActor
+	func releaseHandedOverReclaim() {
+		guard let key = handedOverReclaimKey else { return }
+		handedOverReclaimKey = nil
+		releaseReclaim(forKey: key)
+	}
+
 	/// One recording parked on disk, resolved against the current container.
 	private struct ParkedRecovery {
 		let key: String
@@ -599,7 +609,9 @@ extension AudioRecorderViewModel {
 	/// normal unprocessed-recording path can persist them.
 	///
 	/// Returns `true` when in-memory state was restored and the caller should
-	/// continue with its recovery check.
+	/// continue with its recovery check. The reclaim reservation is then still
+	/// held and belongs to that caller, which releases it through
+	/// `releaseHandedOverReclaim()` once its pass is over.
 	@MainActor
 	func reclaimDeferredRecoverySegmentsIfNeeded() async -> Bool {
 		guard recordingURL == nil,
@@ -626,10 +638,6 @@ extension AudioRecorderViewModel {
 			)
 			return false
 		}
-		// Released on every exit: this owns the entry only while it is working on
-		// it. Where it returns true the caller's unprocessed-recording pass takes
-		// over, guarded by `recordingBeingProcessed` rather than by this.
-		defer { releaseReclaim(forKey: parked.key) }
 
 		let segments = parked.segments
 		AppLog.shared.audioSession(
@@ -645,6 +653,14 @@ extension AudioRecorderViewModel {
 			// still has to validate and save this file, and it clears the entry
 			// once the database row exists. Dropping the only durable pointer
 			// first would lose the audio if that work never completed.
+			//
+			// The reservation is handed over with it rather than released here.
+			// That pass has to inspect the container and query the database before
+			// it can set `recordingBeingProcessed`, and an entry left unowned
+			// across those awaits is one that a recording started in the meantime
+			// picks up through `reclaimDeferredRecoverySegmentsForSupersededSession`
+			// — both passes then save the same audio and the row is inserted twice.
+			handedOverReclaimKey = parked.key
 			return true
 		}
 
@@ -662,6 +678,8 @@ extension AudioRecorderViewModel {
 				currentSegmentIndex: currentSegmentIndex
 			)
 		}
+		// This path did the work itself, so nothing is handed on.
+		releaseReclaim(forKey: parked.key)
 		return false
 	}
 

@@ -250,9 +250,10 @@ final class CacheMaintenanceService {
     func pruneCachesIfDue(now: Date = Date()) {
         if let lastSweep, now.timeIntervalSince(lastSweep) < Self.sweepInterval { return }
 
-        // Reserve the shared Hub cache before leaving the main actor. The
-        // filesystem sweep is deliberately off-main, so a point-in-time
-        // `isDownloading` read cannot protect the interval before removeItem.
+        // Reserve the shared Hub cache before leaving the main actor: no sweep may
+        // start while a download is running or still unwinding, and two sweeps may
+        // never overlap. What protects a download that starts *during* a sweep is
+        // the per-deletion re-check below, not this reservation.
         guard MLXSwiftDownloadManager.shared.beginCacheMaintenance() else { return }
         lastSweep = now
 
@@ -271,8 +272,11 @@ final class CacheMaintenanceService {
                     }
                 }
             )
+            // Released on its own, before anything that can return early: a
+            // reservation left behind blocks every later sweep for the life of
+            // the process.
+            await MainActor.run { MLXSwiftDownloadManager.shared.endCacheMaintenance() }
             await MainActor.run {
-                MLXSwiftDownloadManager.shared.endCacheMaintenance()
                 guard report.didReclaimAnything else { return }
                 AppLog.shared.fileManagement(
                     "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "
@@ -505,7 +509,12 @@ struct CacheMaintenanceSweep {
                 // otherwise have assets removed from under it. A restore that runs
                 // past the minimum age is exactly the case — its own files stop
                 // being too young to prune while it is still copying them out.
-                if await isCloudSyncActive() { return }
+                //
+                // Skip the file, do not abandon the sweep: the gate is global, so
+                // nothing is removed while a sync runs either way, but a sync that
+                // finishes part way through must not cost this pass the rest of the
+                // cache — and the containers behind this one with it.
+                if await isCloudSyncActive() { continue }
                 do {
                     try fileManager.removeItem(at: url)
                     report.cloudKitAssetCount += 1

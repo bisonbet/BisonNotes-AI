@@ -494,6 +494,55 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(whenIdle.cloudKitAssetCount, 1)
     }
 
+    /// The sync gate skips what the sweep is looking at; it must not abandon the
+    /// pass. This sweep is scheduled from launch and activation — the same moments
+    /// that start a sync — so returning on the first busy check meant a device that
+    /// syncs often lost the race every time and never reclaimed anything.
+    func testSweepKeepsGoingAfterASyncFinishesMidPass() async throws {
+        let root = try makeCachesRoot(hubRepos: [], installedModels: [])
+        let assets = root
+            .appendingPathComponent("CloudKit", isDirectory: true)
+            .appendingPathComponent("container", isDirectory: true)
+            .appendingPathComponent("Assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        for index in 0..<3 {
+            let asset = assets.appendingPathComponent("asset\(index)")
+            try Data(repeating: 0x65, count: 4_096).write(to: asset)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSinceNow: -60 * 60 * 48)],
+                ofItemAtPath: asset.path
+            )
+        }
+
+        // Busy for the first check only: the sync ends while the sweep is running.
+        let gate = BusyForFirstChecks(count: 1)
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(
+            isDownloadInFlight: { false },
+            isCloudSyncActive: { await gate.isBusy() }
+        )
+
+        XCTAssertEqual(
+            report.cloudKitAssetCount,
+            2,
+            "The assets behind the skipped one are still eligible once the sync ends"
+        )
+    }
+
+    /// Reports a sync in flight for the first `count` checks, then idle.
+    private actor BusyForFirstChecks {
+        private var remaining: Int
+
+        init(count: Int) {
+            remaining = count
+        }
+
+        func isBusy() -> Bool {
+            guard remaining > 0 else { return false }
+            remaining -= 1
+            return true
+        }
+    }
+
     func testSweepIgnoresNonModelDirectories() async throws {
         let root = try makeCachesRoot(hubRepos: [".metadata", "datasets--org--set"], installedModels: [])
 

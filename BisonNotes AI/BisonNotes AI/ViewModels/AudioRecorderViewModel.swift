@@ -80,6 +80,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// and insert a second row for one recording.
 	var reclaimsInFlight: Set<String> = []
 
+	// A reclaim whose reservation was handed to the unprocessed-recording pass
+	// rather than released. That pass validates the container and checks the
+	// database before it can set `recordingBeingProcessed`, and an entry left
+	// unowned across those awaits is one a new recording's superseded-session
+	// reclaim picks up and saves a second time.
+	var handedOverReclaimKey: String?
+
 	// Files registered by the current capture attempt. Rejected finalization
 	// may remove only an artifact that this attempt created.
 	var recordingAttemptArtifacts: [RecordingAttemptArtifact] = []

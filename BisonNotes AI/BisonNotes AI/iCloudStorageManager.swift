@@ -2644,11 +2644,24 @@ struct CloudReconcileResult {
 struct DeletionMarkerApplication {
     var deletedLocalItems: Int = 0
     var deletedCloudRecords: Int = 0
+    /// Cloud records kept but rewritten, because they referenced something this
+    /// run deleted. Counted apart from `deletedCloudRecords`: a record that was
+    /// saved is not a record that was removed, and the removal count is shown to
+    /// the user.
+    var clearedCloudReferences: Int = 0
     var revivedLocally: Int = 0
 
     var didChangeAnything: Bool {
-        deletedLocalItems > 0 || deletedCloudRecords > 0 || revivedLocally > 0
+        deletedLocalItems > 0 || deletedCloudRecords > 0
+            || clearedCloudReferences > 0 || revivedLocally > 0
     }
+}
+
+/// What committing a `CloudDeletionPlan` actually did to CloudKit. Removals and
+/// rewrites are counted apart because only the first is a deletion.
+private struct CloudDeletionCommitResult {
+    var removedRecords = 0
+    var clearedReferences = 0
 }
 
 private struct CodableSettingsBackupPayload: Codable {
@@ -2662,6 +2675,13 @@ private struct BackupContentRecordsFromIndex {
     /// The manifest these records were named by. Held so a caller can tell a name
     /// the manifest still lists from one it never had.
     var manifest = CloudActiveManifest()
+    /// False when the manifest was missing or written by an older schema.
+    ///
+    /// Not the same question as whether `manifest` is empty, and callers that
+    /// conflated the two paid for it: a trusted manifest legitimately holds no
+    /// transcripts until the first one is made, and reading that as "no manifest"
+    /// put a full query scan on the routine path.
+    var isTrusted = false
     var recordings: [CKRecord] = []
     var transcripts: [CKRecord] = []
     var summaries: [CKRecord] = []
@@ -6117,7 +6137,9 @@ extension iCloudStorageManager {
             plan.expiredMarkerIDsToRetire.insert(marker.recordID)
         }
 
-        application.deletedCloudRecords = try await commitDeletionPlan(plan, workspace: workspace)
+        let commit = try await commitDeletionPlan(plan, workspace: workspace)
+        application.deletedCloudRecords = commit.removedRecords
+        application.clearedCloudReferences = commit.clearedReferences
 
         if application.didChangeAnything {
             let deletedLocalCount = application.deletedLocalItems
@@ -6126,6 +6148,12 @@ extension iCloudStorageManager {
             if deletedLocalCount > 0 || deletedCloudCount > 0 {
                 messageParts.append(
                     "Applied \(deletedLocalCount) iCloud deletion\(deletedLocalCount == 1 ? "" : "s") to this device and cleaned \(deletedCloudCount) cloud record\(deletedCloudCount == 1 ? "" : "s")."
+                )
+            }
+            let clearedCount = application.clearedCloudReferences
+            if clearedCount > 0 {
+                messageParts.append(
+                    "Updated \(clearedCount) cloud record\(clearedCount == 1 ? "" : "s") that referenced deleted content."
                 )
             }
             if application.revivedLocally > 0 {
@@ -6343,9 +6371,20 @@ extension iCloudStorageManager {
         // brings them back as orphans — and the durable deletion entry, believing
         // itself finished, would not try again.
         workspace.manifestRecords = try await fetchBackupRecordsFromContentIndex()
-        if workspace.manifestRecords.transcripts.isEmpty && workspace.manifestRecords.summaries.isEmpty {
-            // No trusted manifest to name the children. A deletion that leaves
-            // orphans behind is worse than one scan on a path the user drives.
+        // Only an *untrusted* manifest earns a scan. Falling back whenever the
+        // transcript and summary lists came back empty put two full-type queries on
+        // the routine tombstone path for every library that simply has no
+        // transcripts yet — the scan CLAUDE.md reserves for a missing or untrusted
+        // manifest, repair, and diagnostics.
+        if !workspace.manifestRecords.isTrusted {
+            // Nothing names the children by id, so the scan is the only way to find
+            // them, and a deletion that leaves orphans behind is worse than one
+            // scan on a path this rare. Recordings are scanned with them:
+            // `applyDeletionPlan` clears the transcript and summary references on
+            // those records, and leaving that list empty meant every recording in
+            // the cloud kept pointing at content this run had just deleted.
+            workspace.manifestRecords.recordings = try await fetchBackupRecords(
+                recordType: Self.backupRecordingRecordType)
             workspace.manifestRecords.transcripts = try await fetchBackupRecords(
                 recordType: Self.backupTranscriptRecordType)
             workspace.manifestRecords.summaries = try await fetchBackupRecords(
@@ -6437,8 +6476,8 @@ extension iCloudStorageManager {
     private func commitDeletionPlan(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
-    ) async throws -> Int {
-        var removedRecordCount = try await applyDeletionPlan(plan, workspace: workspace)
+    ) async throws -> CloudDeletionCommitResult {
+        var result = try await applyDeletionPlan(plan, workspace: workspace)
 
         // Retiring an expired marker in the same non-atomic batch as the records it
         // authorises risks the worst possible half: CloudKit takes the marker and
@@ -6446,20 +6485,21 @@ extension iCloudStorageManager {
         // is updated, and the surviving record is still indexed — so the next sync
         // restores data the user deleted, with no marker left to say otherwise. A
         // marker that lives one cycle longer costs a single extra delete.
-        removedRecordCount += try await deleteExistingCloudRecords(
+        result.removedRecords += try await deleteExistingCloudRecords(
             Array(plan.expiredMarkerIDsToRetire)
         )
-        return removedRecordCount
+        return result
     }
 
     private func applyDeletionPlan(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
-    ) async throws -> Int {
-        var removedRecordCount = try await deleteExistingCloudRecords(Array(plan.recordIDsToDelete))
+    ) async throws -> CloudDeletionCommitResult {
+        var result = CloudDeletionCommitResult()
+        result.removedRecords = try await deleteExistingCloudRecords(Array(plan.recordIDsToDelete))
 
         guard let workspace else {
-            return removedRecordCount
+            return result
         }
 
         // Only names the manifest actually holds are worth a delta. Sending the rest
@@ -6478,7 +6518,7 @@ extension iCloudStorageManager {
         )
 
         guard !plan.clearedTranscriptIds.isEmpty || !plan.clearedSummaryIds.isEmpty else {
-            return removedRecordCount
+            return result
         }
 
         // A record this plan is deleting must never be written back. The manifest is
@@ -6534,7 +6574,11 @@ extension iCloudStorageManager {
         }
 
         try await saveBackupRecords(recordsToSave)
-        removedRecordCount += recordsToSave.count
+        // These records were kept and rewritten, not removed. Folding them into the
+        // removal count told the user their delete had cleaned records it never
+        // touched — the same inaccuracy `deleteExistingCloudRecords` avoids by
+        // reporting only what was really there.
+        result.clearedReferences += recordsToSave.count
 
         // A legacy summary record may still point at a removed transcript. Keep the
         // summary, but clear that relationship so legacy restore cannot recreate it.
@@ -6550,7 +6594,7 @@ extension iCloudStorageManager {
         }
         do {
             try await saveBackupRecords(legacyRecordsToSave)
-            removedRecordCount += legacyRecordsToSave.count
+            result.clearedReferences += legacyRecordsToSave.count
         } catch {
             AppLog.shared.iCloudSync(
                 "Could not clear deleted transcript references from \(legacyRecordsToSave.count) legacy summary record(s): \(error.localizedDescription)",
@@ -6558,7 +6602,7 @@ extension iCloudStorageManager {
             )
         }
 
-        return removedRecordCount
+        return result
     }
 
     private func deleteCloudContentRecords(
@@ -6575,7 +6619,7 @@ extension iCloudStorageManager {
             workspace: workspace,
             into: &plan
         )
-        return try await commitDeletionPlan(plan, workspace: workspace)
+        return try await commitDeletionPlan(plan, workspace: workspace).removedRecords
     }
 
     private func deleteTranscriptContentRecords(
@@ -6584,7 +6628,7 @@ extension iCloudStorageManager {
         let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: true)
         var plan = CloudDeletionPlan()
         planTranscriptContentDeletion(transcriptId: transcriptId, into: &plan)
-        return try await commitDeletionPlan(plan, workspace: workspace)
+        return try await commitDeletionPlan(plan, workspace: workspace).removedRecords
     }
 
     private func deleteSummaryContentRecords(
@@ -6593,7 +6637,7 @@ extension iCloudStorageManager {
         let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: false)
         var plan = CloudDeletionPlan()
         planSummaryContentDeletion(summaryIds: summaryIds, into: &plan)
-        return try await commitDeletionPlan(plan, workspace: workspace)
+        return try await commitDeletionPlan(plan, workspace: workspace).removedRecords
     }
 
     /// Deletes in one batch and reports how many records were really there. The
@@ -7442,11 +7486,18 @@ extension iCloudStorageManager {
     private func fetchBackupRecordsFromContentIndex(
         desiredKeys: [CKRecord.FieldKey]? = nil
     ) async throws -> BackupContentRecordsFromIndex {
-        let manifest = try await contentIndexCoordinator.fetchTrustedManifest()
-        guard !manifest.isEmpty else { return BackupContentRecordsFromIndex() }
+        let state = try await contentIndexCoordinator.fetchManifestState()
+        let manifest = state.manifest
+        // An untrusted manifest and a trusted empty one are different answers, and
+        // the caller decides what to do about each — so both come back labelled
+        // rather than as one indistinguishable empty result.
+        guard state.isTrusted, !manifest.isEmpty else {
+            return BackupContentRecordsFromIndex(isTrusted: state.isTrusted)
+        }
 
         return BackupContentRecordsFromIndex(
             manifest: manifest,
+            isTrusted: true,
             recordings: try await fetchBackupRecordsByRecordNames(
                 Array(manifest.recordings).sorted(),
                 expectedRecordType: Self.backupRecordingRecordType,

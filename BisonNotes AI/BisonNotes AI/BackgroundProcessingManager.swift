@@ -426,23 +426,6 @@ enum JobProcessingStatus: Codable, Equatable {
     }
 }
 
-struct BackgroundProcessingLaunchRecoveryState: Equatable {
-    let previousSessionCrashed: Bool
-    private(set) var reconciliationCompleted = false
-
-    init(previousSessionCrashed: Bool) {
-        self.previousSessionCrashed = previousSessionCrashed
-    }
-
-    var allowsAutomaticRecovery: Bool {
-        !previousSessionCrashed || reconciliationCompleted
-    }
-
-    mutating func markReconciliationCompleted() {
-        reconciliationCompleted = true
-    }
-}
-
 enum BackgroundProcessingCrashRecoveryPolicy {
     static let failureMessage = "Not restarted because the previous app session crashed."
 
@@ -516,7 +499,9 @@ class BackgroundProcessingManager: ObservableObject {
     private let coreDataManager = CoreDataManager()
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
-    private var launchRecoveryState: BackgroundProcessingLaunchRecoveryState
+    private let previousSessionCrashed: Bool
+    /// Jobs that were in flight when the previous session died. No automatic path
+    /// may resume them for the rest of this session; the user can still retry one.
     private var crashProtectedJobIDs = Set<UUID>()
 
     // MARK: - Singleton
@@ -526,25 +511,23 @@ class BackgroundProcessingManager: ObservableObject {
 
     private init(audioSessionManager: EnhancedAudioSessionManager = .shared) {
         self.audioSessionManager = audioSessionManager
-        self.launchRecoveryState = BackgroundProcessingLaunchRecoveryState(
-            previousSessionCrashed: AppLog.shared.previousSessionCrashed
-        )
+        self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
         loadJobsFromCoreData()
-        if launchRecoveryState.previousSessionCrashed {
+        if previousSessionCrashed {
+            // Captured before the sweep below rewrites their statuses, so the
+            // resume paths can still tell a pre-crash job from a fresh one.
             crashProtectedJobIDs = Set(activeJobs.map(\.id))
             failUnfinishedJobsAfterCrash()
         }
-        launchRecoveryState.markReconciliationCompleted()
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
         startStaleJobMonitoring()
 
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
-            guard launchRecoveryState.allowsAutomaticRecovery else { return }
-            if launchRecoveryState.previousSessionCrashed {
+            if previousSessionCrashed {
                 AppLog.shared.backgroundProcessing(
-                    "Launch reconciliation completed; skipping automatic resume of pre-crash jobs",
+                    "Crash reconciliation completed; pre-crash jobs will not resume automatically",
                     level: .info
                 )
             } else {
@@ -890,7 +873,7 @@ class BackgroundProcessingManager: ObservableObject {
             let failedJob = job.withStatus(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: job.status,
-                    previousSessionCrashed: launchRecoveryState.previousSessionCrashed
+                    previousSessionCrashed: previousSessionCrashed
                 )
             )
 
@@ -2410,7 +2393,7 @@ class BackgroundProcessingManager: ObservableObject {
         // recorder. Reconfiguring it while a recording owns it discards the
         // configuration that recovery's activatePreparedSession() requires,
         // which surfaces as a bogus activation failure that stops the recording.
-        guard audioSessionManager.currentConfiguration?.backgroundRecording != true else {
+        guard !audioSessionManager.isOwnedByRecording else {
             AppLog.shared.backgroundProcessing(
                 "Recording owns the shared audio session; skipping keep-alive audio",
                 level: .debug
@@ -2453,7 +2436,7 @@ class BackgroundProcessingManager: ObservableObject {
         // If a recording took the shared session over while keep-alive was
         // running, tearing it down here would clear the configuration out from
         // under the recorder's recovery. Release only the keep-alive player.
-        guard audioSessionManager.currentConfiguration?.backgroundRecording != true else {
+        guard !audioSessionManager.isOwnedByRecording else {
             AppLog.shared.backgroundProcessing(
                 "Recording owns the shared audio session; leaving it active",
                 level: .debug

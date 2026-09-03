@@ -104,20 +104,18 @@ final class AudioRecorderFallbackTests: XCTestCase {
         )
     }
 
-    func testCrashRecoveryIsOneShotAndAllowsNewJobsAfterReconciliation() {
-        var state = BackgroundProcessingLaunchRecoveryState(previousSessionCrashed: true)
-        XCTAssertFalse(state.allowsAutomaticRecovery)
-
-        state.markReconciliationCompleted()
-
-        XCTAssertTrue(state.allowsAutomaticRecovery)
-        XCTAssertEqual(
-            BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
-                status: .queued,
-                previousSessionCrashed: false
-            ),
-            .queued
-        )
+    /// A session that did not crash leaves every job's status alone, so the jobs
+    /// queued after a clean launch are still picked up normally.
+    func testCleanLaunchLeavesJobStatusesAlone() {
+        for status in [JobProcessingStatus.ready, .queued, .processing, .interrupted("background")] {
+            XCTAssertEqual(
+                BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                    status: status,
+                    previousSessionCrashed: false
+                ),
+                status
+            )
+        }
     }
 
     #if os(iOS)

@@ -505,21 +505,85 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
     /// on disk until its save lands. Without sharing the reservation, both would
     /// merge the same segments and insert the same recording twice.
     @MainActor
-    func testTheForegroundReclaimYieldsToAnInFlightOne() async {
-        let viewModel = AudioRecorderViewModel()
+    func testTheForegroundReclaimYieldsToAnInFlightOne() async throws {
+        let parked = try makeParkedRecovery(named: "test-inflight-parked.m4a")
+        defer { parked.cleanUp() }
 
         XCTAssertTrue(
-            viewModel.reserveReclaim(forKey: "parked.m4a"),
+            parked.viewModel.reserveReclaim(forKey: parked.key),
             "Stands in for the superseded-session pass already owning this entry"
         )
 
-        let didReclaim = await viewModel.reclaimDeferredRecoverySegmentsIfNeeded()
+        let didReclaim = await parked.viewModel.reclaimDeferredRecoverySegmentsIfNeeded()
 
         XCTAssertFalse(didReclaim, "The foreground pass must leave a reserved entry alone")
-        XCTAssertTrue(
-            viewModel.reserveReclaim(forKey: "other.m4a"),
-            "Unrelated entries are still claimable"
+        XCTAssertNil(
+            parked.viewModel.recordingURL,
+            "Live recording state must not be pointed at another pass's segments"
         )
+        XCTAssertTrue(parked.viewModel.recordingSegments.isEmpty)
+    }
+
+    /// The pass that does claim the entry keeps the reservation rather than
+    /// releasing it on the way out. It still has to inspect the container and
+    /// query the database before it can set `recordingBeingProcessed`, and an
+    /// entry left unowned across those awaits is one that a recording started in
+    /// the meantime reclaims and saves a second time.
+    @MainActor
+    func testAReclaimedEntryStaysReservedForTheUnprocessedPass() async throws {
+        let parked = try makeParkedRecovery(named: "test-handover-parked.m4a")
+        defer { parked.cleanUp() }
+
+        let didReclaim = await parked.viewModel.reclaimDeferredRecoverySegmentsIfNeeded()
+
+        XCTAssertTrue(didReclaim, "A free parked entry is reclaimed")
+        XCTAssertEqual(parked.viewModel.recordingURL, parked.url)
+        XCTAssertFalse(
+            parked.viewModel.reserveReclaim(forKey: parked.key),
+            "The entry stays owned until the unprocessed-recording pass releases it"
+        )
+
+        parked.viewModel.releaseHandedOverReclaim()
+
+        XCTAssertTrue(
+            parked.viewModel.reserveReclaim(forKey: parked.key),
+            "Once that pass is over the entry is claimable again"
+        )
+    }
+
+    /// One parked single-segment recovery on disk, with the view model that can
+    /// reclaim it. `reclaimDeferredRecoverySegmentsIfNeeded` reads the snapshot
+    /// file, so a test that writes none never reaches the reservation at all.
+    private struct ParkedRecoveryFixture {
+        let viewModel: AudioRecorderViewModel
+        let url: URL
+        let snapshotURL: URL
+        var key: String { url.lastPathComponent }
+
+        func cleanUp() {
+            for url in [url, snapshotURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+
+    @MainActor
+    private func makeParkedRecovery(named filename: String) throws -> ParkedRecoveryFixture {
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let snapshotURL = documents.appendingPathComponent("deferred-recovery.json")
+        let url = documents.appendingPathComponent(filename)
+        try Data("audio".utf8).write(to: url)
+        try? FileManager.default.removeItem(at: snapshotURL)
+
+        let viewModel = AudioRecorderViewModel()
+        viewModel.persistRecoverySnapshot(
+            segments: [url],
+            mainRecordingURL: url,
+            currentSegmentIndex: 0
+        )
+        return ParkedRecoveryFixture(viewModel: viewModel, url: url, snapshotURL: snapshotURL)
     }
 
     func testParkedRecoverySnapshotsDoNotOverwriteEachOther() throws {

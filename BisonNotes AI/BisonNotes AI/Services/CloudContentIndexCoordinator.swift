@@ -220,7 +220,15 @@ final class CloudContentIndexCoordinator {
         let waiterID = nextWaiterID
         nextWaiterID += 1
         queuedWaiters.insert(waiterID)
-        defer { outcomesByWaiter.removeValue(forKey: waiterID) }
+        // Both sides of this caller's bookkeeping go on every exit. A caller
+        // cancelled while awaiting used to leave its id in `queuedWaiters`
+        // forever, and every later write then recorded an outcome for that dead
+        // id which nothing was left to remove — two dictionaries growing for the
+        // lifetime of the process.
+        defer {
+            queuedWaiters.remove(waiterID)
+            outcomesByWaiter.removeValue(forKey: waiterID)
+        }
 
         queuedDelta = (queuedDelta ?? ManifestDelta()).merged(with: delta)
         if let inFlightDelta {
@@ -264,6 +272,11 @@ final class CloudContentIndexCoordinator {
     func replace(with manifest: CloudActiveManifest) async throws -> CloudActiveManifest {
         while let running = writeChain {
             _ = try? await running.value
+            // Same reason as `apply`: awaiting a finished task can return without
+            // suspending, and the writer clears `writeChain` from its own
+            // continuation. Without the yield this loop spins the main actor and
+            // that continuation never runs.
+            await Task.yield()
         }
         let task = Task { @MainActor [weak self] () throws -> CloudActiveManifest in
             guard let self else { return manifest }

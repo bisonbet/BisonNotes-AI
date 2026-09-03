@@ -359,6 +359,13 @@ class AppDataCoordinator: ObservableObject {
             recording.lastModified = deletionDate
             try coreDataManager.saveContext()
         } catch {
+            // Roll back before withdrawing: `saveContext()` leaves a failed save's
+            // edits staged in the context, so the cleared `recordingURL` and
+            // transcript link would still be committed by the next unrelated save —
+            // with their removal intents already taken back. The recording would
+            // then have lost its audio and transcript locally with no tombstone,
+            // and the next sync would restore exactly what the user deleted.
+            coreDataManager.rollbackContext()
             withdrawUncommittedRemovals()
             throw error
         }

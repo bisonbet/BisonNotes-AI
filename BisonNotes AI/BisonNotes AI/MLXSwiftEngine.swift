@@ -104,8 +104,14 @@ final class MLXSwiftDownloadManager: ObservableObject {
     @Published private(set) var isModelDownloaded = false
 
     private var downloadTask: Task<Void, Never>?
+    /// Bumped by every start and every cancel, so a task that is still unwinding
+    /// can tell whether the published state below is still its own to clear.
+    private var downloadGeneration = 0
+    /// Cancelled downloads that have not finished unwinding. They no longer own
+    /// the published state — the user may start another immediately — but their
+    /// blobs may still be landing, so no cache sweep may start while any remain.
+    private var unwindingCancelledDownloads = 0
     private var isCacheMaintenanceInProgress = false
-    private var downloadRequestedDuringCacheMaintenance = false
 
     var modelId: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -134,28 +140,29 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// an unprotected filesystem operation.
     @discardableResult
     func beginCacheMaintenance() -> Bool {
-        guard !isDownloading, !isCacheMaintenanceInProgress else { return false }
+        guard !isDownloading, unwindingCancelledDownloads == 0, !isCacheMaintenanceInProgress else {
+            return false
+        }
         isCacheMaintenanceInProgress = true
         return true
     }
 
     /// Releases the cache reservation after the detached filesystem sweep has
-    /// finished. A download requested while the sweep was running starts now.
+    /// finished.
     func endCacheMaintenance() {
-        guard isCacheMaintenanceInProgress else { return }
         isCacheMaintenanceInProgress = false
-        guard downloadRequestedDuringCacheMaintenance else { return }
-        downloadRequestedDuringCacheMaintenance = false
-        startDownload()
     }
 
     func startDownload() {
         guard !isDownloading else { return }
-        if isCacheMaintenanceInProgress {
-            downloadRequestedDuringCacheMaintenance = true
-            return
-        }
+        // Deliberately not held behind a running sweep. What actually protects a
+        // download's blobs is the sweep re-reading `isDownloading` immediately
+        // before every removal; queuing the request instead was invisible — no
+        // progress, no message, nothing for minutes while gigabytes were swept —
+        // and became permanent whenever the sweep's release never ran.
         let id = modelId
+        downloadGeneration += 1
+        let generation = downloadGeneration
         isDownloading = true
         downloadError = nil
         downloadProgress = 0
@@ -164,10 +171,18 @@ final class MLXSwiftDownloadManager: ObservableObject {
         downloadTask = Task { [weak self] in
             guard let self else { return }
             defer {
-                self.isDownloading = false
-                self.downloadTask = nil
-                if UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID) == id {
-                    UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+                if self.downloadGeneration == generation {
+                    self.isDownloading = false
+                    self.downloadTask = nil
+                    if UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID) == id {
+                        UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+                    }
+                } else {
+                    // Cancelled, and the state above belongs to whoever replaced
+                    // us. Only report that this task has stopped writing. The
+                    // in-flight marker is left alone: it names the download that
+                    // owns it now, and clearing it could expose blobs still landing.
+                    self.unwindingCancelledDownloads = max(0, self.unwindingCancelledDownloads - 1)
                 }
             }
             do {
@@ -190,7 +205,18 @@ final class MLXSwiftDownloadManager: ObservableObject {
     }
 
     func cancelDownload() {
+        if downloadTask != nil {
+            // Cleared here rather than only in the task's `defer`: a Hub download
+            // need not observe cancellation promptly, and leaving `isDownloading`
+            // true until it unwound made the user's next tap on Download a silent
+            // no-op. The unwinding task is counted instead, so the cache sweep
+            // still keeps off the blobs it may still be writing.
+            unwindingCancelledDownloads += 1
+            downloadGeneration += 1
+        }
         downloadTask?.cancel()
+        downloadTask = nil
+        isDownloading = false
         downloadProgress = 0
         downloadError = nil
     }

@@ -91,6 +91,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Private Properties
     private let audioSessionController: any AudioSessionControlling
+    /// A configuration applied to the session's category but not yet activated.
+    ///
+    /// It becomes `currentConfiguration` only once `setActive` succeeds. Publishing
+    /// it up front meant a recovery whose ten activation attempts all failed left
+    /// the manager claiming an owned background-recording session it never got —
+    /// nothing but `deactivateSession()` clears that, and the terminate path does
+    /// not call it, so `BackgroundProcessingManager`'s keep-alive guard skipped
+    /// itself for the rest of the session.
+    private var preparedConfiguration: AudioSessionConfig?
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -194,6 +203,17 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
 
+    /// True while a recording holds this session, or is about to: either it is
+    /// active, or a recovery has prepared the category and not yet activated it.
+    ///
+    /// Anything that would reconfigure the shared session — background processing's
+    /// keep-alive audio, above all — has to ask this first. Reconfiguring under a
+    /// recording discards the category that recovery's `activatePreparedSession()`
+    /// needs, which surfaces as a bogus activation failure that stops the recording.
+    var isOwnedByRecording: Bool {
+        (currentConfiguration ?? preparedConfiguration)?.backgroundRecording == true
+    }
+
     /// Reapply the recording category without activating it.
     ///
     /// Recovery calls this after the old recorder has been stopped and its
@@ -216,11 +236,19 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// the recovery coordinator records its NSError domain and code before it
     /// applies a retry/defer/fail disposition.
     func activatePreparedSession() throws {
-        guard currentConfiguration != nil else {
+        // Falls back to `currentConfiguration` for a caller that re-activates an
+        // already-committed session without preparing a new one.
+        guard let prepared = preparedConfiguration ?? currentConfiguration else {
             throw AudioSessionRecoveryError.missingConfiguration
         }
 
+        // Nothing below this line is reached when activation throws, which is the
+        // point: the manager only claims the session once it actually holds it.
         try audioSessionController.setActive(true, options: [])
+        preparedConfiguration = nil
+        currentConfiguration = prepared
+        isMixedAudioEnabled = prepared.allowMixedAudio
+        isBackgroundRecordingEnabled = prepared.backgroundRecording
         isConfigured = true
     }
 
@@ -233,6 +261,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
+        preparedConfiguration = nil
     }
 
     /// Configure standard recording session (fallback for compatibility)
@@ -362,6 +391,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
+        preparedConfiguration = nil
         AppLog.shared.audioSession("Audio session deactivated and reset")
     }
 
@@ -384,9 +414,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             try? audioSessionController.setPreferredIOBufferDuration(0.1)
         }
 
-        currentConfiguration = config
-        isMixedAudioEnabled = config.allowMixedAudio
-        isBackgroundRecordingEnabled = config.backgroundRecording
+        // Held aside, not published: `activatePreparedSession()` commits it once
+        // the session is actually active.
+        preparedConfiguration = config
     }
 
     private func checkBackgroundAudioPermission() async -> Bool {

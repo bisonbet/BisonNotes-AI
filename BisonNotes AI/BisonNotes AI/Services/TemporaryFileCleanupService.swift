@@ -210,6 +210,11 @@ final class TemporaryFileCleanupService {
         if name.hasPrefix("catalyst_meeting_mix_") && ext == "m4a" { return true }
         if name.hasSuffix("-system.m4a") { return true }
         if name.hasPrefix("temp_merge_") && ext == "m4a" { return true }
+        // The segment merge moves the original main segment aside before it moves
+        // the merged output into place. Both halves of that swap failing — or a
+        // kill between them — leaves a full copy of the recording under this name
+        // with nothing else in the app that knows to reclaim it.
+        if name.hasPrefix("merge_backup_") && ext == "m4a" { return true }
         // Diagnostic exports are written for the share sheet and are multi-megabyte.
         // `LogExporter` clears the previous ones each time it exports; this catches
         // the ones a crash or a dismissed share sheet left behind.
@@ -301,7 +306,13 @@ struct AudioStagingCleanupSweep {
                 continue
             }
 
-            if await isCloudSyncActive() { return result }
+            // Skip this directory, do not abandon the sweep: the gate is global,
+            // so while a sync is running every directory is skipped anyway, but a
+            // sync that finishes part way through must not cost this pass the
+            // orphans it had not reached yet. Returning here meant a device that
+            // syncs on launch and activation — where this sweep is scheduled from —
+            // could lose the race on every pass and never reclaim anything.
+            if await isCloudSyncActive() { continue }
 
             let size = directorySize(runDirectory)
             do {
