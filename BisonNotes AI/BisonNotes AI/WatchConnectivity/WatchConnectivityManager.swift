@@ -59,6 +59,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private var importBackgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
     private let processedRecordingIdsKey = "processedWatchRecordingIds"
     private let maxProcessedIdsRetained = 200
+    private var watchConnectivitySupported = false
 
     // MARK: - File sync callbacks
     var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
@@ -84,11 +85,14 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     private func setupWatchConnectivity() {
         guard WCSession.isSupported() else {
-            AppLog.shared.watchConnectivity("WatchConnectivity not supported on this device", level: .error)
-            connectionState = .error
+            watchConnectivitySupported = false
+            connectionState = .disconnected
+            isWatchAppInstalled = false
+            AppLog.shared.watchConnectivity("WatchConnectivity unavailable on this platform", level: .debug)
             return
         }
 
+        watchConnectivitySupported = true
         let wcSession = WCSession.default
         self.session = wcSession
         wcSession.activate()
@@ -291,6 +295,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     /// Send a sync outcome message via transferUserInfo, which queues for
     /// delivery when the watch is unreachable (unlike sendMessage).
     private func sendQueuedSyncMessage(_ message: WatchRecordingMessage, info: [String: Any]) {
+        guard watchConnectivitySupported else { return }
+
         guard let session = session, session.activationState == .activated else {
             AppLog.shared.watchConnectivity("Cannot queue sync message - session not available", level: .error)
             return
@@ -324,6 +330,8 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     /// Send a message to the watch (requires reachability)
     func sendRecordingCommand(_ message: WatchRecordingMessage, additionalInfo: [String: Any]? = nil) {
+        guard watchConnectivitySupported else { return }
+
         guard let session = session, session.activationState == .activated, session.isReachable else {
             AppLog.shared.watchConnectivity("Cannot send command - watch not reachable or session not activated", level: .error)
             return
@@ -343,6 +351,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     }
 
     private func updateConnectionState() {
+        guard watchConnectivitySupported else {
+            connectionState = .disconnected
+            isWatchAppInstalled = false
+            return
+        }
+
         guard let session = session else {
             connectionState = .error
             return

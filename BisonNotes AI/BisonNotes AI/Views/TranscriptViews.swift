@@ -1182,9 +1182,9 @@ struct TranscriptsView: View {
     private func summaryButtonView(_ recordingData: (recording: RecordingEntry, transcript: TranscriptData?)) -> some View {
         let recording = recordingData.recording
         let hasTranscript = recordingData.transcript != nil
-        // Read the cheap status attribute rather than faulting recording.summary on every row.
+        // Cheap ID/status metadata avoids faulting the relationship unless stale data needs a fallback.
         let status = recording.summaryStatus
-        let hasSummary = status == ProcessingStatus.completed.rawValue
+        let hasSummary = recording.hasStoredSummary
 
         if let recordingId = recording.id, hasTranscript, !hasSummary {
             let isGenerating = generatingSummaryRecordingIds.contains(recordingId)
@@ -1467,24 +1467,19 @@ struct TranscriptsView: View {
             if shouldDeleteImportedRecording {
                 appCoordinator.deleteRecording(id: request.recordingId)
                 AppLog.shared.transcription("Deleted imported transcript and its recording entry")
-            } else if let transcriptId = request.transcriptId {
-                try await appCoordinator.deleteTranscript(id: transcriptId)
-                if request.imported {
-                    recording.recordingURL = nil
-                    recording.lastModified = Date()
-                    try? appCoordinator.coreDataManager.saveContext()
+            } else if request.imported {
+                try await appCoordinator.deleteImportedTranscriptPreservingSummary(
+                    recordingId: request.recordingId,
+                    transcriptId: request.transcriptId
+                )
+                if request.transcriptId != nil {
                     AppLog.shared.transcription("Deleted imported transcript, preserved summary")
                 } else {
-                    AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
+                    AppLog.shared.transcription("Removed unavailable imported transcript, preserved summary")
                 }
-            } else if request.imported {
-                // There is no transcript row to delete, but a summary may still be
-                // anchored to this imported recording. Preserve that summary while
-                // removing the temporary audio relationship.
-                recording.recordingURL = nil
-                recording.lastModified = Date()
-                try? appCoordinator.coreDataManager.saveContext()
-                AppLog.shared.transcription("Removed unavailable imported transcript, preserved summary")
+            } else if let transcriptId = request.transcriptId {
+                try await appCoordinator.deleteTranscript(id: transcriptId)
+                AppLog.shared.transcription("Deleted transcript, preserved recording and summary")
             } else {
                 AppLog.shared.transcription("Cannot delete transcript: no transcript ID", level: .error)
             }
@@ -2979,140 +2974,4 @@ struct TranscriptDetailView: View {
             }
         }
     }
-}
-
-// MARK: - Title Row View
-
-struct TitleRowView: View {
-    let title: TitleItem
-    let recordingName: String
-    @StateObject private var systemIntegration = SystemIntegrationManager()
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Category icon
-            Image(systemName: title.category.icon)
-                .font(.caption)
-                .foregroundColor(.accentColor)
-                .frame(width: 16)
-
-            VStack(alignment: .leading, spacing: 4) {
-                // Title text
-                Text(title.text)
-                    .font(.body)
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.leading)
-
-                // Confidence indicator
-                HStack {
-                    Text("Confidence: \(safeConfidencePercent(title.confidence))%")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-
-                    // Copy button
-                    Button(action: {
-                        PlatformPasteboard.string = title.text
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption2)
-                            .foregroundColor(.accentColor)
-                    }
-                }
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-// MARK: - Enhanced Title Row View
-
-struct EnhancedTitleRowView: View {
-    let title: TitleItem
-    let recordingName: String
-    @StateObject private var systemIntegration = SystemIntegrationManager()
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            // Category icon with background
-            ZStack {
-                Circle()
-                    .fill(Color.accentColor.opacity(0.1))
-                    .frame(width: 32, height: 32)
-
-                Image(systemName: title.category.icon)
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                // Title text
-                Text(title.text)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(nil)
-
-                // Metadata row
-                HStack {
-                    // Confidence indicator
-                    HStack(spacing: 4) {
-                        Image(systemName: "chart.bar.fill")
-                            .font(.caption2)
-                            .foregroundColor(confidenceColor)
-                        Text("\(safeConfidencePercent(title.confidence))%")
-                            .font(.caption2)
-                            .foregroundColor(confidenceColor)
-                    }
-
-                    // Category badge
-                    Text(title.category.rawValue)
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.1))
-                        .foregroundColor(.secondary)
-                        .cornerRadius(4)
-
-                    Spacer()
-
-                    // Copy button
-                    Button(action: {
-                        PlatformPasteboard.string = title.text
-                    }) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.caption2)
-                            .foregroundColor(.accentColor)
-                    }
-                }
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
-        .background(Color.secondary.opacity(0.05))
-        .cornerRadius(8)
-    }
-
-    private var confidenceColor: Color {
-        guard title.confidence.isFinite else { return .gray }
-        switch title.confidence {
-        case 0.8...1.0: return .green
-        case 0.6..<0.8: return .blue
-        case 0.4..<0.6: return .orange
-        default: return .red
-        }
-    }
-}
-
-// MARK: - Helper Functions
-
-private func safeConfidencePercent(_ confidence: Double) -> Int {
-    guard confidence.isFinite else { return 0 }
-    return Int(confidence * 100)
 }

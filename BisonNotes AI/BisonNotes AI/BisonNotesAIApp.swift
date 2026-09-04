@@ -820,7 +820,9 @@ struct BisonNotesAIApp: App {
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
-                    appCoordinator.reconcileiCloudIfEnabled(reason: "app launch", force: true)
+                    CacheMaintenanceService.shared.pruneCachesIfDue()
+                    appCoordinator.observeNetworkRestorationForiCloud()
+                    appCoordinator.reconcileiCloudIfEnabled(reason: .appLaunch, force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
                 #if os(iOS)
@@ -847,11 +849,17 @@ struct BisonNotesAIApp: App {
                     // Repair any files left at .complete protection by v1.11.0.
                     migrateFileProtectionForExistingFiles()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
+                    // Throttled internally: a Mac can stay open for days, so a
+                    // launch-only sweep would never run on the machine that
+                    // accumulates the most.
+                    CacheMaintenanceService.shared.pruneCachesIfDue()
                     // Scan for files placed by the Share Extension (Voice Memos, etc.)
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
-                    appCoordinator.reconcileiCloudIfEnabled(reason: "app active")
+                    // Not forced: the launch pass is usually still running, and an
+                    // activation with nothing pending has nothing to do.
+                    appCoordinator.reconcileiCloudIfEnabled(reason: .appBecameActive)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: Notification.Name("ShareExtensionDidSaveFile"))) { _ in
                     NSLog("📎 Darwin notification received from Share Extension")
@@ -1346,12 +1354,6 @@ struct BisonNotesAIApp: App {
         // Check for pending transcription/summarization jobs
         Task {
             let backgroundManager = BackgroundProcessingManager.shared
-
-            guard !AppLog.shared.previousSessionCrashed else {
-                AppLog.shared.general("Skipping background job processing because previous session crashed", level: .error)
-                task.setTaskCompleted(success: true)
-                return
-            }
 
             // Process any queued jobs
             if !backgroundManager.activeJobs.filter({ $0.status == .queued }).isEmpty {

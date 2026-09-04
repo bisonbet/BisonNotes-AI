@@ -1060,6 +1060,11 @@ struct SummariesView: View {
         return false
     }
 
+    /// Set once the legacy summary scan has completed without throwing. The scan
+    /// walks every record in the zone, so it is a one-time compatibility step, not
+    /// something to repeat every time this view appears.
+    private static let legacySummaryDiscoveryCompletedKey = "iCloudLegacySummaryDiscoveryCompletedV1"
+
     private func checkForFirstTimeiCloudPrompt() {
         guard !hasStartedInitialiCloudPromptCheck else { return }
         hasStartedInitialiCloudPromptCheck = true
@@ -1069,6 +1074,10 @@ struct SummariesView: View {
 
         // Check for legacy iCloud settings and migrate them
         migrateLegacyiCloudSettings()
+
+        guard !UserDefaults.standard.bool(forKey: Self.legacySummaryDiscoveryCompletedKey) else {
+            return
+        }
 
         Task {
             // Check if there are summaries in iCloud
@@ -1102,6 +1111,8 @@ struct SummariesView: View {
 
                     // Mark that we've completed the initial launch check
                     UserDefaults.standard.set(true, forKey: "hasCompletedInitialLaunch")
+                    // The scan succeeded, so it never needs to run again.
+                    UserDefaults.standard.set(true, forKey: Self.legacySummaryDiscoveryCompletedKey)
                 }
             } catch {
                 // If we can't check iCloud (offline, no access, etc.), don't show prompt
@@ -1128,19 +1139,6 @@ struct SummariesView: View {
                         iCloudManager.isEnabled = true
                     }
                 }
-            }
-        }
-    }
-
-    private func syncAllSummaries() async {
-        do {
-            try await iCloudManager.syncAllSummaries()
-        } catch {
-            AppLog.shared.summarization("Sync error: \(error)", level: .error)
-            await MainActor.run {
-                errorMessage = "iCloud sync failed: \(error.localizedDescription)"
-                errorRecoverySuggestion = ""
-                showErrorAlert = true
             }
         }
     }

@@ -340,7 +340,7 @@ Exclusive files:
 - `BisonNotes AI/BisonNotes AI/Views/AcknowledgementsView.swift`
 - A current-release document only if Luna verifies this feature is assigned to that release
 
-Do not retroactively edit the published `docs/bisonnotes-ai-v2.3.html` merely because it exists. Update the active future/current release surface only after confirming branch/release ownership.
+Do not retroactively edit the published `docs/bisonnotes-ai-v2-3.html` merely because it exists. Update the active future/current release surface only after confirming branch/release ownership.
 
 Documentation work:
 

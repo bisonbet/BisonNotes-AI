@@ -11,6 +11,58 @@ import Foundation
 import AVFoundation
 import Speech
 
+/// Bridges Speech's callback-based authorization API to async code without
+/// inheriting the caller's actor. Speech may invoke its callback on a
+/// background queue, so the continuation must not be resumed directly from a
+/// MainActor-isolated method.
+enum SpeechAuthorizationClient {
+    typealias Requester = @Sendable (
+        @escaping @Sendable (SFSpeechRecognizerAuthorizationStatus) -> Void
+    ) -> Void
+
+    static func requestPermission() async -> Bool {
+        await requestAuthorizationStatus() == .authorized
+    }
+
+    static func requestPermission(using requester: @escaping Requester) async -> Bool {
+        await requestAuthorizationStatus(using: requester) == .authorized
+    }
+
+    static func requestAuthorizationStatus() async -> SFSpeechRecognizerAuthorizationStatus {
+        await requestAuthorizationStatus { completion in
+            SFSpeechRecognizer.requestAuthorization(completion)
+        }
+    }
+
+    static func requestAuthorizationStatus(
+        using requester: @escaping Requester
+    ) async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            let gate = SpeechAuthorizationContinuation(continuation: continuation)
+            requester { status in
+                Task {
+                    await gate.resume(status)
+                }
+            }
+        }
+    }
+}
+
+private actor SpeechAuthorizationContinuation {
+    private let continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>
+    private var hasResumed = false
+
+    init(continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ status: SFSpeechRecognizerAuthorizationStatus) {
+        guard !hasResumed else { return }
+        hasResumed = true
+        continuation.resume(returning: status)
+    }
+}
+
 /// Lets the audio tap — which runs on the render thread, outside the service's
 /// actor — check whether it should still be writing. Reads and writes are both
 /// single-word and guarded by the lock, so the unchecked conformance covers only
@@ -192,11 +244,11 @@ class LiveTranscriptionService: ObservableObject {
     // MARK: - Permission Check
 
     static func requestPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status == .authorized)
-            }
-        }
+        await SpeechAuthorizationClient.requestPermission()
+    }
+
+    static func requestPermission(using requester: @escaping SpeechAuthorizationClient.Requester) async -> Bool {
+        await SpeechAuthorizationClient.requestPermission(using: requester)
     }
 }
 

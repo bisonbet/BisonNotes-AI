@@ -18,8 +18,7 @@ class AppDataCoordinator: ObservableObject {
     /// singleton Window scene rather than a per-recording WindowGroup.
     @Published var macPlayerRecordingID: UUID?
 
-    private var lastAutomaticiCloudReconcileDate: Date?
-    private let automaticiCloudReconcileMinInterval: TimeInterval = 300
+    private var networkRestoredObserver: (any NSObjectProtocol)?
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
@@ -195,9 +194,6 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getAllRecordingsWithData()
     }
 
-    func getRecordingsWithTranscripts() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        return coreDataManager.getRecordingsWithTranscripts()
-    }
 
     func deleteRecording(id: UUID) {
         let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
@@ -222,7 +218,7 @@ class AppDataCoordinator: ObservableObject {
 
         Task {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Deleted local recording and queued iCloud deletion marker for retry: \(error)", level: .error)
             }
@@ -254,9 +250,133 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
+        }
+        objectWillChange.send()
+    }
+
+    /// Removes an imported transcript placeholder while retaining its recording
+    /// metadata and summary. Unlike an ordinary missing-file cleanup, this is an
+    /// explicit user deletion: its cloud audio removal and any stale transcript
+    /// identity must survive until CloudKit accepts them.
+    func deleteImportedTranscriptPreservingSummary(
+        recordingId: UUID,
+        transcriptId: UUID? = nil
+    ) async throws {
+        guard let initialRecording = coreDataManager.getRecording(id: recordingId) else {
+            throw NSError(
+                domain: "AppDataCoordinator",
+                code: 404,
+                userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
+            )
+        }
+
+        let iCloudManager = SummaryManager.shared.getiCloudManager()
+        let initialSummary = coreDataManager.getSummary(for: recordingId) ?? initialRecording.summary
+        let transcriptIds = Set([
+            transcriptId,
+            initialRecording.transcriptId,
+            initialRecording.transcript?.id,
+            initialSummary?.transcriptId,
+            initialSummary?.transcript?.id
+        ].compactMap { $0 })
+
+        // Persist both removal intents before touching anything locally, the same
+        // way `deleteSummary` and `setCloudSyncDisabled` do. Queuing them after the
+        // save left a window where a termination between the two would take the
+        // transcript and audio away locally with nothing durable telling the other
+        // devices — and the next sync would restore exactly what the user deleted,
+        // which is the resurrection this method exists to prevent. Withdrawn below
+        // if the local work does not commit.
+        //
+        // `deletionDate` is when the user asked, which is also what the markers must
+        // carry: a marker that reaches CloudKit days later must not erase newer work.
+        let deletionDate = Date()
+        for transcriptId in transcriptIds {
+            iCloudManager.enqueueTranscriptRemovalFromiCloud(
+                transcriptId: transcriptId,
+                recordingId: recordingId,
+                requestedAt: deletionDate
+            )
+        }
+        iCloudManager.enqueueImportedAudioRemovalFromiCloud(
+            recordingId: recordingId,
+            requestedAt: deletionDate
+        )
+
+        // `deleteTranscript` commits a save of its own, so its rows can be durably
+        // gone even when the work below fails. Withdrawing a marker for one of those
+        // would leave the transcript deleted locally with nothing telling the other
+        // devices — the resurrection this method exists to prevent — so only intents
+        // whose mutation has not committed are taken back.
+        var committedTranscriptIds: Set<UUID> = []
+
+        func withdrawUncommittedRemovals() {
+            for transcriptId in transcriptIds where !committedTranscriptIds.contains(transcriptId) {
+                iCloudManager.clearPendingTranscriptRemoval(transcriptId: transcriptId)
+            }
+            // `recordingURL` is only cleared by the `saveContext()` below, so if that
+            // did not land the audio is still referenced locally and its intent goes.
+            iCloudManager.clearPendingImportedAudioRemoval(recordingId: recordingId)
+        }
+
+        do {
+            for transcriptId in transcriptIds {
+                // The marker is already queued; this only removes the local row.
+                // Remove every identity collected above, including stale ids from
+                // the recording and summary relationships. Otherwise backup can
+                // select an older remaining row and recreate the deleted transcript.
+                try coreDataManager.deleteTranscript(id: transcriptId, enqueueCloudDeletion: false)
+                committedTranscriptIds.insert(transcriptId)
+            }
+
+            guard let recording = coreDataManager.getRecording(id: recordingId) else {
+                throw NSError(
+                    domain: "AppDataCoordinator",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
+                )
+            }
+
+            let currentTranscriptId = recording.transcriptId ?? recording.transcript?.id
+            if currentTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                recording.transcript = nil
+                recording.transcriptId = nil
+                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            }
+
+            if let summary = coreDataManager.getSummary(for: recordingId) ?? recording.summary {
+                let currentSummaryTranscriptId = summary.transcriptId ?? summary.transcript?.id
+                if currentSummaryTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                    summary.transcript = nil
+                    summary.transcriptId = nil
+                }
+            }
+
+            recording.recordingURL = nil
+            recording.lastModified = deletionDate
+            try coreDataManager.saveContext()
+        } catch {
+            // Roll back before withdrawing: `saveContext()` leaves a failed save's
+            // edits staged in the context, so the cleared `recordingURL` and
+            // transcript link would still be committed by the next unrelated save —
+            // with their removal intents already taken back. The recording would
+            // then have lost its audio and transcript locally with no tombstone,
+            // and the next sync would restore exactly what the user deleted.
+            coreDataManager.rollbackContext()
+            withdrawUncommittedRemovals()
+            throw error
+        }
+
+        do {
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
+        } catch {
+            AppLog.shared.coreData(
+                "Imported transcript cleanup saved locally; queued iCloud removal for retry: \(error)",
+                level: .error
+            )
         }
         objectWillChange.send()
     }
@@ -291,7 +411,7 @@ class AppDataCoordinator: ObservableObject {
         }
 
         do {
-            try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local summary but failed to remove iCloud summary records: \(error)", level: .error)
         }
@@ -318,7 +438,7 @@ class AppDataCoordinator: ObservableObject {
 
         if disabled {
             do {
-                try await iCloudManager.flushPendingiCloudMutations(appCoordinator: self)
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
             } catch {
                 AppLog.shared.coreData("Marked recording local-only and queued iCloud removal for retry: \(error)", level: .error)
             }
@@ -397,23 +517,31 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled != true
     }
 
-    func reconcileiCloudIfEnabled(reason: String, force: Bool = false) {
+    /// Asks the sync engine for one routine pass.
+    ///
+    /// The decision to run belongs to `iCloudStorageManager`: it knows whether work
+    /// is pending, when the last successful check was, and whether CloudKit has
+    /// asked for a backoff. Requests that arrive while a run is in flight are
+    /// coalesced there rather than starting a second pass.
+    func reconcileiCloudIfEnabled(reason: CloudSyncReason, force: Bool = false) {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         guard iCloudManager.isEnabled else { return }
-
-        if !force,
-           let lastAutomaticiCloudReconcileDate,
-           Date().timeIntervalSince(lastAutomaticiCloudReconcileDate) < automaticiCloudReconcileMinInterval {
-            return
-        }
-        lastAutomaticiCloudReconcileDate = Date()
+        guard iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else { return }
 
         Task {
             do {
-                _ = try await iCloudManager.reconcileAllDataWithiCloud(
+                let result = try await iCloudManager.reconcileAllDataWithiCloud(
                     appCoordinator: self,
                     reason: reason
                 )
+                guard !result.wasCoalescedIntoRunningSync else { return }
+                if let deferredUntil = result.wasDeferredUntil {
+                    AppLog.shared.coreData(
+                        "iCloud sync deferred for \(Int(deferredUntil.timeIntervalSinceNow))s at CloudKit's request",
+                        level: .debug
+                    )
+                    return
+                }
                 syncRecordingURLs()
                 NotificationCenter.default.post(name: NSNotification.Name("iCloudReconcileCompleted"), object: nil)
                 objectWillChange.send()
@@ -423,9 +551,23 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
-    // MARK: - Debug Methods
-
-    func debugDatabaseContents() {
-        coreDataManager.debugDatabaseContents()
+    /// Picks queued work back up when the network returns.
+    func observeNetworkRestorationForiCloud() {
+        guard networkRestoredObserver == nil else { return }
+        networkRestoredObserver = NotificationCenter.default.addObserver(
+            forName: iCloudStorageManager.networkRestoredNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // `queue: .main` delivers on the main thread, and the main-actor check
+            // is a thread check, so `assumeIsolated` happened to hold here. It is
+            // still an assumption about how the notification is delivered rather
+            // than something the type system enforces, and getting it wrong is a
+            // trap at runtime. Hop explicitly instead: the work this schedules is
+            // asynchronous either way.
+            Task { @MainActor in
+                self?.reconcileiCloudIfEnabled(reason: .networkRestored, force: true)
+            }
+        }
     }
 }

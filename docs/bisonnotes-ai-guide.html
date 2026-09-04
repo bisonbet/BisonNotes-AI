@@ -1,7 +1,9 @@
 <!-- BisonNotes AI - Complete User Guide -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
-<!-- This is the current v2.3 full guide; keep the existing /bisonnotes-ai/ page on v2.2 until shipped v2.2 builds no longer depend on it. -->
+<!-- This is the current v2.4 full guide. Publish it at /bisonnotes-ai/, which is the unversioned landing page BisonNotes opens when an installed build's version cannot be read. -->
+<!-- Versioned release snapshots (bisonnotes-ai-v2-4.html and earlier) stay on their own /bisonnotes-ai-v2-N/ pages; this page deliberately carries none of their bnNN-* anchors. -->
+<!-- Once published, a snapshot page is permanent: never delete it, never change its slug, and never rename a bnNN-* id. Installed builds keep opening their own version's page. -->
 
 <style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
 
@@ -11,7 +13,7 @@
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.3</span>
+  <span class="bn-ver">v2.4</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -51,10 +53,29 @@
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.3                                           -->
+<!-- WHAT'S NEW IN V2.4                                           -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.3:</strong>
+  <strong>What&rsquo;s new in v2.4:</strong>
+  <ul>
+    <li><strong>Much faster iCloud sync.</strong> Routine sync now reads and writes in batched requests instead of one record at a time, so a normal pass finishes in a fraction of the time it used to take. Actual times still depend on library size, network, and iCloud availability.</li>
+    <li><strong>Throttling is respected.</strong> When iCloud asks BisonNotes to wait, it waits exactly that long; a long wait is recorded as a deferred run and retried later instead of holding up the app.</li>
+    <li><strong>Devices stop overwriting each other.</strong> The shared index of synced content is updated as a change rather than rewritten wholesale, so two devices syncing at once no longer remove each other&rsquo;s entries.</li>
+    <li><strong>One sync operation at a time.</strong> A backup or restore you start while a sync is already running shows <em>Waiting for the sync already in progress</em> and begins as soon as that run finishes, instead of returning an empty result that looks like success.</li>
+    <li><strong>Audio no longer holds up metadata.</strong> Recording details sync without waiting on audio files, and audio transfer is tracked separately.</li>
+    <li><strong>Interruption recovery on iPhone and iPad.</strong> A phone call or an unexpected background stop now produces one coordinated recovery, always preserves the completed part of the recording, and never reports a recovery that restored nothing as a success.</li>
+    <li><strong>Mac microphone fallback.</strong> If the microphone cannot start for a meeting recording, BisonNotes refreshes the input list, retries meeting devices, and keeps system-audio capture running rather than failing the recording. A microphone that reconnects mid-recording can rejoin its own recovery, and the Mac audio import picker is fixed.</li>
+    <li><strong>Reclaimed storage.</strong> Local AI model downloads are no longer stored twice, deleting a model reclaims all of it, iCloud&rsquo;s own copies of transferred audio are bounded, and the diagnostic error log no longer grows without limit.</li>
+    <li><strong>Interrupted model downloads resume.</strong> A multi-part on-device model interrupted mid-copy is recognized as incomplete instead of being offered as ready.</li>
+    <li><strong>Deletions stay deleted.</strong> Deleting an imported transcript no longer leaves anything behind for a later sync to restore.</li>
+    <li><strong>Version-aware help.</strong> In-app <strong>Learn More</strong> links open the release guide that matches the installed version, at the section that answers the question.</li>
+  </ul>
+  <p>For the full detail on each of these, plus the upgrade checklist, see the <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-4/">v2.4 release and upgrade guide</a>.</p>
+</div>
+
+<details>
+  <summary>What&rsquo;s new in v2.3</summary>
+  <div class="dd">
   <ul>
     <li><strong>Native Mac app.</strong> BisonNotes now runs as a native macOS app with Mac windows, dedicated Settings, standard File/Edit commands and shortcuts, native export and sharing, persistent archive access, and continuity with the data used by the previous Catalyst build.</li>
     <li><strong>Mac Share extension and recording widget.</strong> Import supported audio or transcript files from the macOS Share menu, or use a small or medium desktop widget to open BisonNotes and start recording.</li>
@@ -75,7 +96,9 @@
     <li><strong>Accessibility evidence.</strong> BisonNotes now includes an accessibility matrix, App Store accessibility artifact, public accessibility page, and automated accessibility UI audit coverage for the main app surfaces.</li>
   </ul>
   <p><strong>Also retained from v2.1:</strong> stronger iCloud sync controls, crash-safe recording recovery, and the documented regression testing regimen.</p>
-</div>
+  <p>Earlier release pages stay published: <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-3/">v2.3</a> and <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-2/">v2.2</a>.</p>
+  </div>
+</details>
 
 <!-- ============================================================ -->
 <!-- GETTING STARTED                                               -->
@@ -846,6 +869,8 @@
       <li><strong>Poor Quality:</strong> Adjust audio quality settings, ensure proper mic distance</li>
       <li><strong>Background Recording:</strong> Enable in app settings</li>
       <li><strong>Mac meeting audio missing:</strong> Enable Record Meeting Audio in BisonNotes Settings &rarr; Recording, grant BisonNotes access in macOS System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording, then quit and reopen BisonNotes. If permission or mixing fails, the app still saves microphone audio.</li>
+      <li><strong>A call interrupted a recording:</strong> The completed portion is preserved and appears in Recordings. If iOS would not return the microphone while BisonNotes was in the background, recovery is deferred &mdash; open the app to let it finish, then start a new recording if you still need one.</li>
+      <li><strong>Mac meeting recording has system audio but no microphone:</strong> The microphone could not start or was lost during capture, and BisonNotes deliberately saved the usable track. Check macOS microphone permission and the selected input, reconnect the device, and make a short test recording.</li>
       <li><strong>Preferred Mac microphone disappeared:</strong> Reconnect the USB, Bluetooth, or interface input. BisonNotes temporarily uses the system default while it is absent and reselects the saved microphone when it returns.</li>
     </ul>
   </div>
@@ -869,6 +894,7 @@
       <li><strong>No Transcription:</strong> Check engine configuration</li>
       <li><strong>Poor Quality:</strong> Try a different engine or model</li>
       <li><strong>Large File Issues:</strong> Enable chunking for files over 5 minutes</li>
+      <li><strong>A model stays "not ready" after an interrupted download:</strong> A multi-part model interrupted mid-copy is now correctly reported as incomplete. Start the model setup again; the retained download cache lets it resume rather than start over.</li>
       <li><strong>Parakeet says a model is missing:</strong> Open Transcription Settings and re-download the selected Parakeet model. BisonNotes will reuse valid cached files when they exist, but clears stale settings if the files were removed.</li>
     </ul>
   </div>
@@ -881,6 +907,9 @@
       <li><strong>Missing Recordings:</strong> Use Data Migration tools</li>
       <li><strong>Corrupted Data:</strong> Clear and re-import data</li>
       <li><strong>Sync Problems:</strong> Check iCloud settings</li>
+      <li><strong>A backup says it is waiting:</strong> An automatic sync was already running. Your request starts as soon as that run finishes; leave the app open.</li>
+      <li><strong>Sync reported as deferred:</strong> iCloud asked BisonNotes to wait before sending more requests. The work is kept and retried &mdash; most common right after a large first sync.</li>
+      <li><strong>A deleted imported transcript came back:</strong> Fixed in v2.4. If it reappears from a device still on an older version, update that device and delete the item once more.</li>
     </ul>
   </div>
 </details>
@@ -889,7 +918,7 @@
 <ul>
   <li><strong>Battery:</strong> Use local engines when battery is low</li>
   <li><strong>Memory:</strong> Close other apps during large file processing</li>
-  <li><strong>Storage:</strong> Regularly clean up old recordings</li>
+  <li><strong>Storage:</strong> Regularly clean up old recordings. Since v2.4, BisonNotes also sweeps its own caches in the background &mdash; unused local-model downloads and iCloud&rsquo;s copies of transferred audio &mdash; so free space can keep increasing across the first launches after updating. Your recordings, transcripts, summaries, attachments, and archived audio are never touched by that sweep.</li>
   <li><strong>Network:</strong> Use local engines to reduce data usage</li>
 </ul>
 
@@ -976,6 +1005,10 @@
       <li><strong>Auto-Backup</strong> (v1.7) &mdash; Automatically backs up when new recordings are created</li>
       <li><strong>Automatic cross-device sync</strong> &mdash; When iCloud Sync is enabled, BisonNotes reconciles eligible recordings, transcripts, and summaries when the app launches or becomes active. The Include audio files checkbox controls whether audio files are uploaded and restored.</li>
       <li><strong>CloudKit Sync</strong> &mdash; Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
+      <li><strong>Batched sync</strong> (v2.4) &mdash; A routine pass reads the dataset in a small number of batched requests and issues one batched save and one batched delete, instead of a request per record. Deletion markers from other devices are worked out together and applied once.</li>
+      <li><strong>Throttle-aware retries</strong> (v2.4) &mdash; BisonNotes honors the wait iCloud asks for. A long wait becomes a deferred run that is retried later; queued work is never dropped.</li>
+      <li><strong>One operation at a time</strong> (v2.4) &mdash; Sync requests that arrive during a run join it or collapse into a single follow-up, and a backup or restore you start yourself reports that it is waiting rather than returning zeroed counts.</li>
+      <li><strong>Metadata before audio</strong> (v2.4) &mdash; Recording details sync without waiting on audio uploads, and audio transfer is measured separately.</li>
       <li><strong>Mac, iPhone, and iPad sync</strong> &mdash; iOS, iPadOS, and native macOS use the shared iCloud container <code>iCloud.Bison-Networking.BisonNotes-AI</code>. Devices must use the same Apple ID and CloudKit environment. Local Debug builds use the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac build will not see production iPhone or iPad records until the build channel/environment matches.</li>
       <li><strong>Production schema required</strong> &mdash; TestFlight and App Store builds require the CloudKit production schema to include the app-managed backup record types before sync can save new backup records. Production clients cannot create new CloudKit record types at runtime.</li>
       <li><strong>Review iCloud Items</strong> &mdash; Current app versions mark synced content as active before it is automatically restored on other devices. Older cloud-only items that are not marked active are held in Settings, where they can be restored or deleted from BisonNotes iCloud sync records.</li>

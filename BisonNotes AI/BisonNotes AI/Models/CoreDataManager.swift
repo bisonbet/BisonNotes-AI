@@ -1149,58 +1149,6 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    /// Get all summary IDs for a recording (used to capture IDs before creating new summary)
-    func getAllSummaryIds(for recordingId: UUID) -> [UUID] {
-        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-
-        do {
-            let summaries = try context.fetch(fetchRequest)
-            return summaries.compactMap { $0.id }
-        } catch {
-            AppLog.shared.coreData("Error fetching summary IDs: \(error)", level: .error)
-            return []
-        }
-    }
-
-    /// Delete ALL summaries for a recording (useful for regeneration to clean up orphans)
-    func deleteAllSummaries(for recordingId: UUID) throws {
-        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-
-        do {
-            let summaries = try context.fetch(fetchRequest)
-            if summaries.isEmpty {
-                AppLog.shared.coreData("No summaries found for recording: \(recordingId)", level: .debug)
-                return
-            }
-
-            AppLog.shared.coreData("Deleting \(summaries.count) summary/summaries for recording: \(recordingId)", level: .debug)
-
-            // Hoisted: the recording is the same for every row in this loop.
-            let recording = getRecording(id: recordingId)
-            var effects = DeferredDeletionEffects()
-            for summary in summaries {
-                AppLog.shared.coreData("Deleting summary ID: \(summary.id?.uuidString ?? "nil")", level: .debug)
-                if let summaryId = summary.id, recording?.summaryId == summaryId {
-                    recording?.summary = nil
-                    recording?.summaryId = nil
-                    recording?.summaryStatus = ProcessingStatus.notStarted.rawValue
-                    recording?.lastModified = Date()
-                }
-                effects.stage(summary: summary)
-                context.delete(summary)
-            }
-
-            try save(committing: effects)
-            AppLog.shared.coreData("Successfully deleted all summaries for recording: \(recordingId)")
-        } catch {
-            AppLog.shared.coreData("Error deleting summaries for recording: \(error)", level: .error)
-            context.rollback()
-            throw error
-        }
-    }
-
     // MARK: - Combined Operations
 
     func getCompleteRecordingData(id: UUID) -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
@@ -1224,9 +1172,6 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    func getRecordingsWithTranscripts() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        return getAllRecordingsWithData().filter { $0.transcript != nil }
-    }
 
     // MARK: - Delete Operations
 
@@ -1333,6 +1278,17 @@ class CoreDataManager: ObservableObject {
 
     func saveContext() throws {
         try context.save()
+    }
+
+    /// Discards every uncommitted change in the context.
+    ///
+    /// `saveContext()` deliberately leaves a failed save's edits staged, which is
+    /// fine for a caller that will retry — but not for one that answers the failure
+    /// by withdrawing durable intent elsewhere. Those callers must roll back first,
+    /// or a later unrelated `saveContext()` commits the edits they just disowned.
+    /// The private `save(committing:)` below does the same thing for delete paths.
+    func rollbackContext() {
+        context.rollback()
     }
 
     /// Saves, then runs `effects`. On failure the context rolls back and the
@@ -1485,18 +1441,6 @@ class CoreDataManager: ObservableObject {
         }
     }
 
-    func getActiveProcessingJobs() -> [ProcessingJobEntry] {
-        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "status IN %@", ["queued", "processing"])
-        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: true)]
-
-        do {
-            return try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.coreData("Error fetching active processing jobs: \(error)", level: .error)
-            return []
-        }
-    }
 
     func createProcessingJob(
         id: UUID,
@@ -1707,20 +1651,6 @@ class CoreDataManager: ObservableObject {
         }
 
         return cleanedCount
-    }
-
-    // MARK: - Debug Operations
-
-    func debugDatabaseContents() {
-        let recordings = getAllRecordings()
-        AppLog.shared.coreData("Core Data contains \(recordings.count) recordings", level: .debug)
-
-        for recording in recordings {
-            let hasTranscript = recording.transcript != nil
-            let hasSummary = recording.summary != nil
-            let hasLocation = getLocationData(for: recording) != nil
-            AppLog.shared.coreData("Recording ID: \(recording.id?.uuidString ?? "nil") | transcript: \(hasTranscript) | summary: \(hasSummary) | transcriptionStatus: \(recording.transcriptionStatus ?? "unknown") | summaryStatus: \(recording.summaryStatus ?? "unknown") | location: \(hasLocation)", level: .debug)
-        }
     }
 
     // MARK: - URL Synchronization

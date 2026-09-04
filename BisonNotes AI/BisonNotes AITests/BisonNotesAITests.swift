@@ -277,6 +277,86 @@ final class BisonNotesAITests: XCTestCase {
         XCTAssertEqual(parsed.titles.map(\.text), ["Mental Health Medication Updates"])
     }
 
+    func testCompleteParserRepairsUnescapedQuotesInSummaryWithoutFabricatingMetadata() throws {
+        let malformedQuoteResponse = #"""
+        {
+          "summary": "The transcript describes "tiny little things" that keep becoming major problems.",
+          "tasks": [],
+          "reminders": [],
+          "titles": []
+        }
+        """#
+
+        let parsed = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(
+            malformedQuoteResponse
+        )
+
+        XCTAssertEqual(
+            parsed.summary,
+            "The transcript describes \"tiny little things\" that keep becoming major problems."
+        )
+        XCTAssertTrue(parsed.tasks.isEmpty)
+        XCTAssertTrue(parsed.reminders.isEmpty)
+        XCTAssertTrue(parsed.titles.isEmpty)
+    }
+
+    func testCompleteParserRepairsUnescapedQuotesAcrossCompleteResponseFields() throws {
+        let malformedQuoteResponse = #"""
+        ```json
+        {
+          "summary": "Non-comedy summary mentioning the "service unavailable" error.",
+          "tasks": [
+            {
+              "text": "Review the "service unavailable" error",
+              "priority": "medium",
+              "category": "technical",
+              "timeReference": null,
+              "confidence": 0.9
+            }
+          ],
+          "reminders": [
+            {
+              "text": "Follow up on the "service unavailable" error",
+              "urgency": "later",
+              "timeReference": null,
+              "confidence": 0.8
+            }
+          ],
+          "titles": [
+            {
+              "text": "The "service unavailable" Incident",
+              "category": "technical",
+              "confidence": 0.9
+            }
+          ]
+        }
+        ```
+        """#
+
+        let parsed = try ChatCompletionResponseParser.parseCompleteResponseFromJSON(
+            malformedQuoteResponse
+        )
+
+        XCTAssertEqual(
+            parsed.summary,
+            "Non-comedy summary mentioning the \"service unavailable\" error."
+        )
+        // Metadata cleaning intentionally removes quote characters from task,
+        // reminder, and title text after the JSON parser has decoded them.
+        XCTAssertEqual(
+            parsed.tasks.map(\.text),
+            ["Review the service unavailable error"]
+        )
+        XCTAssertEqual(
+            parsed.reminders.map(\.text),
+            ["Follow up on the service unavailable error"]
+        )
+        XCTAssertEqual(
+            parsed.titles.map(\.text),
+            ["The service unavailable Incident"]
+        )
+    }
+
     func testCompleteParserRejectsMalformedStructuredResponseInsteadOfExtractingMetadata() {
         let malformedStructureResponse = #"""
         {

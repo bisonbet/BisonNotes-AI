@@ -310,28 +310,60 @@ class RecordingWorkflowManager: ObservableObject {
                     }
                 }
 
+                // Nothing outside Core Data may be touched until the deletion has
+                // actually committed. Both a tombstone and an attachment folder are
+                // one-way: raising them for a row that then survives a failed save
+                // deletes the user's cloud copy — and their notes — for a summary
+                // that is still on the device.
+                let migratedSummaryId = existingSummaries.first?.id
+                var supersededSummaryIds: [UUID] = []
+                var attachmentFoldersToRemove: [UUID] = []
                 var deletedCount = 0
+
                 for oldSummary in existingSummaries {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
                     if let oldSummaryId = oldSummary.id {
-                        // Replacing a summary is still a deletion from the sync graph. Keep a
-                        // durable tombstone so another device cannot restore the superseded row.
-                        SummaryManager.shared.getiCloudManager().enqueueSummaryRemovalFromiCloud(
-                            summaryId: oldSummaryId,
-                            recordingId: recordingId
-                        )
-                    }
-                    // Clean up any remaining supplemental folders that were not migrated
-                    if let oldUUID = oldSummary.id, oldUUID != existingSummaries.first?.id {
-                        try? SummaryAttachmentStore.shared.deleteAll(for: oldUUID)
+                        supersededSummaryIds.append(oldSummaryId)
+                        // Supplemental folders that were not migrated onto the new summary.
+                        if oldSummaryId != migratedSummaryId {
+                            attachmentFoldersToRemove.append(oldSummaryId)
+                        }
                     }
                     context.delete(oldSummary)
                     deletedCount += 1
                     AppLog.shared.backgroundProcessing("Deleted old summary \(oldId)", level: .debug)
                 }
+
                 if deletedCount > 0 {
-                    try? context.save()
-                    AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)", level: .debug)
+                    do {
+                        try context.save()
+
+                        // Committed: replacing a summary is still a deletion from the
+                        // sync graph, so raise durable tombstones now that the rows
+                        // are really gone and another device cannot restore them.
+                        let iCloudManager = SummaryManager.shared.getiCloudManager()
+                        for summaryId in supersededSummaryIds {
+                            iCloudManager.enqueueSummaryRemovalFromiCloud(
+                                summaryId: summaryId,
+                                recordingId: recordingId
+                            )
+                        }
+                        for summaryId in attachmentFoldersToRemove {
+                            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
+                        }
+
+                        AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)", level: .debug)
+                    } catch {
+                        // The old rows are still here. Discard the pending deletions so
+                        // a later unrelated save cannot commit them without tombstones,
+                        // and leave the cloud copies alone so the two stay in step.
+                        context.rollback()
+                        AppLog.shared.backgroundProcessing(
+                            "Failed to clean up \(deletedCount) old summary(ies) for recording \(recordingId); " +
+                            "keeping them locally and in iCloud: \(error)",
+                            level: .error
+                        )
+                    }
                 }
             }
 

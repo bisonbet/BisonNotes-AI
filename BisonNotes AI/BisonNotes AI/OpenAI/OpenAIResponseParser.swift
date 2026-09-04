@@ -127,8 +127,8 @@ enum ChatCompletionResponseParser {
     }
 
     /// Decodes the complete structured response and makes one narrow recovery
-    /// attempt for models that emit an invalid backslash escape inside a JSON
-    /// string (for example `\A`). Other malformed JSON remains a hard failure.
+    /// attempt for models that emit recoverable formatting errors inside a JSON
+    /// string. Other malformed JSON remains a hard failure.
     private static func decodeCompleteResponse(from json: String) throws -> CompleteResponse {
         guard let data = json.data(using: .utf8) else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid JSON data")
@@ -137,13 +137,13 @@ enum ChatCompletionResponseParser {
         do {
             return try decodeCompleteResponsePayload(from: data)
         } catch {
-            guard let repairedJSON = repairMalformedJSONEscapes(in: json),
+            guard let repairedJSON = repairMalformedJSON(in: json),
                   let repairedData = repairedJSON.data(using: .utf8) else {
                 throw error
             }
 
             AppLog.shared.networking(
-                "Repairing invalid JSON escape sequences in complete response",
+                "Repairing recoverable JSON string formatting in complete response",
                 level: .debug
             )
             return try decodeCompleteResponsePayload(from: repairedData)
@@ -473,4 +473,166 @@ enum ChatCompletionResponseParser {
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+}
+
+/// Internal rather than private so the repair rules can be exercised directly:
+/// they are pure string transforms, and the behaviour worth locking down is
+/// which quotes they treat as structural. The type itself is internal, so this
+/// stays inside the module.
+extension ChatCompletionResponseParser {
+
+    /// Applies only the recoveries that are safe to attempt before strict
+    /// decoding. The decoder still enforces the complete response schema after
+    /// these repairs, so this cannot turn arbitrary text into metadata.
+    static func repairMalformedJSON(in json: String) -> String? {
+        let quoteRepairedJSON = repairMalformedJSONStringQuotes(in: json)
+        let candidateJSON = quoteRepairedJSON ?? json
+        let escapeRepairedJSON = repairMalformedJSONEscapes(in: candidateJSON)
+
+        return escapeRepairedJSON ?? quoteRepairedJSON
+    }
+
+    /// Escapes quotation marks that occur inside a JSON string but are not
+    /// followed by a JSON string terminator. Some local instruct models emit
+    /// prose such as `The phrase "tiny little things" matters` without escaping
+    /// the inner quotation marks. A quote followed by `,`, `}`, `]`, `:`, or the
+    /// end of the payload remains a structural quote; everything else is treated
+    /// as literal content and escaped.
+    static func repairMalformedJSONStringQuotes(in json: String) -> String? {
+        let characters = Array(json)
+        var repaired = String()
+        repaired.reserveCapacity(json.count)
+
+        var isInsideString = false
+        var isEscaped = false
+        var changed = false
+
+        for index in characters.indices {
+            let character = characters[index]
+
+            if isEscaped {
+                repaired.append(character)
+                isEscaped = false
+                continue
+            }
+
+            if isInsideString, character == "\\" {
+                repaired.append(character)
+                isEscaped = true
+                continue
+            }
+
+            guard character == "\"" else {
+                repaired.append(character)
+                continue
+            }
+
+            guard isInsideString else {
+                isInsideString = true
+                repaired.append(character)
+                continue
+            }
+
+            if isStructuralStringTerminator(at: index, in: characters) {
+                isInsideString = false
+                repaired.append(character)
+            } else {
+                repaired.append("\\")
+                repaired.append(character)
+                changed = true
+            }
+        }
+
+        return changed ? repaired : nil
+    }
+
+    /// Whether the quotation mark at `index` closes the JSON string, judged from
+    /// what follows it.
+    ///
+    /// A comma needs more than a glance. Prose quotes a phrase and then carries
+    /// on — `"Use "foo", then continue"` — and the comma after `foo` looks
+    /// exactly like the separator before the next member. It only is one when
+    /// what follows the comma actually begins a JSON value. `then continue`
+    /// begins none, so that quote is content and gets escaped; treating it as
+    /// structural left the repair outside the string, misread every quote after
+    /// it, and lost the whole summary to a decode failure.
+    static func isStructuralStringTerminator(
+        at index: Array<Character>.Index,
+        in characters: [Character]
+    ) -> Bool {
+        guard let nextIndex = nextNonWhitespaceIndex(after: index, in: characters) else {
+            return true
+        }
+        guard characters[nextIndex] == "," else {
+            return isJSONStringTerminator(characters[nextIndex])
+        }
+        return startsJSONValue(
+            at: nextNonWhitespaceIndex(after: nextIndex, in: characters),
+            in: characters
+        )
+    }
+
+    /// Whether a JSON value begins at `index`.
+    ///
+    /// The three literals are matched as whole tokens: a bare word that merely
+    /// starts with `t`, `f`, or `n` is prose. Numbers and the bracket forms keep
+    /// a mixed array such as `["a", 2]` parsing as it did before.
+    static func startsJSONValue(
+        at index: Array<Character>.Index?,
+        in characters: [Character]
+    ) -> Bool {
+        guard let index else { return false }
+        let character = characters[index]
+        if character == "\"" || character == "{" || character == "[" { return true }
+        if character == "-" || character.isNumber { return true }
+        return ["true", "false", "null"].contains { literal in
+            matchesWholeToken(literal, at: index, in: characters)
+        }
+    }
+
+    /// Whether `token` appears at `index` and ends there — not as the opening of
+    /// a longer word.
+    static func matchesWholeToken(
+        _ token: String,
+        at index: Array<Character>.Index,
+        in characters: [Character]
+    ) -> Bool {
+        let tokenCharacters = Array(token)
+        let end = index + tokenCharacters.count
+        guard end <= characters.count else { return false }
+        for offset in tokenCharacters.indices where characters[index + offset] != tokenCharacters[offset] {
+            return false
+        }
+        guard end < characters.count else { return true }
+        let following = characters[end]
+        return following.isWhitespace
+            || following == ","
+            || following == "}"
+            || following == "]"
+    }
+
+    static func nextNonWhitespaceIndex(
+        after index: Array<Character>.Index,
+        in characters: [Character]
+    ) -> Array<Character>.Index? {
+        var nextIndex = characters.index(after: index)
+        while nextIndex < characters.endIndex, characters[nextIndex].isWhitespace {
+            nextIndex = characters.index(after: nextIndex)
+        }
+        return nextIndex < characters.endIndex ? nextIndex : nil
+    }
+
+    static func nextNonWhitespaceCharacter(
+        after index: Array<Character>.Index,
+        in characters: [Character]
+    ) -> Character? {
+        nextNonWhitespaceIndex(after: index, in: characters).map { characters[$0] }
+    }
+
+    static func isJSONStringTerminator(_ character: Character?) -> Bool {
+        guard let character else {
+            return true
+        }
+        return character == "," || character == "}" || character == "]" || character == ":"
+    }
 }

@@ -124,8 +124,35 @@ struct LogExporter {
 
         let fileName = "BisonNotes-Logs-\(timestamp).txt"
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        // Each export is multi-megabyte and nothing ever removed the previous ones,
+        // so tmp accumulated one copy per support request. Drop the old ones first;
+        // only the file we are about to hand to the share sheet needs to exist.
+        removePreviousExports(keeping: fileURL)
         try text.write(to: fileURL, atomically: true, encoding: .utf8)
         return fileURL
+    }
+
+    /// Name of a diagnostic export, used here and by `TemporaryFileCleanupService`
+    /// for the exports a crash leaves behind between runs.
+    static let exportFileNamePrefix = "BisonNotes-Logs-"
+
+    static func isExportFileName(_ name: String) -> Bool {
+        name.hasPrefix(exportFileNamePrefix) && name.hasSuffix(".txt")
+    }
+
+    private static func removePreviousExports(keeping current: URL) {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: tempRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        for url in contents
+        where isExportFileName(url.lastPathComponent) && url.lastPathComponent != current.lastPathComponent {
+            try? fileManager.removeItem(at: url)
+        }
     }
 
     private static func sectionHeader(_ title: String) -> String {

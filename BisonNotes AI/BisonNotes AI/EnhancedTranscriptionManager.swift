@@ -746,25 +746,24 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             ? LocalSpeakerLabelsConfiguration.currentUserChoice()
             : nil
 
-        // Validate audio file before transcription
-        do {
-            let testPlayer = try AVAudioPlayer(contentsOf: url)
-            guard testPlayer.duration > 0 else {
-    throw TranscriptionError.noSpeechDetected
-            }
-
-            // Check if duration is reasonable
-            let durationMinutes = testPlayer.duration / 60
-if durationMinutes > 120 { // 2 hours max
+        // Use the same validation required before recording persistence. This
+        // keeps transcription from becoming the first consumer to discover a
+        // header-only or otherwise unusable recording.
+        let duration: TimeInterval
+        switch await RecordingFinalizationPolicy.inspect(url: url, delegateSucceeded: true) {
+        case .usable(_, let validatedDuration):
+            duration = validatedDuration
+            let durationMinutes = duration / 60
+            if durationMinutes > 120 { // 2 hours max
                 AppLog.shared.transcription("Audio file is very long (\(durationMinutes) minutes), this may cause memory issues")
             }
-        } catch {
-            AppLog.shared.transcription("Audio file validation failed: \(error)", level: .error)
+        case .rejected(let rejection):
+            AppLog.shared.transcription(
+                "Audio file validation failed before transcription: \(rejection)",
+                level: .error
+            )
             throw TranscriptionError.audioExtractionFailed
         }
-
-        // Check file duration
-        let duration = try await getAudioDuration(url: url)
 
         // Select the configured transcription engine
         switch selectedEngine {
@@ -825,11 +824,7 @@ if isWhisperAvailable {
         AppLog.shared.transcription("Starting native speech recognition, duration: \(duration)s")
 
         // Request speech recognition authorization if needed
-        let authStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
+        let authStatus = await SpeechAuthorizationClient.requestAuthorizationStatus()
 
         AppLog.shared.transcription("Speech recognition authorization status: \(authStatus.rawValue)", level: .debug)
 

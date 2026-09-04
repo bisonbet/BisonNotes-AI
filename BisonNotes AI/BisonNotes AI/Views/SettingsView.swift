@@ -18,7 +18,6 @@ struct SettingsView: View {
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
-    @StateObject private var errorHandler = ErrorHandler()
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @StateObject private var importManager = FileImportManager()
     @State private var showingTranscriptionSettings = false
@@ -430,8 +429,12 @@ struct SettingsView: View {
 
                 if isRunningCloudBackupAction {
                     ModernInlineStatus(
-                        title: "Working...",
-                        subtitle: nil,
+                        title: iCloudManager.isUserTransferWaitingForRunningSync
+                            ? "Waiting its turn..."
+                            : "Working...",
+                        subtitle: iCloudManager.isUserTransferWaitingForRunningSync
+                            ? "A sync is already running; this starts as soon as it finishes"
+                            : nil,
                         systemImage: "arrow.triangle.2.circlepath",
                         tint: .secondary,
                         showsProgress: true
@@ -797,7 +800,11 @@ struct SettingsView: View {
                         ProgressView()
                             .progressViewStyle(.circular)
                             .scaleEffect(0.8)
-                        Text("Working…")
+                        Text(
+                            iCloudManager.isUserTransferWaitingForRunningSync
+                                ? "Waiting for the sync already in progress…"
+                                : "Working…"
+                        )
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -1199,17 +1206,6 @@ struct SettingsView: View {
     }
 
     // MARK: - iCloud Sync Functions
-
-    private func syncAllSummaries() async {
-        do {
-            try await iCloudManager.syncAllSummaries()
-        } catch {
-            AppLog.shared.log("Sync error: \(error)", level: .error, category: .general)
-            await MainActor.run {
-                errorHandler.handle(AppError.from(error, context: "iCloud Sync"), context: "Sync", showToUser: true)
-            }
-        }
-    }
 
     private func backupAllDataToiCloud() async {
         await MainActor.run {
@@ -1898,22 +1894,5 @@ private struct ModernIcon: View {
             .frame(width: size, height: size)
             .background(tint.opacity(0.14))
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-    }
-}
-
-struct DebugButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.caption)
-            .foregroundColor(.primary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(.systemGray6))
-                    .opacity(configuration.isPressed ? 0.8 : 1.0)
-            )
-            .scaleEffect(configuration.isPressed ? 0.98 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
     }
 }

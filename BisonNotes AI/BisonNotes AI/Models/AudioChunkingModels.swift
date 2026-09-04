@@ -155,6 +155,171 @@ struct ReassemblyResult {
     let timedWords: [TimedTranscriptWord]?
 }
 
+// MARK: - Recording Finalization Validation
+
+struct AudioAssetInspection: Equatable, Sendable {
+    let fileSize: Int64
+    let duration: TimeInterval
+    let hasAudioTrack: Bool
+}
+
+enum AudioAssetInspectionError: Error, Equatable, Sendable {
+    case fileMissing
+    case fileUnreadable
+    case invalidDuration
+    case missingAudioTrack
+    case invalidContainer
+}
+
+enum AudioAssetInspector {
+    static func inspect(url: URL) async throws -> AudioAssetInspection {
+        try await inspectWithAudioTrack(url: url).inspection
+    }
+
+    /// The inspection plus the audio track that was loaded to produce it.
+    ///
+    /// Kept separate from `inspect(url:)` because `AVAssetTrack` is not `Sendable`
+    /// and the finalization path only needs the sendable facts. Callers that go on
+    /// to read the track's format use this instead of opening the asset a second
+    /// time — for a long recording that is a whole extra demux of the same file.
+    static func inspectWithAudioTrack(
+        url: URL
+    ) async throws -> (inspection: AudioAssetInspection, audioTrack: AVAssetTrack) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: url.path) else {
+            throw AudioAssetInspectionError.fileMissing
+        }
+
+        let fileSize: Int64
+        do {
+            let attributes = try fileManager.attributesOfItem(atPath: url.path)
+            guard let value = attributes[.size] as? NSNumber, value.int64Value > 0 else {
+                throw AudioAssetInspectionError.fileUnreadable
+            }
+            fileSize = value.int64Value
+        } catch let error as AudioAssetInspectionError {
+            throw error
+        } catch {
+            throw AudioAssetInspectionError.fileUnreadable
+        }
+
+        let asset = AVURLAsset(url: url)
+        do {
+            let duration = try await asset.load(.duration).seconds
+            guard duration.isFinite, duration > 0 else {
+                throw AudioAssetInspectionError.invalidDuration
+            }
+
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            guard let audioTrack = tracks.first else {
+                throw AudioAssetInspectionError.missingAudioTrack
+            }
+
+            return (
+                AudioAssetInspection(
+                    fileSize: fileSize,
+                    duration: duration,
+                    hasAudioTrack: true
+                ),
+                audioTrack
+            )
+        } catch let error as AudioAssetInspectionError {
+            throw error
+        } catch {
+            throw AudioAssetInspectionError.invalidContainer
+        }
+    }
+}
+
+struct RecordingFinalizationFacts: Equatable, Sendable {
+    let delegateSucceeded: Bool
+    let fileExists: Bool
+    let fileSize: Int64
+    let duration: TimeInterval
+    let hasAudioTrack: Bool
+}
+
+enum RecordingFinalizationRejection: Equatable, Sendable {
+    case delegateReportedFailure
+    case fileMissing
+    case fileUnreadable
+    case invalidDuration
+    case missingAudioTrack
+    case invalidContainer
+
+    var userMessage: String {
+        switch self {
+        case .delegateReportedFailure:
+            return "Recording failed and was not saved."
+        case .fileMissing, .fileUnreadable, .invalidDuration, .missingAudioTrack, .invalidContainer:
+            return "No audio was captured. Recording was not saved."
+        }
+    }
+}
+
+enum RecordingFinalizationResult: Equatable, Sendable {
+    case usable(fileSize: Int64, duration: TimeInterval)
+    case rejected(RecordingFinalizationRejection)
+
+    var isUsable: Bool {
+        if case .usable = self { return true }
+        return false
+    }
+}
+
+enum RecordingFinalizationPolicy {
+    static func evaluate(_ facts: RecordingFinalizationFacts) -> RecordingFinalizationResult {
+        guard facts.delegateSucceeded else {
+            return .rejected(.delegateReportedFailure)
+        }
+        guard facts.fileExists else {
+            return .rejected(.fileMissing)
+        }
+        guard facts.fileSize > 0 else {
+            return .rejected(.fileUnreadable)
+        }
+        guard facts.duration.isFinite, facts.duration > 0 else {
+            return .rejected(.invalidDuration)
+        }
+        guard facts.hasAudioTrack else {
+            return .rejected(.missingAudioTrack)
+        }
+
+        return .usable(fileSize: facts.fileSize, duration: facts.duration)
+    }
+
+    static func inspect(url: URL, delegateSucceeded: Bool) async -> RecordingFinalizationResult {
+        guard delegateSucceeded else {
+            return .rejected(.delegateReportedFailure)
+        }
+
+        do {
+            let inspection = try await AudioAssetInspector.inspect(url: url)
+            return evaluate(
+                RecordingFinalizationFacts(
+                    delegateSucceeded: true,
+                    fileExists: true,
+                    fileSize: inspection.fileSize,
+                    duration: inspection.duration,
+                    hasAudioTrack: inspection.hasAudioTrack
+                )
+            )
+        } catch let error as AudioAssetInspectionError {
+            let rejection: RecordingFinalizationRejection
+            switch error {
+            case .fileMissing: rejection = .fileMissing
+            case .fileUnreadable: rejection = .fileUnreadable
+            case .invalidDuration: rejection = .invalidDuration
+            case .missingAudioTrack: rejection = .missingAudioTrack
+            case .invalidContainer: rejection = .invalidContainer
+            }
+            return .rejected(rejection)
+        } catch {
+            return .rejected(.invalidContainer)
+        }
+    }
+}
+
 // MARK: - Audio File Info
 
 struct AudioFileInfo {
@@ -169,37 +334,34 @@ struct AudioFileInfo {
         AppLog.shared.chunking("AudioFileInfo.create - Analyzing audio source", level: .debug)
         AppLog.shared.chunking("AudioFileInfo.create - File exists: \(FileManager.default.fileExists(atPath: url.path))", level: .debug)
 
-        let asset = AVURLAsset(url: url)
-        let duration = try await asset.load(.duration).seconds
+        // One inspection, and it hands back the audio track it already loaded:
+        // re-opening the asset here meant demuxing the whole file twice.
+        let inspection: AudioAssetInspection
+        let audioTrack: AVAssetTrack
+        do {
+            (inspection, audioTrack) = try await AudioAssetInspector.inspectWithAudioTrack(url: url)
+        } catch {
+            AppLog.shared.chunking(
+                "AudioFileInfo.create - Audio inspection failed: \(error)",
+                level: .error
+            )
+            throw AudioChunkingError.invalidAudioFile
+        }
+        let duration = inspection.duration
         AppLog.shared.chunking("AudioFileInfo.create - Loaded duration: \(duration)s (\(duration/60) minutes)", level: .debug)
 
-        let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        let fileSize = fileAttributes[.size] as? Int64 ?? 0
+        let fileSize = inspection.fileSize
         AppLog.shared.chunking("AudioFileInfo.create - File size: \(fileSize) bytes (\(fileSize/1024/1024) MB)", level: .debug)
 
-        // Validation checks
-        if duration <= 0 {
-            AppLog.shared.chunking("AudioFileInfo.create - Invalid duration: \(duration)", level: .error)
-            throw AudioChunkingError.invalidAudioFile
-        }
-
-        if fileSize <= 0 {
-            AppLog.shared.chunking("AudioFileInfo.create - Invalid file size: \(fileSize)", level: .error)
-            throw AudioChunkingError.invalidAudioFile
-        }
-
         // Get format information
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
         var sampleRate: Double = 0
         var channels: Int = 0
 
-        if let audioTrack = tracks.first {
-            let formatDescriptions = try await audioTrack.load(.formatDescriptions)
-            if let formatDescription = formatDescriptions.first {
-                let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
-                sampleRate = audioStreamBasicDescription?.pointee.mSampleRate ?? 0
-                channels = Int(audioStreamBasicDescription?.pointee.mChannelsPerFrame ?? 0)
-            }
+        let formatDescriptions = try await audioTrack.load(.formatDescriptions)
+        if let formatDescription = formatDescriptions.first {
+            let audioStreamBasicDescription = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
+            sampleRate = audioStreamBasicDescription?.pointee.mSampleRate ?? 0
+            channels = Int(audioStreamBasicDescription?.pointee.mChannelsPerFrame ?? 0)
         }
 
         // Determine format from file extension

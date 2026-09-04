@@ -426,6 +426,18 @@ enum JobProcessingStatus: Codable, Equatable {
     }
 }
 
+enum BackgroundProcessingCrashRecoveryPolicy {
+    static let failureMessage = "Not restarted because the previous app session crashed."
+
+    static func statusAfterLaunch(
+        status: JobProcessingStatus,
+        previousSessionCrashed: Bool
+    ) -> JobProcessingStatus {
+        guard previousSessionCrashed, !status.isTerminal else { return status }
+        return .failed(failureMessage)
+    }
+}
+
 // MARK: - Background Processing Manager
 
 @MainActor
@@ -483,19 +495,28 @@ class BackgroundProcessingManager: ObservableObject {
     private let localSpeakerLabelingCoordinator = LocalSpeakerLabelingCoordinator()
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
-    private let audioSessionManager = EnhancedAudioSessionManager()
+    private let audioSessionManager: EnhancedAudioSessionManager
     private let coreDataManager = CoreDataManager()
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
+    private let previousSessionCrashed: Bool
+    /// Jobs that were in flight when the previous session died. No automatic path
+    /// may resume them for the rest of this session; the user can still retry one.
+    private var crashProtectedJobIDs = Set<UUID>()
 
     // MARK: - Singleton
 
     static let shared = BackgroundProcessingManager()
     private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
 
-    private init() {
+    private init(audioSessionManager: EnhancedAudioSessionManager = .shared) {
+        self.audioSessionManager = audioSessionManager
+        self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
         loadJobsFromCoreData()
-        if AppLog.shared.previousSessionCrashed {
+        if previousSessionCrashed {
+            // Captured before the sweep below rewrites their statuses, so the
+            // resume paths can still tell a pre-crash job from a fresh one.
+            crashProtectedJobIDs = Set(activeJobs.map(\.id))
             failUnfinishedJobsAfterCrash()
         }
         setupAppLifecycleObservers()
@@ -504,11 +525,14 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
-            guard !AppLog.shared.previousSessionCrashed else {
-                AppLog.shared.backgroundProcessing("Skipping automatic job resume because previous session crashed", level: .error)
-                return
+            if previousSessionCrashed {
+                AppLog.shared.backgroundProcessing(
+                    "Crash reconciliation completed; pre-crash jobs will not resume automatically",
+                    level: .info
+                )
+            } else {
+                await resumeInterruptedJobs()
             }
-            await resumeInterruptedJobs()
             if !activeJobs.filter({ $0.status == .queued }).isEmpty {
                 await processNextJob()
             }
@@ -839,14 +863,19 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func failUnfinishedJobsAfterCrash() {
-        let message = "Not restarted because the previous app session crashed."
+        let message = BackgroundProcessingCrashRecoveryPolicy.failureMessage
         var failedCount = 0
 
         activeJobs = activeJobs.map { job in
             guard !job.status.isTerminal else { return job }
 
             failedCount += 1
-            let failedJob = job.withStatus(.failed(message))
+            let failedJob = job.withStatus(
+                BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
+                    status: job.status,
+                    previousSessionCrashed: previousSessionCrashed
+                )
+            )
 
             if let jobEntry = coreDataManager.getProcessingJob(id: failedJob.id) {
                 jobEntry.status = failedJob.status.displayName
@@ -1977,11 +2006,6 @@ class BackgroundProcessingManager: ObservableObject {
         // Clear notification badge
         await clearNotificationBadge()
 
-        guard !AppLog.shared.previousSessionCrashed else {
-            AppLog.shared.backgroundProcessing("Skipping automatic foreground job recovery because previous session crashed", level: .error)
-            return
-        }
-
         // Check if any jobs completed while in background
         await checkForCompletedJobs()
 
@@ -2000,16 +2024,14 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Resume jobs that were interrupted due to background limitations
     private func resumeInterruptedJobs(notify: Bool = true) async {
-        guard !AppLog.shared.previousSessionCrashed else {
-            AppLog.shared.backgroundProcessing("Skipping interrupted job resume because previous session crashed", level: .error)
-            return
-        }
-
         // Find interrupted jobs (using the new .interrupted status)
-        let interruptedJobs = activeJobs.filter { $0.status.isInterrupted }
+        let interruptedJobs = activeJobs.filter {
+            $0.status.isInterrupted && !crashProtectedJobIDs.contains($0.id)
+        }
 
         // Also find legacy interrupted jobs (from old .failed status messages)
         let legacyInterruptedJobs = activeJobs.filter { job in
+            guard !crashProtectedJobIDs.contains(job.id) else { return false }
             if case .failed(let message) = job.status {
                 return message.contains("interrupted") || message.contains("App was terminated") || message.contains("App was closed")
             }
@@ -2367,6 +2389,18 @@ class BackgroundProcessingManager: ObservableObject {
 
         guard !backgroundAudioKeepAliveActive else { return }
 
+        // This manager shares EnhancedAudioSessionManager.shared with the
+        // recorder. Reconfiguring it while a recording owns it discards the
+        // configuration that recovery's activatePreparedSession() requires,
+        // which surfaces as a bogus activation failure that stops the recording.
+        guard !audioSessionManager.isOwnedByRecording else {
+            AppLog.shared.backgroundProcessing(
+                "Recording owns the shared audio session; skipping keep-alive audio",
+                level: .debug
+            )
+            return
+        }
+
         do {
             try await audioSessionManager.configureBackgroundProcessingSession()
 
@@ -2398,6 +2432,17 @@ class BackgroundProcessingManager: ObservableObject {
 
         stopKeepAliveAudio()
         backgroundAudioKeepAliveActive = false
+
+        // If a recording took the shared session over while keep-alive was
+        // running, tearing it down here would clear the configuration out from
+        // under the recorder's recovery. Release only the keep-alive player.
+        guard !audioSessionManager.isOwnedByRecording else {
+            AppLog.shared.backgroundProcessing(
+                "Recording owns the shared audio session; leaving it active",
+                level: .debug
+            )
+            return
+        }
 
         do {
             try await audioSessionManager.deactivateSession()
@@ -2756,11 +2801,6 @@ class BackgroundProcessingManager: ObservableObject {
         if reconciledCount > 0 {
             AppLog.shared.backgroundProcessing("Reconciled \(reconciledCount) stale/orphaned processing job(s)")
             objectWillChange.send()
-
-            guard !AppLog.shared.previousSessionCrashed else {
-                AppLog.shared.backgroundProcessing("Leaving reconciled jobs stopped because previous session crashed", level: .error)
-                return
-            }
 
             // Re-queue interrupted jobs after reconciliation (suppress notifications from periodic monitor).
             await resumeInterruptedJobs(notify: false)

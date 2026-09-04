@@ -15,8 +15,8 @@ struct RecordingsView: View {
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var showingAudioImporter = false
-    @State private var showingTranscriptImporter = false
+    @State private var showingFileImporter = false
+    @State private var fileImportKind: FileImportKind = .audio
     @StateObject private var webImportManager = WebImportManager()
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [AudioRecordingFile] = []
@@ -25,6 +25,11 @@ struct RecordingsView: View {
     @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
+
+    private enum FileImportKind {
+        case audio
+        case transcript
+    }
 
     private struct RecordingActionConfig {
         let title: String
@@ -154,6 +159,34 @@ struct RecordingsView: View {
         }
     }
 
+    private var fileImportContentTypes: [UTType] {
+        switch fileImportKind {
+        case .audio:
+            return [.audio]
+        case .transcript:
+            return Self.transcriptContentTypes
+        }
+    }
+
+    private func beginFileImport(_ kind: FileImportKind) {
+        fileImportKind = kind
+        showingFileImporter = true
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) {
+        let importKind = fileImportKind
+        switch importKind {
+        case .audio:
+            handleImport(result) { urls in
+                await importManager.importAudioFiles(from: urls)
+            }
+        case .transcript:
+            handleImport(result) { urls in
+                await transcriptImportManager.importTranscriptFiles(from: urls)
+            }
+        }
+    }
+
     private static let transcriptContentTypes: [UTType] = {
         var types: [UTType] = [.plainText, .text, .pdf]
         types.append(UTType(importedAs: "org.openxmlformats.wordprocessingml.document"))
@@ -269,7 +302,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
                                 )
                             ) {
-                                showingAudioImporter = true
+                                beginFileImport(.audio)
                             }
 
                             homeActionButton(
@@ -295,7 +328,7 @@ struct RecordingsView: View {
                                     accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
                                 )
                             ) {
-                                showingTranscriptImporter = true
+                                beginFileImport(.transcript)
                             }
                         }
 
@@ -316,22 +349,11 @@ struct RecordingsView: View {
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
             .fileImporter(
-                isPresented: $showingAudioImporter,
-                allowedContentTypes: [.audio],
+                isPresented: $showingFileImporter,
+                allowedContentTypes: fileImportContentTypes,
                 allowsMultipleSelection: true
             ) { result in
-                handleImport(result) { urls in
-                    await importManager.importAudioFiles(from: urls)
-                }
-            }
-            .fileImporter(
-                isPresented: $showingTranscriptImporter,
-                allowedContentTypes: Self.transcriptContentTypes,
-                allowsMultipleSelection: true
-            ) { result in
-                handleImport(result) { urls in
-                    await transcriptImportManager.importTranscriptFiles(from: urls)
-                }
+                handleFileImport(result)
             }
             .sheet(isPresented: $showingWebImport) {
                 WebImportSheet(
@@ -370,10 +392,10 @@ struct RecordingsView: View {
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportAudioFromMenu"))) { _ in
-                showingAudioImporter = true
+                beginFileImport(.audio)
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ImportTranscriptFromMenu"))) { _ in
-                showingTranscriptImporter = true
+                beginFileImport(.transcript)
             }
             .onReceive(
                 NotificationCenter.default.publisher(for: NSNotification.Name("ImportFromLinkFromMenu"))

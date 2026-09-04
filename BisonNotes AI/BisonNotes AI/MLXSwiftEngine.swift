@@ -18,6 +18,7 @@ enum MLXSwiftSettingsKeys {
     static let topK = "mlxSwiftTopK"
     static let topP = "mlxSwiftTopP"
     static let repetitionPenalty = "mlxSwiftRepeatPenalty"
+    static let inFlightDownloadModelID = "mlxSwiftInFlightDownloadModelID"
 
     static let smallModelId = "prism-ml/Ternary-Bonsai-1.7B-mlx-2bit"
     static let defaultModelId = "prism-ml/Ternary-Bonsai-4B-mlx-2bit"
@@ -103,6 +104,14 @@ final class MLXSwiftDownloadManager: ObservableObject {
     @Published private(set) var isModelDownloaded = false
 
     private var downloadTask: Task<Void, Never>?
+    /// Bumped by every start and every cancel, so a task that is still unwinding
+    /// can tell whether the published state below is still its own to clear.
+    private var downloadGeneration = 0
+    /// Cancelled downloads that have not finished unwinding. They no longer own
+    /// the published state — the user may start another immediately — but their
+    /// blobs may still be landing, so no cache sweep may start while any remain.
+    private var unwindingCancelledDownloads = 0
+    private var isCacheMaintenanceInProgress = false
 
     var modelId: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -125,14 +134,57 @@ final class MLXSwiftDownloadManager: ObservableObject {
         #endif
     }
 
+    /// Reserves the Hub cache for the off-main maintenance sweep. Both this
+    /// method and `startDownload()` run on the main actor, so acquisition and
+    /// download startup are mutually exclusive rather than a check followed by
+    /// an unprotected filesystem operation.
+    @discardableResult
+    func beginCacheMaintenance() -> Bool {
+        guard !isDownloading, unwindingCancelledDownloads == 0, !isCacheMaintenanceInProgress else {
+            return false
+        }
+        isCacheMaintenanceInProgress = true
+        return true
+    }
+
+    /// Releases the cache reservation after the detached filesystem sweep has
+    /// finished.
+    func endCacheMaintenance() {
+        isCacheMaintenanceInProgress = false
+    }
+
     func startDownload() {
         guard !isDownloading else { return }
+        // Deliberately not held behind a running sweep. What actually protects a
+        // download's blobs is the sweep re-reading `isDownloading` immediately
+        // before every removal; queuing the request instead was invisible — no
+        // progress, no message, nothing for minutes while gigabytes were swept —
+        // and became permanent whenever the sweep's release never ran.
+        let id = modelId
+        downloadGeneration += 1
+        let generation = downloadGeneration
         isDownloading = true
         downloadError = nil
         downloadProgress = 0
+        UserDefaults.standard.set(id, forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
 
         downloadTask = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.downloadGeneration == generation {
+                    self.isDownloading = false
+                    self.downloadTask = nil
+                    if UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID) == id {
+                        UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
+                    }
+                } else {
+                    // Cancelled, and the state above belongs to whoever replaced
+                    // us. Only report that this task has stopped writing. The
+                    // in-flight marker is left alone: it names the download that
+                    // owns it now, and clearing it could expose blobs still landing.
+                    self.unwindingCancelledDownloads = max(0, self.unwindingCancelledDownloads - 1)
+                }
+            }
             do {
                 #if canImport(MLXLLM) && canImport(MLXLMCommon)
                 try await self.performDownload()
@@ -140,13 +192,12 @@ final class MLXSwiftDownloadManager: ObservableObject {
                 throw NSError(domain: "MLXSwift", code: -1,
                               userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
                 #endif
-                self.isDownloading = false
+                guard !Task.isCancelled else { return }
                 self.isModelDownloaded = true
                 AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(self.modelId)")
             } catch {
                 if !Task.isCancelled {
                     self.downloadError = error.localizedDescription
-                    self.isDownloading = false
                     AppLog.shared.summarization("[MLXSwift] Download failed: \(error.localizedDescription)", level: .error)
                 }
             }
@@ -154,6 +205,15 @@ final class MLXSwiftDownloadManager: ObservableObject {
     }
 
     func cancelDownload() {
+        if downloadTask != nil {
+            // Cleared here rather than only in the task's `defer`: a Hub download
+            // need not observe cancellation promptly, and leaving `isDownloading`
+            // true until it unwound made the user's next tap on Download a silent
+            // no-op. The unwinding task is counted instead, so the cache sweep
+            // still keeps off the blobs it may still be writing.
+            unwindingCancelledDownloads += 1
+            downloadGeneration += 1
+        }
         downloadTask?.cancel()
         downloadTask = nil
         isDownloading = false
@@ -351,6 +411,27 @@ extension MLXSwiftDownloadManager {
                 self?.downloadProgress = progress.fractionCompleted
             }
         }
+
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies the result into its `downloadBase`, so a finished model sits on disk
+        // twice — 15.8 GB for a 7.9 GB model.
+        //
+        // The blobs are only useful *during* a download: everything that resumes an
+        // interrupted one lives in that cache, which is why disabling it outright is
+        // the wrong fix. Once the materialized copy is complete they are dead weight,
+        // so they go here rather than waiting for the next maintenance sweep.
+        //
+        // Gated on the model actually being usable: if the download was interrupted
+        // after config.json landed, the blobs are what a retry resumes from and must
+        // survive, and the manager must not report a partial model as downloaded.
+        guard checkModelExists(modelId: id) else {
+            throw NSError(
+                domain: "MLXSwift",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "The model download did not finish materializing its weights."]
+            )
+        }
+        removeHubBlobCache(for: id)
     }
 
     func checkModelExists() -> Bool {
@@ -360,8 +441,7 @@ extension MLXSwiftDownloadManager {
     func checkModelExists(modelId: String) -> Bool {
         let config = ModelConfiguration(id: modelId)
         let dir = config.modelDirectory(hub: defaultHubApi)
-        let configFile = dir.appendingPathComponent("config.json")
-        return FileManager.default.fileExists(atPath: configFile.path)
+        return CacheMaintenancePolicy.isMaterializedModelComplete(at: dir)
     }
 
     func removeModelFiles() throws {
@@ -369,6 +449,35 @@ extension MLXSwiftDownloadManager {
         let dir = config.modelDirectory(hub: defaultHubApi)
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
+        }
+        // `defaultHubApi` downloads through a content-addressed blob cache and then
+        // copies into its `downloadBase`, so the directory above is only half of what
+        // the model occupies. Removing just it left a full second copy behind — two
+        // "deleted" models were still costing 3.3 GB. `CacheMaintenanceService` also
+        // sweeps these, but a delete the user asked for should free the space now.
+        removeHubBlobCache(for: modelId)
+    }
+
+    private func removeHubBlobCache(for modelId: String) {
+        guard let hubRepo = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent(
+                CacheMaintenancePolicy.hubRepoDirectoryName(forModelID: modelId),
+                isDirectory: true
+            ),
+            FileManager.default.fileExists(atPath: hubRepo.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: hubRepo)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Could not remove blob cache for \(modelId): \(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 }

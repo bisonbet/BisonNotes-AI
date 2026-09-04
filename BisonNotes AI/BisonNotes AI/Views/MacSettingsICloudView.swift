@@ -114,8 +114,10 @@ struct MacStorageICloudCard: View {
 
         if isRunning {
             MacSettingsInlineStatus(
-                title: "Working...",
-                subtitle: nil,
+                title: iCloudManager.isUserTransferWaitingForRunningSync ? "Waiting its turn..." : "Working...",
+                subtitle: iCloudManager.isUserTransferWaitingForRunningSync
+                    ? "A sync is already running; this starts as soon as it finishes"
+                    : nil,
                 systemImage: "arrow.triangle.2.circlepath",
                 tint: .secondary,
                 showsProgress: true

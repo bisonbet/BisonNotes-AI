@@ -38,7 +38,7 @@ enum LegacyLlamaMigration {
 
     static let legacyModelDirectoryName = "OnDeviceLLMModels"
 
-    /// Basenames used by the current v2.3 catalog and by earlier catalogs that
+    /// Basenames used by the current v2.4 catalog and by earlier catalogs that
     /// shipped models later removed or renamed. The cleanup only removes these
     /// known model names; it never deletes arbitrary files from Application
     /// Support.

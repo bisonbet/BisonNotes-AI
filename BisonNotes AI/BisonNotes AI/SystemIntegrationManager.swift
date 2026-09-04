@@ -143,9 +143,6 @@ final class SystemIntegrationManager: NSObject, ObservableObject {
             reminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: dueDate)
         }
 
-        // Add category tag
-        reminder.addTag(task.category.rawValue)
-
         do {
             try eventStore.save(reminder, commit: true)
             return true
@@ -205,9 +202,6 @@ final class SystemIntegrationManager: NSObject, ObservableObject {
                 ekReminder.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: relativeDate)
             }
         }
-
-        // Add urgency tag
-        ekReminder.addTag(reminder.urgency.rawValue)
 
         do {
             try eventStore.save(ekReminder, commit: true)
@@ -420,13 +414,5 @@ extension ReminderItem.Urgency {
         case .thisWeek: return 5
         case .later: return 9
         }
-    }
-}
-
-extension EKReminder {
-    func addTag(_ tag: String) {
-        // Note: EKReminder doesn't have a direct tag property in older iOS versions
-        // This is a placeholder for future implementation
-        // In newer iOS versions, you might use categories or other metadata
     }
 }

@@ -54,7 +54,10 @@ extension AudioRecorderViewModel {
 
     func handleMacFirstSuccessfulWrite() {
         let health = macCaptureHealth.snapshot()
-        let inputName = enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
+        let inputName = macInputDeviceID.flatMap { deviceID in
+            enhancedAudioSessionManager.getAvailableInputs()
+                .first(where: { input in input.audioDeviceID == deviceID })?.portName
+        } ?? enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
         recordDelayedMacMicrophoneStartOffsetIfNeeded()
         AppLog.shared.recording(
             "Mac microphone first buffer committed from \(inputName) " +
@@ -119,7 +122,10 @@ extension AudioRecorderViewModel {
     ) async {
         guard isStartingRecording || isRecording else { return }
         let health = macCaptureHealth.snapshot()
-        let inputName = enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
+        let inputName = macInputDeviceID.flatMap { deviceID in
+            enhancedAudioSessionManager.getAvailableInputs()
+                .first(where: { input in input.audioDeviceID == deviceID })?.portName
+        } ?? enhancedAudioSessionManager.getActiveInput()?.portName ?? "system default"
         AppLog.shared.recording(
             "Mac microphone capture unhealthy on \(inputName): \(assessment) " +
             "(segmentFrames=\(health.segmentFramesWritten), totalFrames=\(health.totalFramesWritten))",
@@ -134,31 +140,17 @@ extension AudioRecorderViewModel {
         macAutomaticRecoveryAttempts += 1
         let attempt = macAutomaticRecoveryAttempts
         let neverProducedAudio = health.totalFramesWritten == 0
-        var didFallBackToDefaultInput = false
-        if neverProducedAudio,
-           attempt == 1,
-           enhancedAudioSessionManager.hasPreferredInput() {
-            // Keep the persisted preference so the user's selected device is
-            // restored for a later recording, but avoid retrying a present-but-
-            // silent USB route indefinitely during this startup.
-            try? await enhancedAudioSessionManager.clearPreferredInput()
-            didFallBackToDefaultInput = true
-            AppLog.shared.audioSession(
-                "Preferred Mac input produced no initial audio; retrying startup with the system default",
-                level: .error
-            )
-        }
         // A device that never delivered a buffer never "stopped" providing audio,
         // and the fallback silently changes which microphone is used — say so.
         let cause = neverProducedAudio
             ? "\(inputName) did not provide any audio."
             : "\(inputName) stopped providing audio."
-        let action: String
-        if didFallBackToDefaultInput {
-            action = "Switching to the system default microphone"
-        } else {
-            action = neverProducedAudio ? "Retrying" : "Reconnecting"
-        }
+        let hasAlternateInput = !enhancedAudioSessionManager
+            .recordingInputCandidates(excluding: macInputDeviceID)
+            .isEmpty
+        let action = hasAlternateInput
+            ? "Trying another available microphone"
+            : (neverProducedAudio ? "Waiting for an available microphone" : "Reconnecting")
         errorMessage = "\(cause) \(action) (attempt \(attempt) of " +
             "\(Self.maximumAutomaticCaptureRecoveryAttempts))…"
         if !macSystemAudioContinuesWithoutMicrophone {
@@ -176,10 +168,33 @@ extension AudioRecorderViewModel {
     @MainActor
     private func stopAfterExhaustingCaptureRecovery(inputName: String) async {
         if isStartingRecording {
+            if continueMacSystemAudioWithoutMicrophone(
+                after: NSError(
+                    domain: "AudioRecorderViewModel.Mac",
+                    code: -20,
+                    userInfo: [NSLocalizedDescriptionKey: "The microphone did not provide audio."]
+                )
+            ) {
+                return
+            }
             await abortMacRecordingStartup(
                 reason: "The selected microphone did not provide any audio after automatic recovery."
             )
         } else {
+            // The failed engine still owns the current scratch segment. Seal it
+            // before switching to system-only capture; otherwise a later
+            // reconnect treats this as an already-waiting recording and replaces
+            // the engine without ever adding this segment to the finalization set.
+            sealMacScratchSegment()
+            if continueMacSystemAudioWithoutMicrophone(
+                after: NSError(
+                    domain: "AudioRecorderViewModel.Mac",
+                    code: -21,
+                    userInfo: [NSLocalizedDescriptionKey: "The microphone stopped providing audio."]
+                )
+            ) {
+                return
+            }
             let microphoneFailure = macCaptureHealth.snapshot().totalFramesWritten == 0
                 ? "did not provide any audio"
                 : "stopped providing audio"
@@ -191,11 +206,18 @@ extension AudioRecorderViewModel {
 
     @MainActor
     private func restartMacCaptureDuringStartup() async {
+        let failedInputDeviceID = macInputDeviceID
         sealMacScratchSegment()
         do {
             guard let finalURL = recordingURL else { throw CocoaError(.fileNoSuchFile) }
-            try startMacContinuation(at: finalURL)
+            try startMacContinuationWithAutomaticInputFallback(
+                at: finalURL,
+                excluding: failedInputDeviceID
+            )
         } catch {
+            if continueMacSystemAudioWithoutMicrophone(after: error) {
+                return
+            }
             await abortMacRecordingStartup(
                 reason: "The microphone could not be restarted: \(error.localizedDescription)"
             )
@@ -240,6 +262,7 @@ extension AudioRecorderViewModel {
         macScratchSegmentURLs = []
         macSystemAudioURL = nil
         macMicrophoneStartOffset = 0
+        macInputDeviceID = nil
         macAwaitingRecoveryBuffer = false
         resetRecordingLocation()
         recordingStartedAt = nil
