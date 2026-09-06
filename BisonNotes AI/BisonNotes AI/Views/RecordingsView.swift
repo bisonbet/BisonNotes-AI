@@ -130,14 +130,24 @@ struct RecordingsView: View {
                 Text(recorderVM.isStartingRecording ? "Starting..." : "Start Recording")
                     .font(.headline)
                     .fontWeight(.bold)
+                    .multilineTextAlignment(.center)
+                    // A hard `.frame(height: 56)` clipped this label once Dynamic
+                    // Type grew past the default. Padding plus a minimum height
+                    // keeps the 56pt button at standard sizes and lets it grow
+                    // and wrap beyond them.
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .foregroundColor(.white)
-            .frame(height: 56)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            // 12 keeps the intrinsic height under `minHeight` at standard Dynamic
+            // Type, so the button still measures exactly 56pt there and the rows
+            // below it are not nudged into the container edge.
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, minHeight: 56)
             .background(
                 recorderVM.isStartingRecording
                     ? Color.gray
-                    : Color(red: 0.0, green: 0.32, blue: 0.68)
+                    : Color.bisonPrimaryAction
             )
             .clipShape(RoundedRectangle(cornerRadius: 16))
         }
