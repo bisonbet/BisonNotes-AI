@@ -156,7 +156,18 @@ class LiveTranscriptionService: ObservableObject {
         // ending the Speech request or beginning export.
         // The tap's immutable captures keep its file and request alive until
         // any in-flight callback has returned.
-        tapActivation?.deactivate()
+        //
+        // Awaited off the main actor rather than called directly: `deactivate()`
+        // blocks on the lock the tap holds across `AVAudioFile.write` and
+        // `SFSpeechAudioBufferRecognitionRequest.append`, so calling it here would
+        // park the main thread on the tap thread's disk I/O. That write can stall
+        // — a locked device's data protection, or a concurrent export or restore —
+        // and a long enough stall on the main thread is a watchdog termination
+        // rather than a hitch. Awaiting preserves the ordering the gate exists for:
+        // nothing below runs until the in-flight buffer has finished.
+        if let gate = tapActivation {
+            await Task.detached { gate.deactivate() }.value
+        }
         tapActivation = nil
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()

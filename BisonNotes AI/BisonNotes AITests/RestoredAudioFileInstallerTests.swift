@@ -50,6 +50,43 @@ final class RestoredAudioFileInstallerTests: XCTestCase {
         }
     }
 
+    /// The `defer` in `install` covers every throwing path, but a kill or a crash
+    /// between the copy and the rename does not run it. The orphan it leaves is a
+    /// full recording's worth of bytes in Documents, and the only thing in the app
+    /// that can reclaim it is this sweep — `findOrphanedAudioFiles` filters to audio
+    /// extensions, so it never sees a `.tmp`.
+    @MainActor
+    func testStagingFileLeftByAKilledRestoreIsReclaimedByTheCleanupSweep() throws {
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let prefix = RestoredAudioFileInstaller.stagingPrefix
+        let orphaned = documents.appendingPathComponent("\(prefix)\(UUID()).tmp")
+        let inProgress = documents.appendingPathComponent("\(prefix)\(UUID()).tmp")
+        defer {
+            try? FileManager.default.removeItem(at: orphaned)
+            try? FileManager.default.removeItem(at: inProgress)
+        }
+        try Data("orphaned restore".utf8).write(to: orphaned)
+        try Data("restore still copying".utf8).write(to: inProgress)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-120)],
+            ofItemAtPath: orphaned.path
+        )
+
+        TemporaryFileCleanupService.shared.cleanupStaleFiles(maxAge: 60)
+
+        // A hidden name would fail here: the sweep enumerates with `.skipsHiddenFiles`.
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: orphaned.path),
+            "An abandoned staging file must be reclaimable"
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: inProgress.path),
+            "The age gate must protect a restore that is still copying"
+        )
+    }
+
     private func withFiles(_ body: (URL, URL, URL) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("restore-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

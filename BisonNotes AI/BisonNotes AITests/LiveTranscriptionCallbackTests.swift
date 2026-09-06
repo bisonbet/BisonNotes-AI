@@ -48,6 +48,48 @@ final class LiveTranscriptionCallbackTests: XCTestCase {
         await BackgroundRecognitionInvocation(handler: handler).run()
     }
 
+    /// `stop()` awaits the deactivation off the main actor. The wait itself still
+    /// blocks on the lock the tap holds across `AVAudioFile.write` and
+    /// `SFSpeechAudioBufferRecognitionRequest.append`, so doing it on the main
+    /// thread would park the UI on the tap thread's disk I/O.
+    @MainActor
+    func testStopWaitsForTheTapWithoutBlockingTheMainActor() async {
+        let gate = LiveTranscriptionTapGate()
+        let entered = DispatchSemaphore(value: 0)
+        let releaseBuffer = DispatchSemaphore(value: 0)
+        defer { releaseBuffer.signal() }
+
+        DispatchQueue.global().async {
+            gate.whileActive {
+                entered.signal()
+                _ = releaseBuffer.wait(timeout: .now() + 5)
+            }
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+
+        let started = ContinuousClock.now
+        // Exactly what `LiveTranscriptionService.stop()` does.
+        let stopping = Task { @MainActor in
+            await Task.detached { gate.deactivate() }.value
+        }
+        // Only reachable while the main actor is free. Called directly instead of
+        // awaited off it, `deactivate()` would hold the main thread until the
+        // buffer above timed out five seconds later.
+        let releasing = Task { @MainActor in
+            releaseBuffer.signal()
+        }
+        await releasing.value
+        XCTAssertLessThan(
+            started.duration(to: .now), .seconds(1),
+            "The main actor must stay free while an in-flight buffer finishes"
+        )
+
+        await stopping.value
+        var ranAfterStop = false
+        gate.whileActive { ranAfterStop = true }
+        XCTAssertFalse(ranAfterStop, "Stop must still be complete once the await returns")
+    }
+
     func testDeactivationWaitsForAcceptedBufferAndRejectsLaterWork() {
         let gate = LiveTranscriptionTapGate()
         let entered = DispatchSemaphore(value: 0)

@@ -21,6 +21,9 @@ callbacks need to be constructed outside that isolation.
 2. Serialize the complete write/append operation with tap deactivation, so stop
    waits for an accepted buffer before ending the Speech request. The former
    locked Boolean check allowed stop to overtake a buffer after its check.
+   `stop()` awaits that wait off the main actor: deactivation blocks on the lock
+   the tap holds across `AVAudioFile.write` and the Speech `append`, and holding
+   the main thread on the tap thread's disk I/O trades a crash for a hang.
 3. Add regression coverage that constructs callbacks from MainActor and invokes
    them on a background queue. Verify audio writes, suppression after stop,
    successful/error Speech results, and deactivation waiting for an accepted

@@ -111,6 +111,11 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// the published state — the user may start another immediately — but their
     /// blobs may still be landing, so no cache sweep may start while any remain.
     private var unwindingCancelledDownloads = 0
+    /// Blob caches a finished download could not remove because a cancelled task
+    /// was still writing. Drained as soon as nothing is downloading or unwinding;
+    /// the maintenance sweep is a backstop, not the owner, because it is gated on
+    /// the same counter and cannot run while one of those tasks is stuck.
+    private var deferredBlobCleanups: Set<String> = []
     private var isCacheMaintenanceInProgress = false
     private let downloadOperation: (@MainActor (String) async throws -> Void)?
     private let blobCleanup: (@MainActor (String) -> Void)?
@@ -191,6 +196,9 @@ final class MLXSwiftDownloadManager: ObservableObject {
                     // owns it now, and clearing it could expose blobs still landing.
                     self.unwindingCancelledDownloads = max(0, self.unwindingCancelledDownloads - 1)
                 }
+                // Whichever branch ran, this task has stopped writing. If it was the
+                // last one, any cleanup an earlier finish had to skip can run now.
+                self.drainDeferredBlobCleanups()
             }
             guard !Task.isCancelled, self.downloadGeneration == generation else { return }
             do {
@@ -222,9 +230,40 @@ final class MLXSwiftDownloadManager: ObservableObject {
     }
 
     private func cleanUpCompletedDownload(for id: String) {
-        // Older cancelled tasks may still be writing even when the current
-        // task finishes. Leave their blobs for the later maintenance sweep.
-        guard unwindingCancelledDownloads == 0 else { return }
+        // Older cancelled tasks may still be writing even when the current task
+        // finishes, and deleting the shared blob cache under them would take the
+        // bytes they are still landing. Remember the work instead of dropping it:
+        // the maintenance sweep cannot be the owner here, because `beginCacheMaintenance`
+        // is gated on the same counter and a Hub download that never observes its
+        // cancellation would leave a full duplicate of the model on disk forever.
+        guard unwindingCancelledDownloads == 0 else {
+            deferredBlobCleanups.insert(id)
+            return
+        }
+        // A restarted download of the same model supersedes any cleanup still
+        // pending for it; removing the entry keeps the drain from repeating it.
+        deferredBlobCleanups.remove(id)
+        removeBlobCache(for: id)
+    }
+
+    /// Runs the cleanups deferred above, once no task can still be writing blobs.
+    /// `isDownloading` matters as much as the counter: the deferred model may be the
+    /// one a restarted download is fetching right now, and its blobs are what that
+    /// download resumes from.
+    private func drainDeferredBlobCleanups() {
+        guard !deferredBlobCleanups.isEmpty,
+              !isDownloading,
+              unwindingCancelledDownloads == 0 else {
+            return
+        }
+        let pending = deferredBlobCleanups
+        deferredBlobCleanups.removeAll()
+        for id in pending {
+            removeBlobCache(for: id)
+        }
+    }
+
+    private func removeBlobCache(for id: String) {
         if let cleanup = blobCleanup {
             cleanup(id)
         } else {
