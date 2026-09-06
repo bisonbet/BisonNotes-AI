@@ -29,10 +29,11 @@ enum TranscriptCleanupModelState: Equatable {
 enum TranscriptCleanupModelLocator {
     #if !os(watchOS) && canImport(MLXLLM) && canImport(MLXLMCommon)
     static var directory: URL {
+        // Keep inspection aligned with MLXLMCommon.downloadModel's default hub.
         ModelConfiguration(
             id: TranscriptCleanupSettings.modelId,
             revision: TranscriptCleanupSettings.modelRevision
-        ).modelDirectory()
+        ).modelDirectory(hub: defaultHubApi)
     }
 
     static var licenseURL: URL {

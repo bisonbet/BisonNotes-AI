@@ -316,6 +316,21 @@ final class TranscriptCleanupTests: XCTestCase {
         XCTAssertFalse(snapshot.matches(rawEdit))
         XCTAssertFalse(snapshot.matches(nil))
     }
+
+    #if !os(watchOS) && canImport(MLXLLM) && canImport(MLXLMCommon)
+    func testCleanupModelLocatorUsesTheMLXMaterializedCache() {
+        let cachesDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let expectedDirectory = cachesDirectory
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent("mlx-community", isDirectory: true)
+            .appendingPathComponent("S1-mini-MLX-8bit", isDirectory: true)
+
+        XCTAssertEqual(
+            TranscriptCleanupModelLocator.directory.standardizedFileURL,
+            expectedDirectory.standardizedFileURL
+        )
+    }
+    #endif
 }
 
 private extension TranscriptCleanupTests {
