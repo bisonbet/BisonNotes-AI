@@ -18,6 +18,56 @@ final class MLXDownloadGenerationTests: XCTestCase {
         await exerciseRestart(staleFails: false, replacementFinishesFirst: true)
     }
 
+    /// `removeHubBlobCache` deletes one model's Hub repository, so a writer still
+    /// unwinding for a different model cannot be holding these blobs. Deferring on
+    /// it would strand a full duplicate of the finished model whenever the
+    /// cancelled Hub task never observes its cancellation.
+    @MainActor
+    func testACancelledDownloadDoesNotDeferAnotherModelsCleanup() async {
+        let defaults = UserDefaults.standard
+        let modelKey = MLXSwiftSettingsKeys.modelId
+        let markerKey = MLXSwiftSettingsKeys.inFlightDownloadModelID
+        let oldModel = defaults.object(forKey: modelKey)
+        let oldMarker = defaults.object(forKey: markerKey)
+        defer {
+            defaults.set(oldModel, forKey: modelKey)
+            defaults.set(oldMarker, forKey: markerKey)
+        }
+        let cancelled = "tests/generation-\(UUID())"
+        let replacement = "tests/generation-\(UUID())"
+        let downloads = ControlledMLXDownloads()
+        var cleanedModels: [String] = []
+        let manager = MLXSwiftDownloadManager(
+            downloadOperation: { _ in try await downloads.run() },
+            blobCleanup: { cleanedModels.append($0) }
+        )
+
+        defaults.set(cancelled, forKey: modelKey)
+        manager.startDownload()
+        await waitUntil { downloads.pending.count == 1 }
+        manager.cancelDownload()
+
+        defaults.set(replacement, forKey: modelKey)
+        manager.startDownload()
+        await waitUntil { downloads.pending.count == 2 }
+
+        downloads.finish(1)
+        await waitUntil { !manager.isDownloading }
+        XCTAssertEqual(
+            cleanedModels, [replacement],
+            "A writer unwinding for another model must not defer this cleanup"
+        )
+        // The whole-cache sweep is the exception: it still waits for every writer.
+        XCTAssertFalse(manager.beginCacheMaintenance())
+
+        downloads.finish(0)
+        await waitUntil { downloads.completed == 2 }
+        XCTAssertEqual(cleanedModels, [replacement])
+        XCTAssertNil(manager.downloadError)
+        XCTAssertTrue(manager.beginCacheMaintenance())
+        manager.endCacheMaintenance()
+    }
+
     @MainActor
     private func exerciseRestart(staleFails: Bool, replacementFinishesFirst: Bool) async {
         let defaults = UserDefaults.standard
