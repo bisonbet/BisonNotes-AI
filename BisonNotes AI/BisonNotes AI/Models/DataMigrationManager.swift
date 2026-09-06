@@ -114,48 +114,12 @@ class DataMigrationManager: ObservableObject {
         }
     }
 
-    private var cloudDeletionManager: iCloudStorageManager {
-        configurediCloudStorageManager ?? iCloudStorageManager.shared
-    }
-
-    // MARK: - Deletion Markers
+    // MARK: - Deletion markers
     //
-    // A deletion marker is durable and says the *user* deleted something, so it
-    // travels to every device and outlives the row it describes. Only
-    // clearAllCoreData raises one from this file: the user asked for the store to
-    // be emptied, and without markers the next reconcile would restore it.
-    //
-    // Repair and de-duplication deliberately do not. A local file this device
-    // cannot see is not a deletion, an orphaned row is a local inconsistency, and
-    // CLAUDE.md is explicit that superseded duplicates are pruned "never with a
-    // tombstone, because every device derives the same winner from the same
-    // data". Publishing one from any of those would delete a healthy copy from
-    // every other device over a problem local to this one.
-
-    private func enqueueTranscriptDeletion(_ transcript: TranscriptEntry) {
-        guard let transcriptId = transcript.id else { return }
-        cloudDeletionManager.enqueueTranscriptRemovalFromiCloud(
-            transcriptId: transcriptId,
-            recordingId: transcript.recordingId ?? transcript.recording?.id
-        )
-    }
-
-    private func enqueueSummaryDeletion(_ summary: SummaryEntry) {
-        guard let summaryId = summary.id else { return }
-        cloudDeletionManager.enqueueSummaryRemovalFromiCloud(
-            summaryId: summaryId,
-            recordingId: summary.recordingId ?? summary.recording?.id
-        )
-    }
-
-    private func enqueueRecordingDeletion(_ recording: RecordingEntry, includingChildren: Bool = true) {
-        guard let recordingId = recording.id else { return }
-        cloudDeletionManager.enqueueRecordingDeletionForiCloud(
-            recordingId: recordingId,
-            transcriptIds: includingChildren ? [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 } : [],
-            summaryIds: includingChildren ? [recording.summaryId ?? recording.summary?.id].compactMap { $0 } : []
-        )
-    }
+    // User-requested clearing uses the same transactional outbox as the normal
+    // deletion paths. Repair and de-duplication deliberately do not raise cloud
+    // markers: a local inconsistency is not evidence that another device's copy
+    // should be deleted.
 
     func performDataMigration() async {
         AppLog.shared.dataMigration("Starting data migration")
@@ -540,50 +504,39 @@ class DataMigrationManager: ObservableObject {
         let recordings = (try? context.fetch(RecordingEntry.fetchRequest())) ?? []
         let transcripts = (try? context.fetch(TranscriptEntry.fetchRequest())) ?? []
         let summaries = (try? context.fetch(SummaryEntry.fetchRequest())) ?? []
+        let deletionDate = Date()
+        var effects = DeferredDeletionEffects()
 
-        // Batch deletes bypass Core Data relationship callbacks, so the tombstones
-        // are raised here rather than through the usual delete paths. They are
-        // raised only once the store is actually empty: queueing first and then
-        // failing the delete would wipe iCloud while the local rows survived.
-        let entities = ["RecordingEntry", "TranscriptEntry", "SummaryEntry"]
-        var clearedEveryEntity = true
-
-        for entityName in entities {
-            let fetchRequest = NSFetchRequest<NSFetchRequestResult>(entityName: entityName)
-            let deleteRequest = NSBatchDeleteRequest(fetchRequest: fetchRequest)
-
-            do {
-                try context.execute(deleteRequest)
-                AppLog.shared.dataMigration("Cleared all \(entityName) entries")
-            } catch {
-                clearedEveryEntity = false
-                AppLog.shared.dataMigration("Error clearing \(entityName): \(error)", level: .error)
-            }
+        for recording in recordings {
+            effects.stage(recording: recording, requestedAt: deletionDate)
         }
+        for transcript in transcripts {
+            effects.stage(transcript: transcript, requestedAt: deletionDate)
+        }
+        for summary in summaries {
+            effects.stage(summary: summary, requestedAt: deletionDate)
+        }
+
+        // Regular context deletes keep the local rows and their outbox intents in
+        // the same SQLite transaction. A batch delete executes independently of
+        // the context save and would reopen the crash window this outbox closes.
+        transcripts.forEach { context.delete($0) }
+        summaries.forEach { context.delete($0) }
+        recordings.forEach { context.delete($0) }
 
         do {
-            try context.save()
-            AppLog.shared.dataMigration("Core Data cleared successfully")
-        } catch {
-            AppLog.shared.dataMigration("Error saving after clearing Core Data: \(error)", level: .error)
-            context.rollback()
-            return
-        }
-
-        guard clearedEveryEntity else {
+            let coreDataManager = CoreDataManager(persistenceController: persistenceController)
+            try coreDataManager.save(committing: effects)
             AppLog.shared.dataMigration(
-                "Store only partly cleared; withholding iCloud tombstones so a retry is still possible",
-                level: .error
+                "Cleared all Core Data entries and staged \(recordings.count) recording deletion marker(s)"
             )
+        } catch {
+            AppLog.shared.dataMigration("Error clearing Core Data and staging cloud removals: \(error)", level: .error)
             return
         }
 
-        recordings.forEach { enqueueRecordingDeletion($0) }
-        transcripts.forEach { enqueueTranscriptDeletion($0) }
-        summaries.forEach { enqueueSummaryDeletion($0) }
-
-        // The batch delete bypassed relationship callbacks, so every attachment
-        // folder is now unreachable.
+        // Every attachment folder is now unreachable; this also covers any
+        // duplicate rows that were not represented by the recording relationship.
         SummaryAttachmentStore.shared.pruneOrphans(against: context)
     }
 

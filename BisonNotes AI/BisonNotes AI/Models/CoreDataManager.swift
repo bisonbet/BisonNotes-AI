@@ -44,73 +44,142 @@ enum CoreDataDeletionError: Error, Equatable {
     case recordingNotFound(UUID)
 }
 
-/// Side effects of a delete that must not run until Core Data has committed.
+/// Side effects of a delete that must be committed with the Core Data change.
 ///
-/// Two of them cannot be taken back. Attachment files are gone from disk once
-/// deleted, so a rollback returns rows pointing at notes the user can no longer
-/// open. A cloud deletion marker is durable and outlives the row it describes,
-/// so one queued for a row that then rolls back deletes a live copy from every
-/// other device. Callers stage the intent, save, and only then commit; if the
-/// save throws, nothing staged has happened.
+/// Cloud mutations are inserted into the same persistent store transaction as
+/// the deleted rows. Attachment folders remain post-commit filesystem effects:
+/// unlike an outbox row, they cannot be rolled back by SQLite.
 @MainActor
 struct DeferredDeletionEffects {
-    private var summaries: [(summaryId: UUID, recordingId: UUID?)] = []
-    private var transcripts: [(transcriptId: UUID, recordingId: UUID?)] = []
-    private var recordings: [(recordingId: UUID, transcriptIds: [UUID], summaryIds: [UUID])] = []
+    private var summaries: [(summaryId: UUID, recordingId: UUID?, requestedAt: Date, deleteAttachments: Bool)] = []
+    private var transcripts: [(transcriptId: UUID, recordingId: UUID?, requestedAt: Date)] = []
+    private var recordings: [(recordingId: UUID, transcriptIds: [UUID], summaryIds: [UUID], requestedAt: Date)] = []
+    private var localOnlyRemovals: [(recordingId: UUID, requestedAt: Date)] = []
+    private var importedAudioRemovals: [(recordingId: UUID, requestedAt: Date)] = []
 
     var isEmpty: Bool {
-        summaries.isEmpty && transcripts.isEmpty && recordings.isEmpty
+        summaries.isEmpty && transcripts.isEmpty && recordings.isEmpty &&
+            localOnlyRemovals.isEmpty && importedAudioRemovals.isEmpty
     }
 
-    /// Stages a summary. `deletesAttachments` is false for a row whose files are
-    /// being handed to another id rather than destroyed.
-    mutating func stage(summary: SummaryEntry) {
+    mutating func stage(
+        summary: SummaryEntry,
+        requestedAt: Date = Date(),
+        deleteAttachments: Bool = true
+    ) {
         guard let summaryId = summary.id else { return }
-        summaries.append((summaryId, summary.recordingId ?? summary.recording?.id))
+        summaries.append((
+            summaryId,
+            summary.recordingId ?? summary.recording?.id,
+            requestedAt,
+            deleteAttachments
+        ))
     }
 
-    mutating func stageSummary(id summaryId: UUID, recordingId: UUID?) {
-        summaries.append((summaryId, recordingId))
+    mutating func stageSummary(
+        id summaryId: UUID,
+        recordingId: UUID?,
+        requestedAt: Date = Date(),
+        deleteAttachments: Bool = true
+    ) {
+        summaries.append((summaryId, recordingId, requestedAt, deleteAttachments))
     }
 
-    mutating func stage(transcript: TranscriptEntry) {
+    mutating func stage(transcript: TranscriptEntry, requestedAt: Date = Date()) {
         guard let transcriptId = transcript.id else { return }
-        transcripts.append((transcriptId, transcript.recordingId ?? transcript.recording?.id))
+        transcripts.append((transcriptId, transcript.recordingId ?? transcript.recording?.id, requestedAt))
     }
 
-    mutating func stage(recording: RecordingEntry) {
+    mutating func stage(recording: RecordingEntry, requestedAt: Date = Date()) {
         guard let recordingId = recording.id else { return }
         recordings.append((
             recordingId,
             [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 },
-            [recording.summaryId ?? recording.summary?.id].compactMap { $0 }
+            [recording.summaryId ?? recording.summary?.id].compactMap { $0 },
+            requestedAt
         ))
     }
 
-    /// Publishes the tombstones and removes the attachment files. Call only after
-    /// the save that removed these rows has succeeded.
-    func commit() {
-        guard !isEmpty else { return }
-        let iCloudManager = SummaryManager.shared.getiCloudManager()
+    mutating func stageLocalOnlyRemoval(recordingId: UUID, requestedAt: Date = Date()) {
+        localOnlyRemovals.append((recordingId, requestedAt))
+    }
 
+    mutating func stageImportedAudioRemoval(recordingId: UUID, requestedAt: Date = Date()) {
+        importedAudioRemovals.append((recordingId, requestedAt))
+    }
+
+    /// Inserts every outbound intent into the transaction that deletes the rows.
+    /// A thrown error leaves the caller's context free to roll back the whole
+    /// deletion, including any outbox rows inserted so far.
+    func stageCloudMutations(in context: NSManagedObjectContext) throws {
         for recording in recordings {
-            iCloudManager.enqueueRecordingDeletionForiCloud(
-                recordingId: recording.recordingId,
-                transcriptIds: recording.transcriptIds,
-                summaryIds: recording.summaryIds
+            // A whole-recording deletion supersedes an earlier explicit imported
+            // audio removal for the same target. Keep the old enqueue API's
+            // coalescing behavior inside this transaction too.
+            try PendingCloudMutationStore.remove(
+                kind: .importedAudioRemoval,
+                targetId: recording.recordingId,
+                from: context
+            )
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .recordingDeletion,
+                    targetId: recording.recordingId,
+                    transcriptIds: recording.transcriptIds,
+                    summaryIds: recording.summaryIds,
+                    requestedAt: recording.requestedAt
+                ),
+                in: context
             )
         }
         for transcript in transcripts {
-            iCloudManager.enqueueTranscriptRemovalFromiCloud(
-                transcriptId: transcript.transcriptId,
-                recordingId: transcript.recordingId
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .transcriptRemoval,
+                    targetId: transcript.transcriptId,
+                    recordingId: transcript.recordingId,
+                    requestedAt: transcript.requestedAt
+                ),
+                in: context
             )
         }
         for summary in summaries {
-            iCloudManager.enqueueSummaryRemovalFromiCloud(
-                summaryId: summary.summaryId,
-                recordingId: summary.recordingId
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .summaryRemoval,
+                    targetId: summary.summaryId,
+                    recordingId: summary.recordingId,
+                    requestedAt: summary.requestedAt
+                ),
+                in: context
             )
+        }
+        for removal in localOnlyRemovals {
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .localOnlyRemoval,
+                    targetId: removal.recordingId,
+                    requestedAt: removal.requestedAt
+                ),
+                in: context
+            )
+        }
+        for removal in importedAudioRemovals {
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .importedAudioRemoval,
+                    targetId: removal.recordingId,
+                    requestedAt: removal.requestedAt
+                ),
+                in: context
+            )
+        }
+    }
+
+    /// Removes attachment files after a successful database commit. No cloud
+    /// publication happens here; the outbox row is already durable.
+    func commit() {
+        for summary in summaries where summary.deleteAttachments {
             try? SummaryAttachmentStore.shared.deleteAll(for: summary.summaryId)
         }
     }
@@ -118,7 +187,7 @@ struct DeferredDeletionEffects {
     /// Removes the attachment files without publishing any tombstone, for local
     /// cleanup that every device derives independently.
     func commitLocalOnly() {
-        for summary in summaries {
+        for summary in summaries where summary.deleteAttachments {
             try? SummaryAttachmentStore.shared.deleteAll(for: summary.summaryId)
         }
     }
@@ -147,6 +216,7 @@ class CoreDataManager: ObservableObject {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
+        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
     }
 
     // MARK: - Context Management
@@ -486,54 +556,63 @@ class CoreDataManager: ObservableObject {
     /// `enqueueCloudDeletion` is false when applying a marker that came from
     /// another device — see `deleteRecording(id:enqueueCloudDeletion:)`.
     func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
-        guard let id else { return }
-
         do {
-            let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-            let transcripts = try context.fetch(fetchRequest)
-            guard !transcripts.isEmpty else {
-                AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
-                return
-            }
-
-            // Only rows that point at *this* transcript. Matching on the parent
-            // recording instead would clear the link on a recording that has since
-            // moved to a newer transcript, which is exactly the id an iCloud
-            // deletion marker for a superseded duplicate carries.
-            let recordings = fetchRecordings(
-                matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
-            )
-            for recording in recordings {
-                recording.transcript = nil
-                recording.transcriptId = nil
-                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
-                recording.lastModified = Date()
-            }
-
-            let summaryEntries = fetchSummaries(
-                matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
-            )
-            for summary in summaryEntries {
-                summary.transcript = nil
-                summary.transcriptId = nil
-            }
-
-            // Capture before deleting, and enqueue only after the save lands:
-            // a rollback below would otherwise leave a queued cloud removal for a
-            // transcript that still exists locally, and the next sync would delete
-            // the cloud copy and then reconcile the local row away.
             var effects = DeferredDeletionEffects()
-            transcripts.forEach {
-                effects.stage(transcript: $0)
-                context.delete($0)
-            }
+            guard try stageTranscriptDeletion(id: id, effects: &effects) else { return }
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
-            AppLog.shared.coreData("Deleted transcript with ID: \(id)")
+            AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
             throw error
         }
+    }
+
+    /// Stages a transcript deletion without saving. Compound user actions use
+    /// this to put every local edit and every corresponding outbox row in one
+    /// persistent transaction.
+    @discardableResult
+    func stageTranscriptDeletion(
+        id: UUID?,
+        effects: inout DeferredDeletionEffects,
+        requestedAt: Date = Date()
+    ) throws -> Bool {
+        guard let id else { return false }
+
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        let transcripts = try context.fetch(fetchRequest)
+        guard !transcripts.isEmpty else {
+            AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
+            return false
+        }
+
+        // Only rows that point at *this* transcript. Matching on the parent
+        // recording instead would clear the link on a recording that has since
+        // moved to a newer transcript, which is exactly the id an iCloud
+        // deletion marker for a superseded duplicate carries.
+        let recordings = fetchRecordings(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
+        )
+        for recording in recordings {
+            recording.transcript = nil
+            recording.transcriptId = nil
+            recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            recording.lastModified = requestedAt
+        }
+
+        let summaryEntries = fetchSummaries(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
+        )
+        for summary in summaryEntries {
+            summary.transcript = nil
+            summary.transcriptId = nil
+        }
+
+        for transcript in transcripts {
+            effects.stage(transcript: transcript, requestedAt: requestedAt)
+            context.delete(transcript)
+        }
+        return true
     }
 
     // MARK: - Repair Operations
@@ -1291,11 +1370,14 @@ class CoreDataManager: ObservableObject {
         context.rollback()
     }
 
-    /// Saves, then runs `effects`. On failure the context rolls back and the
-    /// error propagates with nothing staged having run — which is the whole
-    /// point of staging. Every delete path goes through here.
-    private func save(committing effects: DeferredDeletionEffects, localOnly: Bool = false) throws {
+    /// Saves the local mutation and its cloud outbox rows as one transaction,
+    /// then runs only irreversible filesystem effects after that transaction
+    /// succeeds. Every user deletion path goes through here.
+    func save(committing effects: DeferredDeletionEffects, localOnly: Bool = false) throws {
         do {
+            if !localOnly {
+                try effects.stageCloudMutations(in: context)
+            }
             try context.save()
         } catch {
             context.rollback()
@@ -1795,9 +1877,19 @@ class CoreDataManager: ObservableObject {
 
         recording.isCloudSyncDisabled = disabled
         recording.lastModified = Date()
+        var effects = DeferredDeletionEffects()
+        if disabled {
+            effects.stageLocalOnlyRemoval(recordingId: recordingId)
+        } else {
+            try PendingCloudMutationStore.remove(
+                kind: .localOnlyRemoval,
+                targetId: recordingId,
+                from: context
+            )
+        }
 
         do {
-            try context.save()
+            try save(committing: effects)
             AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
         } catch {
             AppLog.shared.coreData("Failed to save iCloud exclusion update: \(error)", level: .error)

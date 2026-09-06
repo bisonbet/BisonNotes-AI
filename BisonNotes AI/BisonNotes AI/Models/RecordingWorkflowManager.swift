@@ -316,18 +316,19 @@ class RecordingWorkflowManager: ObservableObject {
                 // deletes the user's cloud copy — and their notes — for a summary
                 // that is still on the device.
                 let migratedSummaryId = existingSummaries.first?.id
-                var supersededSummaryIds: [UUID] = []
-                var attachmentFoldersToRemove: [UUID] = []
+                var effects = DeferredDeletionEffects()
                 var deletedCount = 0
 
                 for oldSummary in existingSummaries {
                     let oldId = oldSummary.id?.uuidString ?? "nil"
                     if let oldSummaryId = oldSummary.id {
-                        supersededSummaryIds.append(oldSummaryId)
-                        // Supplemental folders that were not migrated onto the new summary.
-                        if oldSummaryId != migratedSummaryId {
-                            attachmentFoldersToRemove.append(oldSummaryId)
-                        }
+                        // Keep the primary folder because its supplemental data was
+                        // migrated to the new summary. Other folders are removed only
+                        // after the row deletion and its outbox intent commit.
+                        effects.stage(
+                            summary: oldSummary,
+                            deleteAttachments: oldSummaryId != migratedSummaryId
+                        )
                     }
                     context.delete(oldSummary)
                     deletedCount += 1
@@ -336,28 +337,14 @@ class RecordingWorkflowManager: ObservableObject {
 
                 if deletedCount > 0 {
                     do {
-                        try context.save()
-
-                        // Committed: replacing a summary is still a deletion from the
-                        // sync graph, so raise durable tombstones now that the rows
-                        // are really gone and another device cannot restore them.
-                        let iCloudManager = SummaryManager.shared.getiCloudManager()
-                        for summaryId in supersededSummaryIds {
-                            iCloudManager.enqueueSummaryRemovalFromiCloud(
-                                summaryId: summaryId,
-                                recordingId: recordingId
-                            )
-                        }
-                        for summaryId in attachmentFoldersToRemove {
-                            try? SummaryAttachmentStore.shared.deleteAll(for: summaryId)
-                        }
+                        let coreDataManager = appCoordinator?.coreDataManager
+                            ?? CoreDataManager(persistenceController: persistenceController)
+                        try coreDataManager.save(committing: effects)
 
                         AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)", level: .debug)
                     } catch {
-                        // The old rows are still here. Discard the pending deletions so
-                        // a later unrelated save cannot commit them without tombstones,
-                        // and leave the cloud copies alone so the two stay in step.
-                        context.rollback()
+                        // The old rows and their outbox intents roll back together,
+                        // leaving the cloud copies and local rows in step.
                         AppLog.shared.backgroundProcessing(
                             "Failed to clean up \(deletedCount) old summary(ies) for recording \(recordingId); " +
                             "keeping them locally and in iCloud: \(error)",
