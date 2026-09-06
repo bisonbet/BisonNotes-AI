@@ -62,10 +62,19 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             metricsSink: metrics
         )
         manager.networkStatus = .available
+        // The outbox is a Core Data table now, not a UserDefaults blob, so clearing
+        // it only reaches the store this manager is bound to. Bind it to the test
+        // store first: deletions made through `appCoordinator` queue their intent
+        // there via the shared manager, and clearing the default on-disk store
+        // instead left those rows behind for `bindPendingMutationContext` to copy
+        // into the next test's store, where the flush leg then wrote them out.
+        manager.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
         manager.clearPendingCloudMutationsForTesting()
     }
 
     override func tearDown() async throws {
+        // Bound to the test store in `setUp`, so this really does empty it rather
+        // than the process-wide default store.
         manager?.clearPendingCloudMutationsForTesting()
         // A retry armed by a deferred run holds the coordinator until it fires.
         manager?.cancelDeferredSyncRetry()
@@ -960,6 +969,61 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
                 XCTFail("A waiter on a failed run must not report \(value)")
             }
         }
+    }
+
+    func testCloudSyncWaitsForCacheMaintenanceAndRequestsAYield() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        XCTAssertTrue(coordinator.beginCacheMaintenance())
+        var ran = false
+
+        let sync = Task { @MainActor in
+            try await coordinator.submit(intent: .routineSnapshot) {
+                ran = true
+            }
+        }
+        await Task.yield()
+
+        XCTAssertFalse(ran)
+        XCTAssertTrue(coordinator.shouldYieldCacheMaintenance)
+
+        coordinator.endCacheMaintenance()
+        _ = try await sync.value
+        XCTAssertTrue(ran)
+    }
+
+    func testCancelledCloudSyncWaiterIsRemovedFromTheFollowUpQueue() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .routineSnapshot) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first sync to start") { coordinator.isRunning }
+
+        var secondWorkRan = false
+        let second = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false
+            ) {
+                secondWorkRan = true
+            }
+        }
+        await waitUntil("the second sync to queue") { coordinator.pendingFollowUpCount == 1 }
+
+        second.cancel()
+        do {
+            _ = try await second.value
+            XCTFail("A cancelled queued waiter must throw")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertEqual(coordinator.pendingFollowUpCount, 0)
+        XCTAssertFalse(secondWorkRan)
+
+        gate.open()
+        _ = try await first.value
     }
 
     func testAThrottledQueryDoesNotEscalateIntoAZoneScan() async throws {
@@ -1883,6 +1947,86 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertEqual(fullReadCount, 2, "The refetch this covers has to have happened")
     }
 
+    /// A failed restore copy is a transient local-cache/filesystem condition, not
+    /// evidence that the cloud asset is gone. The next routine pass must fetch the
+    /// asset again and install it without requiring a manual restore.
+    func testARecordingAudioRestoreIsRetriedByALaterRoutineReconcile() async throws {
+        let recordingId = UUID()
+        let now = Date()
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = RecordingEntry(context: context)
+        recording.id = recordingId
+        recording.recordingName = "Restore retry"
+        recording.recordingDate = now
+        recording.createdAt = now
+        recording.lastModified = now
+        recording.recordingURL = nil
+        recording.duration = 12
+        recording.fileSize = 11
+        recording.audioQuality = AudioQuality.whisperOptimized.rawValue
+        recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+        recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+        try context.save()
+
+        let cloudAudioURL = tempDirectory.appendingPathComponent("restore-retry.m4a")
+        try Data("cloud audio that becomes available to the next pass".utf8).write(to: cloudAudioURL)
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName,
+                fields: [
+                    "recordingName": "Restore retry",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "restore-retry.m4a",
+                    "duration": 12.0,
+                    "fileSize": 11,
+                    "audioQuality": AudioQuality.whisperOptimized.rawValue,
+                    "audioAsset": CKAsset(fileURL: cloudAudioURL),
+                    "audioFileName": "restore-retry.m4a",
+                    "audioByteCount": Int64("cloud audio that becomes available to the next pass".utf8.count),
+                    "audioSignature": "restore-retry-signature",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        let previousAudioSetting = UserDefaults.standard.object(forKey: "iCloudBackupIncludeAudioFiles")
+        UserDefaults.standard.set(true, forKey: "iCloudBackupIncludeAudioFiles")
+        defer {
+            manager.setRestoredAudioFileManagerForTesting(nil)
+            if let previousAudioSetting {
+                UserDefaults.standard.set(previousAudioSetting, forKey: "iCloudBackupIncludeAudioFiles")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "iCloudBackupIncludeAudioFiles")
+            }
+        }
+
+        manager.setRestoredAudioFileManagerForTesting(FailingReconcileRestoreCopyFileManager())
+        let failed = try await runReconcile()
+
+        XCTAssertEqual(failed.restoreResult.audioFilesFailedToRestore, 1)
+        XCTAssertEqual(failed.restoreResult.audioFilesRestored, 0)
+        XCTAssertNil(
+            appCoordinator.getRecording(id: recordingId)?.recordingURL,
+            "A failed copy must leave the existing local URL untouched"
+        )
+
+        manager.setRestoredAudioFileManagerForTesting(nil)
+        let retried = try await runReconcile(reason: .appBecameActive)
+
+        XCTAssertEqual(retried.restoreResult.audioFilesFailedToRestore, 0)
+        XCTAssertEqual(retried.restoreResult.audioFilesRestored, 1)
+        let restoredRecording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let restoredURL = try XCTUnwrap(appCoordinator.coreDataManager.getAbsoluteURL(for: restoredRecording))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
+        XCTAssertEqual(try Data(contentsOf: restoredURL), Data("cloud audio that becomes available to the next pass".utf8))
+    }
+
     /// A marker is the only record other devices have of a delete they did not
     /// see. Retiring it in the same non-atomic batch as the records it authorises
     /// means CloudKit can take the marker, permanently refuse one content record,
@@ -2023,5 +2167,12 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == recordingId },
             "The bootstrap scan must actually restore what it finds"
         )
+    }
+}
+
+private final class FailingReconcileRestoreCopyFileManager: FileManager, @unchecked Sendable {
+    override func copyItem(at source: URL, to destination: URL) throws {
+        try Data("partial restore".utf8).write(to: destination)
+        throw POSIXError(.ENOSPC)
     }
 }

@@ -4,6 +4,73 @@ import XCTest
 
 final class MLXDownloadGenerationTests: XCTestCase {
     @MainActor
+    func testDownloadWaitsForCacheMaintenanceAndStartsAfterItReleases() async {
+        let defaults = UserDefaults.standard
+        let modelKey = MLXSwiftSettingsKeys.modelId
+        let markerKey = MLXSwiftSettingsKeys.inFlightDownloadModelID
+        let oldModel = defaults.object(forKey: modelKey)
+        let oldMarker = defaults.object(forKey: markerKey)
+        defer {
+            defaults.set(oldModel, forKey: modelKey)
+            defaults.set(oldMarker, forKey: markerKey)
+        }
+
+        defaults.set("tests/maintenance-queue-\(UUID())", forKey: modelKey)
+        let downloads = ControlledMLXDownloads()
+        let manager = MLXSwiftDownloadManager(
+            downloadOperation: { _ in try await downloads.run() },
+            blobCleanup: { _ in }
+        )
+
+        XCTAssertTrue(manager.beginCacheMaintenance())
+        manager.startDownload()
+        XCTAssertTrue(manager.isDownloadQueued)
+        XCTAssertFalse(manager.isDownloading)
+        XCTAssertTrue(downloads.pending.isEmpty)
+
+        manager.endCacheMaintenance()
+        await waitUntil { downloads.pending.count == 1 }
+        XCTAssertTrue(manager.isDownloading)
+        XCTAssertFalse(manager.isDownloadQueued)
+
+        downloads.finish(0)
+        await waitUntil { !manager.isDownloading }
+    }
+
+    @MainActor
+    func testCancelledQueuedDownloadDoesNotStartAfterMaintenance() async {
+        let defaults = UserDefaults.standard
+        let modelKey = MLXSwiftSettingsKeys.modelId
+        let markerKey = MLXSwiftSettingsKeys.inFlightDownloadModelID
+        let oldModel = defaults.object(forKey: modelKey)
+        let oldMarker = defaults.object(forKey: markerKey)
+        defer {
+            defaults.set(oldModel, forKey: modelKey)
+            defaults.set(oldMarker, forKey: markerKey)
+        }
+
+        defaults.set("tests/maintenance-cancel-\(UUID())", forKey: modelKey)
+        let downloads = ControlledMLXDownloads()
+        let manager = MLXSwiftDownloadManager(
+            downloadOperation: { _ in try await downloads.run() },
+            blobCleanup: { _ in }
+        )
+
+        XCTAssertTrue(manager.beginCacheMaintenance())
+        manager.startDownload()
+        XCTAssertTrue(manager.isDownloadQueued)
+
+        manager.cancelDownload()
+        XCTAssertFalse(manager.isDownloadQueued)
+        XCTAssertFalse(manager.isDownloading)
+
+        manager.endCacheMaintenance()
+        await Task.yield()
+        XCTAssertTrue(downloads.pending.isEmpty)
+        XCTAssertFalse(manager.isDownloading)
+    }
+
+    @MainActor
     func testCancelledCompletionCannotCleanUpReplacementDownload() async {
         await exerciseRestart(staleFails: false, replacementFinishesFirst: false)
     }

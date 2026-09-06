@@ -129,8 +129,8 @@ struct MLXSwiftSettingsView: View {
                 }
             }
 
-            // Download Progress (if downloading)
-            if downloadManager.isDownloading {
+            // Download Progress (if downloading or waiting for a cache sweep)
+            if downloadManager.isDownloading || downloadManager.isDownloadQueued {
                 Section("Download Progress") {
                     downloadProgressView
                 }
@@ -233,7 +233,7 @@ struct MLXSwiftSettingsView: View {
                     }
                 }
 
-                if downloadManager.isDownloading {
+                if downloadManager.isDownloading || downloadManager.isDownloadQueued {
                     nativeSettingsCard(title: "Download Progress", systemImage: "arrow.down.circle", tint: .blue) {
                         downloadProgressView
                     }
@@ -382,7 +382,10 @@ struct MLXSwiftSettingsView: View {
                     .font(.title2)
                     .foregroundColor(.blue)
             }
-        } else if downloadManager.isDownloading && downloadManager.modelId == model.id {
+        } else if (downloadManager.isDownloading || downloadManager.isDownloadQueued)
+                    && downloadManager.modelId == model.id {
+            // A queued download is cancellable too, and showing the arrow for it
+            // made the row look untouched while the request sat waiting.
             Button {
                 downloadManager.cancelDownload()
             } label: {
@@ -400,7 +403,7 @@ struct MLXSwiftSettingsView: View {
                     .font(.title2)
                     .foregroundColor(.blue)
             }
-            .disabled(downloadManager.isDownloading)
+            .disabled(downloadManager.isDownloading || downloadManager.isDownloadQueued)
         }
     }
 
@@ -423,16 +426,26 @@ struct MLXSwiftSettingsView: View {
     @ViewBuilder
     private var downloadProgressView: some View {
         VStack(spacing: 12) {
-            Text("Downloading \(downloadManager.modelDisplayName)")
+            // A download requested during a cache sweep is queued rather than
+            // started. It has no progress to report, so say what it is waiting on
+            // instead of showing a 0% bar that never moves.
+            Text(downloadManager.isDownloadQueued
+                 ? "Queued: \(downloadManager.modelDisplayName)"
+                 : "Downloading \(downloadManager.modelDisplayName)")
                 .font(.subheadline)
                 .fontWeight(.medium)
 
-            ProgressView(value: downloadManager.downloadProgress)
-                .progressViewStyle(.linear)
+            if downloadManager.isDownloadQueued {
+                ProgressView()
+                    .progressViewStyle(.linear)
+            } else {
+                ProgressView(value: downloadManager.downloadProgress)
+                    .progressViewStyle(.linear)
 
-            Text("\(Int(downloadManager.downloadProgress * 100))%")
-                .font(.caption)
-                .foregroundColor(.secondary)
+                Text("\(Int(downloadManager.downloadProgress * 100))%")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
             if let error = downloadManager.downloadError {
                 Text(error)
@@ -440,7 +453,7 @@ struct MLXSwiftSettingsView: View {
                     .foregroundColor(.red)
             }
 
-            Button("Cancel Download") {
+            Button(downloadManager.isDownloadQueued ? "Cancel" : "Cancel Download") {
                 downloadManager.cancelDownload()
             }
             .foregroundColor(.red)
@@ -449,8 +462,27 @@ struct MLXSwiftSettingsView: View {
 
     // MARK: - Model Status View
 
+    /// Shown wherever the status is, not inside the download-progress section:
+    /// a queued deletion sets neither `isDownloading` nor `isDownloadQueued`, so
+    /// gating this on those flags hid it entirely and the model could vanish when
+    /// maintenance finished with no prior indication.
+    @ViewBuilder
+    private var deferredMaintenanceNoticeView: some View {
+        if let notice = downloadManager.deferredMaintenanceNotice {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "clock")
+                    .foregroundColor(.orange)
+                Text(notice)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     @ViewBuilder
     private var modelStatusView: some View {
+        deferredMaintenanceNoticeView
         if downloadManager.isModelDownloaded {
             HStack {
                 Image(systemName: "checkmark.circle.fill")

@@ -34,6 +34,9 @@ class AppDataCoordinator: ObservableObject {
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
         SummaryManager.shared.configure(with: self)
+        SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
+            to: coreDataManager.managedObjectContext
+        )
 
         Task {
             await initializeSystem()
@@ -196,23 +199,11 @@ class AppDataCoordinator: ObservableObject {
 
 
     func deleteRecording(id: UUID) {
-        let transcriptIds = coreDataManager.getTranscript(for: id).flatMap { $0.id }.map { [$0] } ?? []
-        let summaryIds = coreDataManager.getSummary(for: id).flatMap { $0.id }.map { [$0] } ?? []
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        // Persist the deletion intent first so a crash after the local save
-        // still tells other devices. Withdraw it if the local delete rolls back.
-        iCloudManager.enqueueRecordingDeletionForiCloud(
-            recordingId: id,
-            transcriptIds: transcriptIds,
-            summaryIds: summaryIds
-        )
         do {
             try coreDataManager.deleteRecording(id: id)
         } catch {
-            // Covers the not-found case too: nothing was deleted here, so the
-            // marker queued a moment ago must not go on to delete it elsewhere.
-            iCloudManager.clearPendingRecordingDeletion(recordingId: id)
-            AppLog.shared.coreData("Failed to delete recording \(id); withdrew the iCloud deletion marker: \(error)", level: .error)
+            AppLog.shared.coreData("Failed to delete recording \(id): \(error)", level: .error)
             return
         }
 
@@ -228,26 +219,8 @@ class AppDataCoordinator: ObservableObject {
     /// Deletes only a transcript. The recording, audio, and any summary remain, while
     /// the transcript's cloud tombstone is retained until iCloud accepts it.
     func deleteTranscript(id: UUID) async throws {
-        let transcript = coreDataManager.getTranscript(id: id)
-        let recordingId = transcript?.recordingId ?? transcript?.recording?.id
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        iCloudManager.enqueueTranscriptRemovalFromiCloud(
-            transcriptId: id,
-            recordingId: recordingId
-        )
-
-        do {
-            try coreDataManager.deleteTranscript(id: id)
-            guard coreDataManager.getTranscript(id: id) == nil else {
-                // Nothing was deleted — the row was not there. Withdraw the marker
-                // rather than tombstoning something this device never saw.
-                iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
-                return
-            }
-        } catch {
-            iCloudManager.clearPendingTranscriptRemoval(transcriptId: id)
-            throw error
-        }
+        try coreDataManager.deleteTranscript(id: id)
 
         do {
             try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
@@ -283,53 +256,31 @@ class AppDataCoordinator: ObservableObject {
             initialSummary?.transcript?.id
         ].compactMap { $0 })
 
-        // Persist both removal intents before touching anything locally, the same
-        // way `deleteSummary` and `setCloudSyncDisabled` do. Queuing them after the
-        // save left a window where a termination between the two would take the
-        // transcript and audio away locally with nothing durable telling the other
-        // devices — and the next sync would restore exactly what the user deleted,
-        // which is the resurrection this method exists to prevent. Withdrawn below
-        // if the local work does not commit.
-        //
-        // `deletionDate` is when the user asked, which is also what the markers must
-        // carry: a marker that reaches CloudKit days later must not erase newer work.
         let deletionDate = Date()
-        for transcriptId in transcriptIds {
-            iCloudManager.enqueueTranscriptRemovalFromiCloud(
-                transcriptId: transcriptId,
-                recordingId: recordingId,
-                requestedAt: deletionDate
-            )
-        }
-        iCloudManager.enqueueImportedAudioRemovalFromiCloud(
-            recordingId: recordingId,
-            requestedAt: deletionDate
-        )
-
-        // `deleteTranscript` commits a save of its own, so its rows can be durably
-        // gone even when the work below fails. Withdrawing a marker for one of those
-        // would leave the transcript deleted locally with nothing telling the other
-        // devices — the resurrection this method exists to prevent — so only intents
-        // whose mutation has not committed are taken back.
-        var committedTranscriptIds: Set<UUID> = []
-
-        func withdrawUncommittedRemovals() {
-            for transcriptId in transcriptIds where !committedTranscriptIds.contains(transcriptId) {
-                iCloudManager.clearPendingTranscriptRemoval(transcriptId: transcriptId)
-            }
-            // `recordingURL` is only cleared by the `saveContext()` below, so if that
-            // did not land the audio is still referenced locally and its intent goes.
-            iCloudManager.clearPendingImportedAudioRemoval(recordingId: recordingId)
-        }
-
+        var effects = DeferredDeletionEffects()
         do {
             for transcriptId in transcriptIds {
-                // The marker is already queued; this only removes the local row.
                 // Remove every identity collected above, including stale ids from
                 // the recording and summary relationships. Otherwise backup can
                 // select an older remaining row and recreate the deleted transcript.
-                try coreDataManager.deleteTranscript(id: transcriptId, enqueueCloudDeletion: false)
-                committedTranscriptIds.insert(transcriptId)
+                let removedLocalRow = try coreDataManager.stageTranscriptDeletion(
+                    id: transcriptId,
+                    effects: &effects,
+                    requestedAt: deletionDate
+                )
+                if !removedLocalRow {
+                    // An id with no local row is the case this method exists for:
+                    // an imported placeholder whose transcript is already gone
+                    // here but still live in iCloud. Staging the deletion alone
+                    // would tombstone nothing, and the next reconcile would pull
+                    // the transcript back down — the resurrection this method is
+                    // meant to prevent.
+                    effects.stageTranscript(
+                        id: transcriptId,
+                        recordingId: recordingId,
+                        requestedAt: deletionDate
+                    )
+                }
             }
 
             guard let recording = coreDataManager.getRecording(id: recordingId) else {
@@ -357,16 +308,12 @@ class AppDataCoordinator: ObservableObject {
 
             recording.recordingURL = nil
             recording.lastModified = deletionDate
-            try coreDataManager.saveContext()
+            effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
+            try coreDataManager.save(committing: effects)
         } catch {
-            // Roll back before withdrawing: `saveContext()` leaves a failed save's
-            // edits staged in the context, so the cleared `recordingURL` and
-            // transcript link would still be committed by the next unrelated save —
-            // with their removal intents already taken back. The recording would
-            // then have lost its audio and transcript locally with no tombstone,
-            // and the next sync would restore exactly what the user deleted.
+            // `save(committing:)` rolls back both local edits and outbox rows on
+            // failure. Nothing has been published or withdrawn outside the store.
             coreDataManager.rollbackContext()
-            withdrawUncommittedRemovals()
             throw error
         }
 
@@ -383,32 +330,11 @@ class AppDataCoordinator: ObservableObject {
 
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        let summary = coreDataManager.getSummary(id: id)
-        let recordingId = summary?.recordingId
-            ?? summary?.recording?.id
-            ?? coreDataManager.getRecording(forSummaryId: id)?.id
 
         // Attachment files are removed by deleteSummary once its save commits.
         // Doing it here destroyed the user's notes even when the delete below
         // threw and the marker was withdrawn.
-
-        // Persist the deletion intent before the local delete. This closes the crash window
-        // where a device could remove its local summary and never tell the other devices.
-        iCloudManager.enqueueSummaryRemovalFromiCloud(
-            summaryId: id,
-            recordingId: recordingId
-        )
-
-        do {
-            try coreDataManager.deleteSummary(id: id)
-            guard coreDataManager.getSummary(id: id) == nil else {
-                iCloudManager.clearPendingSummaryRemoval(summaryId: id)
-                return
-            }
-        } catch {
-            iCloudManager.clearPendingSummaryRemoval(summaryId: id)
-            throw error
-        }
+        try coreDataManager.deleteSummary(id: id)
 
         do {
             try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
@@ -423,18 +349,7 @@ class AppDataCoordinator: ObservableObject {
 
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        if disabled {
-            iCloudManager.enqueueLocalOnlyCloudRemoval(recordingId: recordingId)
-        }
-
-        do {
-            try coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: disabled)
-        } catch {
-            if disabled {
-                iCloudManager.clearPendingLocalOnlyCloudRemoval(recordingId: recordingId)
-            }
-            throw error
-        }
+        try coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: disabled)
 
         if disabled {
             do {
@@ -443,7 +358,6 @@ class AppDataCoordinator: ObservableObject {
                 AppLog.shared.coreData("Marked recording local-only and queued iCloud removal for retry: \(error)", level: .error)
             }
         } else {
-            iCloudManager.clearPendingLocalOnlyCloudRemoval(recordingId: recordingId)
             scheduleAutoBackupIfEnabled()
         }
 

@@ -211,6 +211,9 @@ struct CacheMaintenanceReport: Equatable, Sendable {
     var cloudKitAssetBytes: Int64 = 0
     var cloudKitAssetCount = 0
     var removedDirectoryCount = 0
+    /// A sync or download arrived while the sweep was in progress. The caller
+    /// should make the next scheduled opportunity eligible again.
+    var didYieldToActiveWork = false
 
     var reclaimedBytes: Int64 {
         duplicateModelBlobBytes + orphanedModelBlobBytes + cloudKitAssetBytes
@@ -250,11 +253,15 @@ final class CacheMaintenanceService {
     func pruneCachesIfDue(now: Date = Date()) {
         if let lastSweep, now.timeIntervalSince(lastSweep) < Self.sweepInterval { return }
 
-        // Reserve the shared Hub cache before leaving the main actor: no sweep may
-        // start while a download is running or still unwinding, and two sweeps may
-        // never overlap. What protects a download that starts *during* a sweep is
-        // the per-deletion re-check below, not this reservation.
-        guard MLXSwiftDownloadManager.shared.beginCacheMaintenance() else { return }
+        // Reserve both shared resources before leaving the main actor. A new
+        // CloudKit run and a new Hub download wait for this reservation to release;
+        // either one can still request a prompt cooperative yield.
+        let cloudCoordinator = SummaryManager.shared.getiCloudManager().operationCoordinator
+        guard cloudCoordinator.beginCacheMaintenance() else { return }
+        guard MLXSwiftDownloadManager.shared.beginCacheMaintenance() else {
+            cloudCoordinator.endCacheMaintenance()
+            return
+        }
         lastSweep = now
 
         Task.detached(priority: .utility) {
@@ -268,15 +275,27 @@ final class CacheMaintenanceService {
                 },
                 isCloudSyncActive: {
                     await MainActor.run {
-                        SummaryManager.shared.getiCloudManager().operationCoordinator.isRunning
+                        let coordinator = SummaryManager.shared.getiCloudManager().operationCoordinator
+                        return coordinator.isRunning
+                    }
+                },
+                shouldYield: {
+                    await MainActor.run {
+                        let coordinator = SummaryManager.shared.getiCloudManager().operationCoordinator
+                        return coordinator.shouldYieldCacheMaintenance ||
+                            MLXSwiftDownloadManager.shared.shouldYieldCacheMaintenance
                     }
                 }
             )
-            // Released on its own, before anything that can return early: a
-            // reservation left behind blocks every later sweep for the life of
-            // the process.
-            await MainActor.run { MLXSwiftDownloadManager.shared.endCacheMaintenance() }
             await MainActor.run {
+                // A reservation left behind blocks every later sweep for the life
+                // of the process. If work arrived mid-pass, retry the sweep at the
+                // next lifecycle opportunity instead of charging the full interval.
+                if report.didYieldToActiveWork {
+                    self.lastSweep = nil
+                }
+                SummaryManager.shared.getiCloudManager().operationCoordinator.endCacheMaintenance()
+                MLXSwiftDownloadManager.shared.endCacheMaintenance()
                 guard report.didReclaimAnything else { return }
                 AppLog.shared.fileManagement(
                     "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "
@@ -316,11 +335,21 @@ struct CacheMaintenanceSweep {
     ///   yet takes that recording's audio with it.
     func run(
         isDownloadInFlight: @Sendable () async -> Bool,
-        isCloudSyncActive: @Sendable () async -> Bool
+        isCloudSyncActive: @Sendable () async -> Bool,
+        shouldYield: @Sendable () async -> Bool = { false }
     ) async -> CacheMaintenanceReport {
         var report = CacheMaintenanceReport()
-        await pruneHuggingFaceBlobCache(into: &report, isDownloadInFlight: isDownloadInFlight)
-        await pruneCloudKitAssetCache(into: &report, isCloudSyncActive: isCloudSyncActive)
+        await pruneHuggingFaceBlobCache(
+            into: &report,
+            isDownloadInFlight: isDownloadInFlight,
+            shouldYield: shouldYield
+        )
+        if report.didYieldToActiveWork { return report }
+        await pruneCloudKitAssetCache(
+            into: &report,
+            isCloudSyncActive: isCloudSyncActive,
+            shouldYield: shouldYield
+        )
         return report
     }
 
@@ -348,7 +377,8 @@ struct CacheMaintenanceSweep {
 
     private func pruneHuggingFaceBlobCache(
         into report: inout CacheMaintenanceReport,
-        isDownloadInFlight: @Sendable () async -> Bool
+        isDownloadInFlight: @Sendable () async -> Bool,
+        shouldYield: @Sendable () async -> Bool
     ) async {
         guard let hubCacheRoot, let materializedModelsRoot else { return }
 
@@ -379,6 +409,10 @@ struct CacheMaintenanceSweep {
             // single reading taken before the sweep goes stale the moment it is used.
             let size = directorySize(directory)
 
+            if await shouldYield() {
+                report.didYieldToActiveWork = true
+                return
+            }
             guard let reason = CacheMaintenancePolicy.hubPruneReason(
                 directoryName: directory.lastPathComponent,
                 installedModelIDs: installed,
@@ -474,7 +508,8 @@ struct CacheMaintenanceSweep {
 
     private func pruneCloudKitAssetCache(
         into report: inout CacheMaintenanceReport,
-        isCloudSyncActive: @Sendable () async -> Bool
+        isCloudSyncActive: @Sendable () async -> Bool,
+        shouldYield: @Sendable () async -> Bool
     ) async {
         guard let cachesRoot else { return }
         let cloudKitRoot = cachesRoot.appendingPathComponent("CloudKit", isDirectory: true)
@@ -514,6 +549,10 @@ struct CacheMaintenanceSweep {
                 // nothing is removed while a sync runs either way, but a sync that
                 // finishes part way through must not cost this pass the rest of the
                 // cache — and the containers behind this one with it.
+                if await shouldYield() {
+                    report.didYieldToActiveWork = true
+                    return
+                }
                 if await isCloudSyncActive() { continue }
                 do {
                     try fileManager.removeItem(at: url)

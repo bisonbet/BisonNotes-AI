@@ -221,6 +221,15 @@ struct OnDeviceAIDownloadView: View {
         if !mlxReady {
             AppLog.shared.summarization("OnDeviceAIDownload: Starting MLX \(mlxModel.displayName) download...", level: .debug)
             mlxManager.startDownload()
+            // A cache sweep in flight queues the request instead of starting it.
+            // Say so rather than reporting a download that has not begun; the
+            // settings screen shows the queued state and offers a cancel button.
+            if mlxManager.isDownloadQueued {
+                AppLog.shared.summarization(
+                    "OnDeviceAIDownload: MLX download queued behind cache maintenance; it starts when the sweep releases",
+                    level: .debug
+                )
+            }
         } else {
             AppLog.shared.summarization("OnDeviceAIDownload: MLX model already downloaded", level: .debug)
         }

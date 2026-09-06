@@ -16,10 +16,38 @@ Ordered by value, not by effort.
 
 ---
 
+## Follow-up execution status — 2026-09-06
+
+The correctness work from [v2.5-follow-up-agent-plan.md](v2.5-follow-up-agent-plan.md)
+is implemented on `codex/v2.5-follow-up-agent-plan`, based on `v2.5`. The
+remaining release gates are recorded here rather than implied by source-level
+tests:
+
+- Atomic deletion intent now lives in a versioned `PendingCloudMutation` entity
+  in the same Core Data store and transaction as local changes, including the
+  clear-all local-data path. Legacy queues migrate losslessly and retain
+  malformed data for recovery.
+- Failed restore audio is retried by a later ordinary reconcile; no separate
+  retry queue was needed.
+- CloudKit and Hub cache maintenance use reservations, cooperative yield, and
+  cancellation-safe queued work. Typed staging-capacity deferral preserves
+  metadata progress and retries audio after space is available.
+- The native macOS Debug build passed. The iOS test target could not complete in
+  this checkout because the existing Watch Widget source uses `accessoryCorner`,
+  which Xcode 26.6 reports unavailable for the iOS build configuration. Signed
+  device, two-device CloudKit, low-storage, and real download/sync validation
+  remain outstanding.
+
+The `iCloudStorageManager` extraction and Textual fork work remain out of scope;
+the detailed design notes below are retained for a later, separately scoped
+change.
+
 ## 1. Atomic deletion outbox
 
-**Status:** planned, not started. Raised by Codex on PR #124 against
-`RecordingWorkflowManager.swift:339`; declined there and left open on the thread.
+**Status:** implemented on the follow-up branch; full iOS test execution remains
+blocked by the existing Watch Widget build error described above. Raised by
+Codex on PR #124 against `RecordingWorkflowManager.swift:339`; declined there
+and left open on the thread.
 
 ### The defect
 
@@ -143,32 +171,27 @@ ordering is correct and must survive this refactor.
 
 ## 2. Reserve the CloudKit asset cache for the duration of a sync
 
-**Status:** partially fixed in v2.4 (`6f71e6ae`); a residual window remains.
+**Status:** implemented on the follow-up branch; the residual check-to-delete
+window is replaced by resource reservations and cooperative yield.
 
 `CacheMaintenanceSweep.pruneCloudKitAssetCache` now takes `isCloudSyncActive` and
-re-reads it immediately before every asset deletion, so a sync that starts
-mid-sweep protects the assets it has not copied out yet. That is the same shape
-as the `isDownloadInFlight` gate on the blob sweep.
+re-reads it immediately before every asset deletion. The follow-up now also gives
+`CloudSyncOperationCoordinator` a resource-scoped `beginCacheMaintenance()` /
+`endCacheMaintenance()` reservation: new CloudKit work waits and requests a
+cooperative yield, while the sweep holds the reservation through off-main deletion.
+`MLXSwiftDownloadManager` uses the same lifecycle for Hub downloads and explicit
+model deletion, including cancellation-safe queued startup.
 
-It is still a check, not a reservation. A sync that starts in the window between
-the check and `removeItem` is not seen. The blob sweep does not have this problem
-because `MLXSwiftDownloadManager.beginCacheMaintenance()` *reserves* the cache
-before the sweep leaves the main actor, so the download side can refuse to start.
-
-**The fix:** give `CloudSyncOperationCoordinator` the same pair —
-`beginCacheMaintenance()` / `endCacheMaintenance()`, refusing to hand out a
-maintenance reservation while an operation is running and refusing to start an
-operation while one is held. Then the sweep reserves once instead of polling.
-
-**Priority: low.** The residual window is microseconds, and the v2.4 restore-side
-fix (below) already means the consequence is one skipped audio file rather than a
-failed run. Worth doing when the coordinator is next touched, not on its own.
+The per-item activity checks remain as a defensive guard for existing direct cache
+access, but they are no longer the primary exclusion mechanism.
 
 ---
 
 ## 3. Retry audio that a restore could not copy
 
-**Status:** open question, verify before building.
+**Status:** verified on the follow-up branch. A failed copy leaves the existing
+local URL unchanged, and a later ordinary reconcile retries and installs the
+same cloud asset; no durable retry state was added.
 
 `performRestore` now counts `audioFilesFailedToRestore` and continues rather than
 throwing out of the whole run (`6f71e6ae`). Nothing explicitly schedules another
@@ -191,8 +214,9 @@ same spirit as `audioFilesPendingRetry` clearing the backup signature.
 
 ## 4. A recording larger than half the free disk still cannot stage
 
-**Status:** known limitation of the v2.4 staging budget (`876bd1f3`). Raised by
-Cursor's review of PR #124.
+**Status:** typed capacity deferral implemented on the follow-up branch. The
+per-run budget remains separate from measured free capacity, metadata continues
+to upload, and the user-facing shortage message is deduplicated.
 
 `CloudAudioAssetPolicy.stagingByteBudget` caps a run's staging at half of
 available capacity. The "first file of a run always stages, however large" rule

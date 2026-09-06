@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="1" systemVersion="11A491" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithCloudKit="true" userDefinedModelVersionIdentifier="">
+    <entity name="RecordingEntry" representedClassName="RecordingEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="audioQuality" optional="YES" attributeType="String"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="duration" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="fileSize" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isCloudSyncDisabled" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="locationAccuracy" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationAddress" optional="YES" attributeType="String"/>
+        <attribute name="locationLatitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationLongitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="locationTimestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="recordingDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="recordingName" optional="YES" attributeType="String"/>
+        <attribute name="recordingURL" optional="YES" attributeType="String"/>
+        <attribute name="summaryId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="summaryStatus" optional="YES" attributeType="String"/>
+        <attribute name="transcriptId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="transcriptionStatus" optional="YES" attributeType="String"/>
+        <attribute name="isArchived" optional="YES" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="archivedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="archiveNote" optional="YES" attributeType="String"/>
+        <relationship name="summary" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="SummaryEntry" inverseName="recording" inverseEntity="SummaryEntry"/>
+        <relationship name="transcript" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="TranscriptEntry" inverseName="recording" inverseEntity="TranscriptEntry"/>
+        <relationship name="processingJobs" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="ProcessingJobEntry" inverseName="recording" inverseEntity="ProcessingJobEntry"/>
+    </entity>
+    <entity name="SummaryEntry" representedClassName="SummaryEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="aiMethod" optional="YES" attributeType="String"/>
+        <attribute name="compressionRatio" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="confidence" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="contentType" optional="YES" attributeType="String"/>
+        <attribute name="generatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="originalLength" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="processingTime" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="recordingId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="reminders" optional="YES" attributeType="String"/>
+        <attribute name="summary" optional="YES" attributeType="String"/>
+        <attribute name="tasks" optional="YES" attributeType="String"/>
+        <attribute name="titles" optional="YES" attributeType="String"/>
+        <attribute name="transcriptId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="version" optional="YES" attributeType="Integer 32" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="wordCount" optional="YES" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="summary" inverseEntity="RecordingEntry"/>
+        <relationship name="transcript" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="TranscriptEntry" inverseName="summaries" inverseEntity="TranscriptEntry"/>
+    </entity>
+    <entity name="TranscriptEntry" representedClassName="TranscriptEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="confidence" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="createdAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="engine" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="processingTime" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="recordingId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="segments" optional="YES" attributeType="String"/>
+        <attribute name="speakerMappings" optional="YES" attributeType="String"/>
+        <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="transcript" inverseEntity="RecordingEntry"/>
+        <relationship name="summaries" optional="YES" toMany="YES" deletionRule="Nullify" destinationEntity="SummaryEntry" inverseName="transcript" inverseEntity="SummaryEntry"/>
+    </entity>
+    <entity name="ProcessingJobEntry" representedClassName="ProcessingJobEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="completionTime" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="engine" optional="YES" attributeType="String"/>
+        <attribute name="error" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="jobType" optional="YES" attributeType="String"/>
+        <attribute name="lastModified" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="modelName" optional="YES" attributeType="String"/>
+        <attribute name="progress" optional="YES" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="recordingName" optional="YES" attributeType="String"/>
+        <attribute name="recordingURL" optional="YES" attributeType="String"/>
+        <attribute name="startTime" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="status" optional="YES" attributeType="String"/>
+        <relationship name="recording" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="RecordingEntry" inverseName="processingJobs" inverseEntity="RecordingEntry"/>
+    </entity>
+    <entity name="RecordingArchiveLocationEntry" representedClassName="RecordingArchiveLocationEntry" syncable="YES" codeGenerationType="class">
+        <attribute name="bookmarkData" optional="YES" attributeType="Binary"/>
+        <attribute name="destinationURLString" optional="YES" attributeType="String"/>
+        <attribute name="displayName" optional="YES" attributeType="String"/>
+        <attribute name="exportedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="exportedFilename" optional="YES" attributeType="String"/>
+        <attribute name="fileSize" optional="YES" attributeType="Integer 64" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="id" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="lastVerifiedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="providerDisplayName" optional="YES" attributeType="String"/>
+        <attribute name="recordingId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="status" optional="YES" attributeType="String"/>
+    </entity>
+    <entity name="PendingCloudMutation" representedClassName="PendingCloudMutationManagedObject" syncable="NO" codeGenerationType="class">
+        <attribute name="kind" optional="NO" attributeType="String" defaultValueString="recordingDeletion"/>
+        <attribute name="payload" optional="YES" attributeType="Binary"/>
+        <attribute name="recordingId" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="requestedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="targetId" optional="NO" attributeType="UUID" defaultValueString="00000000-0000-0000-0000-000000000000" usesScalarValueType="NO"/>
+        <attribute name="version" optional="NO" attributeType="Integer 32" defaultValueString="1" usesScalarValueType="YES"/>
+    </entity>
+    <elements>
+        <element name="RecordingEntry" positionX="-63" positionY="-18" width="128" height="269"/>
+        <element name="SummaryEntry" positionX="144" positionY="72" width="128" height="284"/>
+        <element name="TranscriptEntry" positionX="144" positionY="-117" width="128" height="194"/>
+        <element name="ProcessingJobEntry" positionX="144" positionY="180" width="128" height="194"/>
+        <element name="RecordingArchiveLocationEntry" positionX="342" positionY="180" width="128" height="209"/>
+        <element name="PendingCloudMutation" positionX="540" positionY="180" width="128" height="180"/>
+    </elements>
+</model>

@@ -4,6 +4,7 @@
 //
 
 import CloudKit
+import CoreData
 import XCTest
 @testable import BisonNotes_AI
 
@@ -12,6 +13,47 @@ final class ICloudBackupRegressionTests: XCTestCase {
     private var persistenceController: PersistenceController!
     private var appCoordinator: AppDataCoordinator!
     private var tempDirectory: URL!
+
+    private static let legacyMutationKeys = [
+        "iCloudPendingDeletionMarkersV1",
+        "iCloudPendingLocalOnlyRemovalsV1",
+        "iCloudPendingSummaryRemovalsV1",
+        "iCloudPendingTranscriptRemovalsV1",
+        "iCloudPendingImportedAudioRemovalsV1"
+    ]
+
+    private struct LegacyDeletionMarkerFixture: Codable {
+        let recordingId: UUID
+        let transcriptIds: [UUID]
+        let summaryIds: [UUID]
+        let requestedAt: Date
+    }
+
+    private struct LegacyLocalOnlyRemovalFixture: Codable {
+        let recordingId: UUID
+        let requestedAt: Date
+    }
+
+    private struct LegacySummaryRemovalFixture: Codable {
+        let summaryId: UUID
+        let recordingId: UUID?
+        let requestedAt: Date
+    }
+
+    private struct LegacyTranscriptRemovalFixture: Codable {
+        let transcriptId: UUID
+        let recordingId: UUID?
+        let requestedAt: Date
+    }
+
+    private struct LegacyImportedAudioRemovalFixture: Codable {
+        let recordingId: UUID
+        let requestedAt: Date
+    }
+
+    private final class PersistentStoreLoadBox: @unchecked Sendable {
+        var error: Error?
+    }
 
     override func setUpWithError() throws {
         UserDefaults.standard.set(false, forKey: "iCloudSyncEnabled")
@@ -1183,6 +1225,275 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(manifest, [], "The manifest must not keep claiming a record that was deleted")
     }
 
+    // MARK: Durable outbox persistence and migration
+
+    func testSQLiteMigrationFromShippingModelPreservesContentAndAddsDurableOutbox() throws {
+        let storeURL = tempDirectory.appendingPathComponent("shipping-migration.sqlite")
+        let shippingContainer = try makeShippingModelContainer(at: storeURL)
+        let recordingId = UUID()
+        let shippingContext = shippingContainer.viewContext
+        let shippingRecording = NSEntityDescription.insertNewObject(
+            forEntityName: "RecordingEntry",
+            into: shippingContext
+        )
+        shippingRecording.setValue(recordingId, forKey: "id")
+        shippingRecording.setValue("Before durable outbox", forKey: "recordingName")
+        shippingRecording.setValue(Date(), forKey: "recordingDate")
+        shippingRecording.setValue(42.0, forKey: "duration")
+        shippingRecording.setValue(Int64(1024), forKey: "fileSize")
+        shippingRecording.setValue(Date(), forKey: "lastModified")
+        try shippingContext.save()
+        try closePersistentStores(of: shippingContainer)
+
+        let migrated = PersistenceController(storeURL: storeURL)
+        defer { try? closePersistentStores(of: migrated) }
+        let context = migrated.container.viewContext
+        let request = NSFetchRequest<NSManagedObject>(entityName: "RecordingEntry")
+        request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
+        let restored = try XCTUnwrap(try context.fetch(request).first)
+
+        XCTAssertEqual(restored.value(forKey: "recordingName") as? String, "Before durable outbox")
+        XCTAssertNotNil(
+            NSEntityDescription.entity(forEntityName: PendingCloudMutationStore.entityName, in: context),
+            "The current model must add the outbox entity while migrating the shipping store"
+        )
+
+        let requestedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try PendingCloudMutationStore.enqueue(
+            PendingCloudMutation(
+                kind: .recordingDeletion,
+                targetId: recordingId,
+                requestedAt: requestedAt
+            ),
+            in: context
+        )
+        try context.save()
+
+        XCTAssertEqual(
+            try PendingCloudMutationStore.fetchAll(in: context),
+            [PendingCloudMutation(kind: .recordingDeletion, targetId: recordingId, requestedAt: requestedAt)]
+        )
+    }
+
+    func testSQLiteDeletionAndOutboxSurviveReopenTogether() throws {
+        let storeURL = tempDirectory.appendingPathComponent("delete-outbox.sqlite")
+        let recordingId = UUID()
+        let firstController = PersistenceController(storeURL: storeURL)
+        let firstManager = CoreDataManager(persistenceController: firstController)
+        let recording = RecordingEntry(context: firstManager.managedObjectContext)
+        recording.id = recordingId
+        recording.recordingName = "Durably deleted"
+        recording.recordingDate = Date()
+        recording.duration = 30
+        recording.fileSize = 1024
+        recording.lastModified = Date()
+        try firstManager.saveContext()
+
+        try firstManager.deleteRecording(id: recordingId)
+        XCTAssertNil(firstManager.getRecording(id: recordingId))
+        XCTAssertEqual(PendingCloudMutationStore.count(in: firstManager.managedObjectContext), 1)
+        try closePersistentStores(of: firstController)
+
+        let reopened = PersistenceController(storeURL: storeURL)
+        defer { try? closePersistentStores(of: reopened) }
+        let context = reopened.container.viewContext
+        let recordings = try context.fetch(NSFetchRequest<NSManagedObject>(entityName: "RecordingEntry"))
+        let mutations = try PendingCloudMutationStore.fetchAll(in: context)
+
+        XCTAssertTrue(recordings.isEmpty)
+        XCTAssertEqual(mutations.count, 1)
+        XCTAssertEqual(mutations.first?.kind, .recordingDeletion)
+        XCTAssertEqual(mutations.first?.targetId, recordingId)
+    }
+
+    func testSQLiteSaveFailureRollsBackTheDeletionAndItsOutboxTogether() throws {
+        let storeURL = tempDirectory.appendingPathComponent("delete-outbox-rollback.sqlite")
+        let controller = PersistenceController(storeURL: storeURL)
+        defer { try? closePersistentStores(of: controller) }
+        let manager = CoreDataManager(persistenceController: controller)
+        let context = manager.managedObjectContext
+        let recordingId = UUID()
+        let recording = RecordingEntry(context: context)
+        recording.id = recordingId
+        recording.recordingName = "Must survive failed save"
+        recording.recordingDate = Date()
+        recording.duration = 30
+        recording.fileSize = 1024
+        recording.lastModified = Date()
+        try manager.saveContext()
+
+        // Force the same save to contain an invalid required outbox value. The
+        // deletion and the valid outbox row must both roll back as one transaction.
+        let invalidOutbox = NSEntityDescription.insertNewObject(
+            forEntityName: PendingCloudMutationStore.entityName,
+            into: context
+        )
+        invalidOutbox.setValue(nil, forKey: "kind")
+        invalidOutbox.setValue(nil, forKey: "targetId")
+
+        XCTAssertThrowsError(try manager.deleteRecording(id: recordingId))
+        XCTAssertNotNil(manager.getRecording(id: recordingId))
+        XCTAssertEqual(PendingCloudMutationStore.count(in: context), 0)
+    }
+
+    func testClearAllCoreDataCommitsItsCloudRemovalsWithTheLocalRows() async throws {
+        _ = try createCompleteRecording(named: "Clear all transaction")
+        let migrationManager = DataMigrationManager(persistenceController: persistenceController)
+
+        await migrationManager.clearAllCoreData()
+
+        XCTAssertTrue(appCoordinator.coreDataManager.getAllRecordings().isEmpty)
+        XCTAssertTrue(appCoordinator.coreDataManager.getAllTranscripts().isEmpty)
+        XCTAssertTrue(appCoordinator.coreDataManager.getAllSummaries().isEmpty)
+
+        let mutations = try PendingCloudMutationStore.fetchAll(
+            in: persistenceController.container.viewContext
+        )
+        XCTAssertEqual(mutations.count, 3)
+        XCTAssertEqual(
+            Set(mutations.map(\.kind)),
+            Set([
+                .recordingDeletion,
+                .transcriptRemoval,
+                .summaryRemoval
+            ])
+        )
+    }
+
+    func testLegacyMutationQueuesMigrateLosslesslyAndRerunWithoutDuplicates() throws {
+        let defaults = UserDefaults.standard
+        let keys = Self.legacyMutationKeys
+        let oldValues = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer {
+            for (key, value) in oldValues {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+
+        let recordingId = UUID()
+        let transcriptId = UUID()
+        let summaryId = UUID()
+        let requestedAt = Date(timeIntervalSince1970: 1_700_000_001)
+        let encoder = JSONEncoder()
+        defaults.set(
+            try encoder.encode([
+                LegacyDeletionMarkerFixture(
+                    recordingId: recordingId,
+                    transcriptIds: [transcriptId],
+                    summaryIds: [summaryId],
+                    requestedAt: requestedAt
+                )
+            ]),
+            forKey: "iCloudPendingDeletionMarkersV1"
+        )
+        defaults.set(
+            try encoder.encode([
+                LegacyLocalOnlyRemovalFixture(recordingId: recordingId, requestedAt: requestedAt)
+            ]),
+            forKey: "iCloudPendingLocalOnlyRemovalsV1"
+        )
+        defaults.set(
+            try encoder.encode([
+                LegacySummaryRemovalFixture(
+                    summaryId: summaryId,
+                    recordingId: recordingId,
+                    requestedAt: requestedAt
+                )
+            ]),
+            forKey: "iCloudPendingSummaryRemovalsV1"
+        )
+        defaults.set(
+            try encoder.encode([
+                LegacyTranscriptRemovalFixture(
+                    transcriptId: transcriptId,
+                    recordingId: recordingId,
+                    requestedAt: requestedAt
+                )
+            ]),
+            forKey: "iCloudPendingTranscriptRemovalsV1"
+        )
+        defaults.set(
+            try encoder.encode([
+                LegacyImportedAudioRemovalFixture(recordingId: recordingId, requestedAt: requestedAt)
+            ]),
+            forKey: "iCloudPendingImportedAudioRemovalsV1"
+        )
+
+        let controller = PersistenceController(inMemory: true)
+        defer { try? closePersistentStores(of: controller) }
+        let context = controller.container.viewContext
+
+        XCTAssertTrue(PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context))
+        let firstPass = try PendingCloudMutationStore.fetchAll(in: context)
+        XCTAssertEqual(firstPass.count, 5)
+        XCTAssertTrue(keys.allSatisfy { defaults.object(forKey: $0) == nil })
+        XCTAssertFalse(PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context))
+        XCTAssertEqual(try PendingCloudMutationStore.fetchAll(in: context).count, firstPass.count)
+        XCTAssertEqual(
+            Set(firstPass.map(\.kind)),
+            Set(PendingCloudMutationKind.allCases)
+        )
+        XCTAssertEqual(
+            firstPass.first(where: { $0.kind == .recordingDeletion })?.transcriptIds,
+            [transcriptId]
+        )
+        XCTAssertEqual(
+            firstPass.first(where: { $0.kind == .recordingDeletion })?.summaryIds,
+            [summaryId]
+        )
+    }
+
+    func testFailedLegacyMigrationRetainsRecoverableUserDefaultsData() throws {
+        let defaults = UserDefaults.standard
+        let key = "iCloudPendingDeletionMarkersV1"
+        let oldValue = defaults.object(forKey: key)
+        defer {
+            if let oldValue { defaults.set(oldValue, forKey: key) } else { defaults.removeObject(forKey: key) }
+        }
+        let malformed = Data("not-json".utf8)
+        defaults.set(malformed, forKey: key)
+
+        let controller = PersistenceController(inMemory: true)
+        defer { try? closePersistentStores(of: controller) }
+        XCTAssertFalse(PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: controller.container.viewContext))
+        XCTAssertEqual(defaults.data(forKey: key), malformed)
+        XCTAssertTrue(try PendingCloudMutationStore.fetchAll(in: controller.container.viewContext).isEmpty)
+    }
+
+    func testPendingMutationAcknowledgementRetainsAConcurrentNewerPayload() throws {
+        let controller = PersistenceController(inMemory: true)
+        defer { try? closePersistentStores(of: controller) }
+        let context = controller.container.viewContext
+        let targetId = UUID()
+        let firstTranscript = UUID()
+        let newerTranscript = UUID()
+        let first = PendingCloudMutation(
+            kind: .recordingDeletion,
+            targetId: targetId,
+            transcriptIds: [firstTranscript],
+            requestedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try PendingCloudMutationStore.enqueue(first, in: context)
+        try context.save()
+        let snapshot = try XCTUnwrap(PendingCloudMutationStore.fetchAll(in: context).first)
+
+        try PendingCloudMutationStore.enqueue(
+            PendingCloudMutation(
+                kind: .recordingDeletion,
+                targetId: targetId,
+                transcriptIds: [newerTranscript],
+                requestedAt: Date(timeIntervalSince1970: 1_700_000_100)
+            ),
+            in: context
+        )
+        try context.save()
+
+        XCTAssertFalse(try PendingCloudMutationStore.removeIfUnchanged(snapshot, from: context))
+        let retained = try XCTUnwrap(PendingCloudMutationStore.fetchAll(in: context).first)
+        XCTAssertEqual(Set(retained.transcriptIds), Set([firstTranscript, newerTranscript]))
+    }
+
     // MARK: Arbitration through the real legs
 
     func testNewerCloudRecordWinsThroughBatchedExecution() async throws {
@@ -1348,5 +1659,73 @@ final class ICloudBackupRegressionTests: XCTestCase {
             ProcessingStatus.completed.rawValue,
             "An accepted summary must repair a stale recording status"
         )
+    }
+
+    /// The compiled `.momd` that ships in the bundle, which holds every model
+    /// version as its own `.mom`.
+    ///
+    /// Deliberately not the source `.xcdatamodel`: `NSManagedObjectModel` loads
+    /// compiled `.mom`/`.momd` only, so reading the source tree could never have
+    /// produced a model no matter what path it was given.
+    private static func compiledModelDirectoryURL() -> URL? {
+        var searched: [Bundle] = [Bundle(for: ICloudBackupRegressionTests.self), Bundle.main]
+        searched.append(contentsOf: Bundle.allBundles)
+        for bundle in searched {
+            if let url = bundle.url(forResource: "BisonNotes_AI", withExtension: "momd") {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private func makeShippingModelContainer(at storeURL: URL) throws -> NSPersistentContainer {
+        guard let modelDirectoryURL = Self.compiledModelDirectoryURL() else {
+            throw NSError(
+                domain: "ICloudBackupRegressionTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not find BisonNotes_AI.momd in any loaded bundle"]
+            )
+        }
+        // `BisonNotes_AI.mom` is the v1 entry — the model as shipped, before
+        // `PendingCloudMutation` was added. Opening the `.momd` directory instead
+        // would load the current version and test nothing.
+        let modelURL = modelDirectoryURL.appendingPathComponent("BisonNotes_AI.mom")
+        guard let model = NSManagedObjectModel(contentsOf: modelURL) else {
+            throw NSError(
+                domain: "ICloudBackupRegressionTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not load the shipping Core Data model at \(modelURL.path)"]
+            )
+        }
+        XCTAssertNil(
+            model.entitiesByName[PendingCloudMutationStore.entityName],
+            "The shipping model must not already contain the outbox, or this migration proves nothing"
+        )
+
+        let container = NSPersistentContainer(name: "BisonNotes_AI_Shipping", managedObjectModel: model)
+        let description = container.persistentStoreDescriptions[0]
+        description.url = storeURL
+        description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
+        description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+        let loadBox = PersistentStoreLoadBox()
+        container.loadPersistentStores { _, error in
+            loadBox.error = error
+        }
+        if let loadError = loadBox.error { throw loadError }
+        return container
+    }
+
+    private func closePersistentStores(of controller: PersistenceController) throws {
+        let coordinator = controller.container.persistentStoreCoordinator
+        for store in coordinator.persistentStores {
+            try coordinator.remove(store)
+        }
+    }
+
+    private func closePersistentStores(of container: NSPersistentContainer) throws {
+        let coordinator = container.persistentStoreCoordinator
+        for store in coordinator.persistentStores {
+            try coordinator.remove(store)
+        }
     }
 }

@@ -27,6 +27,10 @@ enum CloudAudioAssetDecision: Equatable {
     /// This run has staged as much as it may hold. Metadata uploads and the audio
     /// stays owed, exactly as a failed copy leaves it.
     case deferredOverStagingBudget
+    /// The volume reports that the complete staged set would exceed the space
+    /// available right now. This is distinct from the per-run policy budget so
+    /// callers can explain a real disk-space shortage and retry after recovery.
+    case deferredInsufficientSpace(requiredBytes: Int64, availableBytes: Int64)
     case upload(byteCount: Int64, signature: String)
 
     var uploads: Bool {
@@ -61,6 +65,8 @@ enum CloudAudioAssetPolicy {
     ///   - cloudSignature: signature stored on the existing cloud record.
     ///   - stagedBytesSoFar: what this run has already copied into staging.
     ///   - stagingByteBudget: the peak this run may hold, from `stagingByteBudget(availableCapacity:)`.
+    ///   - availableCapacity: current free capacity for the staging volume, when
+    ///     the platform can report it. Negative and nil values mean unknown.
     static func decide(
         includeAudioFiles: Bool,
         sourceExists: Bool,
@@ -68,12 +74,21 @@ enum CloudAudioAssetPolicy {
         cloudSignature: String?,
         byteCount: Int64,
         stagedBytesSoFar: Int64 = 0,
-        stagingByteBudget: Int64 = maximumStagingByteBudget
+        stagingByteBudget: Int64 = maximumStagingByteBudget,
+        availableCapacity: Int64? = nil
     ) -> CloudAudioAssetDecision {
         guard includeAudioFiles else { return .skippedDisabled }
         guard sourceExists, let localSignature else { return .skippedMissingSource }
         // An unchanged file is never copied, so it never spends the budget.
         guard localSignature != cloudSignature else { return .skippedUnchanged }
+        let requiredBytes = max(0, stagedBytesSoFar) &+ max(0, byteCount)
+        if let availableCapacity, availableCapacity >= 0,
+           requiredBytes > availableCapacity {
+            return .deferredInsufficientSpace(
+                requiredBytes: requiredBytes,
+                availableBytes: availableCapacity
+            )
+        }
         // The first file of a run always goes, however large. Deferring it on size
         // alone would strand a recording bigger than the budget forever, and one
         // copy is the smallest peak that makes any progress at all.

@@ -156,6 +156,87 @@ final class CloudAudioAssetPolicyTests: XCTestCase {
         XCTAssertEqual(decision, .skippedUnchanged)
     }
 
+    func testAFileThatExceedsReportedCapacityReturnsATypedRetry() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            stagedBytesSoFar: 200,
+            stagingByteBudget: 10_000,
+            availableCapacity: 1_000
+        )
+
+        XCTAssertEqual(
+            decision,
+            .deferredInsufficientSpace(requiredBytes: 1_100, availableBytes: 1_000)
+        )
+        XCTAssertFalse(decision.uploads)
+    }
+
+    func testReportedCapacityShortageWinsOverThePerRunBudget() {
+        let decision = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            stagedBytesSoFar: 200,
+            stagingByteBudget: 500,
+            availableCapacity: 10_000
+        )
+
+        XCTAssertEqual(decision, .deferredOverStagingBudget)
+    }
+
+    func testUnknownCapacityDoesNotStrandAnAudioUpload() {
+        let nilCapacity = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            availableCapacity: nil
+        )
+        let negativeCapacity = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            availableCapacity: -1
+        )
+
+        XCTAssertTrue(nilCapacity.uploads)
+        XCTAssertTrue(negativeCapacity.uploads)
+    }
+
+    func testARecoveredCapacityAllowsTheSameAudioToUpload() {
+        let blocked = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            availableCapacity: 100
+        )
+        let recovered = CloudAudioAssetPolicy.decide(
+            includeAudioFiles: true,
+            sourceExists: true,
+            localSignature: "new",
+            cloudSignature: "old",
+            byteCount: 900,
+            availableCapacity: 1_000
+        )
+
+        XCTAssertEqual(
+            blocked,
+            .deferredInsufficientSpace(requiredBytes: 900, availableBytes: 100)
+        )
+        XCTAssertEqual(recovered, .upload(byteCount: 900, signature: "new"))
+    }
+
     func testTheBudgetIsNeverMoreThanHalfOfWhatIsFree() {
         XCTAssertEqual(CloudAudioAssetPolicy.stagingByteBudget(availableCapacity: 1_000), 500)
     }
