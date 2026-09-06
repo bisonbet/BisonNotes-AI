@@ -5894,10 +5894,23 @@ extension iCloudStorageManager {
         }
     }
 
-    private func enqueuePendingCloudMutation(_ mutation: PendingCloudMutation) {
+    /// - Returns: whether the intent is now durable. Callers that reassure the
+    ///   user their deletion will reach iCloud must not do so when this is false.
+    @discardableResult
+    private func enqueuePendingCloudMutation(_ mutation: PendingCloudMutation) -> Bool {
         applyPendingCloudMutationChanges("persist pending iCloud mutation") { context in
             try PendingCloudMutationStore.enqueue(mutation, in: context)
         }
+    }
+
+    /// Says the removal was not recorded, rather than letting the caller's
+    /// success message claim work that is not queued. The local row is already
+    /// gone in these paths, so silence here reads as "handled" when in fact the
+    /// item can come back on the next reconcile.
+    private func publishOutboxFailureMessage(_ subject: String) {
+        publishMaintenanceMessage(
+            "Could not record the iCloud removal for \(subject). It may reappear from iCloud until the deletion is recorded again."
+        )
     }
 
     private func acknowledgePendingCloudMutation(_ mutation: PendingCloudMutation) {
@@ -5935,7 +5948,9 @@ extension iCloudStorageManager {
         // failure of the second left the imported-audio removal durably gone with
         // no recording deletion queued — the user's delete would never reach the
         // other devices, and the next reconcile would restore the recording.
-        applyPendingCloudMutationChanges("queue the iCloud deletion for \(recordingId.uuidString)") { context in
+        let queued = applyPendingCloudMutationChanges(
+            "queue the iCloud deletion for \(recordingId.uuidString)"
+        ) { context in
             try PendingCloudMutationStore.remove(
                 kind: .importedAudioRemoval,
                 targetId: recordingId,
@@ -5952,15 +5967,20 @@ extension iCloudStorageManager {
                 in: context
             )
         }
+        // Still drop the summaries locally either way: re-uploading rows the user
+        // deleted is worse than an unrecorded tombstone.
         let deletedSummaryIds = Set(summaryIds)
         pendingSyncQueue.removeAll { summary in
             summary.recordingId == recordingId || deletedSummaryIds.contains(summary.id)
         }
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        if !queued {
+            publishOutboxFailureMessage("this recording")
+        }
     }
 
     func enqueueLocalOnlyCloudRemoval(recordingId: UUID) {
-        enqueuePendingCloudMutation(
+        let queued = enqueuePendingCloudMutation(
             PendingCloudMutation(
                 kind: .localOnlyRemoval,
                 targetId: recordingId,
@@ -5968,6 +5988,10 @@ extension iCloudStorageManager {
             )
         )
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        guard queued else {
+            publishOutboxFailureMessage("this local-only recording")
+            return
+        }
         publishMaintenanceMessage("Existing iCloud copies for local-only recordings will be removed when iCloud sync is available.")
     }
 
@@ -5976,7 +6000,7 @@ extension iCloudStorageManager {
         recordingId: UUID? = nil,
         requestedAt: Date = Date()
     ) {
-        enqueuePendingCloudMutation(
+        let queued = enqueuePendingCloudMutation(
             PendingCloudMutation(
                 kind: .summaryRemoval,
                 targetId: summaryId,
@@ -5986,6 +6010,10 @@ extension iCloudStorageManager {
         )
         pendingSyncQueue.removeAll { $0.id == summaryId }
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        guard queued else {
+            publishOutboxFailureMessage("a deleted summary")
+            return
+        }
         publishMaintenanceMessage("Deleted summaries will be removed from iCloud sync records when iCloud sync is available.")
     }
 
@@ -5994,7 +6022,7 @@ extension iCloudStorageManager {
         recordingId: UUID? = nil,
         requestedAt: Date = Date()
     ) {
-        enqueuePendingCloudMutation(
+        let queued = enqueuePendingCloudMutation(
             PendingCloudMutation(
                 kind: .transcriptRemoval,
                 targetId: transcriptId,
@@ -6003,6 +6031,10 @@ extension iCloudStorageManager {
             )
         )
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        guard queued else {
+            publishOutboxFailureMessage("a deleted transcript")
+            return
+        }
         publishMaintenanceMessage("Deleted transcripts will be removed from iCloud sync records when iCloud sync is available.")
     }
 
@@ -6013,7 +6045,7 @@ extension iCloudStorageManager {
         recordingId: UUID,
         requestedAt: Date = Date()
     ) {
-        enqueuePendingCloudMutation(
+        let queued = enqueuePendingCloudMutation(
             PendingCloudMutation(
                 kind: .importedAudioRemoval,
                 targetId: recordingId,
@@ -6021,6 +6053,10 @@ extension iCloudStorageManager {
             )
         )
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        guard queued else {
+            publishOutboxFailureMessage("deleted imported audio")
+            return
+        }
         publishMaintenanceMessage("Deleted imported audio will be removed from iCloud sync records when iCloud sync is available.")
     }
 

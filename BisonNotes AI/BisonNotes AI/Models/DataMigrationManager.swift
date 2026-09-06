@@ -501,9 +501,25 @@ class DataMigrationManager: ObservableObject {
     // MARK: - Utility Methods
 
     func clearAllCoreData() async {
-        let recordings = (try? context.fetch(RecordingEntry.fetchRequest())) ?? []
-        let transcripts = (try? context.fetch(TranscriptEntry.fetchRequest())) ?? []
-        let summaries = (try? context.fetch(SummaryEntry.fetchRequest())) ?? []
+        // Every entity is read before anything is staged, and a failure on any one
+        // of them abandons the whole clear. `try?` turned a transient fetch failure
+        // into an empty collection, so a clear could delete transcripts and
+        // summaries, tombstone them for every other device, leave the recordings
+        // behind, and still log success.
+        let recordings: [RecordingEntry]
+        let transcripts: [TranscriptEntry]
+        let summaries: [SummaryEntry]
+        do {
+            recordings = try context.fetch(RecordingEntry.fetchRequest())
+            transcripts = try context.fetch(TranscriptEntry.fetchRequest())
+            summaries = try context.fetch(SummaryEntry.fetchRequest())
+        } catch {
+            AppLog.shared.dataMigration(
+                "Could not read every entity to clear; nothing was deleted so the clear can be retried: \(error)",
+                level: .error
+            )
+            return
+        }
         let deletionDate = Date()
         var effects = DeferredDeletionEffects()
 

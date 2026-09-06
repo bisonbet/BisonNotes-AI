@@ -136,8 +136,11 @@ final class MLXSwiftDownloadManager: ObservableObject {
     private var queuedModelDeletionIDs: [String] = []
     @Published private(set) var isDownloadQueued = false
     /// What the manager is waiting on, for the settings UI to show. A queued
-    /// download reports no progress and is not `isDownloading`, so without this the
-    /// user's tap on Download looked like a dead button for as long as the sweep ran.
+    /// download reports no progress and is not `isDownloading`, and a queued
+    /// deletion sets no flag at all, so without this the user's tap looked like a
+    /// dead button for as long as the sweep ran. Always recomputed from the queued
+    /// state by `updateDeferredMaintenanceNotice` rather than assigned ad hoc, so
+    /// it cannot outlive or contradict what is actually pending.
     @Published private(set) var deferredMaintenanceNotice: String?
     private let downloadOperation: (@MainActor (String) async throws -> Void)?
     private let blobCleanup: (@MainActor (String) -> Void)?
@@ -187,10 +190,10 @@ final class MLXSwiftDownloadManager: ObservableObject {
     func endCacheMaintenance() {
         isCacheMaintenanceInProgress = false
         cacheMaintenanceYieldRequested = false
-        deferredMaintenanceNotice = nil
 
         let deletionIDs = queuedModelDeletionIDs
         queuedModelDeletionIDs = []
+        updateDeferredMaintenanceNotice()
         for deletionID in deletionIDs {
             deleteModelNow(for: deletionID)
         }
@@ -204,6 +207,22 @@ final class MLXSwiftDownloadManager: ObservableObject {
 
     var shouldYieldCacheMaintenance: Bool {
         cacheMaintenanceYieldRequested
+    }
+
+    private func updateDeferredMaintenanceNotice() {
+        let pendingDeletions = queuedModelDeletionIDs.count
+        switch (isDownloadQueued, pendingDeletions) {
+        case (false, 0):
+            deferredMaintenanceNotice = nil
+        case (true, 0):
+            deferredMaintenanceNotice = "Waiting for cache maintenance to finish before downloading."
+        case (false, 1):
+            deferredMaintenanceNotice = "Model deletion will run after cache maintenance finishes."
+        case (false, let count):
+            deferredMaintenanceNotice = "\(count) model deletions will run after cache maintenance finishes."
+        case (true, _):
+            deferredMaintenanceNotice = "A model download and deletion will run after cache maintenance finishes."
+        }
     }
 
     func startDownload() {
@@ -221,10 +240,10 @@ final class MLXSwiftDownloadManager: ObservableObject {
             downloadProgress = 0
             // Queuing is only acceptable while the user can see it happening.
             // `MLXSwiftSettingsView` renders this alongside a cancel button.
-            deferredMaintenanceNotice = "Waiting for cache maintenance to finish before downloading."
+            updateDeferredMaintenanceNotice()
             return
         }
-        deferredMaintenanceNotice = nil
+        updateDeferredMaintenanceNotice()
 
         downloadGeneration += 1
         let generation = downloadGeneration
@@ -342,11 +361,9 @@ final class MLXSwiftDownloadManager: ObservableObject {
             // already cancelled.
             queuedDownloadModelID = nil
             isDownloadQueued = false
-            // Any queued deletion still stands, so only drop the notice when this
-            // was the last thing waiting on the sweep.
-            if queuedModelDeletionIDs.isEmpty {
-                deferredMaintenanceNotice = nil
-            }
+            // Any queued deletion still stands; the notice re-derives itself so it
+            // describes what is actually left rather than the cancelled download.
+            updateDeferredMaintenanceNotice()
         }
         if downloadTask != nil {
             // Cleared here rather than only in the task's `defer`: a Hub download
@@ -380,7 +397,7 @@ final class MLXSwiftDownloadManager: ObservableObject {
             SummaryManager.shared.getiCloudManager().operationCoordinator.requestCacheMaintenanceYield()
             // Not `downloadError`: this is not a failure, and a download queued
             // afterwards used to clear it, hiding the pending deletion entirely.
-            deferredMaintenanceNotice = "Model deletion will run after cache maintenance finishes."
+            updateDeferredMaintenanceNotice()
             return
         }
         deleteModelNow(for: id)

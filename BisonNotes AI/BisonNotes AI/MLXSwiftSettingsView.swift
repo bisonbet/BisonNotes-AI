@@ -447,13 +447,6 @@ struct MLXSwiftSettingsView: View {
                     .foregroundColor(.secondary)
             }
 
-            if let notice = downloadManager.deferredMaintenanceNotice {
-                Text(notice)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-
             if let error = downloadManager.downloadError {
                 Text(error)
                     .font(.caption)
@@ -469,8 +462,27 @@ struct MLXSwiftSettingsView: View {
 
     // MARK: - Model Status View
 
+    /// Shown wherever the status is, not inside the download-progress section:
+    /// a queued deletion sets neither `isDownloading` nor `isDownloadQueued`, so
+    /// gating this on those flags hid it entirely and the model could vanish when
+    /// maintenance finished with no prior indication.
+    @ViewBuilder
+    private var deferredMaintenanceNoticeView: some View {
+        if let notice = downloadManager.deferredMaintenanceNotice {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "clock")
+                    .foregroundColor(.orange)
+                Text(notice)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
     @ViewBuilder
     private var modelStatusView: some View {
+        deferredMaintenanceNoticeView
         if downloadManager.isModelDownloaded {
             HStack {
                 Image(systemName: "checkmark.circle.fill")
