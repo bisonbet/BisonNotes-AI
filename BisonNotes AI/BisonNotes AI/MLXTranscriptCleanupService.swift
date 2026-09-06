@@ -35,6 +35,11 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
     static let shared = MLXTranscriptCleanupService()
 
     private static let generationTimeoutNanoseconds: UInt64 = 120_000_000_000
+    /// MLX's default cache limit scales with host memory and can retain several
+    /// GB of reusable Metal buffers during a long transcript cleanup pass.
+    /// Keep enough room for normal buffer reuse without making the cache the
+    /// dominant part of the app's memory footprint.
+    private static let memoryCacheLimitBytes = 32 * 1024 * 1024
 
     private var modelContainer: ModelContainer?
 
@@ -145,9 +150,18 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
     }
 
     func releaseResources() async {
-        guard modelContainer != nil else { return }
+        let before = Memory.snapshot()
         modelContainer = nil
         Memory.clearCache()
+        let after = Memory.snapshot()
+        let beforeTotal = before.activeMemory + before.cacheMemory
+        let afterTotal = after.activeMemory + after.cacheMemory
+        let freed = beforeTotal >= afterTotal ? beforeTotal - afterTotal : 0
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Resources released — freed \(freed / (1024 * 1024))MB "
+                + "(active: \(after.activeMemory / (1024 * 1024))MB, "
+                + "cache: \(after.cacheMemory / (1024 * 1024))MB)"
+        )
     }
 
     private func loadContainer() async throws -> ModelContainer {
@@ -161,12 +175,27 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
 
         // This is intentionally the directory overload. It cannot silently
         // fetch a missing model during transcription.
+        Memory.cacheLimit = Self.memoryCacheLimitBytes
         Memory.clearCache()
+        let beforeLoad = Memory.snapshot()
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Memory configured: "
+                + "cacheLimit=\(Self.memoryCacheLimitBytes / (1024 * 1024))MB, "
+                + "active=\(beforeLoad.activeMemory / (1024 * 1024))MB, "
+                + "cache=\(beforeLoad.cacheMemory / (1024 * 1024))MB"
+        )
         let container = try await loadModelContainer(
             hub: defaultHubApi,
             directory: TranscriptCleanupModelLocator.directory
         )
         modelContainer = container
+        let afterLoad = Memory.snapshot()
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Model loaded — "
+                + "active=\(afterLoad.activeMemory / (1024 * 1024))MB, "
+                + "cache=\(afterLoad.cacheMemory / (1024 * 1024))MB, "
+                + "peak=\(afterLoad.peakMemory / (1024 * 1024))MB"
+        )
         return container
     }
 
