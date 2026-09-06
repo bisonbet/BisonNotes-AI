@@ -112,6 +112,8 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// blobs may still be landing, so no cache sweep may start while any remain.
     private var unwindingCancelledDownloads = 0
     private var isCacheMaintenanceInProgress = false
+    private let downloadOperation: (@MainActor (String) async throws -> Void)?
+    private let blobCleanup: (@MainActor (String) -> Void)?
 
     var modelId: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -122,7 +124,12 @@ final class MLXSwiftDownloadManager: ObservableObject {
         modelId.components(separatedBy: "/").last ?? modelId
     }
 
-    init() {
+    init(
+        downloadOperation: (@MainActor (String) async throws -> Void)? = nil,
+        blobCleanup: (@MainActor (String) -> Void)? = nil
+    ) {
+        self.downloadOperation = downloadOperation
+        self.blobCleanup = blobCleanup
         refreshModelStatus()
     }
 
@@ -185,22 +192,45 @@ final class MLXSwiftDownloadManager: ObservableObject {
                     self.unwindingCancelledDownloads = max(0, self.unwindingCancelledDownloads - 1)
                 }
             }
+            guard !Task.isCancelled, self.downloadGeneration == generation else { return }
             do {
-                #if canImport(MLXLLM) && canImport(MLXLMCommon)
-                try await self.performDownload()
-                #else
-                throw NSError(domain: "MLXSwift", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
-                #endif
-                guard !Task.isCancelled else { return }
-                self.isModelDownloaded = true
-                AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(self.modelId)")
+                if let operation = self.downloadOperation {
+                    try await operation(id)
+                } else {
+                    #if canImport(MLXLLM) && canImport(MLXLMCommon)
+                    try await self.performDownload(modelID: id, generation: generation)
+                    #else
+                    throw NSError(domain: "MLXSwift", code: -1,
+                                  userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
+                    #endif
+                }
+                // No suspension between the ownership check and removal: a
+                // cancelled task must never delete a replacement download's blobs.
+                guard !Task.isCancelled, self.downloadGeneration == generation else { return }
+                self.cleanUpCompletedDownload(for: id)
+                if self.modelId == id { self.isModelDownloaded = true }
+                AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(id)")
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled, self.downloadGeneration == generation {
                     self.downloadError = error.localizedDescription
-                    AppLog.shared.summarization("[MLXSwift] Download failed: \(error.localizedDescription)", level: .error)
+                    AppLog.shared.summarization(
+                        "[MLXSwift] Download failed: \(error.localizedDescription)", level: .error
+                    )
                 }
             }
+        }
+    }
+
+    private func cleanUpCompletedDownload(for id: String) {
+        // Older cancelled tasks may still be writing even when the current
+        // task finishes. Leave their blobs for the later maintenance sweep.
+        guard unwindingCancelledDownloads == 0 else { return }
+        if let cleanup = blobCleanup {
+            cleanup(id)
+        } else {
+            #if canImport(MLXLLM) && canImport(MLXLMCommon)
+            removeHubBlobCache(for: id)
+            #endif
         }
     }
 
@@ -403,12 +433,12 @@ private func configureMLXMemoryForIOS() {
 // MARK: Download Manager Hub Integration
 
 extension MLXSwiftDownloadManager {
-    func performDownload() async throws {
-        let id = modelId
+    private func performDownload(modelID id: String, generation: Int) async throws {
         let config = ModelConfiguration(id: id)
         _ = try await downloadModel(hub: defaultHubApi, configuration: config) { [weak self] progress in
             Task { @MainActor [weak self] in
-                self?.downloadProgress = progress.fractionCompleted
+                guard let self, self.downloadGeneration == generation, self.isDownloading else { return }
+                self.downloadProgress = progress.fractionCompleted
             }
         }
 
@@ -419,7 +449,7 @@ extension MLXSwiftDownloadManager {
         // The blobs are only useful *during* a download: everything that resumes an
         // interrupted one lives in that cache, which is why disabling it outright is
         // the wrong fix. Once the materialized copy is complete they are dead weight,
-        // so they go here rather than waiting for the next maintenance sweep.
+        // so the owning task removes them after this method returns successfully.
         //
         // Gated on the model actually being usable: if the download was interrupted
         // after config.json landed, the blobs are what a retry resumes from and must
@@ -431,7 +461,6 @@ extension MLXSwiftDownloadManager {
                 userInfo: [NSLocalizedDescriptionKey: "The model download did not finish materializing its weights."]
             )
         }
-        removeHubBlobCache(for: id)
     }
 
     func checkModelExists() -> Bool {

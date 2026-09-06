@@ -4794,19 +4794,16 @@ extension iCloudStorageManager {
                     let destinationURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent(uniqueFileName)
 
-                    if fileManager.fileExists(atPath: destinationURL.path) {
-                        try? fileManager.removeItem(at: destinationURL)
-                    }
-
                     // One unreadable asset must not take the rest of the restore
                     // with it. CloudKit's asset cache is a `Caches` directory the
                     // system may purge, and the maintenance sweep can reach a file
                     // this loop has not copied yet, so the copy is genuinely
-                    // fallible. The metadata is already applied; leaving the audio
-                    // behind costs one file, while throwing here abandoned every
-                    // record after it in the run.
+                    // fallible. Stage before replacing so failure preserves any
+                    // existing local audio and its URL while metadata can restore.
                     do {
-                        try fileManager.copyItem(at: assetURL, to: destinationURL)
+                        try RestoredAudioFileInstaller.install(
+                            from: assetURL, to: destinationURL, fileManager: fileManager
+                        )
                         entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
                         result.audioFilesRestored += 1
                     } catch {
