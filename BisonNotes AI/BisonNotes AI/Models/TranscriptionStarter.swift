@@ -238,12 +238,18 @@ final class TranscriptionStarter: ObservableObject {
 
                     if result.success && !result.fullText.isEmpty {
                         let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
+                        // The warning above says the cleaned result was
+                        // discarded, so it must not be persisted with the ASR
+                        // segments it was derived alongside.
+                        let segmentsToSave = isCleanupSourceStale
+                            ? result.segments.map { $0.withCleanup(nil) }
+                            : result.segments
                         let transcriptData = TranscriptData(
                             recordingId: recordingId,
                             recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
-                            segments: result.segments,
+                            segments: segmentsToSave,
                             speakerMappings: result.speakerMappings ?? [:],
                             engine: selectedEngine,
                             processingTime: result.processingTime

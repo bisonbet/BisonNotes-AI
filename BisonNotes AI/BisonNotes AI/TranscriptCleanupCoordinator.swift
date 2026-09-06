@@ -171,6 +171,12 @@ struct TranscriptCleanupCoordinator: Sendable {
         // failure, which keeps the original transcript.
         let deadline = Date().addingTimeInterval(Self.maximumRunDuration)
 
+        // The system prompt, control line and chat-template markup are a fixed
+        // cost on every rendered request. Measuring it once lets both the
+        // chunking budget and the expansion check below talk about the
+        // segment's own tokens rather than the prompt's.
+        let overhead = try await normalizer.renderedRequestTokenCount(for: "")
+
         for segment in segments {
             try Task.checkCancellation()
             guard Date() < deadline else {
@@ -186,7 +192,7 @@ struct TranscriptCleanupCoordinator: Sendable {
                 continue
             }
 
-            let inputPieces = try await inputPieces(for: rawText)
+            let inputPieces = try await inputPieces(for: rawText, overhead: overhead)
             var normalizedPieces: [String] = []
             normalizedPieces.reserveCapacity(inputPieces.count)
 
@@ -195,7 +201,7 @@ struct TranscriptCleanupCoordinator: Sendable {
                 guard Date() < deadline else {
                     throw TranscriptCleanupNormalizerError.generationFailed
                 }
-                normalizedPieces.append(try await normalizedText(for: piece))
+                normalizedPieces.append(try await normalizedText(for: piece, overhead: overhead))
             }
 
             let normalizedText = normalizedPieces.joined(separator: " ")
@@ -213,17 +219,16 @@ struct TranscriptCleanupCoordinator: Sendable {
         )
     }
 
-    private func inputPieces(for rawText: String) async throws -> [String] {
+    private func inputPieces(for rawText: String, overhead: Int) async throws -> [String] {
         let fullRequestTokenCount = try await normalizer.renderedRequestTokenCount(for: rawText)
         guard fullRequestTokenCount > Self.maxRenderedInputTokens else {
             return [rawText]
         }
 
         // Each sentence and word is rendered exactly once and the fixed
-        // chat-template overhead is measured once and added back. Re-rendering
-        // the whole growing prefix per sentence made this quadratic in the
-        // length of a single unpunctuated turn.
-        let overhead = try await normalizer.renderedRequestTokenCount(for: "")
+        // chat-template overhead is added back. Re-rendering the whole growing
+        // prefix per sentence made this quadratic in the length of a single
+        // unpunctuated turn.
         let budget = Self.maxRenderedInputTokens - overhead
         guard budget > 0 else {
             throw TranscriptCleanupNormalizerError.invalidRequest
@@ -331,11 +336,11 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// absolute per-generation output cap is never applied to a concatenated
     /// total — a split retry whose halves each finished normally used to be
     /// rejected as invalid output once their token counts were summed.
-    private func normalizedText(for piece: String) async throws -> String {
+    private func normalizedText(for piece: String, overhead: Int) async throws -> String {
         let generation = try await normalizer.normalize(piece)
         try Task.checkCancellation()
         if generation.finishReason != .length {
-            try validate(generation, originalText: piece)
+            try validate(generation, originalText: piece, overhead: overhead)
             return generation.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
@@ -349,7 +354,7 @@ struct TranscriptCleanupCoordinator: Sendable {
             try Task.checkCancellation()
             let retry = try await normalizer.normalize(retryPiece)
             try Task.checkCancellation()
-            try validate(retry, originalText: retryPiece)
+            try validate(retry, originalText: retryPiece, overhead: overhead)
             let text = retry.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { parts.append(text) }
         }
@@ -373,7 +378,8 @@ struct TranscriptCleanupCoordinator: Sendable {
 
     private func validate(
         _ generation: TranscriptCleanupGeneration,
-        originalText: String
+        originalText: String,
+        overhead: Int
     ) throws {
         guard generation.finishReason == .stop else {
             if generation.finishReason == .cancelled {
@@ -394,7 +400,11 @@ struct TranscriptCleanupCoordinator: Sendable {
             }
         }
 
-        let inputTokens = max(generation.inputTokenCount, 1)
+        // `inputTokenCount` is the provider's prompt token count, which
+        // includes the system prompt, control line and template markup. Left
+        // in, that fixed cost inflates the expansion ceiling by hundreds of
+        // tokens for a short segment and lets a long hallucinated rewrite pass.
+        let inputTokens = max(generation.inputTokenCount - overhead, 1)
         guard generation.outputTokenCount <= Self.maxNewOutputTokens else {
             throw TranscriptCleanupNormalizerError.invalidOutput
         }
@@ -451,11 +461,10 @@ struct TranscriptCleanupCoordinator: Sendable {
         trustedLanguageCode: String?,
         mode: TranscriptCleanupMode
     ) -> LanguageEligibility {
-        // A positive assertion outranks any guess: the engine's own language
-        // metadata, or the user explicitly asking for English cleanup. Both
-        // short-circuit before the probes below, so one Latin clause or a run
-        // of proper nouns can no longer veto a transcript the caller has
-        // already identified as English.
+        // Language metadata the ASR engine itself reported is a measurement,
+        // not a guess, so it outranks the text probes below: one Latin clause
+        // or a run of proper nouns cannot veto a transcript Whisper already
+        // identified as English.
         if let trustedLanguageCode {
             let normalizedCode = trustedLanguageCode
                 .replacingOccurrences(of: "_", with: "-")
@@ -469,9 +478,13 @@ struct TranscriptCleanupCoordinator: Sendable {
             return LanguageEligibility(isEligible: true, warning: nil)
         }
 
-        if case .manual(let confirmedEnglish) = mode, confirmedEnglish {
-            return LanguageEligibility(isEligible: true, warning: nil)
-        }
+        // Manual confirmation is deliberately *not* checked here. The editor's
+        // action passes `confirmedEnglish: true` unconditionally, so it carries
+        // no user judgement about the language — it only means "cleanup was
+        // asked for directly". It may override an uncertain result at the
+        // bottom of this method, never a confident non-English determination,
+        // because sending clearly French or Spanish text to an English-only
+        // normalizer can translate or corrupt the stored cleaned text.
 
         // A whole-transcript language guess can hide a short foreign-language
         // turn inside an otherwise English transcript. Reject only segments
@@ -500,6 +513,12 @@ struct TranscriptCleanupCoordinator: Sendable {
 
         if let best, best.key != .english, best.value >= Self.englishConfidenceThreshold {
             return LanguageEligibility(isEligible: false, warning: .nonEnglish)
+        }
+
+        // Nothing above could confirm or rule out English. Only here does a
+        // directly requested cleanup proceed anyway.
+        if case .manual(let confirmedEnglish) = mode, confirmedEnglish {
+            return LanguageEligibility(isEligible: true, warning: nil)
         }
 
         return LanguageEligibility(isEligible: false, warning: .uncertainLanguage)
