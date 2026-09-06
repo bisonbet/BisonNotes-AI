@@ -228,6 +228,7 @@ final class TranscriptCleanupModelManager: ObservableObject {
                 if FileManager.default.fileExists(atPath: TranscriptCleanupModelLocator.directory.path) {
                     try FileManager.default.removeItem(at: TranscriptCleanupModelLocator.directory)
                 }
+                self.removeHubBlobCache()
                 self.isDeletionInProgress = false
                 await MLXModelResourceCoordinator.shared.release()
                 self.refresh()
@@ -279,6 +280,38 @@ final class TranscriptCleanupModelManager: ObservableObject {
             )
         }
         return TranscriptCleanupModelLocator.isComplete ? .ready : .notDownloaded
+    }
+
+    /// `defaultHubApi` downloads through a content-addressed blob cache and
+    /// then copies into its `downloadBase`, so the materialized directory is
+    /// only half of what the model occupies. `CacheMaintenanceService` also
+    /// sweeps these, but a delete the user asked for should free the space now
+    /// — the same reasoning as `MLXSwiftDownloadManager.removeModelFiles(for:)`.
+    private func removeHubBlobCache() {
+        #if !os(watchOS) && canImport(MLXLLM) && canImport(MLXLMCommon)
+        guard let hubRepo = FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("huggingface", isDirectory: true)
+            .appendingPathComponent("hub", isDirectory: true)
+            .appendingPathComponent(
+                CacheMaintenancePolicy.hubRepoDirectoryName(
+                    forModelID: TranscriptCleanupSettings.modelId
+                ),
+                isDirectory: true
+            ),
+            FileManager.default.fileExists(atPath: hubRepo.path) else {
+            return
+        }
+
+        do {
+            try FileManager.default.removeItem(at: hubRepo)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Could not remove the S1-mini blob cache: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+        #endif
     }
 
     private func invalidatePinnedRevisionMarker() -> Bool {

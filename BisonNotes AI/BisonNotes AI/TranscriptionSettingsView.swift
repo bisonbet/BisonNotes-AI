@@ -177,9 +177,18 @@ struct TranscriptionSettingsView: View {
                     tint: .indigo
                 )
             }
-            .disabled(!TranscriptCleanupSettings.availability.isAvailable)
+            // An unsupported device must still be able to turn an inherited
+            // "on" back off: a restore from a supported device would otherwise
+            // leave the toggle on and disabled, so every queued transcription
+            // snapshotted cleanup as enabled and warned about the platform.
+            .disabled(!TranscriptCleanupSettings.availability.isAvailable && !transcriptCleanupEnabled)
             .onChange(of: transcriptCleanupEnabled) { _, enabled in
                 if enabled && !TranscriptCleanupSettings.availability.isAvailable {
+                    transcriptCleanupEnabled = false
+                }
+            }
+            .onAppear {
+                if transcriptCleanupEnabled && !TranscriptCleanupSettings.availability.isAvailable {
                     transcriptCleanupEnabled = false
                 }
             }

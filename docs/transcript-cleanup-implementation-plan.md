@@ -1,7 +1,10 @@
 # English transcript cleanup with S1-mini: implementation handoff
 
-Status: proposed implementation plan; no application code implemented.
-Prepared 2026-09-06 against branch `v2.5-transcript-clean-llm`, HEAD `cc00a2ce4a688df3a85a3782e8696a37e69a5a4b`. Working tree was clean before adding this document. Reverify provenance before implementation; this is a baseline, not permission to reset a newer checkout.
+Status: **implemented**. The application code, tests, settings, editor action and documentation described below all landed on `v2.5-transcript-clean-llm` (PR #127). Sections 1–7 record the contract this feature was built to and remain the reference for its invariants; they are no longer a description of outstanding work.
+
+What is still open is hardware acceptance only: on an Apple-silicon Mac and a supported physical iPhone/iPad, the model download, inference quality and latency, peak memory, offline reuse, and a two-device iCloud round trip of both representations. Those gates are spelled out at the end of section 7 and have not been run. Do not read the milestone and test sections below as a to-do list for the code.
+
+Originally prepared 2026-09-06 against branch `v2.5-transcript-clean-llm`, HEAD `cc00a2ce4a688df3a85a3782e8696a37e69a5a4b`, as a pre-implementation plan; that baseline is historical provenance and is not permission to reset a newer checkout.
 
 ## 1. Product contract
 

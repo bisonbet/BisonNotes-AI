@@ -53,6 +53,10 @@ struct TranscriptionResult {
     let speakerLabelWarning: LocalSpeakerLabelWarning?
     /// Optional final-result cleanup can fail without failing the ASR result.
     let transcriptCleanupWarning: TranscriptCleanupWarning?
+    /// The language the ASR engine itself reported, when it reports one. This
+    /// is trusted metadata rather than a guess, so cleanup uses it in place of
+    /// its own conservative `NLLanguageRecognizer` probe.
+    let languageCode: String?
 
     init(
         fullText: String,
@@ -64,7 +68,8 @@ struct TranscriptionResult {
         timedWords: [TimedTranscriptWord]? = nil,
         speakerMappings: [String: String]? = nil,
         speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
-        transcriptCleanupWarning: TranscriptCleanupWarning? = nil
+        transcriptCleanupWarning: TranscriptCleanupWarning? = nil,
+        languageCode: String? = nil
     ) {
         self.fullText = fullText
         self.segments = segments
@@ -76,6 +81,7 @@ struct TranscriptionResult {
         self.speakerMappings = speakerMappings
         self.speakerLabelWarning = speakerLabelWarning
         self.transcriptCleanupWarning = transcriptCleanupWarning
+        self.languageCode = languageCode
     }
 
     func with(
@@ -84,7 +90,8 @@ struct TranscriptionResult {
         speakerMappings: [String: String]? = nil,
         speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
         transcriptCleanupWarning: TranscriptCleanupWarning? = nil,
-        segments: [TranscriptSegment]? = nil
+        segments: [TranscriptSegment]? = nil,
+        languageCode: String? = nil
     ) -> TranscriptionResult {
         TranscriptionResult(
             fullText: fullText ?? self.fullText,
@@ -96,7 +103,8 @@ struct TranscriptionResult {
             timedWords: timedWords ?? self.timedWords,
             speakerMappings: speakerMappings ?? self.speakerMappings,
             speakerLabelWarning: speakerLabelWarning,
-            transcriptCleanupWarning: transcriptCleanupWarning ?? self.transcriptCleanupWarning
+            transcriptCleanupWarning: transcriptCleanupWarning ?? self.transcriptCleanupWarning,
+            languageCode: languageCode ?? self.languageCode
         )
     }
 }
@@ -835,13 +843,28 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         guard let resolvedCleanupConfiguration else { return result }
 
+        // An engine that reported its own language beats the caller's guess.
+        // Whisper auto-detects and returns one; without this, a short English
+        // transcript could still fail cleanup's conservative recognizer
+        // threshold and report `uncertainLanguage`.
+        let cleanupConfiguration: TranscriptCleanupConfiguration
+        if resolvedCleanupConfiguration.languageCode == nil, let detected = result.languageCode {
+            cleanupConfiguration = TranscriptCleanupConfiguration(
+                enabled: resolvedCleanupConfiguration.enabled,
+                mode: resolvedCleanupConfiguration.mode,
+                languageCode: detected
+            )
+        } else {
+            cleanupConfiguration = resolvedCleanupConfiguration
+        }
+
         // Every engine path clears `isTranscribing` before returning, but
         // cleanup is a multi-minute on-device pass. Re-taking the flag keeps
         // the UI in its in-progress state and keeps the re-entrancy guard at
         // the top of this method covering the whole call.
         isTranscribing = true
         defer { isTranscribing = false }
-        return await applyFinalTranscriptCleanup(to: result, configuration: resolvedCleanupConfiguration)
+        return await applyFinalTranscriptCleanup(to: result, configuration: cleanupConfiguration)
     }
 
     private func applyFinalTranscriptCleanup(
