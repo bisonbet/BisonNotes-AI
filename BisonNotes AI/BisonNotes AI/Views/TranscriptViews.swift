@@ -9,6 +9,9 @@ import SwiftUI
 import AVFoundation
 import Speech
 import CoreLocation
+#if os(macOS)
+import AppKit
+#endif
 
 private enum TranscriptListSource {
     case audio
@@ -35,10 +38,12 @@ private struct TranscriptDeletionRequest {
 /// immediate persistence action in the editor.
 struct TranscriptEditorSnapshot: Equatable {
     let segmentTexts: [String]
+    let segmentCleanups: [TranscriptSegmentCleanup?]
     let speakerMappings: [String: String]
 
     init(segments: [TranscriptSegment], speakerMappings: [String: String]) {
         self.segmentTexts = segments.map(\.text)
+        self.segmentCleanups = segments.map(\.cleanup)
         self.speakerMappings = speakerMappings
     }
 }
@@ -1573,7 +1578,7 @@ struct TranscriptsView: View {
 
     private func setupTranscriptionCompletionCallback() {
         // Set up completion handler for BackgroundProcessingManager
-        backgroundProcessingManager.onTranscriptionCompleted = { _, job, speakerLabelWarning in
+        backgroundProcessingManager.onTranscriptionCompleted = { _, job, speakerLabelWarning, cleanupWarning in
             Task { @MainActor in
                 AppLog.shared.transcription("Background processing transcription completed for job")
 
@@ -1598,9 +1603,11 @@ struct TranscriptsView: View {
                     if !self.isShowingAlert {
                         let baseMessage = "Transcription completed for: "
                             + (recording.recording.recordingName ?? "Unknown Recording")
-                        self.completedTranscriptionText = speakerLabelWarning.map {
-                            baseMessage + "\n\n" + $0.userVisibleMessage
-                        } ?? baseMessage
+                        let warnings = [speakerLabelWarning?.userVisibleMessage, cleanupWarning?.userVisibleMessage]
+                            .compactMap { $0 }
+                        self.completedTranscriptionText = warnings.isEmpty
+                            ? baseMessage
+                            : baseMessage + "\n\n" + warnings.joined(separator: "\n\n")
                         self.showingTranscriptionCompletionAlert = true
                     }
                 } else {
@@ -1639,12 +1646,62 @@ struct EditableTranscriptView: View {
     @State private var showSummarySheet = false
     @State private var summaryGenerationError: String?
     @State private var speakerLabelWarningMessage: String?
+    @State private var transcriptCleanupWarningMessage: String?
+    @State private var isCleaningTranscript = false
+    @State private var isCancellingTranscriptCleanup = false
+    @State private var transcriptCleanupTask: Task<Void, Never>?
+    @State private var transcriptRepresentation: TranscriptRepresentation = .original
     @State private var summaryStateRefresh = false
     @State private var savedTranscriptSnapshot: TranscriptEditorSnapshot
     @State private var isReloadingTranscript = false
     @State private var transcriptReloadToken = UUID()
     @StateObject private var enhancedTranscriptionManager = EnhancedTranscriptionManager()
+    @StateObject private var transcriptCleanupModelManager = TranscriptCleanupModelManager.shared
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
+
+    private var recordingRenameErrorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { recordingRenameError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    recordingRenameError = nil
+                }
+            }
+        )
+    }
+
+    private var speakerLabelWarningAlertBinding: Binding<Bool> {
+        Binding(
+            get: { speakerLabelWarningMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    speakerLabelWarningMessage = nil
+                }
+            }
+        )
+    }
+
+    private var transcriptCleanupWarningAlertBinding: Binding<Bool> {
+        Binding(
+            get: { transcriptCleanupWarningMessage != nil },
+            set: { isPresented in
+                if !isPresented {
+                    transcriptCleanupWarningMessage = nil
+                }
+            }
+        )
+    }
+
+    private var summaryGenerationErrorAlertBinding: Binding<Bool> {
+        Binding(
+            get: { summaryGenerationError != nil },
+            set: { isPresented in
+                if !isPresented {
+                    summaryGenerationError = nil
+                }
+            }
+        )
+    }
 
     private var uniqueSpeakers: [String] {
         var seen = Set<String>()
@@ -1688,6 +1745,7 @@ struct EditableTranscriptView: View {
         self.transcriptManager = transcriptManager
         self._editedSegments = State(initialValue: transcript.segments)
         self._speakerMappings = State(initialValue: transcript.speakerMappings)
+        self._transcriptRepresentation = State(initialValue: .original)
         let initialName = recording.recordingName ?? transcript.recordingName
         self._editableRecordingName = State(initialValue: initialName)
         self._savedRecordingName = State(initialValue: initialName)
@@ -1822,25 +1880,33 @@ struct EditableTranscriptView: View {
         } message: {
             Text(saveErrorMessage)
         }
-        .alert("Rename Failed", isPresented: Binding(
-            get: { recordingRenameError != nil },
-            set: { if !$0 { recordingRenameError = nil } }
-        )) {
+        .alert("Rename Failed", isPresented: recordingRenameErrorAlertBinding) {
             Button("OK", role: .cancel) {
                 recordingRenameError = nil
             }
         } message: {
             Text(recordingRenameError ?? "Unknown error")
         }
-        .alert("Speaker Labels Unavailable", isPresented: Binding(
-            get: { speakerLabelWarningMessage != nil },
-            set: { if !$0 { speakerLabelWarningMessage = nil } }
-        )) {
+        .alert("Speaker Labels Unavailable", isPresented: speakerLabelWarningAlertBinding) {
             Button("OK", role: .cancel) {
                 speakerLabelWarningMessage = nil
             }
         } message: {
             Text(speakerLabelWarningMessage ?? "Transcription completed without speaker labels.")
+        }
+        .alert("Transcript Cleanup", isPresented: transcriptCleanupWarningAlertBinding) {
+            if !transcriptCleanupModelManager.isReady,
+               TranscriptCleanupSettings.availability.isAvailable {
+                Button("Download S1-mini") {
+                    transcriptCleanupModelManager.startDownload()
+                    transcriptCleanupWarningMessage = nil
+                }
+            }
+            Button("OK", role: .cancel) {
+                transcriptCleanupWarningMessage = nil
+            }
+        } message: {
+            Text(transcriptCleanupWarningMessage ?? "Transcript cleanup was not applied.")
         }
         .sheet(isPresented: $showingSpeakerEditor) {
             SpeakerEditingView(
@@ -1882,10 +1948,7 @@ struct EditableTranscriptView: View {
                 .nativeMacPresentationContext(.modalSheet)
             #endif
         }
-        .alert("Unable to Generate Summary", isPresented: Binding(
-            get: { summaryGenerationError != nil },
-            set: { if !$0 { summaryGenerationError = nil } }
-        )) {
+        .alert("Unable to Generate Summary", isPresented: summaryGenerationErrorAlertBinding) {
             Button("OK", role: .cancel) { summaryGenerationError = nil }
         } message: {
             Text(summaryGenerationError ?? "Unknown error")
@@ -1907,7 +1970,15 @@ struct EditableTranscriptView: View {
                 if let warningMessage = userInfo["speakerLabelWarning"] as? String {
                     speakerLabelWarningMessage = warningMessage
                 }
-                refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
+                if let warningMessage = userInfo["transcriptCleanupWarning"] as? String {
+                    transcriptCleanupWarningMessage = warningMessage
+                }
+                let shouldSelectCleaned = userInfo["transcriptCleanupWarning"] == nil
+                    && recording.id.flatMap({ appCoordinator.getTranscriptData(for: $0) })?.hasCleanedText == true
+                refreshTranscriptFromCoreData(
+                    replacingUnsavedEdits: true,
+                    preferredRepresentation: shouldSelectCleaned ? .cleaned : .original
+                )
                 isRerunningTranscription = false
                 AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
@@ -1918,6 +1989,9 @@ struct EditableTranscriptView: View {
         }
         .onAppear {
             refreshTranscriptFromCoreData()
+        }
+        .onDisappear {
+            transcriptCleanupTask?.cancel()
         }
     }
 
@@ -1942,6 +2016,8 @@ struct EditableTranscriptView: View {
         Section {
             recordingTitleEditor
         }
+
+        transcriptCleanupSection
 
         if editedSegments.isEmpty {
             Section {
@@ -1988,7 +2064,11 @@ struct EditableTranscriptView: View {
 
             Section("Segments") {
                 ForEach(Array(editedSegments.enumerated()), id: \.offset) { index, _ in
-                    TranscriptSegmentView(segment: $editedSegments[index], speakerMappings: speakerMappings)
+                    TranscriptSegmentView(
+                        segment: $editedSegments[index],
+                        speakerMappings: speakerMappings,
+                        representation: transcriptRepresentation
+                    )
                 }
             }
             .id("transcript-\(editedSegments.count)-\(editedSegments.first?.text.prefix(10).hashValue ?? 0)")
@@ -2014,6 +2094,92 @@ struct EditableTranscriptView: View {
             }
             .buttonStyle(.plain)
             .disabled(isRerunningTranscription)
+        }
+    }
+
+    private var transcriptCleanupSection: some View {
+        Section {
+            if transcript.hasCleanedText || editedSegments.contains(where: { $0.cleanup != nil }) {
+                Picker("Transcript version", selection: $transcriptRepresentation) {
+                    ForEach(TranscriptRepresentation.allCases) { representation in
+                        Text(representation.title).tag(representation)
+                    }
+                }
+                .accessibilityLabel("Transcript version")
+                .accessibilityValue(transcriptRepresentation.title)
+
+                Label("AI-cleaned text is derived from the original transcript. Speaker labels and timing remain original.", systemImage: "sparkles")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Button {
+                    cleanTranscript()
+                } label: {
+                    HStack {
+                        if isCleaningTranscript {
+                            ProgressView().scaleEffect(0.8)
+                            Text("Cleaning English Transcript…")
+                        } else {
+                            Image(systemName: "wand.and.stars")
+                            Text("Clean up English transcript")
+                        }
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(
+                    isCleaningTranscript
+                        || isRerunningTranscription
+                        || !TranscriptCleanupSettings.availability.isAvailable
+                )
+                .accessibilityIdentifier("transcriptCleanupButton")
+
+                if !transcriptCleanupModelManager.isReady,
+                   TranscriptCleanupSettings.availability.isAvailable {
+                    Button("Download") {
+                        transcriptCleanupModelManager.startDownload()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(transcriptCleanupModelManager.isDownloading)
+                }
+            }
+
+            if isCleaningTranscript {
+                HStack(spacing: 12) {
+                    ProgressView()
+                        .accessibilityLabel("Transcript cleanup in progress")
+                    Button("Cancel") {
+                        isCancellingTranscriptCleanup = true
+                        transcriptCleanupTask?.cancel()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isCancellingTranscriptCleanup)
+                }
+            } else if transcriptCleanupModelManager.state != .ready {
+                Text(transcriptCleanupModelManager.statusDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack {
+                Button {
+                    copySelectedTranscriptText()
+                } label: {
+                    Label("Copy \(transcriptRepresentation.title)", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+
+                ShareLink(item: selectedRepresentationText) {
+                    Label("Share \(transcriptRepresentation.title)", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+            }
+        } header: {
+            Text("Transcript Text")
+        } footer: {
+            Text("Automatic cleanup and summaries use the original text. Cleanup is on-device and English only.")
         }
     }
 
@@ -2212,6 +2378,96 @@ struct EditableTranscriptView: View {
         }
     }
 
+    private var selectedRepresentationText: String {
+        let currentTranscript = transcript.preservingIdentity(
+            segments: editedSegments,
+            speakerMappings: speakerMappings
+        )
+        return currentTranscript.textForExport(for: transcriptRepresentation)
+    }
+
+    private func copySelectedTranscriptText() {
+        let text = selectedRepresentationText
+        #if canImport(UIKit)
+        UIPasteboard.general.string = text
+        #elseif os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #endif
+    }
+
+    private func cleanTranscript() {
+        guard !isCleaningTranscript,
+              let recordingId = recording.id else {
+            transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
+            return
+        }
+
+        let sourceTranscript = appCoordinator.getTranscriptData(for: recordingId) ?? transcript
+        let sourceSnapshot = TranscriptCleanupSourceSnapshot(transcript: sourceTranscript)
+        let sourceSegments = editedSegments
+        let sourceMappings = speakerMappings
+        let sourceEditorSnapshot = TranscriptEditorSnapshot(
+            segments: sourceSegments,
+            speakerMappings: sourceMappings
+        )
+        isCleaningTranscript = true
+        isCancellingTranscriptCleanup = false
+
+        transcriptCleanupTask = Task { @MainActor in
+            defer {
+                transcriptCleanupTask = nil
+                isCleaningTranscript = false
+                isCancellingTranscriptCleanup = false
+            }
+
+            let result = await TranscriptCleanupCoordinator.shared.clean(
+                segments: sourceSegments,
+                configuration: .manual(confirmedEnglish: true)
+            )
+
+            guard !Task.isCancelled else {
+                transcriptCleanupWarningMessage = TranscriptCleanupWarning.cancelled.userVisibleMessage
+                return
+            }
+
+            guard let currentTranscript = appCoordinator.getTranscriptData(for: recordingId),
+                  sourceSnapshot.matches(currentTranscript) else {
+                transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                return
+            }
+
+            guard result.warning == nil else {
+                transcriptCleanupWarningMessage = result.warning?.userVisibleMessage
+                return
+            }
+
+            guard currentTranscriptSnapshot == sourceEditorSnapshot else {
+                transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                return
+            }
+
+            let transcriptId = appCoordinator.addTranscript(
+                for: recordingId,
+                segments: result.segments,
+                speakerMappings: sourceMappings,
+                engine: currentTranscript.engine,
+                processingTime: currentTranscript.processingTime,
+                confidence: currentTranscript.confidence
+            )
+            guard transcriptId != nil else {
+                transcriptCleanupWarningMessage = "The cleaned transcript could not be saved. The original transcript was kept."
+                return
+            }
+
+            editedSegments = result.segments
+            speakerMappings = sourceMappings
+            savedTranscriptSnapshot = currentTranscriptSnapshot
+            transcriptRepresentation = .cleaned
+            NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
+        }
+    }
+
     private func renameRecordingFromTranscript() {
         let trimmedName = editableRecordingName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isUpdatingRecordingName,
@@ -2256,6 +2512,11 @@ struct EditableTranscriptView: View {
         isRerunningTranscription = true
 
         Task {
+            let rerunCleanupConfiguration = TranscriptCleanupConfiguration.automatic()
+            let rerunCleanupEnabled = rerunCleanupConfiguration.enabled
+            let rerunSourceSnapshot = recording.id.flatMap {
+                appCoordinator.getTranscriptData(for: $0)
+            }.map(TranscriptCleanupSourceSnapshot.init(transcript:))
             do {
                 // Get the currently configured transcription engine
                 let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
@@ -2270,14 +2531,14 @@ struct EditableTranscriptView: View {
                     }
                     return
                 }
-
                 AppLog.shared.transcription("Rerunning transcription for the selected recording", level: .debug)
 
                 // Start transcription job through BackgroundProcessingManager
                 try await backgroundProcessingManager.startTranscriptionJob(
                     recordingURL: recordingURL,
                     recordingName: recording.recordingName ?? "Unknown Recording",
-                    engine: selectedEngine
+                    engine: selectedEngine,
+                    transcriptCleanupEnabled: rerunCleanupEnabled
                 )
 
                 AppLog.shared.transcription("Transcription rerun job started through BackgroundProcessingManager")
@@ -2308,8 +2569,24 @@ struct EditableTranscriptView: View {
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(
                         at: recordingURL,
                         using: selectedEngine,
-                        recordingId: recordingId
+                        recordingId: recordingId,
+                        performTranscriptCleanup: rerunCleanupEnabled,
+                        transcriptCleanupConfiguration: rerunCleanupConfiguration
                     )
+
+                    if rerunCleanupEnabled,
+                       (appCoordinator.getRecording(id: recordingId) == nil
+                        || rerunSourceSnapshot?.matches(appCoordinator.getTranscriptData(for: recordingId)) != true) {
+                        await MainActor.run {
+                            transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                            isRerunningTranscription = false
+                        }
+                        AppLog.shared.transcription(
+                            "Discarded stale direct rerun cleanup result: recording=\(recordingId.uuidString)",
+                            level: .info
+                        )
+                        return
+                    }
 
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
@@ -2350,7 +2627,7 @@ struct EditableTranscriptView: View {
         let originalHandler = backgroundProcessingManager.onTranscriptionCompleted
         let recordingID = recording.id
 
-        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job, speakerLabelWarning in
+        backgroundProcessingManager.onTranscriptionCompleted = { transcriptData, job, speakerLabelWarning, cleanupWarning in
             // Only handle completion for our specific recording
             let isMatchingRecording = job.recordingURL == recordingURL
                 || (recordingID != nil && transcriptData.recordingId == recordingID)
@@ -2368,15 +2645,26 @@ struct EditableTranscriptView: View {
                     } else {
                         self.speakerLabelWarningMessage = nil
                     }
+                    if let cleanupWarning {
+                        self.transcriptCleanupWarningMessage = cleanupWarning.userVisibleMessage
+                    } else {
+                        self.transcriptCleanupWarningMessage = nil
+                    }
                     self.updateVisibleTranscript(
                         with: transcriptData,
-                        replacingUnsavedEdits: true
+                        replacingUnsavedEdits: true,
+                        preferredRepresentation: cleanupWarning == nil && transcriptData.hasCleanedText
+                            ? .cleaned
+                            : .original
                     )
                     self.isRerunningTranscription = false
 
                     var userInfo: [String: Any] = ["recordingURL": recordingURL]
                     if let speakerLabelWarning {
                         userInfo["speakerLabelWarning"] = speakerLabelWarning.userVisibleMessage
+                    }
+                    if let cleanupWarning {
+                        userInfo["transcriptCleanupWarning"] = cleanupWarning.userVisibleMessage
                     }
                     NotificationCenter.default.post(
                         name: NSNotification.Name("TranscriptionRerunCompleted"),
@@ -2391,7 +2679,7 @@ struct EditableTranscriptView: View {
                 }
             } else {
                 // If it's not our recording, call the original handler
-                originalHandler?(transcriptData, job, speakerLabelWarning)
+                originalHandler?(transcriptData, job, speakerLabelWarning, cleanupWarning)
             }
         }
     }
@@ -2431,10 +2719,17 @@ struct EditableTranscriptView: View {
             if transcriptId != nil {
                 AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
                 speakerLabelWarningMessage = replacement.speakerLabelWarning?.userVisibleMessage
+                transcriptCleanupWarningMessage = replacement.transcriptCleanupWarning?.userVisibleMessage
 
                 // Immediately refresh the UI with the updated transcript data.
                 // The user confirmed this rerun, so it replaces live edits.
-                refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
+                refreshTranscriptFromCoreData(
+                    replacingUnsavedEdits: true,
+                    preferredRepresentation: replacement.transcriptCleanupWarning == nil
+                        && replacement.segments.contains(where: { $0.cleanup != nil })
+                        ? .cleaned
+                        : .original
+                )
 
                 // Post notification to refresh the main transcripts view
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
@@ -2446,7 +2741,10 @@ struct EditableTranscriptView: View {
         }
     }
 
-    private func refreshTranscriptFromCoreData(replacingUnsavedEdits: Bool = false) {
+    private func refreshTranscriptFromCoreData(
+        replacingUnsavedEdits: Bool = false,
+        preferredRepresentation: TranscriptRepresentation? = nil
+    ) {
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             return
         }
@@ -2461,14 +2759,16 @@ struct EditableTranscriptView: View {
 
             updateVisibleTranscript(
                 with: updatedTranscript,
-                replacingUnsavedEdits: replacingUnsavedEdits
+                replacingUnsavedEdits: replacingUnsavedEdits,
+                preferredRepresentation: preferredRepresentation
             )
         }
     }
 
     private func updateVisibleTranscript(
         with updatedTranscript: TranscriptData,
-        replacingUnsavedEdits: Bool = false
+        replacingUnsavedEdits: Bool = false,
+        preferredRepresentation: TranscriptRepresentation? = nil
     ) {
         // Only update if we have segments with actual content.
         let hasValidContent = updatedTranscript.segments.contains {
@@ -2500,6 +2800,9 @@ struct EditableTranscriptView: View {
         // stale snapshot.
         guard incomingSnapshot != currentTranscriptSnapshot else {
             savedTranscriptSnapshot = incomingSnapshot
+            if let preferredRepresentation {
+                transcriptRepresentation = preferredRepresentation
+            }
             return
         }
 
@@ -2509,6 +2812,7 @@ struct EditableTranscriptView: View {
         isReloadingTranscript = true
         editedSegments = []
         speakerMappings = updatedTranscript.speakerMappings
+        transcriptRepresentation = preferredRepresentation ?? .original
 
         // Small delay to ensure the List/Form rebuilds its segment bindings.
         // The saved baseline moves with the restored segments so the editor is
@@ -2525,6 +2829,7 @@ struct EditableTranscriptView: View {
 struct TranscriptSegmentView: View {
     @Binding var segment: TranscriptSegment
     var speakerMappings: [String: String] = [:]
+    var representation: TranscriptRepresentation = .original
 
     private var hasSpeakerLabel: Bool {
         let s = segment.speaker
@@ -2597,7 +2902,13 @@ struct TranscriptSegmentView: View {
 
     @ViewBuilder
     private var transcriptTextEditor: some View {
-        #if os(macOS)
+        if representation == .cleaned {
+            Text(segment.cleanup?.normalizedText ?? segment.text)
+                .font(.body)
+                .frame(maxWidth: .infinity, minHeight: 120, alignment: .topLeading)
+                .accessibilityLabel("Cleaned transcript text")
+        } else {
+#if os(macOS)
         // A multiline TextField expands and is not backed by its own scroll
         // view, so wheel/trackpad events always reach the transcript List.
         TextField("Transcript segment", text: segmentTextBinding, axis: .vertical)
@@ -2612,18 +2923,14 @@ struct TranscriptSegmentView: View {
             .font(.body)
             .frame(minHeight: max(120, calculateTextHeight(for: segment.text)))
         #endif
+        }
     }
 
     private var segmentTextBinding: Binding<String> {
         Binding(
             get: { segment.text },
             set: {
-                segment = TranscriptSegment(
-                    speaker: segment.speaker,
-                    text: $0,
-                    startTime: segment.startTime,
-                    endTime: segment.endTime
-                )
+                segment = segment.withOriginalText($0)
             }
         )
     }

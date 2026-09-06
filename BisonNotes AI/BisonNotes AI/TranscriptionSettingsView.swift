@@ -11,8 +11,11 @@ struct TranscriptionSettingsView: View {
     @AppStorage("showTranscriptionProgress") private var showTranscriptionProgress: Bool = true
     @AppStorage("enableLiveTranscription") private var enableLiveTranscription: Bool = false
     @AppStorage("selectedTranscriptionEngine") private var selectedTranscriptionEngine: String = TranscriptionEngine.fluidAudio.rawValue
+    @AppStorage(TranscriptCleanupSettings.Keys.enabled)
+    private var transcriptCleanupEnabled: Bool = TranscriptCleanupSettings.defaultEnabled
 
     @StateObject private var fluidAudioManager = FluidAudioManager.shared
+    @StateObject private var transcriptCleanupModelManager = TranscriptCleanupModelManager.shared
 
     @State private var showingWhisperSettings = false
     @State private var showingFluidAudioSettings = false
@@ -74,6 +77,7 @@ struct TranscriptionSettingsView: View {
                 modernHeader
                 modernLiveTranscriptionSection
                 modernFileTranscriptionSection
+                modernTranscriptCleanupSection
                 modernSelectedEngineConfigurationSection
                 modernDisplayOptionsSection
                 modernTipsSection
@@ -160,6 +164,99 @@ struct TranscriptionSettingsView: View {
                 title: "Whisper Server",
                 subtitle: "Self-hosted on your network"
             )
+        }
+    }
+
+    private var modernTranscriptCleanupSection: some View {
+        TranscriptionSettingsCard(title: "Transcript Cleanup", systemImage: "wand.and.stars", tint: .indigo) {
+            Toggle(isOn: $transcriptCleanupEnabled) {
+                TranscriptionSettingsLabel(
+                    title: "Clean up transcripts (English only)",
+                    subtitle: "Automatic, on-device cleanup after file transcription",
+                    systemImage: "wand.and.stars",
+                    tint: .indigo
+                )
+            }
+            .disabled(!TranscriptCleanupSettings.availability.isAvailable)
+            .onChange(of: transcriptCleanupEnabled) { _, enabled in
+                if enabled && !TranscriptCleanupSettings.availability.isAvailable {
+                    transcriptCleanupEnabled = false
+                }
+            }
+
+            Text("Improve punctuation, remove fillers, and resolve spoken corrections on this device. Original text and speaker labels are preserved.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Text(TranscriptCleanupSettings.modelAttribution)
+                .font(.caption.weight(.medium))
+                .foregroundColor(.secondary)
+
+            if let reason = TranscriptCleanupSettings.availability.explanation {
+                Label(reason, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else {
+                transcriptCleanupModelControls
+            }
+
+            Text("Automatic summaries continue to use the original transcript text. Imported text is cleaned only when you request it from the transcript editor.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var transcriptCleanupModelControls: some View {
+        HStack(spacing: 10) {
+            switch transcriptCleanupModelManager.state {
+            case .downloading:
+                ProgressView(value: transcriptCleanupModelManager.progress)
+                    .frame(maxWidth: 180)
+                Text("Downloading…")
+                    .font(.caption)
+                Button("Cancel") {
+                    transcriptCleanupModelManager.cancelDownload()
+                }
+                .buttonStyle(.bordered)
+            case .waitingForCacheMaintenance:
+                ProgressView()
+                    .controlSize(.small)
+                Text(transcriptCleanupModelManager.statusDescription)
+                    .font(.caption)
+                if transcriptCleanupModelManager.isDownloadCancellable {
+                    Button("Cancel") {
+                        transcriptCleanupModelManager.cancelDownload()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            case .waitingForInference:
+                ProgressView()
+                    .controlSize(.small)
+                Text(transcriptCleanupModelManager.statusDescription)
+                    .font(.caption)
+            case .ready:
+                Label("Ready", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.green)
+                Spacer()
+                Button("Remove Download", role: .destructive) {
+                    transcriptCleanupModelManager.deleteDownloadedModel()
+                }
+                .buttonStyle(.bordered)
+            default:
+                Text(transcriptCleanupModelManager.statusDescription)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Download S1-mini") {
+                    transcriptCleanupModelManager.startDownload()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .onAppear {
+            transcriptCleanupModelManager.refresh()
         }
     }
 
@@ -382,6 +479,7 @@ private extension TranscriptionSettingsView {
             }
 
             Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
+            transcriptCleanupSettingsSection
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
@@ -444,6 +542,10 @@ private extension TranscriptionSettingsView {
 #endif
 
 private extension TranscriptionSettingsView {
+
+    private var transcriptCleanupSettingsSection: some View {
+        modernTranscriptCleanupSection
+    }
 
     private func modernEngineGroupHeader(_ title: String, systemImage: String, tint: Color) -> some View {
         Label(title, systemImage: systemImage)
@@ -621,6 +723,7 @@ private extension TranscriptionSettingsView {
         showTranscriptionProgress = true
         enableLiveTranscription = false
         selectedTranscriptionEngine = TranscriptionEngine.fluidAudio.rawValue
+        TranscriptCleanupSettings.reset()
         UserDefaults.standard.set(
             FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled,
             forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled

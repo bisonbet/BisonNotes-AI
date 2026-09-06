@@ -51,6 +51,8 @@ struct TranscriptionResult {
     let speakerMappings: [String: String]?
     /// A completed transcript can succeed while local labels are unavailable.
     let speakerLabelWarning: LocalSpeakerLabelWarning?
+    /// Optional final-result cleanup can fail without failing the ASR result.
+    let transcriptCleanupWarning: TranscriptCleanupWarning?
 
     init(
         fullText: String,
@@ -61,7 +63,8 @@ struct TranscriptionResult {
         error: Error?,
         timedWords: [TimedTranscriptWord]? = nil,
         speakerMappings: [String: String]? = nil,
-        speakerLabelWarning: LocalSpeakerLabelWarning? = nil
+        speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
+        transcriptCleanupWarning: TranscriptCleanupWarning? = nil
     ) {
         self.fullText = fullText
         self.segments = segments
@@ -72,16 +75,19 @@ struct TranscriptionResult {
         self.timedWords = timedWords
         self.speakerMappings = speakerMappings
         self.speakerLabelWarning = speakerLabelWarning
+        self.transcriptCleanupWarning = transcriptCleanupWarning
     }
 
     func with(
+        fullText: String? = nil,
         timedWords: [TimedTranscriptWord]? = nil,
         speakerMappings: [String: String]? = nil,
         speakerLabelWarning: LocalSpeakerLabelWarning? = nil,
+        transcriptCleanupWarning: TranscriptCleanupWarning? = nil,
         segments: [TranscriptSegment]? = nil
     ) -> TranscriptionResult {
         TranscriptionResult(
-            fullText: fullText,
+            fullText: fullText ?? self.fullText,
             segments: segments ?? self.segments,
             processingTime: processingTime,
             chunkCount: chunkCount,
@@ -89,7 +95,8 @@ struct TranscriptionResult {
             error: error,
             timedWords: timedWords ?? self.timedWords,
             speakerMappings: speakerMappings ?? self.speakerMappings,
-            speakerLabelWarning: speakerLabelWarning
+            speakerLabelWarning: speakerLabelWarning,
+            transcriptCleanupWarning: transcriptCleanupWarning ?? self.transcriptCleanupWarning
         )
     }
 }
@@ -727,12 +734,21 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
     // MARK: - Public Methods
 
-    func transcribeAudioFile(at url: URL, using engine: TranscriptionEngine? = nil, recordingId: UUID) async throws -> TranscriptionResult {
+    func transcribeAudioFile(
+        at url: URL,
+        using engine: TranscriptionEngine? = nil,
+        recordingId: UUID,
+        performTranscriptCleanup: Bool = true,
+        transcriptCleanupConfiguration: TranscriptCleanupConfiguration? = nil
+    ) async throws -> TranscriptionResult {
 
         // Check if already transcribing
         guard !isTranscribing else {
-    throw TranscriptionError.recognitionFailed(NSError(domain: "AlreadyTranscribing", code: -1, userInfo: nil))
+            throw TranscriptionError.recognitionFailed(NSError(domain: "AlreadyTranscribing", code: -1, userInfo: nil))
         }
+
+        let resolvedCleanupConfiguration = transcriptCleanupConfiguration
+            ?? (performTranscriptCleanup ? TranscriptCleanupConfiguration.automatic() : nil)
 
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.transcription("Transcription source file is unavailable", level: .error)
@@ -765,7 +781,10 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.audioExtractionFailed
         }
 
-        // Select the configured transcription engine
+        // Select the configured transcription engine. Cleanup is deliberately
+        // applied once to this completed-file result, after the selected engine
+        // has produced its final segments and labels.
+        let result: TranscriptionResult
         switch selectedEngine {
         case .notConfigured:
             AppLog.shared.transcription("Transcription engine not configured", level: .error)
@@ -773,7 +792,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         case .fluidAudio:
             switchToFluidAudioTranscription()
-            return try await transcribeWithFluidAudio(
+            result = try await transcribeWithFluidAudio(
                 url: url,
                 duration: duration,
                 configuration: localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration()
@@ -785,33 +804,68 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             // Validate Whisper configuration and availability
             if !isWhisperProperlyConfigured() {
                 AppLog.shared.transcription("Whisper not properly configured, falling back to native speech recognition")
-            return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+                result = try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+                break
             }
 
             let isWhisperAvailable = await validateWhisperService()
-if isWhisperAvailable {
+            if isWhisperAvailable {
                 if let config = whisperConfig {
-                    return try await transcribeWithWhisper(url: url, config: config, recordingId: recordingId)
+                    result = try await transcribeWithWhisper(url: url, config: config, recordingId: recordingId)
                 } else {
-                    return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+                    result = try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
                 }
             } else {
-                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+                result = try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         case .mistralAI:
             // Validate Mistral configuration
             if let config = mistralTranscribeConfig {
-                return try await transcribeWithMistral(url: url, config: config, recordingId: recordingId)
+                result = try await transcribeWithMistral(url: url, config: config, recordingId: recordingId)
             } else {
                 // Ensure speech recognizer is available for fallback
                 guard let recognizer = speechRecognizer, recognizer.isAvailable else {
                     throw TranscriptionError.speechRecognizerUnavailable
                 }
-                return try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
+                result = try await transcribeWithNativeSpeech(url: url, duration: duration, recordingId: recordingId)
             }
 
         }
+
+        guard let resolvedCleanupConfiguration else { return result }
+        return await applyFinalTranscriptCleanup(to: result, configuration: resolvedCleanupConfiguration)
+    }
+
+    private func applyFinalTranscriptCleanup(
+        to result: TranscriptionResult,
+        configuration: TranscriptCleanupConfiguration
+    ) async -> TranscriptionResult {
+        guard result.success, !result.segments.isEmpty else { return result }
+
+        guard configuration.enabled else { return result }
+
+        let cleanupResult = await TranscriptCleanupCoordinator.shared.clean(
+            segments: result.segments,
+            configuration: configuration
+        )
+        guard cleanupResult.warning == nil || cleanupResult.warning == .missingModel else {
+            return result.with(
+                speakerLabelWarning: result.speakerLabelWarning,
+                transcriptCleanupWarning: cleanupResult.warning
+            )
+        }
+
+        // Keep the result's existing fullText contract tied to raw ASR text.
+        // A valid all-filler segment may have an intentionally empty cleaned
+        // value, and callers use fullText to decide whether the ASR result
+        // itself is worth persisting. The representation-aware TranscriptData
+        // accessors expose the cleaned text to the editor and exports.
+        return result.with(
+            speakerLabelWarning: result.speakerLabelWarning,
+            transcriptCleanupWarning: cleanupResult.warning,
+            segments: cleanupResult.segments
+        )
     }
 
     private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {

@@ -104,9 +104,12 @@ struct ContentView: View {
             handleActionButtonLaunchIfNeeded()
         }
         .alert(
-            "Transcription Completed Without Speaker Labels",
+            "Transcription Completed With Warnings",
             isPresented: Binding(
-                get: { transcriptionStarter.lastTranscriptionWarning != nil },
+                get: {
+                    transcriptionStarter.lastTranscriptionWarning != nil
+                        || transcriptionStarter.lastTranscriptCleanupWarning != nil
+                },
                 set: { isPresented in
                     if !isPresented {
                         transcriptionStarter.clearLastTranscriptionWarning()
@@ -119,8 +122,12 @@ struct ContentView: View {
             }
         } message: {
             Text(
-                transcriptionStarter.lastTranscriptionWarning?.userVisibleMessage
-                    ?? "The transcript was saved without local speaker labels."
+                [
+                    transcriptionStarter.lastTranscriptionWarning?.userVisibleMessage,
+                    transcriptionStarter.lastTranscriptCleanupWarning?.userVisibleMessage
+                ]
+                .compactMap { $0 }
+                .joined(separator: "\n\n")
             )
         }
     }

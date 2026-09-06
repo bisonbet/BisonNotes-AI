@@ -37,6 +37,9 @@ tests:
   which Xcode 26.6 reports unavailable for the iOS build configuration. Signed
   device, two-device CloudKit, low-storage, and real download/sync validation
   remain outstanding.
+- Optional English transcript cleanup stores derived text alongside the original.
+  An older app may ignore or drop that optional cleaned field when it rewrites a
+  transcript; the original transcript remains usable.
 
 The `iCloudStorageManager` extraction and Textual fork work remain out of scope;
 the detailed design notes below are retained for a later, separately scoped

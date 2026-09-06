@@ -33,6 +33,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 - ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
 - 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
 - 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
+- ✨ **Optional English Transcript Cleanup** — Explicitly download S1-mini by Superwhisper, then clean completed file transcripts on-device while retaining the original
 - 🤖 **Pluggable AI Engines** — On-device MLX Swift, Apple Foundation Models, OpenAI-compatible, Mistral AI, Google AI Studio, Whisper, Wyoming, and Ollama on native macOS
 - 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
 - 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
@@ -51,6 +52,14 @@ The WordPress release guides are versioned snapshots, and each file is named for
 **A published snapshot page is permanent and frozen.** A build that is never updated keeps opening its own slug for as long as it stays installed, so a snapshot page is never deleted, never re-slugged, and its `bn<major><minor>-*` ids are never renamed — not "kept while builds are still installed," but kept indefinitely. Corrections to a shipped release's page are fine; moving or renaming it is what breaks in-app help. Each new release adds a page rather than replacing one.
 
 In-app Help links derive both the page slug and the anchor from the installed marketing version (`BisonNotesDocumentation`): 2.4 opens `/bisonnotes-ai-v2-4/`, and the Processing Options help button opens `#bn24-ai` on that page. Section anchors are version-scoped, so each release guide must keep its own `bn<major><minor>-*` ids — renaming `bn24-ai` breaks the shipped 2.4 binary's help link.
+
+## Transcript Cleanup
+
+The optional **Clean up transcripts (English only)** setting runs S1-mini by Superwhisper on completed file transcriptions on supported Apple-silicon Mac and physical iPhone/iPad targets. It is off by default and never downloads the model when enabled; download S1-mini explicitly from Transcription Settings or the transcript editor first.
+
+Cleanup preserves the original transcript, segment timing, speaker labels, and raw text. Existing editors open on **Original** and can switch to **Cleaned** when a revision exists. Copy, share, and ordinary text export follow the selected representation. The one-time **Clean up English transcript** action also works for imported text without enabling automatic cleanup or rerunning ASR/diarization. Automatic summaries continue to use original text.
+
+The model is English-only and runs locally. Unsupported targets and simulators show an availability reason. An older app may ignore or drop the optional cleaned fields if it rewrites a transcript; the original text remains usable.
 
 ## v2.4 Highlights
 - Routine iCloud metadata sync is rebuilt around batched CloudKit requests. The dataset behind the work — 161 records — took about 3m14s for a full metadata backup plus another 28s of restore enumeration; a routine pass now reads the whole dataset in a couple of batched requests, issues one batched save and one batched delete, and plans an entire deletion-marker set in memory instead of re-reading iCloud once per tombstone.
