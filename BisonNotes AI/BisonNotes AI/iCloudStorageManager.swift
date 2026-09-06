@@ -318,6 +318,11 @@ class iCloudStorageManager: ObservableObject {
     /// before a flush begins.
     private var pendingMutationContext: NSManagedObjectContext =
         PersistenceController.shared.container.viewContext
+    /// Sibling of `pendingMutationContext` on the same store, used for every
+    /// standalone outbox read and write so queue bookkeeping never saves or rolls
+    /// back the shared view context. Rebuilt whenever the binding changes.
+    private lazy var outboxContext: NSManagedObjectContext? =
+        PendingCloudMutationStore.makeIsolatedContext(basedOn: pendingMutationContext)
     /// Prevents a single recording/signature from spamming the maintenance status
     /// when a run is repeatedly deferred until the volume has room.
     private var reportedStagingCapacityShortages: Set<String> = []
@@ -2578,24 +2583,22 @@ class iCloudStorageManager: ObservableObject {
     /// Clears the local state that describes what already exists in iCloud. Local
     /// recordings, transcripts and summaries are untouched — only sync bookkeeping.
     private func resetLocalCloudSyncBookkeeping() {
+        // The outbox goes first, and nothing else moves until it has. Clearing the
+        // in-memory state before this and then returning early on failure left the
+        // reset half applied: `activeManifestMigrationCompletedKey` still claimed
+        // the manifest migration was done for a manifest the erase had just
+        // deleted, so the next sync skipped re-seeding it.
+        let didClearDurableOutbox = applyPendingCloudMutationChanges(
+            "clear the durable iCloud mutation outbox after erase"
+        ) { context in
+            try PendingCloudMutationStore.removeAll(in: context)
+        }
+        guard didClearDurableOutbox else { return }
+
         clearSyncState()
         lastSyncDate = nil
         lastAutoBackupDate = nil
         pendingCloudReviewItems = []
-
-        var didClearDurableOutbox = false
-        do {
-            try PendingCloudMutationStore.removeAll(in: pendingMutationContext)
-            didClearDurableOutbox = true
-        } catch {
-            pendingMutationContext.rollback()
-            AppLog.shared.iCloudSync(
-                "Could not clear the durable iCloud mutation outbox after erase: \(error)",
-                level: .error
-            )
-        }
-
-        guard didClearDurableOutbox else { return }
 
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "lastSyncDate")
@@ -3308,8 +3311,14 @@ extension iCloudStorageManager {
             appCoordinator: appCoordinator,
             options: options
         )
+        // Read once for the whole run, the way line ~724 already does for the other
+        // queues. Each read of `pendingImportedAudioRemovals` is a Core Data fetch
+        // that decodes every outbox row; evaluating it per recording inside the
+        // three loops below cost hundreds of fetches per pass for a queue that is
+        // almost always empty.
+        let pendingImportedAudioRecordingIds = Set(pendingImportedAudioRemovals.map(\.recordingId))
         if activeManifestMigrationCompleted,
-           pendingImportedAudioRemovals.isEmpty,
+           pendingImportedAudioRecordingIds.isEmpty,
            UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) == currentBackupStateSignature {
             let hasCloudContentBackup = try await cloudHasAnyContentBackupRecord()
             if hasCloudContentBackup {
@@ -3386,9 +3395,7 @@ extension iCloudStorageManager {
                 recordName: makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
             )
             let existingRecord = snapshot.recordings[recordID]
-            let hasPendingImportedAudioRemoval = pendingImportedAudioRemovals.contains {
-                $0.recordingId == recordingId
-            }
+            let hasPendingImportedAudioRemoval = pendingImportedAudioRecordingIds.contains(recordingId)
 
             if let existingRecord,
                !hasPendingImportedAudioRemoval,
@@ -3548,9 +3555,8 @@ extension iCloudStorageManager {
                 )
                 continue
             }
-            let hasPendingImportedAudioRemoval = entry.recording.id.map { recordingId in
-                pendingImportedAudioRemovals.contains { $0.recordingId == recordingId }
-            } ?? false
+            let hasPendingImportedAudioRemoval = entry.recording.id
+                .map(pendingImportedAudioRecordingIds.contains) ?? false
             let record = recordingRecordsToWrite[entry.recordID]
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: entry.recordID)
 
@@ -3646,7 +3652,7 @@ extension iCloudStorageManager {
                 result.audioFilesBackedUp += 1
             }
             if let recordingId = entry.recording.id,
-               pendingImportedAudioRemovals.contains(where: { $0.recordingId == recordingId }) {
+               pendingImportedAudioRecordingIds.contains(recordingId) {
                 clearAudioBackupFields(on: record, changed: &changed)
             }
             if changed {
@@ -5757,8 +5763,9 @@ extension iCloudStorageManager {
 
     private func pendingCloudMutations() -> [PendingCloudMutation] {
         _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: pendingMutationContext)
+        guard let context = outboxContext else { return [] }
         do {
-            return try PendingCloudMutationStore.fetchAll(in: pendingMutationContext)
+            return try PendingCloudMutationStore.fetchAll(in: context)
         } catch {
             AppLog.shared.iCloudSync(
                 "Could not read pending iCloud mutation outbox: \(error)",
@@ -5779,25 +5786,42 @@ extension iCloudStorageManager {
             return
         }
 
-        guard !context.hasChanges else {
+        // Two contexts over one store already share every row, so there is nothing
+        // to move — copying and then withdrawing the snapshots would delete the
+        // very rows the copy just merged into.
+        let sameStore = pendingMutationContext.persistentStoreCoordinator != nil &&
+            pendingMutationContext.persistentStoreCoordinator === context.persistentStoreCoordinator
+        guard !sameStore else {
+            pendingMutationContext = context
+            outboxContext = PendingCloudMutationStore.makeIsolatedContext(basedOn: context)
+            _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+            return
+        }
+
+        let previousOutboxContext = outboxContext
+        let previousMutations = pendingCloudMutations()
+
+        // Both sides are outbox-only contexts, so neither the copy nor its rollback
+        // can touch a caller's unsaved work — no unrelated-changes guard is needed,
+        // and a busy view context can no longer strand a durable mutation.
+        guard let destination = PendingCloudMutationStore.makeIsolatedContext(basedOn: context) else {
             AppLog.shared.iCloudSync(
-                "Could not move pending iCloud mutations into a context with unrelated unsaved changes",
+                "Could not move pending iCloud mutations: the destination has no persistent store coordinator",
                 level: .error
             )
             return
         }
 
-        let previousContext = pendingMutationContext
-        let previousContextWasClean = !previousContext.hasChanges
-        let previousMutations = pendingCloudMutations()
         if !previousMutations.isEmpty {
             do {
                 for mutation in previousMutations {
-                    try PendingCloudMutationStore.enqueue(mutation, in: context)
+                    try PendingCloudMutationStore.enqueue(mutation, in: destination)
                 }
-                try context.save()
+                if destination.hasChanges {
+                    try destination.save()
+                }
             } catch {
-                context.rollback()
+                destination.rollback()
                 AppLog.shared.iCloudSync(
                     "Could not move pending iCloud mutations to the active Core Data store: \(error)",
                     level: .error
@@ -5807,69 +5831,78 @@ extension iCloudStorageManager {
         }
 
         pendingMutationContext = context
-
-        guard !previousMutations.isEmpty, previousContextWasClean else {
-            if !previousMutations.isEmpty {
-                AppLog.shared.iCloudSync(
-                    "Retaining pending iCloud mutations on the previous context because it has unrelated unsaved changes",
-                    level: .debug
-                )
-            }
-            _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
-            return
-        }
+        outboxContext = destination
 
         // The destination is now durable. Remove only the snapshots that were
-        // copied; a newer payload remains in the source context for its next
-        // binding. The source was clean before this operation, so a rollback here
-        // cannot discard unrelated user edits.
-        do {
-            for mutation in previousMutations {
-                _ = try PendingCloudMutationStore.removeIfUnchanged(
-                    mutation,
-                    from: previousContext
+        // copied; a newer payload remains in the source store for its next binding.
+        if !previousMutations.isEmpty, let previousOutboxContext {
+            do {
+                for mutation in previousMutations {
+                    _ = try PendingCloudMutationStore.removeIfUnchanged(
+                        mutation,
+                        from: previousOutboxContext
+                    )
+                }
+                if previousOutboxContext.hasChanges {
+                    try previousOutboxContext.save()
+                }
+            } catch {
+                previousOutboxContext.rollback()
+                AppLog.shared.iCloudSync(
+                    "Copied pending iCloud mutations but could not clear the previous store: \(error)",
+                    level: .error
                 )
             }
-            if previousContext.hasChanges {
-                try previousContext.save()
-            }
-        } catch {
-            previousContext.rollback()
-            AppLog.shared.iCloudSync(
-                "Copied pending iCloud mutations but could not clear the previous context: \(error)",
-                level: .error
-            )
         }
 
         _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
     }
 
-    private func enqueuePendingCloudMutation(_ mutation: PendingCloudMutation) {
-        do {
-            try PendingCloudMutationStore.enqueue(mutation, in: pendingMutationContext)
-            try pendingMutationContext.save()
-        } catch {
-            pendingMutationContext.rollback()
+    /// Applies outbox edits as one transaction on a context that holds nothing
+    /// else.
+    ///
+    /// Saving `pendingMutationContext` directly meant every queue write also
+    /// committed whatever unrelated edits the shared view context happened to be
+    /// holding — and, worse, that a failure caused by one of *those* objects
+    /// rolled the user's in-flight work away. `CoreDataManager.saveContext()`
+    /// deliberately leaves a failed save's edits staged for a retry, so that was
+    /// reachable. The delete paths still stage their intent inside the content
+    /// transaction via `save(committing:)`; this is only for the standalone
+    /// enqueue/acknowledge calls the sync legs make.
+    @discardableResult
+    private func applyPendingCloudMutationChanges(
+        _ description: String,
+        _ body: (NSManagedObjectContext) throws -> Void
+    ) -> Bool {
+        guard let context = outboxContext else {
             AppLog.shared.iCloudSync(
-                "Could not persist pending iCloud mutation: \(error)",
+                "Could not \(description): the pending mutation store is unavailable",
                 level: .error
             )
+            return false
+        }
+        do {
+            try body(context)
+            if context.hasChanges {
+                try context.save()
+            }
+            return true
+        } catch {
+            context.rollback()
+            AppLog.shared.iCloudSync("Could not \(description): \(error)", level: .error)
+            return false
+        }
+    }
+
+    private func enqueuePendingCloudMutation(_ mutation: PendingCloudMutation) {
+        applyPendingCloudMutationChanges("persist pending iCloud mutation") { context in
+            try PendingCloudMutationStore.enqueue(mutation, in: context)
         }
     }
 
     private func acknowledgePendingCloudMutation(_ mutation: PendingCloudMutation) {
-        do {
-            guard try PendingCloudMutationStore.removeIfUnchanged(
-                mutation,
-                from: pendingMutationContext
-            ) else { return }
-            try pendingMutationContext.save()
-        } catch {
-            pendingMutationContext.rollback()
-            AppLog.shared.iCloudSync(
-                "Could not acknowledge pending iCloud mutation: \(error)",
-                level: .error
-            )
+        applyPendingCloudMutationChanges("acknowledge pending iCloud mutation") { context in
+            _ = try PendingCloudMutationStore.removeIfUnchanged(mutation, from: context)
         }
     }
 
@@ -5877,19 +5910,8 @@ extension iCloudStorageManager {
         kind: PendingCloudMutationKind,
         targetId: UUID
     ) {
-        do {
-            try PendingCloudMutationStore.remove(
-                kind: kind,
-                targetId: targetId,
-                from: pendingMutationContext
-            )
-            try pendingMutationContext.save()
-        } catch {
-            pendingMutationContext.rollback()
-            AppLog.shared.iCloudSync(
-                "Could not clear pending iCloud mutation: \(error)",
-                level: .error
-            )
+        applyPendingCloudMutationChanges("clear pending iCloud mutation") { context in
+            try PendingCloudMutationStore.remove(kind: kind, targetId: targetId, from: context)
         }
     }
 
@@ -5908,16 +5930,28 @@ extension iCloudStorageManager {
         summaryIds: [UUID],
         requestedAt: Date = Date()
     ) {
-        clearPendingCloudMutation(kind: .importedAudioRemoval, targetId: recordingId)
-        enqueuePendingCloudMutation(
-            PendingCloudMutation(
-                kind: .recordingDeletion,
+        // Withdrawal and enqueue in one transaction, the way
+        // `DeferredDeletionEffects.stageCloudMutations` does it. As two saves, a
+        // failure of the second left the imported-audio removal durably gone with
+        // no recording deletion queued — the user's delete would never reach the
+        // other devices, and the next reconcile would restore the recording.
+        applyPendingCloudMutationChanges("queue the iCloud deletion for \(recordingId.uuidString)") { context in
+            try PendingCloudMutationStore.remove(
+                kind: .importedAudioRemoval,
                 targetId: recordingId,
-                transcriptIds: transcriptIds,
-                summaryIds: summaryIds,
-                requestedAt: requestedAt
+                from: context
             )
-        )
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .recordingDeletion,
+                    targetId: recordingId,
+                    transcriptIds: transcriptIds,
+                    summaryIds: summaryIds,
+                    requestedAt: requestedAt
+                ),
+                in: context
+            )
+        }
         let deletedSummaryIds = Set(summaryIds)
         pendingSyncQueue.removeAll { summary in
             summary.recordingId == recordingId || deletedSummaryIds.contains(summary.id)
@@ -6245,19 +6279,30 @@ extension iCloudStorageManager {
     }
 
     func clearPendingCloudMutationsForTesting() {
-        do {
-            try PendingCloudMutationStore.removeAll(in: pendingMutationContext)
-            UserDefaults.standard.removeObject(forKey: "iCloudPendingDeletionMarkersV1")
-            UserDefaults.standard.removeObject(forKey: "iCloudPendingLocalOnlyRemovalsV1")
-            UserDefaults.standard.removeObject(forKey: "iCloudPendingSummaryRemovalsV1")
-            UserDefaults.standard.removeObject(forKey: "iCloudPendingTranscriptRemovalsV1")
-            UserDefaults.standard.removeObject(forKey: "iCloudPendingImportedAudioRemovalsV1")
-        } catch {
-            pendingMutationContext.rollback()
-            AppLog.shared.iCloudSync(
-                "Could not clear pending cloud mutations for testing: \(error)",
-                level: .error
-            )
+        applyPendingCloudMutationChanges("clear pending cloud mutations for testing") { context in
+            try PendingCloudMutationStore.removeAll(in: context)
+        }
+        // A manager that has never been bound still points at the process-wide
+        // default store. Clearing only the bound store therefore did nothing for
+        // rows queued through a differently-bound manager, and the next
+        // `bindPendingMutationContext` copied them forward into the following
+        // test. Cheap to clear both; this is a DEBUG-only hook.
+        let defaultContext = PersistenceController.shared.container.viewContext
+        if defaultContext.persistentStoreCoordinator !== pendingMutationContext.persistentStoreCoordinator,
+           let defaultOutbox = PendingCloudMutationStore.makeIsolatedContext(basedOn: defaultContext) {
+            do {
+                try PendingCloudMutationStore.removeAll(in: defaultOutbox)
+                if defaultOutbox.hasChanges { try defaultOutbox.save() }
+            } catch {
+                defaultOutbox.rollback()
+                AppLog.shared.iCloudSync(
+                    "Could not clear the default store's pending cloud mutations for testing: \(error)",
+                    level: .error
+                )
+            }
+        }
+        for key in PendingCloudMutationStore.legacyQueueKeys {
+            UserDefaults.standard.removeObject(forKey: key)
         }
     }
     #endif

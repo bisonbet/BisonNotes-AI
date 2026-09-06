@@ -62,10 +62,19 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             metricsSink: metrics
         )
         manager.networkStatus = .available
+        // The outbox is a Core Data table now, not a UserDefaults blob, so clearing
+        // it only reaches the store this manager is bound to. Bind it to the test
+        // store first: deletions made through `appCoordinator` queue their intent
+        // there via the shared manager, and clearing the default on-disk store
+        // instead left those rows behind for `bindPendingMutationContext` to copy
+        // into the next test's store, where the flush leg then wrote them out.
+        manager.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
         manager.clearPendingCloudMutationsForTesting()
     }
 
     override func tearDown() async throws {
+        // Bound to the test store in `setUp`, so this really does empty it rather
+        // than the process-wide default store.
         manager?.clearPendingCloudMutationsForTesting()
         // A retry armed by a deferred run holds the coordinator until it fires.
         manager?.cancelDeferredSyncRetry()

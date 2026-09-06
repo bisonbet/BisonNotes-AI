@@ -263,11 +263,24 @@ class AppDataCoordinator: ObservableObject {
                 // Remove every identity collected above, including stale ids from
                 // the recording and summary relationships. Otherwise backup can
                 // select an older remaining row and recreate the deleted transcript.
-                _ = try coreDataManager.stageTranscriptDeletion(
+                let removedLocalRow = try coreDataManager.stageTranscriptDeletion(
                     id: transcriptId,
                     effects: &effects,
                     requestedAt: deletionDate
                 )
+                if !removedLocalRow {
+                    // An id with no local row is the case this method exists for:
+                    // an imported placeholder whose transcript is already gone
+                    // here but still live in iCloud. Staging the deletion alone
+                    // would tombstone nothing, and the next reconcile would pull
+                    // the transcript back down — the resurrection this method is
+                    // meant to prevent.
+                    effects.stageTranscript(
+                        id: transcriptId,
+                        recordingId: recordingId,
+                        requestedAt: deletionDate
+                    )
+                }
             }
 
             guard let recording = coreDataManager.getRecording(id: recordingId) else {

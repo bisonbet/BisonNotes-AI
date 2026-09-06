@@ -140,6 +140,13 @@ final class CloudSyncOperationCoordinator {
     private var cacheMaintenanceYieldRequested = false
     private let cacheMaintenancePollNanoseconds: UInt64 = 25_000_000
 
+    /// Identifies each run so a joiner can wait for *its* run rather than for the
+    /// queue to fall idle. Runs are strictly sequential, so "run N has finished"
+    /// is `finishedRunID >= N`.
+    private var nextRunID = 0
+    private var currentRunID = -1
+    private var finishedRunID = -1
+
     var isRunning: Bool { currentTask != nil }
     var hasPendingFollowUp: Bool { !pending.isEmpty }
     /// Distinct jobs waiting. Equivalent requests collapse, independent ones do not.
@@ -208,7 +215,7 @@ final class CloudSyncOperationCoordinator {
 
         if allowJoiningRunningOperation, coalescesWithEquivalentRequests, running.subsumes(intent) {
             // If the run we are riding on fails, this request failed with it.
-            try await waitForCurrentRunToFinish(currentTask)
+            try await waitForRunToFinish(currentRunID, task: currentTask)
             return .joinedRunningOperation(running)
         }
 
@@ -256,8 +263,17 @@ final class CloudSyncOperationCoordinator {
         return ranOwnWork ? .completed : .coalescedIntoFollowUp(coalescedInto)
     }
 
-    private func waitForCurrentRunToFinish(_ task: Task<Void, any Error>) async throws {
-        while self.currentTask != nil {
+    /// Waits for one specific run, then reports its result.
+    ///
+    /// Deliberately keyed on `runID` rather than on `currentTask != nil`: follow-up
+    /// work can claim the slot in the same main-actor turn the joined run releases
+    /// it, so a poller watching the shared handle never observes the idle window
+    /// and ends up waiting for the whole queue to drain instead of for the run it
+    /// actually joined. Polling — rather than awaiting `task.value` directly — is
+    /// what lets a cancelled joiner leave while the run continues for its other
+    /// callers.
+    private func waitForRunToFinish(_ runID: Int, task: Task<Void, any Error>) async throws {
+        while finishedRunID < runID {
             try await Task.sleep(nanoseconds: cacheMaintenancePollNanoseconds)
         }
         try await task.value
@@ -321,19 +337,28 @@ final class CloudSyncOperationCoordinator {
         let task = Task { @MainActor in
             try await work()
         }
+        let runID = nextRunID
+        nextRunID += 1
+        currentRunID = runID
         currentTask = task
         runningIntent = intent
 
         do {
             try await task.value
         } catch {
-            finishRun(intent: intent, satisfying: waiters, error: error)
+            finishRun(runID, intent: intent, satisfying: waiters, error: error)
             throw error
         }
-        finishRun(intent: intent, satisfying: waiters, error: nil)
+        finishRun(runID, intent: intent, satisfying: waiters, error: nil)
     }
 
-    private func finishRun(intent: CloudSyncIntent, satisfying waiters: Set<Int>, error: (any Error)?) {
+    private func finishRun(
+        _ runID: Int,
+        intent: CloudSyncIntent,
+        satisfying waiters: Set<Int>,
+        error: (any Error)?
+    ) {
+        finishedRunID = max(finishedRunID, runID)
         currentTask = nil
         runningIntent = nil
         completedRunCount += 1

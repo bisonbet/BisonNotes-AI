@@ -75,6 +75,20 @@ enum PendingCloudMutationStore {
     private static let legacyTranscriptRemovalsKey = "iCloudPendingTranscriptRemovalsV1"
     private static let legacyImportedAudioRemovalsKey = "iCloudPendingImportedAudioRemovalsV1"
 
+    static let legacyQueueKeys = [
+        legacyDeletionMarkersKey,
+        legacyLocalOnlyRemovalsKey,
+        legacySummaryRemovalsKey,
+        legacyTranscriptRemovalsKey,
+        legacyImportedAudioRemovalsKey
+    ]
+
+    /// Cheap enough to sit in front of every outbox read: once the upgrade has
+    /// happened, none of these keys exist and no context is built at all.
+    static func hasLegacyQueues(in defaults: UserDefaults = .standard) -> Bool {
+        legacyQueueKeys.contains { defaults.object(forKey: $0) != nil }
+    }
+
     private struct Payload: Codable, Equatable {
         var transcriptIds: [UUID]
         var summaryIds: [UUID]
@@ -160,13 +174,12 @@ enum PendingCloudMutationStore {
         return removed
     }
 
+    /// Stages the removal without saving, like `remove` and `enqueue`, so the
+    /// caller decides which transaction it belongs to.
     static func removeAll(in context: NSManagedObjectContext) throws {
         let request = NSFetchRequest<NSManagedObject>(entityName: entityName)
         for object in try context.fetch(request) {
             context.delete(object)
-        }
-        if context.hasChanges {
-            try context.save()
         }
     }
 
@@ -203,18 +216,42 @@ enum PendingCloudMutationStore {
         return (try? context.count(for: request)) ?? 0
     }
 
+    /// A context that touches nothing but this entity, on the same store as
+    /// `context`.
+    ///
+    /// Every write here is the outbox's alone, so saving one can neither commit
+    /// an unrelated caller's staged edits nor — on failure — roll them away.
+    /// `viewContext.automaticallyMergesChangesFromParent` carries the result back
+    /// to the UI context, and reads go to the store, so rows staged transactionally
+    /// with a deletion are still seen once that deletion commits.
+    static func makeIsolatedContext(basedOn context: NSManagedObjectContext) -> NSManagedObjectContext? {
+        guard let coordinator = context.persistentStoreCoordinator else { return nil }
+        let isolated = NSManagedObjectContext(concurrencyType: .mainQueueConcurrencyType)
+        isolated.persistentStoreCoordinator = coordinator
+        // Never let a stale registered object answer for a row another context
+        // has since changed in the store.
+        isolated.stalenessInterval = 0
+        isolated.mergePolicy = NSMergePolicy(merge: .mergeByPropertyStoreTrumpMergePolicyType)
+        return isolated
+    }
+
     /// Migrates each legacy queue independently. A malformed queue is left in
     /// UserDefaults, while valid queues can still be moved in the same save.
-    /// The caller should invoke this before starting normal edits on a context.
+    ///
+    /// The work runs on an isolated context rather than the caller's. Bailing out
+    /// when the caller's context was dirty meant a migration could be skipped
+    /// silently — `fetchAll` then reported an empty outbox, and a flush walked zero
+    /// of the user's pre-upgrade tombstones while reporting success.
     @discardableResult
     static func migrateLegacyQueuesIfNeeded(
-        in context: NSManagedObjectContext,
+        in callerContext: NSManagedObjectContext,
         defaults: UserDefaults = .standard
     ) -> Bool {
-        guard !context.hasChanges else {
+        guard hasLegacyQueues(in: defaults) else { return false }
+        guard let context = makeIsolatedContext(basedOn: callerContext) else {
             AppLog.shared.coreData(
-                "Deferred pending iCloud mutation migration until the Core Data context is clean",
-                level: .debug
+                "Could not migrate pending iCloud mutations: the context has no persistent store coordinator",
+                level: .error
             )
             return false
         }

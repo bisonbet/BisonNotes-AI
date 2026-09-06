@@ -90,6 +90,18 @@ struct DeferredDeletionEffects {
         transcripts.append((transcriptId, transcript.recordingId ?? transcript.recording?.id, requestedAt))
     }
 
+    /// Stages a transcript tombstone by identity, for an id whose local row is
+    /// already gone. A missing row is not evidence that the cloud copy should
+    /// survive — for an imported placeholder it is the normal case, and without
+    /// this the next reconcile restores the transcript the user just deleted.
+    mutating func stageTranscript(
+        id transcriptId: UUID,
+        recordingId: UUID?,
+        requestedAt: Date = Date()
+    ) {
+        transcripts.append((transcriptId, recordingId, requestedAt))
+    }
+
     mutating func stage(recording: RecordingEntry, requestedAt: Date = Date()) {
         guard let recordingId = recording.id else { return }
         recordings.append((

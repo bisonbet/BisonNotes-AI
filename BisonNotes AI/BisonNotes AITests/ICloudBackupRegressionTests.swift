@@ -1661,13 +1661,35 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+    /// The compiled `.momd` that ships in the bundle, which holds every model
+    /// version as its own `.mom`.
+    ///
+    /// Deliberately not the source `.xcdatamodel`: `NSManagedObjectModel` loads
+    /// compiled `.mom`/`.momd` only, so reading the source tree could never have
+    /// produced a model no matter what path it was given.
+    private static func compiledModelDirectoryURL() -> URL? {
+        var searched: [Bundle] = [Bundle(for: ICloudBackupRegressionTests.self), Bundle.main]
+        searched.append(contentsOf: Bundle.allBundles)
+        for bundle in searched {
+            if let url = bundle.url(forResource: "BisonNotes_AI", withExtension: "momd") {
+                return url
+            }
+        }
+        return nil
+    }
+
     private func makeShippingModelContainer(at storeURL: URL) throws -> NSPersistentContainer {
-        let sourceRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let modelURL = sourceRoot
-            .appendingPathComponent("BisonNotes_AI.xcdatamodeld")
-            .appendingPathComponent("BisonNotes_AI.xcdatamodel")
+        guard let modelDirectoryURL = Self.compiledModelDirectoryURL() else {
+            throw NSError(
+                domain: "ICloudBackupRegressionTests",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Could not find BisonNotes_AI.momd in any loaded bundle"]
+            )
+        }
+        // `BisonNotes_AI.mom` is the v1 entry — the model as shipped, before
+        // `PendingCloudMutation` was added. Opening the `.momd` directory instead
+        // would load the current version and test nothing.
+        let modelURL = modelDirectoryURL.appendingPathComponent("BisonNotes_AI.mom")
         guard let model = NSManagedObjectModel(contentsOf: modelURL) else {
             throw NSError(
                 domain: "ICloudBackupRegressionTests",
@@ -1675,6 +1697,10 @@ final class ICloudBackupRegressionTests: XCTestCase {
                 userInfo: [NSLocalizedDescriptionKey: "Could not load the shipping Core Data model at \(modelURL.path)"]
             )
         }
+        XCTAssertNil(
+            model.entitiesByName[PendingCloudMutationStore.entityName],
+            "The shipping model must not already contain the outbox, or this migration proves nothing"
+        )
 
         let container = NSPersistentContainer(name: "BisonNotes_AI_Shipping", managedObjectModel: model)
         let description = container.persistentStoreDescriptions[0]

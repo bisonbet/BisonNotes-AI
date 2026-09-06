@@ -126,9 +126,19 @@ final class MLXSwiftDownloadManager: ObservableObject {
     private var deferredBlobCleanups: Set<String> = []
     private var isCacheMaintenanceInProgress = false
     private var cacheMaintenanceYieldRequested = false
+    /// Only one model downloads at a time, so a second request while one is queued
+    /// deliberately replaces it — the user changed their mind about which model to
+    /// fetch, and the earlier request never started writing anything.
     private var queuedDownloadModelID: String?
-    private var queuedModelDeletionID: String?
+    /// Deletions are not interchangeable: each one frees a different model's files.
+    /// A single slot silently dropped the first of two deletes requested during the
+    /// same sweep, leaving gigabytes the user asked to reclaim on disk.
+    private var queuedModelDeletionIDs: [String] = []
     @Published private(set) var isDownloadQueued = false
+    /// What the manager is waiting on, for the settings UI to show. A queued
+    /// download reports no progress and is not `isDownloading`, so without this the
+    /// user's tap on Download looked like a dead button for as long as the sweep ran.
+    @Published private(set) var deferredMaintenanceNotice: String?
     private let downloadOperation: (@MainActor (String) async throws -> Void)?
     private let blobCleanup: (@MainActor (String) -> Void)?
 
@@ -177,9 +187,11 @@ final class MLXSwiftDownloadManager: ObservableObject {
     func endCacheMaintenance() {
         isCacheMaintenanceInProgress = false
         cacheMaintenanceYieldRequested = false
+        deferredMaintenanceNotice = nil
 
-        if let deletionID = queuedModelDeletionID {
-            queuedModelDeletionID = nil
+        let deletionIDs = queuedModelDeletionIDs
+        queuedModelDeletionIDs = []
+        for deletionID in deletionIDs {
             deleteModelNow(for: deletionID)
         }
 
@@ -207,8 +219,12 @@ final class MLXSwiftDownloadManager: ObservableObject {
             SummaryManager.shared.getiCloudManager().operationCoordinator.requestCacheMaintenanceYield()
             downloadError = nil
             downloadProgress = 0
+            // Queuing is only acceptable while the user can see it happening.
+            // `MLXSwiftSettingsView` renders this alongside a cancel button.
+            deferredMaintenanceNotice = "Waiting for cache maintenance to finish before downloading."
             return
         }
+        deferredMaintenanceNotice = nil
 
         downloadGeneration += 1
         let generation = downloadGeneration
@@ -326,6 +342,11 @@ final class MLXSwiftDownloadManager: ObservableObject {
             // already cancelled.
             queuedDownloadModelID = nil
             isDownloadQueued = false
+            // Any queued deletion still stands, so only drop the notice when this
+            // was the last thing waiting on the sweep.
+            if queuedModelDeletionIDs.isEmpty {
+                deferredMaintenanceNotice = nil
+            }
         }
         if downloadTask != nil {
             // Cleared here rather than only in the task's `defer`: a Hub download
@@ -352,10 +373,14 @@ final class MLXSwiftDownloadManager: ObservableObject {
         #if canImport(MLXLLM) && canImport(MLXLMCommon)
         let id = modelId
         if isCacheMaintenanceInProgress {
-            queuedModelDeletionID = id
+            if !queuedModelDeletionIDs.contains(id) {
+                queuedModelDeletionIDs.append(id)
+            }
             cacheMaintenanceYieldRequested = true
             SummaryManager.shared.getiCloudManager().operationCoordinator.requestCacheMaintenanceYield()
-            downloadError = "Model deletion will run after cache maintenance finishes."
+            // Not `downloadError`: this is not a failure, and a download queued
+            // afterwards used to clear it, hiding the pending deletion entirely.
+            deferredMaintenanceNotice = "Model deletion will run after cache maintenance finishes."
             return
         }
         deleteModelNow(for: id)
