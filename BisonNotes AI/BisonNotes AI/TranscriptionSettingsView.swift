@@ -77,10 +77,10 @@ struct TranscriptionSettingsView: View {
                 modernHeader
                 modernLiveTranscriptionSection
                 modernFileTranscriptionSection
-                modernTranscriptCleanupSection
                 modernSelectedEngineConfigurationSection
                 modernDisplayOptionsSection
                 modernTipsSection
+                modernTranscriptCleanupSection
                 modernResetSection
             }
             .padding(.horizontal, 20)
@@ -376,6 +376,10 @@ private extension TranscriptionSettingsView {
 
                 macSelectedEngineDetail
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                transcriptCleanupSettingsSection
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
             }
             .frame(minWidth: 500)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -479,7 +483,6 @@ private extension TranscriptionSettingsView {
             }
 
             Toggle("Show Transcription Progress", isOn: $showTranscriptionProgress)
-            transcriptCleanupSettingsSection
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 16)
