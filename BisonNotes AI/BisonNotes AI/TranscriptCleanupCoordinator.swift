@@ -62,6 +62,10 @@ struct TranscriptCleanupCoordinator: Sendable {
 
     static let maxRenderedInputTokens = 1_000
     static let maxNewOutputTokens = 1_024
+    /// S1-mini can drop an isolated ASR fragment even when it is not filler.
+    /// Retaining a short source fragment is safer than rejecting the entire
+    /// cleanup pass; longer substantive empty output remains invalid.
+    private static let maxConservativeFallbackWords = 3
     /// Ceiling for one whole cleanup pass, however many segments it covers.
     static let maximumRunDuration: TimeInterval = 10 * 60
     private static let englishConfidenceThreshold = 0.9
@@ -340,8 +344,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         let generation = try await normalizer.normalize(piece)
         try Task.checkCancellation()
         if generation.finishReason != .length {
-            try validate(generation, originalText: piece, overhead: overhead)
-            return generation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return try validatedText(generation, originalText: piece, overhead: overhead)
         }
 
         let retryPieces = try await whitespacePiecesForRetry(piece)
@@ -354,8 +357,7 @@ struct TranscriptCleanupCoordinator: Sendable {
             try Task.checkCancellation()
             let retry = try await normalizer.normalize(retryPiece)
             try Task.checkCancellation()
-            try validate(retry, originalText: retryPiece, overhead: overhead)
-            let text = retry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let text = try validatedText(retry, originalText: retryPiece, overhead: overhead)
             if !text.isEmpty { parts.append(text) }
         }
         return parts.joined(separator: " ")
@@ -376,11 +378,11 @@ struct TranscriptCleanupCoordinator: Sendable {
         return pieces
     }
 
-    private func validate(
+    private func validatedText(
         _ generation: TranscriptCleanupGeneration,
         originalText: String,
         overhead: Int
-    ) throws {
+    ) throws -> String {
         guard generation.finishReason == .stop else {
             if generation.finishReason == .cancelled {
                 throw TranscriptCleanupNormalizerError.cancelled
@@ -394,12 +396,6 @@ struct TranscriptCleanupCoordinator: Sendable {
             throw TranscriptCleanupNormalizerError.invalidOutput
         }
 
-        if normalizedText.isEmpty {
-            guard isFillerOnly(originalText) else {
-                throw TranscriptCleanupNormalizerError.invalidOutput
-            }
-        }
-
         // `inputTokenCount` is the provider's prompt token count, which
         // includes the system prompt, control line and template markup. Left
         // in, that fixed cost inflates the expansion ceiling by hundreds of
@@ -411,6 +407,20 @@ struct TranscriptCleanupCoordinator: Sendable {
         guard generation.outputTokenCount <= inputTokens * 2 + 32 else {
             throw TranscriptCleanupNormalizerError.invalidOutput
         }
+
+        guard normalizedText.isEmpty else { return normalizedText }
+        guard isFillerOnly(originalText) else {
+            let sourceWordCount = originalText.split(whereSeparator: \.isWhitespace).count
+            guard sourceWordCount <= Self.maxConservativeFallbackWords else {
+                throw TranscriptCleanupNormalizerError.invalidOutput
+            }
+            // Short fragments are often split from a larger spoken sentence by
+            // ASR. If the normalizer drops one, keep the source rather than
+            // dropping words or invalidating every other cleaned segment.
+            return originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return ""
     }
 
     private func containsGeneratedControlToken(_ text: String) -> Bool {

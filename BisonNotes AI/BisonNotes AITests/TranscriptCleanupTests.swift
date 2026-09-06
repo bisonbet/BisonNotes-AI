@@ -219,6 +219,22 @@ final class TranscriptCleanupTests: XCTestCase {
         XCTAssertNil(substantiveResult.segments.first?.cleanup)
     }
 
+    func testShortSubstantiveEmptyOutputRetainsTheOriginalFragment() async {
+        let segment = makeSegment(text: "in.")
+        let normalizer = FakeTranscriptNormalizer(
+            ready: true,
+            generations: [.success(generation(text: "", inputTokens: 80, outputTokens: 0))]
+        )
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [segment],
+            configuration: enabledEnglishConfiguration()
+        )
+
+        XCTAssertNil(result.warning)
+        XCTAssertEqual(result.segments.first?.cleanup?.normalizedText, "in.")
+    }
+
     func testGeneratedSpeakerLabelsAreRejectedAsNonPlainOutput() async {
         let segment = makeSegment(text: "the deadline is Friday")
         let normalizer = FakeTranscriptNormalizer(
