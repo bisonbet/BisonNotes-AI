@@ -152,10 +152,20 @@ class LiveTranscriptionService: ObservableObject {
         guard isActive else { return (nil, "") }
 
         isActive = false
+        // Release the microphone before this method can suspend.
+        // `finalizeLiveTranscriptionRecording` has already set the view model idle,
+        // so `beginRecordingStartup` admits a new recording the moment the main
+        // actor is free; yielding while this engine still owned the input node
+        // would leave two engines contending for it and fail the new startup.
+        // Neither call waits for a callback already in flight — that is what the
+        // gate below is for — and the tap's immutable captures keep its file and
+        // request alive until any such callback has returned.
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+
         // Finish any in-flight write/append and reject later callbacks before
         // ending the Speech request or beginning export.
-        // The tap's immutable captures keep its file and request alive until
-        // any in-flight callback has returned.
         //
         // Awaited off the main actor rather than called directly: `deactivate()`
         // blocks on the lock the tap holds across `AVAudioFile.write` and
@@ -169,9 +179,6 @@ class LiveTranscriptionService: ObservableObject {
             await Task.detached { gate.deactivate() }.value
         }
         tapActivation = nil
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
         audioFile = nil  // Flush and close the file
 
         recognitionRequest?.endAudio()

@@ -23,7 +23,11 @@ callbacks need to be constructed outside that isolation.
    locked Boolean check allowed stop to overtake a buffer after its check.
    `stop()` awaits that wait off the main actor: deactivation blocks on the lock
    the tap holds across `AVAudioFile.write` and the Speech `append`, and holding
-   the main thread on the tap thread's disk I/O trades a crash for a hang.
+   the main thread on the tap thread's disk I/O trades a crash for a hang. The
+   tap is removed and the engine stopped before that suspension, because the view
+   model is already idle by then and admits a new recording as soon as the main
+   actor is free — the wait must not be taken while this engine still owns the
+   input node.
 3. Add regression coverage that constructs callbacks from MainActor and invokes
    them on a background queue. Verify audio writes, suppression after stop,
    successful/error Speech results, and deactivation waiting for an accepted
