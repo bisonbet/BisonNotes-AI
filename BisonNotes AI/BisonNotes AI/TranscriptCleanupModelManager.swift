@@ -119,7 +119,18 @@ final class TranscriptCleanupModelManager: ObservableObject {
         }
     }
 
+    /// Re-reads the on-disk model state. Safe to call from any `onAppear`: a
+    /// refresh must never overwrite an in-flight or queued download, because
+    /// `isDownloading` is what the cache-maintenance sweep reads to decide the
+    /// Hub blobs a resuming download still needs are safe to prune.
     func refresh() {
+        guard downloadTask == nil, !queuedDownload, !queuedDeletion else { return }
+        applyResolvedState()
+    }
+
+    /// Unconditional form, for the lifecycle points that already know no
+    /// download or deletion is outstanding.
+    private func applyResolvedState() {
         guard !isDeletionInProgress else { return }
         guard TranscriptCleanupSettings.availability.isAvailable else {
             state = .unavailable(
@@ -159,14 +170,16 @@ final class TranscriptCleanupModelManager: ObservableObject {
                 try await self.downloadModel()
                 guard !Task.isCancelled else {
                     self.progress = 0
-                    self.refresh()
+                    // `downloadTask` is still set until this task's `defer`, so
+                    // the guarded `refresh()` would be a no-op here.
+                    self.applyResolvedState()
                     return
                 }
                 self.progress = 1
                 self.state = .ready
             } catch is CancellationError {
                 self.progress = 0
-                self.refresh()
+                self.applyResolvedState()
             } catch {
                 self.progress = 0
                 self.state = .failed("S1-mini download failed: \(error.localizedDescription)")

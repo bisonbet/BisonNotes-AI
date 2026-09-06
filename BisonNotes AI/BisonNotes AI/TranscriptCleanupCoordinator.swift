@@ -62,6 +62,8 @@ struct TranscriptCleanupCoordinator: Sendable {
 
     static let maxRenderedInputTokens = 1_000
     static let maxNewOutputTokens = 1_024
+    /// Ceiling for one whole cleanup pass, however many segments it covers.
+    static let maximumRunDuration: TimeInterval = 10 * 60
     private static let englishConfidenceThreshold = 0.9
 
     let normalizer: any TranscriptCleanupNormalizing
@@ -121,41 +123,37 @@ struct TranscriptCleanupCoordinator: Sendable {
             return TranscriptCleanupResult(segments: segments, warning: .missingModel, cleanedSegmentCount: 0)
         }
 
-        guard await MLXModelResourceCoordinator.shared.acquire() else {
-            return TranscriptCleanupResult(segments: segments, warning: .cancelled, cleanedSegmentCount: 0)
-        }
         do {
-            try Task.checkCancellation()
-            let result = try await cleanEligibleSegments(segments)
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return result
-        } catch is CancellationError {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .cancelled, cleanedSegmentCount: 0)
-        } catch TranscriptCleanupNormalizerError.cancelled {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .cancelled, cleanedSegmentCount: 0)
-        } catch TranscriptCleanupNormalizerError.modelUnavailable {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .missingModel, cleanedSegmentCount: 0)
-        } catch TranscriptCleanupNormalizerError.templateUnavailable,
-                TranscriptCleanupNormalizerError.generationFailed,
-                TranscriptCleanupNormalizerError.invalidRequest {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .resourceFailure, cleanedSegmentCount: 0)
-        } catch TranscriptCleanupNormalizerError.invalidOutput {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .invalidOutput, cleanedSegmentCount: 0)
+            return try await MLXModelResourceCoordinator.shared.withExclusive {
+                do {
+                    let result = try await self.cleanEligibleSegments(segments)
+                    await self.normalizer.releaseResources()
+                    return result
+                } catch {
+                    await self.normalizer.releaseResources()
+                    throw error
+                }
+            }
         } catch {
-            await normalizer.releaseResources()
-            await MLXModelResourceCoordinator.shared.release()
-            return TranscriptCleanupResult(segments: segments, warning: .invalidOutput, cleanedSegmentCount: 0)
+            return TranscriptCleanupResult(
+                segments: segments,
+                warning: Self.warning(for: error),
+                cleanedSegmentCount: 0
+            )
+        }
+    }
+
+    /// A failed run always keeps the original segments untouched; only the
+    /// reported warning differs. Keeping the mapping here rather than in a
+    /// catch clause per case is what lets the permit and the normalizer be
+    /// released in exactly one place.
+    private static func warning(for error: Error) -> TranscriptCleanupWarning {
+        if error is CancellationError { return .cancelled }
+        switch error as? TranscriptCleanupNormalizerError {
+        case .cancelled: return .cancelled
+        case .modelUnavailable: return .missingModel
+        case .templateUnavailable, .generationFailed, .invalidRequest: return .resourceFailure
+        case .invalidOutput, .none: return .invalidOutput
         }
     }
 
@@ -166,8 +164,18 @@ struct TranscriptCleanupCoordinator: Sendable {
         cleanedSegments.reserveCapacity(segments.count)
         var cleanedSegmentCount = 0
 
+        // The per-generation watchdog in the service bounds one model call, not
+        // the run. A long recording is hundreds of segments, and the whole run
+        // holds the process-wide MLX permit and, on iOS, a finite background
+        // task — so the run gets its own deadline and degrades to a resource
+        // failure, which keeps the original transcript.
+        let deadline = Date().addingTimeInterval(Self.maximumRunDuration)
+
         for segment in segments {
             try Task.checkCancellation()
+            guard Date() < deadline else {
+                throw TranscriptCleanupNormalizerError.generationFailed
+            }
 
             let rawText = segment.text
             guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -184,9 +192,10 @@ struct TranscriptCleanupCoordinator: Sendable {
 
             for piece in inputPieces {
                 try Task.checkCancellation()
-                let generation = try await normalizeWithOneBoundedRetry(piece)
-                try validate(generation, originalText: piece)
-                normalizedPieces.append(generation.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                guard Date() < deadline else {
+                    throw TranscriptCleanupNormalizerError.generationFailed
+                }
+                normalizedPieces.append(try await normalizedText(for: piece))
             }
 
             let normalizedText = normalizedPieces.joined(separator: " ")
@@ -210,105 +219,141 @@ struct TranscriptCleanupCoordinator: Sendable {
             return [rawText]
         }
 
-        let sentenceUnits = sentenceParts(in: rawText)
-        var pieces: [String] = []
-        var pending = ""
+        // Each sentence and word is rendered exactly once and the fixed
+        // chat-template overhead is measured once and added back. Re-rendering
+        // the whole growing prefix per sentence made this quadratic in the
+        // length of a single unpunctuated turn.
+        let overhead = try await normalizer.renderedRequestTokenCount(for: "")
+        let budget = Self.maxRenderedInputTokens - overhead
+        guard budget > 0 else {
+            throw TranscriptCleanupNormalizerError.invalidRequest
+        }
 
-        for sentence in sentenceUnits {
-            let candidate = pending.isEmpty ? sentence : "\(pending) \(sentence)"
-            if try await normalizer.renderedRequestTokenCount(for: candidate) <= Self.maxRenderedInputTokens {
-                pending = candidate
+        var pieces: [String] = []
+        var pending: [String] = []
+        var pendingCount = 0
+
+        for sentence in sentenceParts(in: rawText) {
+            let sentenceCount = try await unitTokenCount(sentence, overhead: overhead)
+            if sentenceCount > budget {
+                if !pending.isEmpty {
+                    pieces.append(pending.joined(separator: " "))
+                    pending = []
+                    pendingCount = 0
+                }
+                pieces.append(
+                    contentsOf: try await whitespacePieces(for: sentence, budget: budget, overhead: overhead)
+                )
                 continue
             }
 
-            if !pending.isEmpty {
-                pieces.append(pending)
-                pending = ""
+            if pendingCount + sentenceCount > budget, !pending.isEmpty {
+                pieces.append(pending.joined(separator: " "))
+                pending = []
+                pendingCount = 0
             }
-
-            if try await normalizer.renderedRequestTokenCount(for: sentence) <= Self.maxRenderedInputTokens {
-                pending = sentence
-            } else {
-                pieces.append(contentsOf: try await whitespacePieces(for: sentence))
-            }
+            pending.append(sentence)
+            pendingCount += sentenceCount
         }
 
         if !pending.isEmpty {
-            pieces.append(pending)
+            pieces.append(pending.joined(separator: " "))
         }
 
         guard !pieces.isEmpty else {
             throw TranscriptCleanupNormalizerError.invalidRequest
         }
-        return pieces
+        return try await verifiedPieces(pieces, budget: budget, overhead: overhead)
     }
 
-    private func whitespacePieces(for text: String) async throws -> [String] {
+    /// Summed per-unit counts can undercount when the tokenizer merges across a
+    /// join, and `normalize` rejects an over-budget request outright. Each
+    /// assembled piece is therefore measured once against the real renderer,
+    /// which stays linear in the number of pieces.
+    private func verifiedPieces(
+        _ pieces: [String],
+        budget: Int,
+        overhead: Int
+    ) async throws -> [String] {
+        var verified: [String] = []
+        verified.reserveCapacity(pieces.count)
+        for piece in pieces {
+            if try await normalizer.renderedRequestTokenCount(for: piece) <= Self.maxRenderedInputTokens {
+                verified.append(piece)
+            } else {
+                verified.append(
+                    contentsOf: try await whitespacePieces(for: piece, budget: budget, overhead: overhead)
+                )
+            }
+        }
+        return verified
+    }
+
+    private func unitTokenCount(_ text: String, overhead: Int) async throws -> Int {
+        max(try await normalizer.renderedRequestTokenCount(for: text) - overhead, 1)
+    }
+
+    private func whitespacePieces(
+        for text: String,
+        budget: Int,
+        overhead: Int
+    ) async throws -> [String] {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return [] }
 
         var pieces: [String] = []
-        var pending = ""
+        var pending: [String] = []
+        var pendingCount = 0
         for word in words {
-            let candidate = pending.isEmpty ? word : "\(pending) \(word)"
-            if try await normalizer.renderedRequestTokenCount(for: candidate) <= Self.maxRenderedInputTokens {
-                pending = candidate
-                continue
-            }
-
-            guard !pending.isEmpty else {
+            let wordCount = try await unitTokenCount(word, overhead: overhead)
+            guard wordCount <= budget else {
                 throw TranscriptCleanupNormalizerError.invalidRequest
             }
-            pieces.append(pending)
-            pending = word
 
-            guard try await normalizer.renderedRequestTokenCount(for: pending) <= Self.maxRenderedInputTokens else {
-                throw TranscriptCleanupNormalizerError.invalidRequest
+            if pendingCount + wordCount > budget, !pending.isEmpty {
+                pieces.append(pending.joined(separator: " "))
+                pending = []
+                pendingCount = 0
             }
+            pending.append(word)
+            pendingCount += wordCount
         }
 
         if !pending.isEmpty {
-            pieces.append(pending)
+            pieces.append(pending.joined(separator: " "))
         }
         return pieces
     }
 
-    private func normalizeWithOneBoundedRetry(
-        _ piece: String
-    ) async throws -> TranscriptCleanupGeneration {
+    /// Returns the validated, trimmed cleaned text for one input piece.
+    ///
+    /// Every generation is validated against the piece that produced it, so the
+    /// absolute per-generation output cap is never applied to a concatenated
+    /// total — a split retry whose halves each finished normally used to be
+    /// rejected as invalid output once their token counts were summed.
+    private func normalizedText(for piece: String) async throws -> String {
         let generation = try await normalizer.normalize(piece)
         try Task.checkCancellation()
-        guard generation.finishReason == .length else { return generation }
+        if generation.finishReason != .length {
+            try validate(generation, originalText: piece)
+            return generation.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
 
         let retryPieces = try await whitespacePiecesForRetry(piece)
         guard retryPieces.count > 1 else {
             throw TranscriptCleanupNormalizerError.generationFailed
         }
 
-        var output = ""
-        var inputTokens = 0
-        var outputTokens = 0
+        var parts: [String] = []
         for retryPiece in retryPieces {
             try Task.checkCancellation()
             let retry = try await normalizer.normalize(retryPiece)
             try Task.checkCancellation()
-            guard retry.finishReason == .stop else {
-                if retry.finishReason == .cancelled {
-                    throw TranscriptCleanupNormalizerError.cancelled
-                }
-                throw TranscriptCleanupNormalizerError.generationFailed
-            }
-            output += (output.isEmpty ? "" : " ") + retry.text
-            inputTokens += retry.inputTokenCount
-            outputTokens += retry.outputTokenCount
+            try validate(retry, originalText: retryPiece)
+            let text = retry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { parts.append(text) }
         }
-
-        return TranscriptCleanupGeneration(
-            text: output,
-            inputTokenCount: inputTokens,
-            outputTokenCount: outputTokens,
-            finishReason: .stop
-        )
+        return parts.joined(separator: " ")
     }
 
     private func whitespacePiecesForRetry(_ text: String) async throws -> [String] {
@@ -406,17 +451,11 @@ struct TranscriptCleanupCoordinator: Sendable {
         trustedLanguageCode: String?,
         mode: TranscriptCleanupMode
     ) -> LanguageEligibility {
-        let text = segments.map(\.text).joined(separator: " ")
-
-        // A whole-transcript language guess can hide a short foreign-language
-        // turn inside an otherwise English transcript. Reject only segments
-        // with enough signal for NaturalLanguage to make a high-confidence
-        // determination, so names and short interjections do not block a
-        // cleanup operation.
-        guard !hasClearlyNonEnglishSegment(in: segments) else {
-            return LanguageEligibility(isEligible: false, warning: .nonEnglish)
-        }
-
+        // A positive assertion outranks any guess: the engine's own language
+        // metadata, or the user explicitly asking for English cleanup. Both
+        // short-circuit before the probes below, so one Latin clause or a run
+        // of proper nouns can no longer veto a transcript the caller has
+        // already identified as English.
         if let trustedLanguageCode {
             let normalizedCode = trustedLanguageCode
                 .replacingOccurrences(of: "_", with: "-")
@@ -430,6 +469,20 @@ struct TranscriptCleanupCoordinator: Sendable {
             return LanguageEligibility(isEligible: true, warning: nil)
         }
 
+        if case .manual(let confirmedEnglish) = mode, confirmedEnglish {
+            return LanguageEligibility(isEligible: true, warning: nil)
+        }
+
+        // A whole-transcript language guess can hide a short foreign-language
+        // turn inside an otherwise English transcript. Reject only segments
+        // with enough signal for NaturalLanguage to make a high-confidence
+        // determination, so names and short interjections do not block a
+        // cleanup operation.
+        guard !hasClearlyNonEnglishSegment(in: segments) else {
+            return LanguageEligibility(isEligible: false, warning: .nonEnglish)
+        }
+
+        let text = segments.map(\.text).joined(separator: " ")
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(text)
         let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
@@ -449,9 +502,6 @@ struct TranscriptCleanupCoordinator: Sendable {
             return LanguageEligibility(isEligible: false, warning: .nonEnglish)
         }
 
-        if case .manual(let confirmedEnglish) = mode, confirmedEnglish {
-            return LanguageEligibility(isEligible: true, warning: nil)
-        }
         return LanguageEligibility(isEligible: false, warning: .uncertainLanguage)
     }
 

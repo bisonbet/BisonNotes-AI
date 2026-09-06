@@ -23,13 +23,18 @@ private final class TranscriptCleanupInputTransfer: @unchecked Sendable {
     }
 
     func consume() -> LMInput {
-        precondition(value != nil, "Transcript cleanup input was consumed more than once")
-        return value!
+        guard let value else {
+            preconditionFailure("Transcript cleanup input was consumed more than once")
+        }
+        self.value = nil
+        return value
     }
 }
 
 actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
     static let shared = MLXTranscriptCleanupService()
+
+    private static let generationTimeoutNanoseconds: UInt64 = 120_000_000_000
 
     private var modelContainer: ModelContainer?
 
@@ -86,6 +91,18 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
                 additionalContext: ["enable_thinking": false]
             )
         )
+        // This deliberately does not call
+        // `SummaryThinkingModelCatalog.completionTokenBudget(...)`. That rule
+        // sizes a *summary* request whose cap has to cover a model's reasoning
+        // pass on top of its answer, derived from a user-configured Max Tokens.
+        // Cleanup has neither: S1-mini is a fixed, pinned normalizer requested
+        // with `enable_thinking: false`, it emits no reasoning tokens, and its
+        // output is bounded by the input rather than by a setting. Truncation
+        // is still read from the provider's own signal (`.length` below) and
+        // recovered by splitting the input, not by growing the cap — doubling
+        // a budget cannot help a request whose answer is a rewrite of a
+        // 1,000-token input. Register the model in the catalog if it is ever
+        // replaced by one that reasons.
         let parameters = GenerateParameters(
             maxTokens: TranscriptCleanupCoordinator.maxNewOutputTokens,
             temperature: 0,
@@ -173,7 +190,9 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
                 return values
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: 120_000_000_000)
+                // Bounds one model call. The whole cleanup pass is bounded
+                // separately by `TranscriptCleanupCoordinator.maximumRunDuration`.
+                try await Task.sleep(nanoseconds: Self.generationTimeoutNanoseconds)
                 throw TranscriptCleanupNormalizerError.generationFailed
             }
 

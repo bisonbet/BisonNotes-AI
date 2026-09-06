@@ -129,20 +129,33 @@ struct TranscriptSegment: Codable, Identifiable, Sendable {
 
     /// Preserves every field, including segment identity, for callers that
     /// need an explicit immutable copy operation.
+    ///
+    /// Changing the original text drops any derived cleanup, exactly as
+    /// `withOriginalText` does — a cleaned value that describes text which no
+    /// longer exists is never carried forward. An explicit `replaceCleanup`
+    /// still wins, so a caller can rewrite both halves in one step.
     func preservingIdentity(
         speaker: String? = nil,
         text: String? = nil,
         cleanup: TranscriptSegmentCleanup? = nil,
         replaceCleanup: Bool = false
     ) -> TranscriptSegment {
-        TranscriptSegment(
+        let resolvedText = text ?? self.text
+        let resolvedCleanup: TranscriptSegmentCleanup?
+        if replaceCleanup {
+            resolvedCleanup = cleanup
+        } else {
+            resolvedCleanup = resolvedText == self.text ? self.cleanup : nil
+        }
+
+        return TranscriptSegment(
             id: id,
             speaker: speaker ?? self.speaker,
-            text: text ?? self.text,
+            text: resolvedText,
             startTime: startTime,
             endTime: endTime,
             hasLeadingSpace: hasLeadingSpace,
-            cleanup: replaceCleanup ? cleanup : self.cleanup
+            cleanup: resolvedCleanup
         )
     }
 }

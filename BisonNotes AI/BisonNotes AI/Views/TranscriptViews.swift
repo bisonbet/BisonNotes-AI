@@ -2397,8 +2397,10 @@ struct EditableTranscriptView: View {
     }
 
     private func cleanTranscript() {
-        guard !isCleaningTranscript,
-              let recordingId = recording.id else {
+        // A re-entrant call is a no-op, not an error: only a genuinely missing
+        // recording identifier warrants telling the user something is wrong.
+        guard !isCleaningTranscript else { return }
+        guard let recordingId = recording.id else {
             transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
             return
         }

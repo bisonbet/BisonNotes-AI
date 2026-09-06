@@ -834,6 +834,13 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         }
 
         guard let resolvedCleanupConfiguration else { return result }
+
+        // Every engine path clears `isTranscribing` before returning, but
+        // cleanup is a multi-minute on-device pass. Re-taking the flag keeps
+        // the UI in its in-progress state and keeps the re-entrancy guard at
+        // the top of this method covering the whole call.
+        isTranscribing = true
+        defer { isTranscribing = false }
         return await applyFinalTranscriptCleanup(to: result, configuration: resolvedCleanupConfiguration)
     }
 
@@ -849,7 +856,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             segments: result.segments,
             configuration: configuration
         )
-        guard cleanupResult.warning == nil || cleanupResult.warning == .missingModel else {
+        guard cleanupResult.warning == nil else {
             return result.with(
                 speakerLabelWarning: result.speakerLabelWarning,
                 transcriptCleanupWarning: cleanupResult.warning

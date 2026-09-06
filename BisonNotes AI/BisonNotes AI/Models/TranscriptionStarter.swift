@@ -199,27 +199,29 @@ final class TranscriptionStarter: ObservableObject {
                     )
                     try Task.checkCancellation()
 
-                    if cleanupConfiguration.enabled,
-                       (appCoordinator.getRecording(id: recordingId) == nil
-                        || !cleanupSourceSnapshot.matches(appCoordinator.getTranscriptData(for: recordingId))) {
-                        let warning = TranscriptCleanupWarning.staleResult
-                        lastTranscriptCleanupWarning = warning
-                        await backgroundProcessingManager.sendNotification(
-                            title: "Transcription Complete",
-                            body: warning.userVisibleMessage
-                        )
+                    // Only the derived cleanup can go stale here; the ASR result
+                    // is still saved below. Returning early discarded a completed
+                    // transcription and skipped the temporary-audio cleanup at
+                    // the end of this method.
+                    let isCleanupSourceStale = cleanupConfiguration.enabled
+                        && (appCoordinator.getRecording(id: recordingId) == nil
+                            || !cleanupSourceSnapshot.matches(appCoordinator.getTranscriptData(for: recordingId)))
+                    if isCleanupSourceStale {
                         AppLog.shared.transcription(
-                            "Discarded stale direct transcription cleanup result: recording=\(recordingId.uuidString)",
+                            "Discarded stale direct transcription cleanup result, keeping uncleaned transcript: "
+                                + "recording=\(recordingId.uuidString)",
                             level: .info
                         )
-                        return
                     }
 
+                    let cleanupWarning = isCleanupSourceStale
+                        ? TranscriptCleanupWarning.staleResult
+                        : result.transcriptCleanupWarning
                     lastTranscriptionWarning = result.speakerLabelWarning
-                    lastTranscriptCleanupWarning = result.transcriptCleanupWarning
+                    lastTranscriptCleanupWarning = cleanupWarning
                     let warnings = [
                         result.speakerLabelWarning?.userVisibleMessage,
-                        result.transcriptCleanupWarning?.userVisibleMessage
+                        cleanupWarning?.userVisibleMessage
                     ].compactMap { $0 }
                     if !warnings.isEmpty {
                         AppLog.shared.transcription(

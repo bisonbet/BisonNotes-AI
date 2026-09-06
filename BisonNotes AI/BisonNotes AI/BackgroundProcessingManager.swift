@@ -1295,15 +1295,17 @@ class BackgroundProcessingManager: ObservableObject {
                 sourceSnapshot: cleanupSourceSnapshot,
                 configuration: cleanupConfiguration
             )
-            guard cleanupPreparation.shouldSave else {
+            if !cleanupPreparation.shouldSave {
+                // Only the derived cleanup is stale, never the ASR result. The
+                // transcript this job just produced is still saved — uncleaned —
+                // and the staleness is reported as a warning, the same way every
+                // other cleanup failure is. Failing the job here threw away a
+                // completed transcription and skipped the chunk cleanup below.
                 let warningCategory = cleanupPreparation.warning?.logCategory ?? "stale-result"
                 AppLog.shared.backgroundProcessing(
-                    "Discarded stale transcript cleanup result: recording=\(recordingId.uuidString), "
-                        + "category=\(warningCategory)",
+                    "Discarded stale transcript cleanup result, saving uncleaned transcript: "
+                        + "recording=\(recordingId.uuidString), category=\(warningCategory)",
                     level: .info
-                )
-                throw BackgroundProcessingError.processingFailed(
-                    cleanupPreparation.warning?.userVisibleMessage ?? "Transcript changed while cleanup was running."
                 )
             }
 

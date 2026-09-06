@@ -744,19 +744,15 @@ private actor MLXSwiftService {
     }
 
     func processComplete(text: String) async throws -> SummarizationResult {
-        guard await MLXModelResourceCoordinator.shared.acquire() else {
-            throw CancellationError()
-        }
-        do {
-            try Task.checkCancellation()
-            let result = try await processCompleteUnlocked(text: text)
-            unloadModel()
-            await MLXModelResourceCoordinator.shared.release()
-            return result
-        } catch {
-            unloadModel()
-            await MLXModelResourceCoordinator.shared.release()
-            throw error
+        try await MLXModelResourceCoordinator.shared.withExclusive {
+            do {
+                let result = try await self.processCompleteUnlocked(text: text)
+                await self.unloadModel()
+                return result
+            } catch {
+                await self.unloadModel()
+                throw error
+            }
         }
     }
 
