@@ -344,7 +344,10 @@ final class TranscriptCleanupModelManager: ObservableObject {
         let escapedModelId = TranscriptCleanupSettings.modelId.addingPercentEncoding(
             withAllowedCharacters: .urlPathAllowed
         ) ?? TranscriptCleanupSettings.modelId
-        let url = URL(string: "https://huggingface.co/\(escapedModelId)/resolve/\(TranscriptCleanupSettings.modelRevision)/LICENSE")!
+        let url = URL(
+            string: "https://huggingface.co/\(escapedModelId)/resolve/"
+                + "\(TranscriptCleanupSettings.modelRevision)/LICENSE"
+        )!
         let (data, response) = try await URLSession.shared.data(from: url)
         guard let httpResponse = response as? HTTPURLResponse,
               (200..<300).contains(httpResponse.statusCode) else {
