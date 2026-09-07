@@ -145,7 +145,9 @@ final class TranscriptCleanupTests: XCTestCase {
     func testCleanupIsAtomicAndDoesNotOverwritePriorCleanedValuesOnFailure() async {
         let firstCleanup = TranscriptSegmentCleanup(normalizedText: "Old first")
         let first = makeSegment(text: "first", cleanup: firstCleanup)
-        let second = makeSegment(text: "second")
+        // Longer than `maxConservativeFallbackWords`, so an empty completion is
+        // a genuine invalid output rather than a retained short fragment.
+        let second = makeSegment(text: "second segment with several words")
         let normalizer = FakeTranscriptNormalizer(
             ready: true,
             generations: [
@@ -311,6 +313,83 @@ final class TranscriptCleanupTests: XCTestCase {
         XCTAssertEqual(stats.releaseCount, 0)
     }
 
+    /// The editor's action passes `confirmedEnglish: true` unconditionally, so
+    /// it must not be able to push clearly non-English text into an
+    /// English-only normalizer. Manual confirmation only overrides an
+    /// *uncertain* determination, never a confident one.
+    func testManualConfirmationDoesNotOverrideAClearlyNonEnglishSegment() async {
+        let normalizer = FakeTranscriptNormalizer(ready: true)
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [
+                makeSegment(text: "Nous devons expédier cette fonctionnalité avant vendredi prochain."),
+                makeSegment(text: "We should ship it.")
+            ],
+            configuration: .manual(confirmedEnglish: true)
+        )
+
+        let stats = await normalizer.stats()
+        XCTAssertEqual(result.warning, .nonEnglish)
+        XCTAssertNil(result.segments.first?.cleanup)
+        XCTAssertEqual(stats.normalizationRequests, [])
+        XCTAssertEqual(stats.releaseCount, 0)
+    }
+
+    /// Manual confirmation still rescues text the recognizer cannot place, so
+    /// the guard above must not have made the confirmation inert.
+    func testManualConfirmationStillOverridesUncertainLanguage() async {
+        let normalizer = FakeTranscriptNormalizer(ready: true)
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [makeSegment(text: "ok")],
+            configuration: .manual(confirmedEnglish: true)
+        )
+
+        let stats = await normalizer.stats()
+        XCTAssertNil(result.warning)
+        XCTAssertEqual(result.segments.first?.cleanup?.normalizedText, "ok")
+        XCTAssertEqual(stats.normalizationRequests, ["ok"])
+    }
+
+    /// `inputTokenCount` is the provider's prompt token count, which includes
+    /// the fixed system prompt, control line and template markup. Leaving that
+    /// in inflates the expansion ceiling and lets a long rewrite pass.
+    func testExpansionCeilingExcludesTheFixedPromptOverhead() async {
+        // Overhead is 40 tokens, so a 10-token segment allows 10 * 2 + 32 = 52
+        // output tokens. 60 is under the un-corrected ceiling of 50 * 2 + 32.
+        let normalizer = FakeTranscriptNormalizer(
+            ready: true,
+            generations: [
+                .success(generation(text: "A much longer rewrite.", inputTokens: 50, outputTokens: 60))
+            ],
+            fixedOverhead: 40
+        )
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [makeSegment(text: "we need to ship it before friday next week ok")],
+            configuration: enabledEnglishConfiguration()
+        )
+
+        XCTAssertEqual(result.warning, .invalidOutput)
+        XCTAssertNil(result.segments.first?.cleanup)
+    }
+
+    func testExpansionCeilingAcceptsOutputWithinTheCorrectedBudget() async {
+        let normalizer = FakeTranscriptNormalizer(
+            ready: true,
+            generations: [
+                .success(generation(text: "A rewrite.", inputTokens: 50, outputTokens: 50))
+            ],
+            fixedOverhead: 40
+        )
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [makeSegment(text: "we need to ship it before friday next week ok")],
+            configuration: enabledEnglishConfiguration()
+        )
+
+        XCTAssertNil(result.warning)
+        XCTAssertEqual(result.segments.first?.cleanup?.normalizedText, "A rewrite.")
+    }
+
     func testSourceSnapshotDetectsRawEditsButIgnoresDerivedCleanup() {
         let transcript = makeTranscript(
             segments: [makeSegment(text: "original", cleanup: TranscriptSegmentCleanup(normalizedText: "Original."))]
@@ -360,6 +439,9 @@ private extension TranscriptCleanupTests {
     actor FakeTranscriptNormalizer: TranscriptCleanupNormalizing {
         let ready: Bool
         let tokenScale: Int
+        /// Stands in for the chat template's fixed cost, which the real service
+        /// reports inside `promptTokenCount`.
+        let fixedOverhead: Int
         var generations: [Result<TranscriptCleanupGeneration, TranscriptCleanupNormalizerError>]
         private(set) var readinessChecks = 0
         private(set) var tokenRequests: [String] = []
@@ -369,11 +451,13 @@ private extension TranscriptCleanupTests {
         init(
             ready: Bool,
             generations: [Result<TranscriptCleanupGeneration, TranscriptCleanupNormalizerError>] = [],
-            tokenScale: Int = 1
+            tokenScale: Int = 1,
+            fixedOverhead: Int = 0
         ) {
             self.ready = ready
             self.generations = generations
             self.tokenScale = tokenScale
+            self.fixedOverhead = fixedOverhead
         }
 
         var isReady: Bool {
@@ -385,7 +469,8 @@ private extension TranscriptCleanupTests {
 
         func renderedRequestTokenCount(for rawText: String) async throws -> Int {
             tokenRequests.append(rawText)
-            return max(1, rawText.split(whereSeparator: { $0.isWhitespace }).count * tokenScale)
+            let words = rawText.split(whereSeparator: { $0.isWhitespace }).count
+            return max(1, words * tokenScale + fixedOverhead)
         }
 
         func normalize(_ rawText: String) async throws -> TranscriptCleanupGeneration {

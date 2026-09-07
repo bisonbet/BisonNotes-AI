@@ -1097,11 +1097,11 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Resolve the original recording before any transcription work can produce data to save.
         let recordingId = try resolveRecordingID(for: job.recordingURL)
-        let cleanupConfiguration = TranscriptCleanupConfiguration(
-            enabled: job.transcriptCleanupEnabled,
-            mode: .automatic,
-            languageCode: nil
-        )
+        // Filled in from the ASR result below when the engine reports its own
+        // language. Background jobs go through `transcribeChunk` rather than
+        // `transcribeAudioFile`, so this path has to collect the metadata
+        // itself instead of inheriting the configuration the direct paths build.
+        var detectedLanguageCode: String?
         let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
             transcript: coreDataManager.getTranscriptData(for: recordingId)
         )
@@ -1181,6 +1181,7 @@ class BackgroundProcessingManager: ObservableObject {
 
             // Transcribe the chunk
             let transcriptResult = try await transcribeChunk(chunk, engine: engine, recordingId: recordingId)
+            detectedLanguageCode = detectedLanguageCode ?? transcriptResult.languageCode
 
             // Create transcript chunk
             let transcriptChunk = chunkingService.createTranscriptChunk(
@@ -1289,13 +1290,18 @@ class BackgroundProcessingManager: ObservableObject {
         // Cleanup is a final-result operation. It runs once after reassembly and
         // any speaker labeling, never inside transcribeChunk.
         if let finalTranscriptData {
+            let cleanupConfiguration = TranscriptCleanupConfiguration(
+                enabled: job.transcriptCleanupEnabled,
+                mode: .automatic,
+                languageCode: detectedLanguageCode
+            )
             let cleanupPreparation = await prepareTranscriptCleanup(
                 for: finalTranscriptData,
                 recordingId: recordingId,
                 sourceSnapshot: cleanupSourceSnapshot,
                 configuration: cleanupConfiguration
             )
-            if !cleanupPreparation.shouldSave {
+            if !cleanupPreparation.isCleanupUsable {
                 // Only the derived cleanup is stale, never the ASR result. The
                 // transcript this job just produced is still saved — uncleaned —
                 // and the staleness is reported as a warning, the same way every
@@ -1600,10 +1606,13 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
+    /// The transcript is always saved; this only says whether the cleanup pass
+    /// produced a value that may be merged into it. `isCleanupUsable == false`
+    /// means the derived text was discarded, not that persistence is skipped.
     private struct TranscriptCleanupSavePreparation {
         let transcript: TranscriptData
         let warning: TranscriptCleanupWarning?
-        let shouldSave: Bool
+        let isCleanupUsable: Bool
     }
 
     private func prepareTranscriptCleanup(
@@ -1613,14 +1622,14 @@ class BackgroundProcessingManager: ObservableObject {
         configuration: TranscriptCleanupConfiguration
     ) async -> TranscriptCleanupSavePreparation {
         guard configuration.enabled else {
-            return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, shouldSave: true)
+            return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, isCleanupUsable: true)
         }
 
         guard sourceSnapshot.matches(coreDataManager.getTranscriptData(for: recordingId)) else {
             return TranscriptCleanupSavePreparation(
                 transcript: transcript,
                 warning: .staleResult,
-                shouldSave: false
+                isCleanupUsable: false
             )
         }
 
@@ -1633,7 +1642,7 @@ class BackgroundProcessingManager: ObservableObject {
             return TranscriptCleanupSavePreparation(
                 transcript: transcript,
                 warning: .staleResult,
-                shouldSave: false
+                isCleanupUsable: false
             )
         }
 
@@ -1641,7 +1650,7 @@ class BackgroundProcessingManager: ObservableObject {
         return TranscriptCleanupSavePreparation(
             transcript: cleanedTranscript,
             warning: result.warning,
-            shouldSave: true
+            isCleanupUsable: true
         )
     }
 

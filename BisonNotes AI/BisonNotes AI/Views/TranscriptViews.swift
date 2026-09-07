@@ -2576,25 +2576,51 @@ struct EditableTranscriptView: View {
                         transcriptCleanupConfiguration: rerunCleanupConfiguration
                     )
 
-                    if rerunCleanupEnabled,
-                       (appCoordinator.getRecording(id: recordingId) == nil
-                        || rerunSourceSnapshot?.matches(appCoordinator.getTranscriptData(for: recordingId)) != true) {
+                    // The recording itself being gone is the only reason to drop
+                    // a completed rerun: there is nothing left to attach it to.
+                    guard appCoordinator.getRecording(id: recordingId) != nil else {
                         await MainActor.run {
                             transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
                             isRerunningTranscription = false
                         }
                         AppLog.shared.transcription(
-                            "Discarded stale direct rerun cleanup result: recording=\(recordingId.uuidString)",
+                            "Discarded direct rerun because the recording was deleted: "
+                                + "recording=\(recordingId.uuidString)",
                             level: .info
                         )
                         return
                     }
 
+                    // Only the derived cleanup can go stale. Matching
+                    // TranscriptionStarter and BackgroundProcessingManager, the
+                    // ASR rerun is still saved — uncleaned — and the staleness
+                    // is reported as a warning rather than throwing the work away.
+                    let isRerunCleanupStale = rerunCleanupEnabled
+                        && rerunSourceSnapshot?.matches(appCoordinator.getTranscriptData(for: recordingId)) != true
+                    if isRerunCleanupStale {
+                        AppLog.shared.transcription(
+                            "Discarded stale direct rerun cleanup result, keeping uncleaned transcript: "
+                                + "recording=\(recordingId.uuidString)",
+                            level: .info
+                        )
+                    }
+
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
+                        // The warning says the cleaned result was discarded, so
+                        // it must not be persisted with the ASR segments.
+                        // `with` does not carry `speakerLabelWarning` forward on
+                        // its own, so it is passed through explicitly.
+                        let rerunResult = isRerunCleanupStale
+                            ? result.with(
+                                speakerLabelWarning: result.speakerLabelWarning,
+                                transcriptCleanupWarning: .staleResult,
+                                segments: result.segments.map { $0.withCleanup(nil) }
+                            )
+                            : result
                         let replacement = TranscriptRerunReplacement(
-                            result: result,
+                            result: rerunResult,
                             engine: selectedEngine
                         )
                         try Task.checkCancellation()
