@@ -5622,9 +5622,16 @@ extension iCloudStorageManager {
             recordType: Self.backupDeletionRecordType,
             recordID: recordID)
         let parentRecordingId: UUID?
-        if kind == .recording || kind == .importedAudio {
+        switch kind {
+        case .recording:
             parentRecordingId = id
-        } else {
+        case .importedAudio:
+            // Older clients treat any `recordingId` on a deletion marker as a
+            // whole-recording tombstone. The imported-audio ID is already encoded
+            // in its distinct record-name prefix, so leaving this field absent is
+            // required for backward-compatible, non-destructive reads.
+            parentRecordingId = nil
+        case .transcript, .summary:
             parentRecordingId = recordingId
         }
         record[Self.fieldRecordingId] = parentRecordingId?.uuidString
@@ -6232,7 +6239,7 @@ extension iCloudStorageManager {
         try await saveDeletionMarker(
             kind: .importedAudio,
             id: pendingRemoval.recordingId,
-            recordingId: pendingRemoval.recordingId,
+            recordingId: nil,
             deletedAt: pendingRemoval.requestedAt
         )
 

@@ -389,6 +389,32 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(importedAudioTarget?.recordingId, recordingId)
     }
 
+    func testImportedAudioDeletionMarkerOmitsRecordingIdForLegacyClients() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = UUID()
+
+        harness.manager.enqueueImportedAudioRemovalFromiCloud(recordingId: recordingId)
+        _ = try await harness.manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+
+        let marker = try XCTUnwrap(
+            harness.transport.record(
+                named: "backup_deletion_importedaudio_\(recordingId.uuidString)"
+            )
+        )
+        XCTAssertNil(
+            marker["recordingId"],
+            "Legacy clients interpret this field as a whole-recording tombstone"
+        )
+
+        let decoded = harness.manager.decodeDeletionTargetForTesting(
+            recordName: marker.recordID.recordName,
+            recordingId: nil
+        )
+        XCTAssertEqual(decoded?.kind, .importedAudio)
+        XCTAssertEqual(decoded?.id, recordingId)
+        XCTAssertEqual(decoded?.recordingId, recordingId)
+    }
+
     /// Applying another device's imported-audio tombstone unlinks the placeholder
     /// and removes the file, but leaves the recording row and its summary standing.
     func testApplyingImportedAudioRemovalKeepsTheRecordingAndSummary() throws {
