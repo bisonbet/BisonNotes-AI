@@ -75,6 +75,16 @@ struct CloudSyncRunReport: Equatable, Sendable {
     var recordsFetched = 0
     var recordsSaved = 0
     var recordsDeleted = 0
+    /// Of `recordsDeleted`, how many were already gone from the server.
+    ///
+    /// CloudKit reports a delete of a missing record as success-by-another-name, and
+    /// the executor folds it into `deleted` because already-absent is the state the
+    /// caller wanted. That made the log line ambiguous in the one case where it
+    /// mattered: a steady `deleted=62` could mean sixty-two records genuinely
+    /// removed every run — two devices trading uploads and deletions forever — or
+    /// sixty-two no-op deletes replayed from tombstones still inside their retention
+    /// window. Those call for opposite responses, so they are counted apart.
+    var recordsAlreadyAbsent = 0
     var recordsFailed = 0
     var conflictCount = 0
 
@@ -101,6 +111,10 @@ struct CloudSyncRunReport: Equatable, Sendable {
             "retries=\(retryCount)",
             String(format: "retryWait=%.2fs", retryWaitSeconds)
         ]
+        if recordsAlreadyAbsent > 0 {
+            // Only when it happened: a clean run should not carry a zero here.
+            parts.append("alreadyGone=\(recordsAlreadyAbsent)")
+        }
         if deferredItemCount > 0 {
             parts.append("deferredItems=\(deferredItemCount)")
         }
@@ -224,6 +238,7 @@ final class CloudSyncRunRecorder {
         add(outcome.stats)
         report.recordsSaved += outcome.saved.count
         report.recordsDeleted += outcome.deleted.count
+        report.recordsAlreadyAbsent += outcome.alreadyAbsent.count
         report.recordsFailed += outcome.failures.count
         report.conflictCount += outcome.conflicts.count
         if let until = outcome.deferredUntil {

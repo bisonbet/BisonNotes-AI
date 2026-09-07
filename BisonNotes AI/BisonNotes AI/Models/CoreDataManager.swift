@@ -667,6 +667,58 @@ class CoreDataManager: ObservableObject {
         return true
     }
 
+    /// Applies another device's imported-audio tombstone: unlinks the recording from
+    /// its audio and removes the local placeholder, keeping the recording row and its
+    /// summary. Returns false when there was nothing left to unlink.
+    ///
+    /// Deliberately scoped to the audio. The transcript half of an imported deletion
+    /// travels as its own tombstone, and clearing `transcriptId` here would strand a
+    /// real transcript row on any device whose markers arrive in the other order.
+    ///
+    /// Saves local-only: this is someone else's marker being applied, and raising a
+    /// tombstone of our own would re-create one a revive had withdrawn.
+    @discardableResult
+    func applyImportedAudioRemoval(recordingId: UUID, requestedAt: Date) throws -> Bool {
+        guard let recording = getRecording(id: recordingId),
+              let storedURL = recording.recordingURL else {
+            return false
+        }
+
+        recording.recordingURL = nil
+        // Only ever forward. A rename made on this device after the delete is still
+        // the newer edit, and moving the stamp back would hand it to the cloud copy.
+        if let existing = recording.lastModified, existing > requestedAt {
+            recording.lastModified = existing
+        } else {
+            recording.lastModified = requestedAt
+        }
+
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        // Filesystem effects only after the save lands, matching every other
+        // deletion path here: a rolled-back save must not leave the audio gone.
+        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            for url in Self.storedURLCandidates(storedURL, documentsURL: documentsURL) {
+                try? FileManager.default.removeItem(at: url)
+                for ext in AdvancedTroubleshootingService.permittedSidecarExtensions {
+                    let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
+                    try? FileManager.default.removeItem(at: sidecarURL)
+                }
+            }
+        }
+
+        AppLog.shared.coreData(
+            "Applied imported audio removal for recording \(recordingId.uuidString)",
+            level: .debug
+        )
+        return true
+    }
+
     // MARK: - Repair Operations
 
     /// Repairs orphaned summaries by creating missing recording entries
