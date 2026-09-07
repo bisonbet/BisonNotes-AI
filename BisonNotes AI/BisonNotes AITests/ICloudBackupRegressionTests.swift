@@ -370,6 +370,132 @@ final class ICloudBackupRegressionTests: XCTestCase {
             manager.decodeDeletionTargetForTesting(recordName: summaryName, recordingId: parentRecordingId)?.recordingId,
             parentRecordingId
         )
+
+        // An imported-audio marker carries `recordingId`, so a decoder that fell
+        // through to the recording branch would read it as a whole-recording
+        // tombstone and delete the recording and its summary on every other device.
+        // It has to be recognised by its own prefix, before that fallback.
+        let importedAudioName = manager.deletionMarkerRecordNameForTesting(
+            kind: .importedAudio,
+            id: recordingId
+        )
+        XCTAssertNotEqual(importedAudioName, recordingName)
+        let importedAudioTarget = manager.decodeDeletionTargetForTesting(
+            recordName: importedAudioName,
+            recordingId: recordingId
+        )
+        XCTAssertEqual(importedAudioTarget?.kind, .importedAudio)
+        XCTAssertEqual(importedAudioTarget?.id, recordingId)
+        XCTAssertEqual(importedAudioTarget?.recordingId, recordingId)
+    }
+
+    /// Applying another device's imported-audio tombstone unlinks the placeholder
+    /// and removes the file, but leaves the recording row and its summary standing.
+    func testApplyingImportedAudioRemovalKeepsTheRecordingAndSummary() throws {
+        let recordingId = try createRecordingOnly(named: "Imported audio removal")
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let audioURL = tempDirectory.appendingPathComponent("\(recordingId.uuidString).m4a")
+        try Data("placeholder".utf8).write(to: audioURL)
+
+        recording.audioQuality = "imported"
+        recording.recordingURL = audioURL.path
+        recording.lastModified = Date().addingTimeInterval(-3_600)
+
+        let summary = SummaryEntry(context: context)
+        summary.id = UUID()
+        summary.recording = recording
+        summary.recordingId = recordingId
+        summary.summary = "Retained summary"
+        summary.aiMethod = "fixture"
+        summary.generatedAt = Date()
+        recording.summary = summary
+        recording.summaryId = summary.id
+        try context.save()
+
+        let deletedAt = Date()
+        let cleared = try appCoordinator.coreDataManager.applyImportedAudioRemoval(
+            recordingId: recordingId,
+            requestedAt: deletedAt
+        )
+
+        XCTAssertTrue(cleared)
+        let remaining = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        XCTAssertNil(remaining.recordingURL)
+        XCTAssertEqual(remaining.lastModified, deletedAt)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+
+        // Idempotent: nothing left to unlink on a second application.
+        XCTAssertFalse(
+            try appCoordinator.coreDataManager.applyImportedAudioRemoval(
+                recordingId: recordingId,
+                requestedAt: deletedAt
+            )
+        )
+    }
+
+    func testApplyingImportedAudioRemovalKeepsTheURLWhenMainFileRemovalFails() throws {
+        let recordingId = try createRecordingOnly(named: "Imported audio removal retry")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let blockingDirectory = tempDirectory.appendingPathComponent("protected-audio-directory")
+        let blockingFile = blockingDirectory.appendingPathComponent("audio.m4a")
+        try FileManager.default.createDirectory(at: blockingDirectory, withIntermediateDirectories: false)
+        try Data("do not remove".utf8).write(to: blockingFile)
+        // Removing a directory is recursive on the simulator, so a non-empty
+        // directory does not reliably exercise the failure path. Remove write
+        // permission from its parent instead; the main file remains present and
+        // the cleanup can restore permissions in the defer below.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o500)],
+            ofItemAtPath: blockingDirectory.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o700)],
+                ofItemAtPath: blockingDirectory.path
+            )
+            try? FileManager.default.removeItem(at: blockingFile)
+            try? FileManager.default.removeItem(at: blockingDirectory)
+        }
+
+        recording.recordingURL = blockingDirectory.path
+        try appCoordinator.coreDataManager.saveContext()
+
+        XCTAssertThrowsError(
+            try appCoordinator.coreDataManager.applyImportedAudioRemoval(
+                recordingId: recordingId,
+                requestedAt: Date()
+            )
+        )
+        XCTAssertEqual(
+            appCoordinator.getRecording(id: recordingId)?.recordingURL,
+            blockingDirectory.path,
+            "A failed main-file removal must leave the URL for a later marker retry"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: blockingFile.path))
+    }
+
+    /// A local edit made after the delete is still the newer edit. Stamping the
+    /// marker's `deletedAt` over it would hand the row to the cloud copy.
+    func testApplyingImportedAudioRemovalNeverMovesLastModifiedBackward() throws {
+        let recordingId = try createRecordingOnly(named: "Renamed after the delete")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let audioURL = tempDirectory.appendingPathComponent("\(recordingId.uuidString).m4a")
+        try Data("placeholder".utf8).write(to: audioURL)
+
+        let laterEdit = Date()
+        recording.audioQuality = "imported"
+        recording.recordingURL = audioURL.path
+        recording.lastModified = laterEdit
+        try appCoordinator.coreDataManager.managedObjectContext.save()
+
+        try appCoordinator.coreDataManager.applyImportedAudioRemoval(
+            recordingId: recordingId,
+            requestedAt: laterEdit.addingTimeInterval(-3_600)
+        )
+
+        XCTAssertEqual(appCoordinator.getRecording(id: recordingId)?.lastModified, laterEdit)
     }
 
     func testLocalOnlyToggleQueuesAndClearsPendingCloudRemovalWhenSyncIsUnavailable() async throws {
