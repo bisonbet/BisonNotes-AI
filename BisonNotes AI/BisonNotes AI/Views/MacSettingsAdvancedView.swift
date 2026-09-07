@@ -5,8 +5,7 @@ struct MacAdvancedSettingsPane: View {
     @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var appCoordinator: AppDataCoordinator
 
-    @State private var showingTroubleshootingWarning = false
-    @State private var showingDataMigration = false
+    @State private var showingAdvancedTroubleshooting = false
     @State private var showingAcknowledgements = false
     @State private var isPreparingLogs = false
     @State private var logExportError: String?
@@ -14,7 +13,7 @@ struct MacAdvancedSettingsPane: View {
     var body: some View {
         MacSettingsPaneScroll(
             title: "Advanced",
-            subtitle: "Open background jobs, diagnostics, database tools, and app information."
+            subtitle: "Open background jobs, local troubleshooting, and app information."
         ) {
             MacSettingsCard(title: "Background Processing", systemImage: "gearshape.2", tint: .blue) {
                 Text(
@@ -57,17 +56,16 @@ struct MacAdvancedSettingsPane: View {
                 }
             }
 
-            MacSettingsCard(title: "Database Tools", systemImage: "externaldrive.badge.gearshape", tint: .red) {
+            MacSettingsCard(title: "Advanced Troubleshooting", systemImage: "wrench.and.screwdriver", tint: .orange) {
                 Text(
-                    "These tools can delete or repair local data. Use them only when troubleshooting with a "
-                        + "backup available."
+                    "Review read-only local diagnostics, unreferenced audio, and the separately confirmed iCloud erase flow."
                 )
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                Button("Open Database Tools", role: .destructive) {
-                    showingTroubleshootingWarning = true
+                Button("Open Advanced Troubleshooting") {
+                    showingAdvancedTroubleshooting = true
                 }
                 .buttonStyle(.bordered)
             }
@@ -98,21 +96,13 @@ struct MacAdvancedSettingsPane: View {
                 .buttonStyle(.bordered)
             }
         }
-        .alert("Warning", isPresented: $showingTroubleshootingWarning) {
-            Button("Cancel", role: .cancel) { }
-            Button("Continue", role: .destructive) {
-                showingDataMigration = true
-            }
-        } message: {
-            Text("These tools can delete data. Use with caution and keep a backup before proceeding.")
-        }
-        .sheet(isPresented: $showingDataMigration) {
-            DataMigrationView()
+        .sheet(isPresented: $showingAdvancedTroubleshooting) {
+            AdvancedTroubleshootingView()
                 .environmentObject(appCoordinator)
                 .nativeMacPresentationContext(.modalSheet)
                 .nativeMacModalSizing(width: 800, height: 700)
                 .onExitCommand {
-                    showingDataMigration = false
+                    showingAdvancedTroubleshooting = false
                 }
         }
         .sheet(isPresented: $showingAcknowledgements) {

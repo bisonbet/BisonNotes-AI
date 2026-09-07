@@ -218,8 +218,8 @@ final class TemporaryFileCleanupService {
         // `RestoredAudioFileInstaller` copies a CloudKit audio asset into a sibling of
         // its Documents destination and renames it into place. Its `defer` covers every
         // throwing path, but a kill or a crash between the copy and the rename orphans a
-        // full recording's worth of bytes that nothing else in the app reclaims — the
-        // name is not an audio extension, so the orphaned-audio scan never sees it.
+        // full recording's worth of bytes that the reviewed audio cleanup intentionally
+        // does not inspect because it is restore staging rather than user audio.
         // The age gate protects a restore that is still copying.
         if name.hasPrefix(RestoredAudioFileInstaller.stagingPrefix) && ext == "tmp" { return true }
         // Diagnostic exports are written for the share sheet and are multi-megabyte.

@@ -22,7 +22,7 @@ enum CloudSyncIntent: String, CaseIterable, Sendable {
     case seedFromThisDevice
     /// "Restore From iCloud" — the cloud is the source.
     case restoreToThisDevice
-    /// Database Tools repair. Allowed to query and scan zones.
+    /// Explicit full-cloud repair/diagnostics. The local report never requests it.
     case fullRepair
     /// Cloud-only review discovery.
     case reviewScan

@@ -13,7 +13,9 @@ enum RestoredAudioFileInstaller {
         // but a kill or a crash mid-copy leaves the staged bytes behind, and a hidden
         // name would be invisible to every reclaim path in the app:
         // `TemporaryFileCleanupService` enumerates with `.skipsHiddenFiles` and
-        // `EnhancedFileManager.findOrphanedAudioFiles` only looks at audio extensions.
+        // AdvancedTroubleshootingService deliberately scans only supported
+        // audio extensions; restore staging files must remain reclaimable by
+        // TemporaryFileCleanupService instead.
         let staging = destination.deletingLastPathComponent()
             .appendingPathComponent("\(stagingPrefix)\(UUID().uuidString).tmp")
         defer { try? fileManager.removeItem(at: staging) }

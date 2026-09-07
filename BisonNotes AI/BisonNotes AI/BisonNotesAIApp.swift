@@ -941,6 +941,8 @@ struct BisonNotesAIApp: App {
             SettingsView()
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
+                .environmentObject(fileImportManager)
+                .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .frame(minWidth: 680, minHeight: 600)
         }

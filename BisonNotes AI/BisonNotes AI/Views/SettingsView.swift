@@ -19,15 +19,13 @@ struct SettingsView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @StateObject private var regenerationManager: SummaryRegenerationManager
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
-    @StateObject private var importManager = FileImportManager()
     @State private var showingTranscriptionSettings = false
     @State private var showingAISettings = false
     @State private var showingClearSummariesAlert = false
     @State private var showingBackgroundProcessing = false
-    @State private var showingDataMigration = false
+    @State private var showingAdvancedTroubleshooting = false
     @State private var showingPreferences = false
     @State private var showingAcknowledgements = false
-    @State private var showingTroubleshootingWarning = false
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
     @State private var showingICloudComplianceNotice = false
@@ -158,8 +156,8 @@ struct SettingsView: View {
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
         }
-        .sheet(isPresented: $showingDataMigration) {
-            DataMigrationView()
+        .sheet(isPresented: $showingAdvancedTroubleshooting) {
+            AdvancedTroubleshootingView()
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 800, height: 700)
         }
@@ -576,19 +574,11 @@ struct SettingsView: View {
                 action: { showingAcknowledgements = true }
             )
 
-            Button(role: .destructive) {
-                showingTroubleshootingWarning = true
+            Button {
+                showingAdvancedTroubleshooting = true
             } label: {
                 Label("Advanced Troubleshooting", systemImage: "wrench.and.screwdriver")
                     .font(.subheadline.weight(.semibold))
-            }
-            .alert("Warning", isPresented: $showingTroubleshootingWarning) {
-                Button("Cancel", role: .cancel) { }
-                Button("OK") {
-                    showingDataMigration = true
-                }
-            } message: {
-                Text("These tools can delete data. Use with caution.")
             }
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsMaintenanceSection)
@@ -1077,18 +1067,10 @@ struct SettingsView: View {
             }
             .buttonStyle(.plain)
 
-            Button(role: .destructive) {
-                showingTroubleshootingWarning = true
+            Button {
+                showingAdvancedTroubleshooting = true
             } label: {
                 Label("Advanced Troubleshooting", systemImage: "wrench.and.screwdriver")
-            }
-            .alert("Warning", isPresented: $showingTroubleshootingWarning) {
-                Button("Cancel", role: .cancel) { }
-                Button("OK") {
-                    showingDataMigration = true
-                }
-            } message: {
-                Text("These tools can delete data. Use with caution.")
             }
         }
     }

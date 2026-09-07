@@ -252,6 +252,15 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Fetches recording rows for a diagnostic snapshot without converting a
+    /// read failure into an empty result. Callers must copy the values they
+    /// need while this manager's owning context is isolated to the main actor.
+    func fetchRecordingsForDiagnostics() throws -> [RecordingEntry] {
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     // MARK: - URL Management Helpers
 
     /// Migrates all existing absolute URL paths to relative paths for resilience
@@ -561,6 +570,13 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching transcripts: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchTranscriptsForDiagnostics() throws -> [TranscriptEntry] {
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     /// Deletes a transcript and, once the save has landed, tells iCloud.
@@ -1158,6 +1174,13 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchSummariesForDiagnostics() throws -> [SummaryEntry] {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     /// Returns the complete summary value objects represented by the Core Data store.
     /// SummaryEntry is the authoritative source; this method is the only conversion path
     /// callers should use when they need all summaries for display or cloud backup.
@@ -1521,6 +1544,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching processing jobs: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Throwing counterpart used to decide whether a reviewed audio file is
+    /// still owned by an in-flight processing job. A failed fetch must fail
+    /// closed instead of looking like a store with no jobs.
+    func fetchProcessingJobsForDiagnostics() throws -> [ProcessingJobEntry] {
+        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     func getProcessingJob(id: UUID) -> ProcessingJobEntry? {
