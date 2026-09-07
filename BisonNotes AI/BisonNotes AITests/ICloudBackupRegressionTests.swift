@@ -435,6 +435,47 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+    func testApplyingImportedAudioRemovalKeepsTheURLWhenMainFileRemovalFails() throws {
+        let recordingId = try createRecordingOnly(named: "Imported audio removal retry")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let blockingDirectory = tempDirectory.appendingPathComponent("protected-audio-directory")
+        let blockingFile = blockingDirectory.appendingPathComponent("audio.m4a")
+        try FileManager.default.createDirectory(at: blockingDirectory, withIntermediateDirectories: false)
+        try Data("do not remove".utf8).write(to: blockingFile)
+        // Removing a directory is recursive on the simulator, so a non-empty
+        // directory does not reliably exercise the failure path. Remove write
+        // permission from its parent instead; the main file remains present and
+        // the cleanup can restore permissions in the defer below.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: 0o500)],
+            ofItemAtPath: blockingDirectory.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: 0o700)],
+                ofItemAtPath: blockingDirectory.path
+            )
+            try? FileManager.default.removeItem(at: blockingFile)
+            try? FileManager.default.removeItem(at: blockingDirectory)
+        }
+
+        recording.recordingURL = blockingDirectory.path
+        try appCoordinator.coreDataManager.saveContext()
+
+        XCTAssertThrowsError(
+            try appCoordinator.coreDataManager.applyImportedAudioRemoval(
+                recordingId: recordingId,
+                requestedAt: Date()
+            )
+        )
+        XCTAssertEqual(
+            appCoordinator.getRecording(id: recordingId)?.recordingURL,
+            blockingDirectory.path,
+            "A failed main-file removal must leave the URL for a later marker retry"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: blockingFile.path))
+    }
+
     /// A local edit made after the delete is still the newer edit. Stamping the
     /// marker's `deletedAt` over it would hand the row to the cloud copy.
     func testApplyingImportedAudioRemovalNeverMovesLastModifiedBackward() throws {

@@ -675,6 +675,8 @@ class CoreDataManager: ObservableObject {
     /// travels as its own tombstone, and clearing `transcriptId` here would strand a
     /// real transcript row on any device whose markers arrive in the other order.
     ///
+    /// Removes the file before saving the unlink. A failed filesystem operation or
+    /// save leaves the URL in Core Data, so the marker remains eligible for retry.
     /// Saves local-only: this is someone else's marker being applied, and raising a
     /// tombstone of our own would re-create one a revive had withdrawn.
     @discardableResult
@@ -682,6 +684,59 @@ class CoreDataManager: ObservableObject {
         guard let recording = getRecording(id: recordingId),
               let storedURL = recording.recordingURL else {
             return false
+        }
+
+        guard let documentsURL = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw NSError(
+                domain: "CoreDataManager",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The Documents directory is unavailable"]
+            )
+        }
+
+        let fileManager = FileManager.default
+        let candidates = Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
+        for url in candidates where fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                // A concurrent cleanup can win between the existence check and
+                // removeItem. Only a file that is still present is a failed delete.
+                if fileManager.fileExists(atPath: url.path) {
+                    AppLog.shared.coreData(
+                        "Could not remove imported audio for recording \(recordingId.uuidString): \(error)",
+                        level: .error
+                    )
+                    throw error
+                }
+            }
+        }
+        guard !candidates.contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            throw NSError(
+                domain: "CoreDataManager",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Imported audio still exists after removal"]
+            )
+        }
+
+        // Sidecars are useful cleanup, but the main audio file is the retry gate.
+        // A stale sidecar must not keep the recording URL alive forever.
+        for url in candidates {
+            for ext in AdvancedTroubleshootingService.permittedSidecarExtensions {
+                let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
+                guard fileManager.fileExists(atPath: sidecarURL.path) else { continue }
+                do {
+                    try fileManager.removeItem(at: sidecarURL)
+                } catch {
+                    AppLog.shared.coreData(
+                        "Could not remove imported audio sidecar for recording \(recordingId.uuidString): \(error)",
+                        level: .error
+                    )
+                }
+            }
         }
 
         recording.recordingURL = nil
@@ -698,18 +753,6 @@ class CoreDataManager: ObservableObject {
         } catch {
             context.rollback()
             throw error
-        }
-
-        // Filesystem effects only after the save lands, matching every other
-        // deletion path here: a rolled-back save must not leave the audio gone.
-        if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            for url in Self.storedURLCandidates(storedURL, documentsURL: documentsURL) {
-                try? FileManager.default.removeItem(at: url)
-                for ext in AdvancedTroubleshootingService.permittedSidecarExtensions {
-                    let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
-                    try? FileManager.default.removeItem(at: sidecarURL)
-                }
-            }
         }
 
         AppLog.shared.coreData(

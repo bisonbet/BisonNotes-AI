@@ -31,7 +31,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         "iCloudLastSuccessfulRoutineSyncV1",
         "iCloudQuarantinedBackupRecordNamesV2",
         "iCloudQuarantinedLegacySummaryRecordNamesV2",
-        "iCloudLegacySummaryRecordsAbsentV1",
+        "iCloudLegacySummaryRecordsAbsentAtV2",
         "lastSyncDate"
     ]
 
@@ -941,6 +941,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         try await withAudioBackupEnabled {
             _ = try await runReconcile()
 
+            XCTAssertFalse(
+                transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+                "An imported-audio marker must not trigger a legacy summary scan"
+            )
             let afterFirst = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
             XCTAssertNil(afterFirst.recordingURL, "the tombstone must unlink the placeholder here too")
             XCTAssertFalse(
@@ -1025,11 +1029,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
-    /// `recordingURL` used to be the one field the restore leg could write but never
-    /// clear, so "this recording has no audio" could never reach a device that still
-    /// had a URL — even with the cloud copy winning outright.
-    func testRestoreClearsRecordingURLWhenTheWinningCloudCopyHasNoAudio() async throws {
-        let (recordingId, summaryId, _) = try createImportedRecordingHoldingAudio(
+    /// A metadata-only cloud record is not enough destructive intent to unlink a
+    /// healthy local file. Only an explicit imported-audio tombstone may do that.
+    func testRestorePreservesRecordingURLWhenNoAudioLacksAnImportedAudioTombstone() async throws {
+        let (recordingId, summaryId, audioURL) = try createImportedRecordingHoldingAudio(
             named: "Cloud says no audio"
         )
         let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
@@ -1063,7 +1066,8 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
         let restored = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
         XCTAssertEqual(restored.recordingName, "Renamed on another device")
-        XCTAssertNil(restored.recordingURL)
+        XCTAssertEqual(restored.recordingURL, audioURL.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
     /// The other half of that rule: a cloud record that still names audio must never
@@ -1163,9 +1167,50 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    func testRelationshipCleanupRefetchesFullSummaryRecordsBeforeSaving() async throws {
+        let recordingId = try createCompleteRecording(named: "Full summary refetch")
+        let transcriptId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllTranscripts().first { $0.recordingId == recordingId }?.id
+        )
+        let summaryId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllSummaries().first { $0.recordingId == recordingId }?.id
+        )
+        seedTrustedManifest()
+        _ = try await runReconcile()
+
+        let markerName = "backup_deletion_transcript_\(transcriptId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: markerName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": clock.now.addingTimeInterval(-60),
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+        transport.clearLedger()
+
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            transport.ledger.contains { operation in
+                guard case .fetch(let names, let desiredKeys) = operation else { return false }
+                return desiredKeys == nil && names.contains("backup_summary_\(summaryId.uuidString)")
+            },
+            "A summary with a deleted transcript reference must be full-refetched before saving"
+        )
+        XCTAssertEqual(
+            transport.record(named: "backup_summary_\(summaryId.uuidString)")?["summary"] as? String,
+            "Summary for Full summary refetch with enough content to satisfy validation rules and exercise backup selection.",
+            "Relationship cleanup must preserve the summary payload"
+        )
+    }
+
     /// `legacySummarySyncRecords` is a full type scan whose own documentation says
-    /// nothing on the routine path calls it — but `needsLegacySummaryRecords` is true
-    /// whenever any marker is not a summary, which is nearly always.
+    /// nothing on the routine path calls it — but recording/transcript markers need
+    /// it because legacy summary records are not listed in the active manifest.
     func testLegacySummaryScanRunsOnceThenIsRememberedAsAbsent() async throws {
         try createCompleteRecording(named: "Legacy scan memo")
         seedRetiredRecordingMarker(for: UUID())
@@ -1184,12 +1229,53 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
             "An account known to hold no legacy records must not be scanned again"
         )
+
+        // The absence claim is local and must expire so a record created on another
+        // device can be discovered later.
+        UserDefaults.standard.set(
+            Date().addingTimeInterval(-3_600),
+            forKey: "iCloudLegacySummaryRecordsAbsentAtV2"
+        )
+        transport.clearLedger()
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+            "An expired absence memo must trigger a fresh legacy scan"
+        )
     }
 
-    /// The replay itself: the same record ids were re-issued as deletes on every run,
-    /// long after CloudKit had removed them. The manifest names every live record, so
-    /// a manifest-managed name it no longer holds is provably already gone.
-    func testAReplayedTombstoneIssuesNoDeleteOnceTheManifestNoLongerNamesItsRecords() async throws {
+    func testIncompleteLegacySummaryScanDoesNotPretendTheAccountIsEmpty() async throws {
+        let recordingId = UUID()
+        let legacyRecordName = UUID().uuidString
+        seedRetiredRecordingMarker(for: recordingId)
+        seedTrustedManifest()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: CloudKitSummaryRecord.recordType,
+                name: legacyRecordName,
+                fields: [CloudKitSummaryRecord.recordingIdField: recordingId.uuidString]
+            )
+        ])
+        transport.queryRecordFailures[legacyRecordName] = CloudKitTestError.ckError(.serviceUnavailable)
+
+        do {
+            _ = try await runReconcile()
+            XCTFail("An incomplete legacy scan must fail the deletion preflight")
+        } catch {
+            // Expected: the marker must remain so the next run retries the scan.
+        }
+
+        XCTAssertFalse(iCloudStorageManager.legacySummaryRecordsKnownAbsent)
+        XCTAssertNotNil(
+            transport.record(named: "backup_deletion_\(recordingId.uuidString)"),
+            "A marker must not be retired after an incomplete legacy scan"
+        )
+    }
+
+    /// An explicit deletion id must remain actionable even when the trusted manifest
+    /// is stale because the content save and manifest write were separate operations.
+    func testAReplayedTombstoneKeepsExplicitDeleteIntentWhenManifestNoLongerNamesRecord() async throws {
         try createCompleteRecording(named: "Replay cost")
         let deletedRecordingId = UUID()
         seedRetiredRecordingMarker(for: deletedRecordingId)
@@ -1200,9 +1286,9 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         transport.clearLedger()
         _ = try await runReconcile()
 
-        XCTAssertFalse(
+        XCTAssertTrue(
             deletedRecordNames().contains("backup_recording_\(deletedRecordingId.uuidString)"),
-            "A record the manifest no longer names must not be deleted again every run"
+            "An explicit tombstone id must not be suppressed by a stale manifest"
         )
     }
 

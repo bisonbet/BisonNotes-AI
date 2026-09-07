@@ -2623,7 +2623,7 @@ class iCloudStorageManager: ObservableObject {
         // The erase emptied the account, so "no legacy records" is now trivially
         // true — but it is cleared rather than set, because the next sync should
         // establish that from a scan rather than inherit it from a wipe.
-        defaults.removeObject(forKey: Self.legacySummaryRecordsAbsentKey)
+        defaults.removeObject(forKey: Self.legacySummaryRecordsAbsentAtKey)
     }
 
     // MARK: - Private Methods
@@ -2703,6 +2703,9 @@ struct DeletionMarkerApplication {
     /// the user.
     var clearedCloudReferences: Int = 0
     var revivedLocally: Int = 0
+    /// Imported-audio removals whose local file cleanup failed. The restore leg
+    /// must not turn the same marker into a second, unconditional URL clear.
+    var importedAudioRemovalsFailed = Set<UUID>()
 
     var didChangeAnything: Bool {
         deletedLocalItems > 0 || deletedCloudRecords > 0
@@ -2927,6 +2930,9 @@ extension iCloudStorageManager {
     /// each time, and a phase whose cost grew with every delete the user had ever made.
     private struct CloudDeletionPlan {
         var recordIDsToDelete: Set<CKRecord.ID> = []
+        /// Record ids named directly by a deletion request. These are preserved
+        /// even when a trusted manifest is stale and does not list them yet.
+        var explicitlyTargetedRecordIDs: Set<CKRecord.ID> = []
         /// Markers a later local edit withdrew. Kept apart from `recordIDsToDelete`
         /// because that set is filtered against the manifest before it is issued,
         /// and a marker is never indexed there — folding the two together would
@@ -3220,9 +3226,9 @@ extension iCloudStorageManager {
     /// `applyInboundTombstones` the most expensive phase of a run, several times the
     /// cost of fetching the entire cloud snapshot.
     ///
-    /// Safe to fetch partially because nothing writes these records back. The one
-    /// path that saves a recording — clearing a reference to deleted content —
-    /// refetches it in full first, in `applyDeletionPlan`.
+    /// Safe to fetch partially because nothing writes these records back. Paths that
+    /// save a recording or summary — clearing a reference to deleted content —
+    /// refetch them in full first, in `applyDeletionPlan`.
     static let deletionWorkspaceKeys: [CKRecord.FieldKey] = [
         fieldRecordingId,
         fieldTranscriptId,
@@ -3316,6 +3322,7 @@ extension iCloudStorageManager {
     ) async throws -> CloudBackupLegOutcome {
         var result = CloudBackupResult()
         let deletionTargets = preflight.deletionTargets
+        let importedAudioDeletionTargetIds = deletionTargets.importedAudioRecordings
 
         let backupSourceSelection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
         let excludedRecordingIds = backupSourceSelection.excludedRecordingIds
@@ -3448,10 +3455,10 @@ extension iCloudStorageManager {
                 recordName: makeBackupRecordName(prefix: Self.backupRecordingRecordPrefix, id: recordingId)
             )
             let existingRecord = snapshot.recordings[recordID]
-            let hasPendingImportedAudioRemoval = pendingImportedAudioRecordingIds.contains(recordingId)
+            let hasImportedAudioRemoval = pendingImportedAudioRecordingIds.contains(recordingId)
+                || importedAudioDeletionTargetIds.contains(recordingId)
 
             if let existingRecord,
-               !hasPendingImportedAudioRemoval,
                !Self.shouldUploadLocalVersion(
                    localTimestamp: localRecordingContentTimestamp(recording),
                    cloudTimestamp: backupRecordContentTimestamp(
@@ -3462,7 +3469,13 @@ extension iCloudStorageManager {
                 // Another device holds a newer edit. Leave its fields alone and let
                 // the restore leg bring them down, but still upload audio it has
                 // never seen.
-                if options.includeAudioFiles, existingRecord[Self.fieldAudioSignature] == nil {
+                if hasImportedAudioRemoval {
+                    // The field-level delete still has to be applied, but it must
+                    // not overwrite a newer name, relationship, or processing
+                    // state from another device. The write leg refetches this
+                    // record and clears only its audio fields below.
+                    recordingsNeedingUpload.append((recording, recordID))
+                } else if options.includeAudioFiles, existingRecord[Self.fieldAudioSignature] == nil {
                     recordingsNeedingAudioOnly.append((recording, recordID))
                 }
                 if isActiveBackupRecord(existingRecord) {
@@ -3480,12 +3493,14 @@ extension iCloudStorageManager {
             let probe = existingRecord
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: recordID)
             applyRecordingFields(recording, to: probe, changed: &changed)
-            if hasPendingImportedAudioRemoval {
-                clearAudioBackupFields(on: probe, changed: &changed)
+            if hasImportedAudioRemoval {
+                clearImportedAudioFields(on: probe, changed: &changed)
             }
             if changed {
                 recordingsNeedingUpload.append((recording, recordID))
-            } else if options.includeAudioFiles, existingRecord?[Self.fieldAudioSignature] == nil {
+            } else if options.includeAudioFiles,
+                      !hasImportedAudioRemoval,
+                      existingRecord?[Self.fieldAudioSignature] == nil {
                 recordingsNeedingAudioOnly.append((recording, recordID))
             }
             manifestDelta.addRecordings.insert(recordID.recordName)
@@ -3608,8 +3623,10 @@ extension iCloudStorageManager {
                 )
                 continue
             }
-            let hasPendingImportedAudioRemoval = entry.recording.id
-                .map(pendingImportedAudioRecordingIds.contains) ?? false
+            let hasImportedAudioRemoval = entry.recording.id.map { recordingId in
+                pendingImportedAudioRecordingIds.contains(recordingId)
+                    || importedAudioDeletionTargetIds.contains(recordingId)
+            } ?? false
             let record = recordingRecordsToWrite[entry.recordID]
                 ?? CKRecord(recordType: Self.backupRecordingRecordType, recordID: entry.recordID)
 
@@ -3631,8 +3648,11 @@ extension iCloudStorageManager {
                 // on *their* record rather than falling through to `applyRecordingFields`,
                 // which would put this device's stale name, dates, location, and
                 // processing state over the newer edit merely to drop the audio.
-                if hasPendingImportedAudioRemoval {
+                if hasImportedAudioRemoval {
                     var changed = false
+                    // The newer cloud version wins for metadata. Imported-audio
+                    // deletion is field-level here, so preserve its recordingURL
+                    // and relationships while clearing the asset fields.
                     clearAudioBackupFields(on: refetched, changed: &changed)
                     if changed {
                         AppLog.shared.iCloudSync(
@@ -3655,7 +3675,7 @@ extension iCloudStorageManager {
 
             var changed = recordingRecordsToWrite[entry.recordID] == nil
             applyRecordingFields(entry.recording, to: record, changed: &changed)
-            if options.includeAudioFiles {
+            if options.includeAudioFiles, !hasImportedAudioRemoval {
                 if await attachAudioBackupIfNeeded(
                     recording: entry.recording,
                     to: record,
@@ -3672,8 +3692,8 @@ extension iCloudStorageManager {
                     result.audioFilesBackedUp += 1
                 }
             }
-            if hasPendingImportedAudioRemoval {
-                clearAudioBackupFields(on: record, changed: &changed)
+            if hasImportedAudioRemoval {
+                clearImportedAudioFields(on: record, changed: &changed)
             }
             recordsToSave.append(record)
         }
@@ -3688,8 +3708,13 @@ extension iCloudStorageManager {
                 continue
             }
             guard let record = recordingRecordsToWrite[entry.recordID] else { continue }
+            let hasImportedAudioRemoval = entry.recording.id.map { recordingId in
+                pendingImportedAudioRecordingIds.contains(recordingId)
+                    || importedAudioDeletionTargetIds.contains(recordingId)
+            } ?? false
             var changed = false
-            if await attachAudioBackupIfNeeded(
+            if !hasImportedAudioRemoval,
+               await attachAudioBackupIfNeeded(
                 recording: entry.recording,
                 to: record,
                 appCoordinator: appCoordinator,
@@ -3704,9 +3729,8 @@ extension iCloudStorageManager {
             ) {
                 result.audioFilesBackedUp += 1
             }
-            if let recordingId = entry.recording.id,
-               pendingImportedAudioRecordingIds.contains(recordingId) {
-                clearAudioBackupFields(on: record, changed: &changed)
+            if hasImportedAudioRemoval {
+                clearImportedAudioFields(on: record, changed: &changed)
             }
             if changed {
                 recordsToSave.append(record)
@@ -3917,6 +3941,19 @@ extension iCloudStorageManager {
         recordMetrics(fetch: outcome)
         try outcome.throwIfIncomplete()
         return outcome.records.filter { $0.value.recordType == Self.backupRecordingRecordType }
+    }
+
+    /// Refetches summary records before a relationship-only edit. The deletion
+    /// workspace intentionally carries only planner fields, so saving one of its
+    /// partial records would overwrite the summary payload with absent fields.
+    private func fullSummaryRecords(
+        for recordIDs: [CKRecord.ID]
+    ) async throws -> [CKRecord.ID: CKRecord] {
+        guard !recordIDs.isEmpty else { return [:] }
+        let outcome = try await cloudExecutor.fetch(recordIDs)
+        recordMetrics(fetch: outcome)
+        try outcome.throwIfIncomplete()
+        return outcome.records.filter { $0.value.recordType == Self.backupSummaryRecordType }
     }
 
     /// Combines two record lists by id, keeping the preferred copy where both hold
@@ -4632,6 +4669,7 @@ extension iCloudStorageManager {
             var recordingRecords = Array(restoreSnapshot.recordings.values)
             var transcriptRecords = Array(restoreSnapshot.transcripts.values)
             var summaryRecords = Array(restoreSnapshot.summaries.values)
+            let importedAudioRemovalFailures = preflight.markerApplication.importedAudioRemovalsFailed
 
             // Without a trusted manifest the snapshot holds only the ids this device
             // already knew to ask for. Deciding on emptiness alone meant a device
@@ -4671,6 +4709,21 @@ extension iCloudStorageManager {
                         level: .debug
                     )
                 }
+            }
+
+            // An imported-audio tombstone is field-level deletion intent. Remove
+            // every audio-bearing field before the asset refetch below so a device
+            // that still has the placeholder cannot download or upload it again.
+            recordingRecords = recordingRecords.map { record in
+                guard let recordingId = decodeBackupRecordUUID(
+                    recordName: record.recordID.recordName,
+                    prefix: Self.backupRecordingRecordPrefix
+                ), deletionTargets.importedAudioRecordings.contains(recordingId) else {
+                    return record
+                }
+                var changed = false
+                clearImportedAudioFields(on: record, changed: &changed)
+                return record
             }
 
             if includeAudioFiles {
@@ -4926,6 +4979,8 @@ extension iCloudStorageManager {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
                     entry.recordingURL = nil
                 } else if applyCloudRecording,
+                          deletionTargets.importedAudioRecordings.contains(recordingId),
+                          !importedAudioRemovalFailures.contains(recordingId),
                           record[Self.fieldRecordingURL] == nil,
                           !hasAudioBackupFields(record) {
                     // The cloud copy won and says this recording has no audio at all.
@@ -4935,11 +4990,10 @@ extension iCloudStorageManager {
                     // its stale URL, re-uploaded it on the next tie, and resurrected
                     // the placeholder on the device that deleted it.
                     //
-                    // Both guards matter. A device with audio backup switched off
-                    // still uploads `recordingURL` in `applyRecordingFields`, so a
-                    // nil there is a positive statement rather than a missing
-                    // setting, and `hasAudioBackupFields` keeps a record that is
-                    // merely mid-upload from unlinking healthy local audio.
+                    // The explicit marker is required: a metadata-only cloud
+                    // record is not by itself proof that this device's healthy
+                    // local audio was deleted. The failure guard also keeps a
+                    // failed local file removal eligible for retry.
                     entry.recordingURL = nil
                 }
 
@@ -6505,8 +6559,16 @@ extension iCloudStorageManager {
         if !applicableMarkers.isEmpty {
             // Only a recording or a transcript can still be referenced by a legacy
             // summary record; a summary's own legacy record is named after the
-            // summary and needs no scan to find.
-            let needsLegacyRecords = applicableMarkers.contains { $0.target.kind != .summary }
+            // summary and needs no scan to find. An imported-audio marker only
+            // removes a field and must not trigger the expensive legacy scan.
+            let needsLegacyRecords = applicableMarkers.contains { marker in
+                switch marker.target.kind {
+                case .recording, .transcript:
+                    return true
+                case .summary, .importedAudio:
+                    return false
+                }
+            }
             workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: needsLegacyRecords)
         }
 
@@ -6744,6 +6806,7 @@ extension iCloudStorageManager {
                     application.deletedLocalItems += 1
                 }
             } catch {
+                application.importedAudioRemovalsFailed.insert(target.id)
                 AppLog.shared.iCloudSync(
                     "Failed to apply iCloud imported audio removal locally for \(target.id.uuidString): \(error)",
                     level: .error
@@ -6848,12 +6911,11 @@ extension iCloudStorageManager {
 
         // `legacySummarySyncRecords` is a full type scan, and its own documentation
         // says nothing on the routine path calls it — but `needsLegacySummaryRecords`
-        // is true whenever any marker is not a summary, which is nearly always. Once
-        // a scan has come back empty, this account has no `CD_EnhancedSummary`
-        // records left and no routine sync can create one, so the answer is
-        // remembered rather than re-queried on every run.
+        // is true for recording/transcript markers. A completed empty scan is
+        // remembered briefly; it must expire because another device can create a
+        // legacy record after this device's scan.
         if needsLegacySummaryRecords, !Self.legacySummaryRecordsKnownAbsent {
-            workspace.legacySummaryRecords = await legacySummarySyncRecords()
+            workspace.legacySummaryRecords = try await legacySummarySyncRecords()
         }
         return workspace
     }
@@ -6870,7 +6932,9 @@ extension iCloudStorageManager {
             prefix: Self.backupRecordingRecordPrefix,
             id: recordingId
         )
-        plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordingRecordName))
+        let recordingRecordID = CKRecord.ID(recordName: recordingRecordName)
+        plan.recordIDsToDelete.insert(recordingRecordID)
+        plan.explicitlyTargetedRecordIDs.insert(recordingRecordID)
         plan.recordingRecordNamesToUnindex.insert(recordingRecordName)
 
         var transcriptRecordNames = Set(
@@ -6888,6 +6952,14 @@ extension iCloudStorageManager {
             summaryRecordNames.insert(record.recordID.recordName)
         }
 
+        let explicitlyTargetedTranscriptRecordIDs = transcriptIds.map {
+            CKRecord.ID(recordName: makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: $0))
+        }
+        let explicitlyTargetedSummaryRecordIDs = summaryIds.map {
+            CKRecord.ID(recordName: makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0))
+        }
+        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedTranscriptRecordIDs)
+        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedSummaryRecordIDs)
         plan.recordIDsToDelete.formUnion(transcriptRecordNames.map { CKRecord.ID(recordName: $0) })
         plan.recordIDsToDelete.formUnion(summaryRecordNames.map { CKRecord.ID(recordName: $0) })
         plan.transcriptRecordNamesToUnindex.formUnion(transcriptRecordNames)
@@ -6895,7 +6967,11 @@ extension iCloudStorageManager {
 
         // Legacy `CD_EnhancedSummary` records predate the manifest, so they are
         // matched out of the run's single scan rather than looked up by id.
-        plan.recordIDsToDelete.formUnion(summaryIds.map { CKRecord.ID(recordName: $0.uuidString) })
+        let explicitlyTargetedLegacySummaryRecordIDs = summaryIds.map {
+            CKRecord.ID(recordName: $0.uuidString)
+        }
+        plan.recordIDsToDelete.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
+        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
         for record in workspace.legacySummaryRecords
         where record[CloudKitSummaryRecord.recordingIdField] as? String == recordingId.uuidString {
             plan.recordIDsToDelete.insert(record.recordID)
@@ -6907,7 +6983,9 @@ extension iCloudStorageManager {
         into plan: inout CloudDeletionPlan
     ) {
         let recordName = makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: transcriptId)
-        plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordName))
+        let recordID = CKRecord.ID(recordName: recordName)
+        plan.recordIDsToDelete.insert(recordID)
+        plan.explicitlyTargetedRecordIDs.insert(recordID)
         plan.transcriptRecordNamesToUnindex.insert(recordName)
         // The parent and summary references go in the same cloud mutation. Otherwise
         // a device restoring only the cloud backup could recreate a dangling
@@ -6921,11 +6999,15 @@ extension iCloudStorageManager {
     ) {
         for summaryId in summaryIds {
             let recordName = makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: summaryId)
-            plan.recordIDsToDelete.insert(CKRecord.ID(recordName: recordName))
+            let recordID = CKRecord.ID(recordName: recordName)
+            plan.recordIDsToDelete.insert(recordID)
+            plan.explicitlyTargetedRecordIDs.insert(recordID)
             plan.summaryRecordNamesToUnindex.insert(recordName)
             // A summary's legacy sync record is named after the summary itself, so it
             // is the one legacy record that needs no scan to find.
-            plan.recordIDsToDelete.insert(CKRecord.ID(recordName: summaryId.uuidString))
+            let legacyRecordID = CKRecord.ID(recordName: summaryId.uuidString)
+            plan.recordIDsToDelete.insert(legacyRecordID)
+            plan.explicitlyTargetedRecordIDs.insert(legacyRecordID)
             // The recording's scalar relationship and lifecycle status have to go too,
             // or a restore resurrects a dangling summary reference from the parent.
             plan.clearedSummaryIds.insert(summaryId.uuidString)
@@ -6958,7 +7040,9 @@ extension iCloudStorageManager {
     /// used to re-issue the same record ids each time — sixty-odd deletes of records
     /// CloudKit had removed weeks earlier, on every routine run. The manifest names
     /// every live record, so a manifest-managed name it no longer holds is provably
-    /// already gone and the request buys nothing.
+    /// already gone and the request buys nothing. Explicit ids from the deletion
+    /// request are retained because content and manifest writes are not atomic: a
+    /// first-time delete can target a name the stale manifest does not list yet.
     ///
     /// Two deliberate exceptions. Legacy `CD_EnhancedSummary` ids were never indexed
     /// and are found by scan, so they pass through untouched; and an untrusted
@@ -6975,6 +7059,9 @@ extension iCloudStorageManager {
             .union(manifest.transcripts)
             .union(manifest.summaries)
         return plan.recordIDsToDelete.filter { recordID in
+            if plan.explicitlyTargetedRecordIDs.contains(recordID) {
+                return true
+            }
             let name = recordID.recordName
             let isManifestManaged = manifestManagedRecordPrefixes.contains { name.hasPrefix($0) }
             return isManifestManaged ? indexed.contains(name) : true
@@ -7025,12 +7112,14 @@ extension iCloudStorageManager {
             survives(record) && (plan.clearsTranscript(on: record) || plan.clearsSummary(on: record))
         }
         // Recording records arrive without their audio assets, so the ones that need
-        // editing are refetched in full before being written back.
+        // editing are refetched in full before being written back. A record that
+        // disappeared between the workspace read and this refetch is already gone;
+        // never fall back to saving its partial workspace copy.
         let fullRecordings = try await fullRecordingRecords(for: recordingsToClear.map(\.recordID))
 
         var recordsToSave: [CKRecord] = []
         for partialRecord in recordingsToClear {
-            let record = fullRecordings[partialRecord.recordID] ?? partialRecord
+            guard let record = fullRecordings[partialRecord.recordID] else { continue }
             var shouldSave = false
             if plan.clearsTranscript(on: record) {
                 updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &shouldSave)
@@ -7056,8 +7145,15 @@ extension iCloudStorageManager {
             }
         }
 
-        for record in workspace.manifestRecords.summaries
-        where survives(record) && plan.clearsTranscript(on: record) {
+        let summariesToClear = workspace.manifestRecords.summaries.filter { record in
+            survives(record) && plan.clearsTranscript(on: record)
+        }
+        // The workspace intentionally fetched summaries with only planner fields.
+        // Refetch the complete records before clearing their transcript references,
+        // otherwise saving this partial copy can erase summary text and payload.
+        let fullSummaries = try await fullSummaryRecords(for: summariesToClear.map(\.recordID))
+        for partialRecord in summariesToClear {
+            guard let record = fullSummaries[partialRecord.recordID] else { continue }
             var shouldSave = false
             updateStringField(Self.fieldTranscriptId, value: nil, on: record, changed: &shouldSave)
             updateDateField(Self.fieldLastModified, value: syncClock.now, on: record, changed: &shouldSave)
@@ -7146,31 +7242,37 @@ extension iCloudStorageManager {
     }
 
     private func fetchLegacySummarySyncRecords() async throws -> [CKRecord] {
-        await legacySummarySyncRecords()
+        try await legacySummarySyncRecords()
     }
 
     /// The legacy `CD_EnhancedSummary` records predate the manifest, so there is no
     /// known-ID list for them and a query is the only way to find them. Compatibility
     /// paths only — nothing on the routine path calls this.
-    /// Remembers that this account holds no legacy `CD_EnhancedSummary` records, so
-    /// the routine tombstone path can skip a full type scan it would otherwise run
-    /// on every sync. Cleared whenever a legacy record is written, and by the erase.
-    private static let legacySummaryRecordsAbsentKey = "iCloudLegacySummaryRecordsAbsentV1"
+    /// Remembers a recently completed scan that found no legacy records. The memo is
+    /// deliberately short-lived: another device can create a legacy record after
+    /// this device scans, so a permanent per-device absence claim is unsafe.
+    private static let legacySummaryRecordsAbsentAtKey = "iCloudLegacySummaryRecordsAbsentAtV2"
+    private static let legacySummaryRecordsAbsenceTTL: TimeInterval = 15 * 60
 
     static var legacySummaryRecordsKnownAbsent: Bool {
-        UserDefaults.standard.bool(forKey: legacySummaryRecordsAbsentKey)
+        guard let absentAt = UserDefaults.standard.object(forKey: legacySummaryRecordsAbsentAtKey) as? Date else {
+            return false
+        }
+        let age = Date().timeIntervalSince(absentAt)
+        return age >= 0 && age < legacySummaryRecordsAbsenceTTL
     }
 
     private static func setLegacySummaryRecordsKnownAbsent(_ absent: Bool) {
-        UserDefaults.standard.set(absent, forKey: legacySummaryRecordsAbsentKey)
+        if absent {
+            UserDefaults.standard.set(Date(), forKey: legacySummaryRecordsAbsentAtKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: legacySummaryRecordsAbsentAtKey)
+        }
     }
 
-    private func legacySummarySyncRecords() async -> [CKRecord] {
+    private func legacySummarySyncRecords() async throws -> [CKRecord] {
         let query = CKQuery(recordType: CloudKitSummaryRecord.recordType, predicate: NSPredicate(value: true))
         var records: [CKRecord] = []
-        // A scan that threw tells us nothing about what the account holds. Only a
-        // scan that ran to completion may record an absence.
-        var scanCompleted = false
 
         do {
             var page = try await cloudTransport.records(
@@ -7180,7 +7282,9 @@ extension iCloudStorageManager {
                 resultsLimit: CKQueryOperation.maximumResults
             )
             while true {
-                records.append(contentsOf: page.records)
+                // CloudKit can return successful matches and per-record failures in
+                // the same page. A partial page cannot establish account absence.
+                records.append(contentsOf: try page.recordsOrThrow())
 
                 guard let cursor = page.queryCursor else { break }
                 page = try await cloudTransport.records(
@@ -7189,19 +7293,18 @@ extension iCloudStorageManager {
                     resultsLimit: CKQueryOperation.maximumResults
                 )
             }
-            scanCompleted = true
         } catch {
+            Self.setLegacySummaryRecordsKnownAbsent(false)
             AppLog.shared.iCloudSync("Could not scan legacy summary sync records: \(error.localizedDescription)", level: .error)
+            throw error
         }
 
-        if scanCompleted {
-            Self.setLegacySummaryRecordsKnownAbsent(records.isEmpty)
-            if records.isEmpty {
-                AppLog.shared.iCloudSync(
-                    "No legacy summary records in this account; skipping that scan on future syncs",
-                    level: .debug
-                )
-            }
+        Self.setLegacySummaryRecordsKnownAbsent(records.isEmpty)
+        if records.isEmpty {
+            AppLog.shared.iCloudSync(
+                "No legacy summary records in this account; skipping that scan briefly",
+                level: .debug
+            )
         }
 
         return records
@@ -7574,6 +7677,11 @@ extension iCloudStorageManager {
         clearRecordField(Self.fieldAudioFileName, on: record, changed: &changed)
         clearRecordField(Self.fieldAudioByteCount, on: record, changed: &changed)
         clearRecordField(Self.fieldAudioSignature, on: record, changed: &changed)
+    }
+
+    private func clearImportedAudioFields(on record: CKRecord, changed: inout Bool) {
+        clearRecordField(Self.fieldRecordingURL, on: record, changed: &changed)
+        clearAudioBackupFields(on: record, changed: &changed)
     }
 
     private func hasAudioBackupFields(_ record: CKRecord) -> Bool {
