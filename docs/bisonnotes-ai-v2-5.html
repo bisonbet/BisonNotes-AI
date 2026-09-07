@@ -1,0 +1,174 @@
+<!-- BisonNotes AI v2.5 - WordPress Release and Upgrade Guide -->
+<!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
+<!-- Keep the CSS inside the style tag on one line: WordPress auto-paragraph formatting can break multi-line CSS. -->
+<!-- Publish this snapshot at /bisonnotes-ai-v2-5/ and keep the v2.4, v2.3, and v2.2 pages available for older builds. -->
+<!-- The in-app "Learn More About Processing Options" button opens #bn25-ai on this page; do not rename that id. -->
+
+<style>.bn25 *,.bn25 *::before,.bn25 *::after{box-sizing:border-box}.bn25{max-width:960px;margin:0 auto;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + .35vw,19px);line-height:1.7;color:#1a1a1a;overflow-wrap:anywhere}.entry-content>.bn25,.post-inner .bn25,.page-content .bn25,.section-inner .bn25,.wp-block-post-content .bn25,.entry-content .bn25{max-width:960px!important;width:100%!important}.entry-content>*:has(.bn25),.post-inner:has(.bn25),.section-inner:has(.bn25){max-width:none!important;width:100%!important}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none!important}.bn25 h2{font-size:1.35rem;font-weight:750;margin:2.2rem 0 .75rem;padding-bottom:.35rem;border-bottom:2px solid #c0392b;color:#111}.bn25 h3{font-size:1.1rem;font-weight:700;margin:1.4rem 0 .45rem;color:#222}.bn25 p{margin:.55rem 0}.bn25 ul,.bn25 ol{margin:.4rem 0 .75rem;padding-left:1.4rem}.bn25 li{margin:.3rem 0}.bn25 a{color:#b33125;text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.13em}.bn25 code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:.88em;word-break:break-all}.bn25-hero{text-align:center;padding:1.7rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 52%,#0f3460 100%);color:#fff;border-radius:12px;margin-bottom:1.4rem}.bn25-hero h1{color:#fff!important;font-size:1.65rem;line-height:1.25;margin:0;border:0!important;padding:0!important}.bn25-hero p{margin:.3rem 0 0;color:#fff;opacity:.88}.bn25-badge{display:inline-block;margin-top:.7rem;padding:.18rem .7rem;border-radius:999px;background:#c0392b;color:#fff;font-size:.78rem;font-weight:750}.bn25-toc{background:#f7f8f9;border:1px solid #dde1e5;border-radius:9px;padding:.9rem 1rem;margin:0 0 1.7rem}.bn25-toc strong{display:block;margin-bottom:.25rem}.bn25-toc ol{margin:0}.bn25-card,.bn25-info,.bn25-ok,.bn25-warn{border-radius:8px;padding:.85rem 1rem;margin:.8rem 0}.bn25-card{background:#f7f8f9;border:1px solid #dde1e5}.bn25-info{background:#eaf3fc;border-left:4px solid #2563eb}.bn25-ok{background:#eaf7ec;border-left:4px solid #238b45}.bn25-warn{background:#fef7e0;border-left:4px solid #d5960b}.bn25-grid{display:grid;grid-template-columns:1fr;gap:.75rem;margin:.8rem 0}.bn25-grid>div{background:#fff;border:1px solid #dde1e5;border-radius:9px;padding:.85rem 1rem}.bn25-grid h3{margin:0 0 .3rem}.bn25-grid p,.bn25-grid ul{font-size:.94rem}.bn25-steps{counter-reset:step;list-style:none;padding-left:0!important}.bn25-steps>li{counter-increment:step;position:relative;padding-left:2.4rem;margin:.8rem 0}.bn25-steps>li::before{content:counter(step);position:absolute;left:0;top:.05rem;width:1.65rem;height:1.65rem;border-radius:50%;display:flex;align-items:center;justify-content:center;background:#c0392b;color:#fff;font-weight:750;font-size:.82rem}.bn25 small{font-size:.84rem;color:#555}@media(min-width:620px){.bn25-grid{grid-template-columns:1fr 1fr}}@media(max-width:619px){.bn25{padding:.7rem}.bn25-hero{padding:1.35rem .75rem}.bn25-hero h1{font-size:1.4rem}.bn25 h2{font-size:1.25rem}}</style>
+
+<div class="bn25">
+
+<div class="bn25-hero">
+  <h1>BisonNotes AI v2.5</h1>
+  <p>Release and Upgrade Guide for iPhone, iPad, Apple Watch, and Mac</p>
+  <span class="bn25-badge">On-device transcript cleanup &bull; durable deletions &bull; steadier storage</span>
+</div>
+
+<div class="bn25-toc">
+  <strong>On this page</strong>
+  <ol>
+    <li><a href="#bn25-overview">Release overview</a></li>
+    <li><a href="#bn25-cleanup">Transcript cleanup</a></li>
+    <li><a href="#bn25-ai">AI engines and processing options</a></li>
+    <li><a href="#bn25-sync">Deletions and storage</a></li>
+    <li><a href="#bn25-upgrade">Upgrade checklist</a></li>
+    <li><a href="#bn25-help">Troubleshooting and help</a></li>
+  </ol>
+</div>
+
+<div class="bn25-info">
+  <strong>Looking for the complete instructions?</strong> This page covers what changed in v2.5. The <a href="https://www.bisonnetworking.com/bisonnotes-ai/">full BisonNotes AI user guide</a> walks through every feature, setup step, and troubleshooting topic.
+</div>
+
+<h2 id="bn25-overview">Release Overview</h2>
+
+<p>Version 2.5 adds one new optional feature and continues the reliability work from v2.4. It does not change where your library lives, which engines are available, or how recordings, transcripts, and summaries are stored. Everything described in the v2.4 guide continues to apply; this page covers what changed on top of it.</p>
+
+<div class="bn25-grid">
+  <div>
+    <h3>Readable transcripts, on device</h3>
+    <p>An optional cleanup pass turns spoken English into written English &mdash; punctuation, fillers, and false starts &mdash; without sending anything off the device.</p>
+  </div>
+  <div>
+    <h3>Your original is never replaced</h3>
+    <p>Cleanup is stored alongside the original transcript. Switch between <strong>Original</strong> and <strong>Cleaned</strong> at any time; summaries keep using the original text.</p>
+  </div>
+  <div>
+    <h3>Off until you ask for it</h3>
+    <p>The setting is off by default, stays on the device that set it, and never downloads its model on its own.</p>
+  </div>
+  <div>
+    <h3>Deletions that survive a crash</h3>
+    <p>A deletion and the record of it are now written in one transaction, so a recording removed on one device cannot come back from iCloud later.</p>
+  </div>
+</div>
+
+<h2 id="bn25-cleanup">Transcript Cleanup</h2>
+
+<p>Speech-to-text is faithful to what was said, which is not the same as readable. <strong>Transcript cleanup</strong> is an optional pass that rewrites a finished English transcript into written English: it adds punctuation and sentence breaks, removes fillers such as &ldquo;um&rdquo; and &ldquo;uh,&rdquo; and resolves spoken corrections and false starts.</p>
+
+<p>It runs entirely on your device using a small dedicated model, <strong>S1-mini by Superwhisper</strong>. Nothing is uploaded, and no account, API key, or network connection is used once the model is installed.</p>
+
+<div class="bn25-ok"><strong>Your original transcript is always kept.</strong> Cleanup is stored next to the original rather than replacing it. You can read either version, and turning the feature off later does not delete cleaned text you already have.</div>
+
+<h3>Turning it on</h3>
+<ol class="bn25-steps">
+  <li><strong>Open Transcription Settings.</strong> Find the <strong>Transcript Cleanup</strong> section.</li>
+  <li><strong>Download the model.</strong> Tap <strong>Download S1-mini</strong>. This is a deliberate, one-time download; BisonNotes never fetches it in the background or in the middle of a transcription. The section reports <em>S1-mini is ready on this device</em> when it finishes.</li>
+  <li><strong>Turn on <em>Clean up transcripts (English only)</em>.</strong> New file transcriptions are then cleaned automatically once they finish.</li>
+</ol>
+
+<p>You can also clean a single transcript without turning anything on. Open a transcript and choose <strong>Clean up English transcript</strong>. That one-time action works on imported transcripts too, does not enable the automatic setting, and does not re-run transcription or speaker labeling.</p>
+
+<h3>Reading the two versions</h3>
+<p>Once a transcript has cleaned text, a <strong>Transcript version</strong> control appears with <strong>Original</strong> and <strong>Cleaned</strong>. Copy, share, and text export all follow whichever version you are viewing. Opening an existing transcript always starts on Original, so turning the setting on can never hide what was actually said.</p>
+
+<div class="bn25-info"><strong>Summaries still use the original.</strong> Automatic summaries, tasks, reminders, and titles are generated from the original transcript text in v2.5, so cleanup cannot change what a summary claims was said.</div>
+
+<h3>What cleanup will not do</h3>
+<ul>
+  <li><strong>It does not translate.</strong> Cleanup is English-only. A transcript identified as another language is left alone with a note explaining why.</li>
+  <li><strong>It does not move speaker labels or timing.</strong> Speaker turns, names, and time ranges come from the original transcript and are never re-derived from rewritten words. Word-accurate timestamp exports continue to use the original.</li>
+  <li><strong>It does not add facts.</strong> The model rewrites what is there. It is not a summarizer and does not supplement or correct content.</li>
+  <li><strong>It never runs on live text.</strong> Cleanup happens once, after a recording is fully transcribed and any speaker labeling is done &mdash; never on Live Transcription or on partial audio chunks.</li>
+</ul>
+
+<h3>Where it works</h3>
+<p>Cleanup needs Apple silicon and enough memory to run a local model: a Mac with Apple silicon, or a supported iPhone or iPad. On a device that cannot run it, the setting explains why instead of offering an action that would not work. It is not available on Apple Watch.</p>
+
+<div class="bn25-warn"><strong>If a cleanup pass cannot finish</strong> &mdash; the model is missing, the language is not confirmed as English, the device runs short of resources, or you cancel it &mdash; BisonNotes keeps the original transcript and tells you what happened. A failed cleanup never leaves a transcript partly rewritten.</div>
+
+<h3>Removing the model</h3>
+<p>Choose <strong>Remove Download</strong> in the Transcript Cleanup section to delete the model and reclaim its space, including the download cache it was installed from. Cleaned text you have already saved stays in your transcripts.</p>
+
+<h2 id="bn25-ai">AI Engines and Processing Options</h2>
+
+<p>Engine choices and summary controls are unchanged in v2.5. Choose the engine that fits the device, privacy needs, and workflow: MLX Swift on-device summarization and Apple Native where supported, plus Mistral AI, Google AI Studio, Compatible API, and Ollama in the native Mac app.</p>
+
+<p>New in v2.5, transcription has its own optional on-device step: see <a href="#bn25-cleanup">Transcript cleanup</a> above. It is independent of the summary engine you choose, and summaries continue to read the original transcript.</p>
+
+<h3>Summary detail and thinking</h3>
+<ul>
+  <li><strong>Brief:</strong> Key points, decisions, and deadlines in a compact summary.</li>
+  <li><strong>Balanced:</strong> A practical mix of the main ideas and supporting context.</li>
+  <li><strong>Detailed:</strong> More facts, context, nuance, and conclusions from the transcript.</li>
+  <li><strong>Thinking:</strong> Off sends no thinking override. Light requests a short reasoning pass only for models with a known safe control. Thinking text is removed from the visible summary and does not change factual tasks, reminders, titles, or content type.</li>
+</ul>
+
+<p>Models that reason internally are given room for that reasoning on top of the answer length you configure. If a response is still cut short by the provider&rsquo;s limit, BisonNotes retries once with a larger allowance and then reports the truncation plainly instead of showing a partial summary.</p>
+
+<h3>Local Speaker Labels</h3>
+<p>Turn on <strong>Local Speaker Labels</strong> in On Device settings, then explicitly prepare the speaker model. Labels run after a completed Parakeet recording, imported audio file, or transcript re-run; they do not run during Live Transcription, do not silently download, and keep audio on the device.</p>
+<ul>
+  <li><strong>Offline VBx &mdash; Recommended:</strong> Estimates the speaker count without an app-side two- or three-speaker cap.</li>
+  <li><strong>LS-EEND &mdash; Experimental:</strong> Uses the DIHARD3 500 ms model for up to 10 speakers and complete files up to one hour; labels may be over-segmented or less stable.</li>
+  <li><strong>Safe fallback:</strong> If the model is missing, the duration or speaker limit is reached, or alignment fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a warning.</li>
+  <li><strong>Rename speakers:</strong> Open the completed transcript, edit its speaker controls, and save the mapping for speaker-aware transcript and summary views.</li>
+</ul>
+
+<h2 id="bn25-sync">Deletions and Storage</h2>
+
+<h3>A deleted recording stays deleted</h3>
+<p>Deleting a recording removes it locally and records the fact that it was deleted, so every other device learns about it. Those two writes now happen in a single transaction. Previously an app that stopped at exactly the wrong moment could complete the local removal without recording the intent, and the copy still in iCloud would reappear on the next sync.</p>
+<p>Pending removals from earlier versions are carried forward when you update; nothing queued before the upgrade is lost.</p>
+
+<h3>Storage on a nearly full device</h3>
+<p>When there is not enough free space to stage a recording&rsquo;s audio for upload, BisonNotes now says so once rather than retrying the same impossible copy on every sync. Text, summaries, and settings continue to sync normally while audio waits for space.</p>
+
+<h3>Cache maintenance</h3>
+<p>Background cache cleanup and any download or sync now reserve the caches they use, so a cleanup pass cannot remove files a download is still writing, and a download that starts mid-sweep asks the sweep to stand down rather than racing it.</p>
+
+<h2 id="bn25-upgrade">Upgrade Checklist</h2>
+
+<ol class="bn25-steps">
+  <li><strong>Let current work finish.</strong> Complete active recordings, transcriptions, summaries, and iCloud jobs before installing the update.</li>
+  <li><strong>Keep a copy of critical audio.</strong> Export any irreplaceable meeting recording before a major app or operating-system update.</li>
+  <li><strong>Install v2.5 normally.</strong> Install over the existing app on every device; do not delete the app&rsquo;s container or support files.</li>
+  <li><strong>Open the library first.</strong> Confirm that expected recordings, transcripts, summaries, settings, and Keep on This Device states are present.</li>
+  <li><strong>Let the first sync finish.</strong> Leave BisonNotes in the foreground until it reports a completed sync.</li>
+  <li><strong>Update your other devices.</strong> Devices on the same Apple ID sync best when they are on the same version.</li>
+  <li><strong>Decide about transcript cleanup.</strong> It is off until you turn it on. If you want it, download S1-mini once per device &mdash; the setting and the model are per-device and are not carried over by iCloud.</li>
+  <li><strong>Try cleanup on one transcript first.</strong> Use <strong>Clean up English transcript</strong> on a finished transcript and compare Original with Cleaned before turning on automatic cleanup.</li>
+</ol>
+
+<h2 id="bn25-help">Troubleshooting and Help</h2>
+
+<h3>The cleanup setting is greyed out</h3>
+<p>The device cannot run the on-device model &mdash; an Intel Mac, a device without enough memory, the iOS app running on a Mac, or the Simulator. The setting explains the specific reason in place. If cleanup was switched on previously on another device and the preference came across with a settings restore, you can still switch it off here.</p>
+
+<h3>A transcript finished but was not cleaned</h3>
+<p>Check the message shown with the completed transcription. The usual reasons are that S1-mini has not been downloaded on this device, that the text was not confirmed to be English, or that cleanup was cancelled. The transcript itself is always saved either way.</p>
+
+<h3>It says the language could not be confirmed as English</h3>
+<p>Very short or ambiguous transcripts do not give the language detector enough to work with, and BisonNotes will not guess. Open the transcript and use <strong>Clean up English transcript</strong> to run it anyway. That explicit action still refuses text that is clearly another language.</p>
+
+<h3>Cleanup says the transcript changed while it was running</h3>
+<p>Something else edited or replaced that transcript while the pass was in progress &mdash; an edit on another device, or a sync that arrived mid-run &mdash; so the cleaned text no longer matched what it was derived from and was discarded. The transcription itself is kept. Run cleanup again from the transcript when you are ready.</p>
+
+<h3>Cleanup is slow on a long recording</h3>
+<p>The pass works one speaker turn at a time on the device, so a long recording takes correspondingly longer, and it will not run at the same time as an on-device summary. A pass that runs unusually long stops on its own and keeps the original transcript rather than holding the device.</p>
+
+<h3>I want the space back</h3>
+<p>Use <strong>Remove Download</strong> in the Transcript Cleanup section. That removes both the installed model and the download cache it came from. Transcripts you already cleaned keep their cleaned text.</p>
+
+<div class="bn25-info"><strong>Need more detail?</strong> See the complete BisonNotes AI User Guide for engine setup, transcription, summaries, iCloud, privacy, archiving, playback, Watch features, and advanced workflows.</div>
+
+<div class="bn25-card">
+  <strong>Support</strong>
+  <p>When reporting a problem, include the device model, OS version, BisonNotes version, the feature being used, and exported diagnostic logs when safe to share. Do not include private meeting audio or credentials.</p>
+  <p><a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">Report an issue on GitHub</a></p>
+</div>
+
+<p style="text-align:center"><small>Last updated for BisonNotes AI v2.5. Features can vary by device capability, permissions, selected engine, and operating-system version.</small></p>
+
+</div>
