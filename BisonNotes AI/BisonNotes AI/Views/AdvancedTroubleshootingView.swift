@@ -798,6 +798,11 @@ struct AdvancedTroubleshootingView: View {
         addOwnedPath(recorderVM.macSystemAudioURL)
 #endif
 
+        // Writers that create a file in Documents before saving its Core Data
+        // row are invisible to the unreferenced test for that whole gap.
+        let inFlightAudioPaths = ActiveAudioWorkRegistry.shared.inFlightPaths
+        ownedPaths.formUnion(inFlightAudioPaths)
+
         let existingBackgroundManager = BackgroundProcessingManager.existingInstance
         let activeProcessingJobs = existingBackgroundManager?.activeJobs.filter { !$0.status.isTerminal }
             ?? []
@@ -850,6 +855,16 @@ struct AdvancedTroubleshootingView: View {
                 reason: "Background audio processing is active. Finish it before deleting audio.",
                 ownedPaths: ownedPaths,
                 kind: .processing
+            )
+        }
+        // On macOS the combine sheet and this screen can be open at once, and a
+        // combine writes its output long before it saves a row for it.
+        if !inFlightAudioPaths.isEmpty {
+            return AdvancedTroubleshootingActivitySnapshot(
+                blockAllDeletion: true,
+                reason: "Recordings are being combined. Finish that before deleting audio.",
+                ownedPaths: ownedPaths,
+                kind: .combining
             )
         }
         return AdvancedTroubleshootingActivitySnapshot(

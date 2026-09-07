@@ -522,6 +522,78 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
         XCTAssertTrue(result.skipped.isEmpty)
     }
 
+    func testReportFlagsRowsLinkedToNoRecordingAtAll() async throws {
+        let context = coreDataManager.managedObjectContext
+        let transcript = TranscriptEntry(context: context)
+        transcript.id = UUID()
+        let summary = SummaryEntry(context: context)
+        summary.id = UUID()
+        summary.summary = "Detached fixture"
+        summary.generatedAt = Date()
+        try context.save()
+
+        let report = try await makeService().makeLocalDataReport()
+
+        // Neither column nor relationship names a recording, so the row is
+        // reachable from nothing and must not read as a clean report.
+        XCTAssertTrue(
+            report.issues.contains { issue in
+                issue.category == .relationship
+                    && issue.message.contains("Transcript")
+                    && issue.message.contains("is not linked to any recording")
+            },
+            report.issues.map(\.message).joined(separator: "\n")
+        )
+        XCTAssertTrue(
+            report.issues.contains { issue in
+                issue.category == .relationship
+                    && issue.message.contains("Summary")
+                    && issue.message.contains("is not linked to any recording")
+            },
+            report.issues.map(\.message).joined(separator: "\n")
+        )
+    }
+
+    func testAudioBeingWrittenByAnotherFeatureIsProtected() async throws {
+        let inFlight = try writeFile(named: "combined_1757260000.m4a", byteCount: 30)
+        ActiveAudioWorkRegistry.shared.beginWriting(inFlight)
+        defer { ActiveAudioWorkRegistry.shared.finishWriting(inFlight) }
+
+        // The shape the troubleshooting screen builds while a combine is
+        // exporting: the file exists in Documents with no row pointing at it.
+        let activity = AdvancedTroubleshootingActivitySnapshot(
+            blockAllDeletion: true,
+            reason: "Recordings are being combined. Finish that before deleting audio.",
+            ownedPaths: ActiveAudioWorkRegistry.shared.inFlightPaths,
+            kind: .combining
+        )
+        let service = makeService()
+
+        let scan = try await service.scanUnreferencedAudio(activity: activity)
+        XCTAssertTrue(scan.candidates.isEmpty)
+        XCTAssertEqual(scan.protectedFileCount, 1)
+        XCTAssertNotNil(scan.deletionUnavailableReason)
+
+        let fingerprint = try LocalAdvancedTroubleshootingFileSystem().metadata(for: inFlight)
+        let result = try await service.deleteSelectedAudio(
+            candidates: [
+                UnreferencedAudioCandidate(
+                    id: fingerprint.path,
+                    path: fingerprint.path,
+                    fileName: inFlight.lastPathComponent,
+                    byteCount: fingerprint.byteCount,
+                    fingerprint: fingerprint
+                )
+            ],
+            selectedIDs: [fingerprint.path],
+            activityProvider: { activity }
+        )
+
+        XCTAssertEqual(result.deletedAudioCount, 0)
+        XCTAssertEqual(result.skipped.first?.reason, .activeCombine)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inFlight.path))
+    }
+
     func testReportFlagsARecordingWhoseColumnAndRelationshipNameDifferentRows() async throws {
         let context = coreDataManager.managedObjectContext
         let columnSummaryID = UUID()

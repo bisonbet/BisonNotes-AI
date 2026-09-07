@@ -423,6 +423,13 @@ struct CombineRecordingsView: View {
             let outputFilename = "combined_\(Int(timestamp)).m4a"
             let outputURL = documentsPath.appendingPathComponent(outputFilename)
 
+            // The export lands in Documents well before `addRecording` below
+            // gives it a Core Data row, and until then nothing references it.
+            // Claim the path so reviewed-audio cleanup cannot treat a combine
+            // that is still running as an unreferenced leftover.
+            ActiveAudioWorkRegistry.shared.beginWriting(outputURL)
+            defer { ActiveAudioWorkRegistry.shared.finishWriting(outputURL) }
+
             // Combine the recordings
             let combiner = RecordingCombiner.shared
             let combinedURL = try await combiner.combineRecordings(
@@ -430,6 +437,14 @@ struct CombineRecordingsView: View {
                 secondURL: selectedSecond.url,
                 outputURL: outputURL
             )
+            if combinedURL != outputURL {
+                ActiveAudioWorkRegistry.shared.beginWriting(combinedURL)
+            }
+            defer {
+                if combinedURL != outputURL {
+                    ActiveAudioWorkRegistry.shared.finishWriting(combinedURL)
+                }
+            }
 
             // Get date for the second recording (used for combined recording name)
             let secondDate = combiner.getRecordingDate(from: selectedSecond.url) ?? selectedSecond.date

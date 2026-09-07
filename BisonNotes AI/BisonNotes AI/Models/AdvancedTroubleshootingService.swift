@@ -207,6 +207,7 @@ enum AdvancedTroubleshootingActivityKind: String, Equatable, Sendable {
     case importing
     case processing
     case restore
+    case combining
 }
 
 struct AdvancedTroubleshootingActivitySnapshot: Equatable, Sendable {
@@ -234,6 +235,8 @@ enum AudioCleanupSkipReason: String, Equatable, Sendable {
     case activeProcessingJob
     case activeRestore
     case outsideScope
+    /// Owned by a combine that has written the file but not yet saved its row.
+    case activeCombine
     /// The audio was removed, but its sidecars are shared with another audio
     /// file of the same base name and were left in place.
     case sidecarShared
@@ -258,6 +261,8 @@ enum AudioCleanupSkipReason: String, Equatable, Sendable {
             return "Owned by an active restore"
         case .outsideScope:
             return "Outside the reviewed folder"
+        case .activeCombine:
+            return "Owned by an active combine"
         case .sidecarShared:
             return "Sidecars shared with another audio file"
         case .notEvaluated:
@@ -1190,6 +1195,14 @@ final class AdvancedTroubleshootingService {
                     "transcript-denormalized-\(transcriptID.uuidString)",
                     "Transcript \(transcriptID.uuidString) has a relationship without a recording ID."
                 )
+            } else {
+                // Neither the column nor the relationship names a recording, so
+                // the row is fully detached and reachable from nothing.
+                addIssue(
+                    .relationship,
+                    "transcript-orphan-\(transcriptID.uuidString)",
+                    "Transcript \(transcriptID.uuidString) is not linked to any recording."
+                )
             }
         }
 
@@ -1222,6 +1235,12 @@ final class AdvancedTroubleshootingService {
                     .relationship,
                     "summary-denormalized-\(summaryID.uuidString)",
                     "Summary \(summaryID.uuidString) has a relationship without a recording ID."
+                )
+            } else {
+                addIssue(
+                    .relationship,
+                    "summary-orphan-\(summaryID.uuidString)",
+                    "Summary \(summaryID.uuidString) is not linked to any recording."
                 )
             }
 
@@ -1575,6 +1594,8 @@ final class AdvancedTroubleshootingService {
             return .activeProcessingJob
         case .restore:
             return .activeRestore
+        case .combining:
+            return .activeCombine
         case .recording, .idle:
             return .activeRecording
         }
