@@ -60,6 +60,11 @@ struct DataMigrationView: View {
     @State private var showingOrphanedFilesResults = false
     @State private var orphanedFilesResults: (deleted: Int, totalSize: Int64, errors: [String])?
     @State private var totalOrphanedSize: Int64 = 0
+    @State private var isScanningOrphanedFiles = false
+    /// A scan that finds nothing changes nothing on screen, so the result is always
+    /// reported through this alert — otherwise the button looks broken.
+    @State private var showingOrphanedScanResult = false
+    @State private var orphanedScanMessage = ""
 
     // Background Processing
     @State private var showingBackgroundProcessing = false
@@ -398,8 +403,13 @@ struct DataMigrationView: View {
                     }
                 }) {
                     HStack {
-                        Image(systemName: "waveform.badge.xmark")
-                        Text("Find Orphaned Audio Files")
+                        if isScanningOrphanedFiles {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "waveform.badge.xmark")
+                        }
+                        Text(isScanningOrphanedFiles ? "Scanning…" : "Find Orphaned Audio Files")
                     }
                     .font(.headline)
                     .foregroundColor(.orange)
@@ -412,7 +422,7 @@ struct DataMigrationView: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(migrationManager.migrationProgress > 0 && !migrationManager.isCompleted)
+                .disabled(isScanningOrphanedFiles || (migrationManager.migrationProgress > 0 && !migrationManager.isCompleted))
 
                 // Show orphaned files if found
                 if !orphanedAudioFiles.isEmpty {
@@ -681,6 +691,11 @@ struct DataMigrationView: View {
         } message: {
             Text("This will fetch summaries from iCloud and add any missing entries to your database. It will not overwrite existing local summaries.")
         }
+        .alert("Orphaned Audio Scan", isPresented: $showingOrphanedScanResult) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(orphanedScanMessage)
+        }
         .alert("Confirm Cleanup", isPresented: $showingOrphanedFilesCleanup) {
             Button("Cancel", role: .cancel) { }
             Button("Delete Files", role: .destructive) {
@@ -694,7 +709,7 @@ struct DataMigrationView: View {
         .alert("Cleanup Complete", isPresented: $showingOrphanedFilesResults) {
             Button("OK", role: .cancel) {
                 Task {
-                    await scanForOrphanedAudioFiles() // Refresh after cleanup
+                    await scanForOrphanedAudioFiles(announceResult: false) // Refresh after cleanup
                 }
             }
         } message: {
@@ -1106,7 +1121,11 @@ struct DataMigrationView: View {
 
     // MARK: - Orphaned Audio Files Functions
 
-    private func scanForOrphanedAudioFiles() async {
+    private func scanForOrphanedAudioFiles(announceResult: Bool = true) async {
+        await MainActor.run { isScanningOrphanedFiles = true }
+        // Let the spinner paint before the synchronous Core Data + disk sweep runs.
+        try? await Task.sleep(nanoseconds: 30_000_000)
+
         await MainActor.run {
             let files = EnhancedFileManager.shared.findOrphanedAudioFiles(coordinator: appCoordinator)
             orphanedAudioFiles = files
@@ -1114,6 +1133,19 @@ struct DataMigrationView: View {
             // Calculate total size
             totalOrphanedSize = files.reduce(0) { total, file in
                 total + getFileSize(file)
+            }
+
+            isScanningOrphanedFiles = false
+
+            AppLog.shared.dataMigration("Orphaned audio scan finished: \(files.count) file(s), \(totalOrphanedSize) bytes")
+
+            if announceResult {
+                if files.isEmpty {
+                    orphanedScanMessage = "No orphaned audio files found. Every audio file in your Documents folder is still referenced by a recording in the database."
+                } else {
+                    orphanedScanMessage = "Found \(files.count) orphaned audio file\(files.count == 1 ? "" : "s") totaling \(formatFileSize(totalOrphanedSize)). Review them below to delete them."
+                }
+                showingOrphanedScanResult = true
             }
         }
     }
