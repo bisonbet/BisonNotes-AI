@@ -51,7 +51,7 @@ The WordPress release guides are versioned snapshots, and each file is named for
 
 **A published snapshot page is permanent and frozen.** A build that is never updated keeps opening its own slug for as long as it stays installed, so a snapshot page is never deleted, never re-slugged, and its `bn<major><minor>-*` ids are never renamed — not "kept while builds are still installed," but kept indefinitely. Corrections to a shipped release's page are fine; moving or renaming it is what breaks in-app help. Each new release adds a page rather than replacing one.
 
-In-app Help links derive both the page slug and the anchor from the installed marketing version (`BisonNotesDocumentation`): 2.4 opens `/bisonnotes-ai-v2-4/`, and the Processing Options help button opens `#bn24-ai` on that page. Section anchors are version-scoped, so each release guide must keep its own `bn<major><minor>-*` ids — renaming `bn24-ai` breaks the shipped 2.4 binary's help link.
+In-app Help links derive both the page slug and the anchor from the installed marketing version (`BisonNotesDocumentation`): 2.5 opens `/bisonnotes-ai-v2-5/`, and the Processing Options help button opens `#bn25-ai` on that page. Section anchors are version-scoped, so each release guide must keep its own `bn<major><minor>-*` ids — renaming `bn24-ai` breaks the shipped 2.4 binary's help link, and every published guide must keep the anchors its own release shipped against.
 
 ## Transcript Cleanup
 
@@ -74,7 +74,7 @@ The model is English-only and runs locally. Unsupported targets and simulators s
 - A sharded on-device model is only reported as installed when every shard named by `model.safetensors.index.json` is present and non-empty, so an interrupted copy keeps the download cache it needs to resume instead of being offered as ready.
 - Deleted imported transcripts no longer resurrect: removal intents are queued before the local delete, intents whose local deletion already committed are kept, and stale transcript rows are removed.
 - Summary regeneration commits its Core Data cleanup before queuing iCloud tombstones or deleting attachment folders, so a failed save can no longer leave local rows behind while a later sync deletes their cloud copies.
-- In-app Help is version-aware. `BisonNotesDocumentation` derives both the release-guide slug and the section anchor from the installed marketing version (2.4 → `/bisonnotes-ai-v2-4/#bn24-ai`), and falls back to the unversioned landing page with no fragment when the version cannot be read.
+- In-app Help is version-aware. `BisonNotesDocumentation` derives both the release-guide slug and the section anchor from the installed marketing version (2.5 → `/bisonnotes-ai-v2-5/#bn25-ai`), and falls back to the unversioned landing page with no fragment when the version cannot be read.
 - v2.4 dead code was removed across the app and test targets, and the release adds `docs/icloud-sync-performance-plan.md`, `docs/ios-audio-interruption-recovery-delegation-plan.md`, and `docs/v2.4-dead-code-cleanup-delegation-plan.md`.
 
 ## v2.3 (Build 14) Highlights
