@@ -2516,9 +2516,13 @@ struct EditableTranscriptView: View {
         Task {
             let rerunCleanupConfiguration = TranscriptCleanupConfiguration.automatic()
             let rerunCleanupEnabled = rerunCleanupConfiguration.enabled
-            let rerunSourceSnapshot = recording.id.flatMap {
-                appCoordinator.getTranscriptData(for: $0)
-            }.map(TranscriptCleanupSourceSnapshot.init(transcript:))
+            // Deliberately non-optional, the way TranscriptionStarter builds it:
+            // a recording with no transcript yet has a snapshot whose `matches`
+            // returns true for "still no transcript", so "there was nothing here
+            // to begin with" is not mistaken for "the source changed".
+            let rerunSourceSnapshot = TranscriptCleanupSourceSnapshot(
+                transcript: recording.id.flatMap { appCoordinator.getTranscriptData(for: $0) }
+            )
             do {
                 // Get the currently configured transcription engine
                 let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
@@ -2580,7 +2584,11 @@ struct EditableTranscriptView: View {
                     // a completed rerun: there is nothing left to attach it to.
                     guard appCoordinator.getRecording(id: recordingId) != nil else {
                         await MainActor.run {
-                            transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                            // Nothing to do with cleanup, which may not even be
+                            // turned on: the whole rerun has nowhere to be saved.
+                            saveErrorMessage = "This recording was deleted while the transcription was running, "
+                                + "so the new transcript could not be saved."
+                            showingSaveErrorAlert = true
                             isRerunningTranscription = false
                         }
                         AppLog.shared.transcription(
@@ -2596,7 +2604,7 @@ struct EditableTranscriptView: View {
                     // ASR rerun is still saved — uncleaned — and the staleness
                     // is reported as a warning rather than throwing the work away.
                     let isRerunCleanupStale = rerunCleanupEnabled
-                        && rerunSourceSnapshot?.matches(appCoordinator.getTranscriptData(for: recordingId)) != true
+                        && !rerunSourceSnapshot.matches(appCoordinator.getTranscriptData(for: recordingId))
                     if isRerunCleanupStale {
                         AppLog.shared.transcription(
                             "Discarded stale direct rerun cleanup result, keeping uncleaned transcript: "
