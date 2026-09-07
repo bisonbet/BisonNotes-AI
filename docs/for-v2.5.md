@@ -18,7 +18,7 @@ Ordered by value, not by effort.
 
 ## Follow-up execution status — 2026-09-06
 
-The correctness work from [v2.5-follow-up-agent-plan.md](v2.5-follow-up-agent-plan.md)
+The correctness work from the [historical v2.5 follow-up execution plan](https://github.com/bisonbet/BisonNotes-AI/commit/cc00a2ce)
 is implemented on `codex/v2.5-follow-up-agent-plan`, based on `v2.5`. The
 remaining release gates are recorded here rather than implied by source-level
 tests:

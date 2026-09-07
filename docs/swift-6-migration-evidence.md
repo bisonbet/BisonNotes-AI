@@ -1,6 +1,8 @@
 # Swift 6 Migration Evidence
 
-This is the lead-owned evidence ledger for `docs/swift-6-migration-delegation-plan.md`.
+This is the lead-owned evidence ledger for the historical Swift 6 migration plan
+(the plan was retired after implementation; its source remains in Git history at
+commit [`017067bf`](https://github.com/bisonbet/BisonNotes-AI/commit/017067bf)).
 It records the live baseline, staged strict-concurrency diagnostics, package handoffs,
 target migration matrix, and release/manual evidence. Compilation and automated tests
 do not prove signed-app, hardware, provider-service, CloudKit, or accessibility-release
