@@ -347,8 +347,13 @@ class CoreDataManager: ObservableObject {
         let primaryURL: URL?
         if storedURL.hasPrefix("/") {
             primaryURL = URL(fileURLWithPath: storedURL)
-        } else if let parsed = URL(string: storedURL), parsed.scheme != nil {
-            primaryURL = parsed.isFileURL ? parsed : nil
+        } else if let parsed = URL(string: storedURL), parsed.isFileURL {
+            // Only an explicit `file:` URL takes this branch. Testing
+            // `scheme != nil` instead would capture ordinary filenames that
+            // happen to contain a colon — `URL(string:)` reads
+            // "meeting:notes.m4a" as scheme "meeting" — and strand a recording
+            // whose audio is sitting in Documents under exactly that name.
+            primaryURL = parsed
         } else {
             // Decode URL-encoded characters (like %20 for spaces)
             let decoded = storedURL.removingPercentEncoding ?? storedURL
@@ -419,11 +424,13 @@ class CoreDataManager: ObservableObject {
     /// Used for archived recordings where the local file may have been intentionally removed.
     func getStoredURL(for recording: RecordingEntry) -> URL? {
         guard let urlString = recording.recordingURL else { return nil }
-
-        if let url = URL(string: urlString), url.scheme != nil {
-            return url
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
         }
-        return relativePathToURL(urlString)
+
+        // Shares the one definition of the stored-URL rules, so a filename
+        // containing a colon resolves here the same way it does everywhere else.
+        return Self.storedURLCandidates(urlString, documentsURL: documentsURL).first
     }
 
     private func preservedContentURL(for recording: RecordingEntry, recordingId: UUID) -> URL {

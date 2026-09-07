@@ -528,10 +528,25 @@ struct AdvancedTroubleshootingView: View {
                     .foregroundColor(.secondary)
             }
 
-            ForEach(result.skipped) { item in
+            // A `.sidecarShared` entry describes a file that WAS deleted — only
+            // its sidecars were kept. Rendering it as "Skipped" alongside the
+            // deleted count would list the same name as both deleted and
+            // skipped, leaving the user unable to tell what happened to it.
+            let retainedSidecars = result.skipped.filter { $0.reason == .sidecarShared }
+            let skippedCandidates = result.skipped.filter { $0.reason != .sidecarShared }
+
+            ForEach(skippedCandidates) { item in
                 Text("Skipped \(URL(fileURLWithPath: item.path).lastPathComponent): \(item.detail)")
                     .font(.caption)
                     .foregroundColor(.orange)
+            }
+            ForEach(retainedSidecars) { item in
+                Text(
+                    "Removed \(URL(fileURLWithPath: item.path).lastPathComponent), but kept its "
+                        + "sidecars: \(item.detail)"
+                )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
             ForEach(result.failures) { item in
                 Text("Could not remove \(URL(fileURLWithPath: item.path).lastPathComponent): \(item.message)")

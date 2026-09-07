@@ -522,6 +522,28 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
         XCTAssertTrue(result.skipped.isEmpty)
     }
 
+    func testColonBearingFilenameStillProtectsItsRecording() async throws {
+        // `URL(string:)` reads "meeting:notes_2026.m4a" as scheme "meeting".
+        // Treating that as a non-file URL would leave the row resolving to
+        // nothing, so its audio would look unreferenced and become deletable.
+        let audio = try writeFile(named: "meeting:notes_2026.m4a", byteCount: 26)
+        let recording = insertRecording(name: "Colon name", url: audio)
+        recording.recordingURL = audio.lastPathComponent
+        try coreDataManager.managedObjectContext.save()
+
+        let scan = try await makeService().scanUnreferencedAudio()
+        let report = try await makeService().makeLocalDataReport()
+
+        XCTAssertTrue(scan.candidates.isEmpty, scan.candidates.map(\.fileName).joined(separator: ", "))
+        XCTAssertEqual(scan.protectedFileCount, 1)
+        XCTAssertFalse(report.issues.contains { $0.category == .missingAudio })
+        XCTAssertEqual(
+            coreDataManager.getStoredURL(for: recording).map { $0.lastPathComponent },
+            "meeting:notes_2026.m4a"
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audio.path))
+    }
+
     func testReportFlagsRowsLinkedToNoRecordingAtAll() async throws {
         let context = coreDataManager.managedObjectContext
         let transcript = TranscriptEntry(context: context)
