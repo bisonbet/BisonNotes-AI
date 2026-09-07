@@ -421,8 +421,8 @@ final class TranscriptCleanupTests: XCTestCase {
             .appendingPathComponent("S1-mini-MLX-8bit", isDirectory: true)
 
         XCTAssertEqual(
-            TranscriptCleanupModelLocator.directory.standardizedFileURL,
-            expectedDirectory.standardizedFileURL
+            TranscriptCleanupModelLocator.directory.standardizedFileURL.path,
+            expectedDirectory.standardizedFileURL.path
         )
     }
     #endif
