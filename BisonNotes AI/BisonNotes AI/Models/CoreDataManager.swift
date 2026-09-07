@@ -252,6 +252,15 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Fetches recording rows for a diagnostic snapshot without converting a
+    /// read failure into an empty result. Callers must copy the values they
+    /// need while this manager's owning context is isolated to the main actor.
+    func fetchRecordingsForDiagnostics() throws -> [RecordingEntry] {
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     // MARK: - URL Management Helpers
 
     /// Migrates all existing absolute URL paths to relative paths for resilience
@@ -321,17 +330,39 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // Decode URL-encoded characters (like %20 for spaces)
-        let decodedPath = relativePath.removingPercentEncoding ?? relativePath
+        return Self.storedURLCandidates(relativePath, documentsURL: documentsURL).first
+    }
 
-        // If it's just a filename, append directly to documents
-        if !decodedPath.contains("/") {
-            return documentsURL.appendingPathComponent(decodedPath)
+    /// The pure form of the rules `getAbsoluteURL` applies to a stored
+    /// `recordingURL`: the path the string names, plus the Documents-relative
+    /// filename fallback used when a container path changed.
+    ///
+    /// This is the single definition of those rules. Read-only callers — the
+    /// troubleshooting report and the reviewed-audio scan — use it instead of
+    /// restating them, so a change here cannot leave one of them protecting a
+    /// different set of files than `getAbsoluteURL` resolves. Unlike
+    /// `getAbsoluteURL` it touches neither the file system nor the managed
+    /// object, so a diagnostic can call it without rewriting a row.
+    nonisolated static func storedURLCandidates(_ storedURL: String, documentsURL: URL) -> [URL] {
+        let primaryURL: URL?
+        if storedURL.hasPrefix("/") {
+            primaryURL = URL(fileURLWithPath: storedURL)
+        } else if let parsed = URL(string: storedURL), parsed.isFileURL {
+            // Only an explicit `file:` URL takes this branch. Testing
+            // `scheme != nil` instead would capture ordinary filenames that
+            // happen to contain a colon — `URL(string:)` reads
+            // "meeting:notes.m4a" as scheme "meeting" — and strand a recording
+            // whose audio is sitting in Documents under exactly that name.
+            primaryURL = parsed
+        } else {
+            // Decode URL-encoded characters (like %20 for spaces)
+            let decoded = storedURL.removingPercentEncoding ?? storedURL
+            primaryURL = documentsURL.appendingPathComponent(decoded)
         }
 
-        // If it's a relative path, construct the full URL using appendingPathComponent
-        // This is more reliable than URL(string:relativeTo:) for file paths
-        return documentsURL.appendingPathComponent(decodedPath)
+        guard let primaryURL else { return [] }
+        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
+        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
     }
 
     /// Gets the current absolute URL for a recording, handling container ID changes
@@ -393,11 +424,13 @@ class CoreDataManager: ObservableObject {
     /// Used for archived recordings where the local file may have been intentionally removed.
     func getStoredURL(for recording: RecordingEntry) -> URL? {
         guard let urlString = recording.recordingURL else { return nil }
-
-        if let url = URL(string: urlString), url.scheme != nil {
-            return url
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
         }
-        return relativePathToURL(urlString)
+
+        // Shares the one definition of the stored-URL rules, so a filename
+        // containing a colon resolves here the same way it does everywhere else.
+        return Self.storedURLCandidates(urlString, documentsURL: documentsURL).first
     }
 
     private func preservedContentURL(for recording: RecordingEntry, recordingId: UUID) -> URL {
@@ -561,6 +594,13 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching transcripts: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchTranscriptsForDiagnostics() throws -> [TranscriptEntry] {
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     /// Deletes a transcript and, once the save has landed, tells iCloud.
@@ -1158,6 +1198,13 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchSummariesForDiagnostics() throws -> [SummaryEntry] {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     /// Returns the complete summary value objects represented by the Core Data store.
     /// SummaryEntry is the authoritative source; this method is the only conversion path
     /// callers should use when they need all summaries for display or cloud backup.
@@ -1521,6 +1568,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching processing jobs: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Throwing counterpart used to decide whether a reviewed audio file is
+    /// still owned by an in-flight processing job. A failed fetch must fail
+    /// closed instead of looking like a store with no jobs.
+    func fetchProcessingJobsForDiagnostics() throws -> [ProcessingJobEntry] {
+        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     func getProcessingJob(id: UUID) -> ProcessingJobEntry? {

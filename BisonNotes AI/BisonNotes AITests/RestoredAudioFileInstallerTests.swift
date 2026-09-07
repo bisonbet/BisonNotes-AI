@@ -53,8 +53,8 @@ final class RestoredAudioFileInstallerTests: XCTestCase {
     /// The `defer` in `install` covers every throwing path, but a kill or a crash
     /// between the copy and the rename does not run it. The orphan it leaves is a
     /// full recording's worth of bytes in Documents, and the only thing in the app
-    /// that can reclaim it is this sweep — `findOrphanedAudioFiles` filters to audio
-    /// extensions, so it never sees a `.tmp`.
+    /// that can reclaim it is the temporary-file sweep — the reviewed audio cleanup
+    /// intentionally does not inspect restore staging files or `.tmp` artifacts.
     @MainActor
     func testStagingFileLeftByAKilledRestoreIsReclaimedByTheCleanupSweep() throws {
         let documents = try XCTUnwrap(

@@ -65,7 +65,7 @@ BisonNotes AI/
 │   ├── RecordingsView.swift
 │   ├── AudioPlayerView.swift
 │   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
-│   └── DataMigrationView.swift
+│   └── AdvancedTroubleshootingView.swift
 ├── ViewModels/          # View model layer
 ├── FluidAudio/          # Parakeet plus Local Speaker Labels adapters/settings
 ├── AI Engines/         # Various AI service integrations
@@ -109,7 +109,7 @@ Every CloudKit request goes through the components under `BisonNotes AI/Services
 
 Retries live in `CloudKitRetryPolicy`: honor `CKErrorRetryAfterKey`, bounded jittered backoff otherwise, at most three retries, and a requested wait over 30 seconds becomes a persisted eligibility time and a deferred result instead of a sleeping foreground task. Nothing — fetch, save, or scan — may issue a request before that time. Automatic triggers ask `shouldStartRoutineSnapshot(force:)` first; queued edits and user deletions are never delayed by the maintenance throttle, and throttle timestamps advance only after a complete run.
 
-Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Database Tools deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
+Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Advanced Troubleshooting deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
 
 ### AI Engine Integration
 New AI engines should follow the existing pattern:

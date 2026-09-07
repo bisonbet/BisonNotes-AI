@@ -529,7 +529,22 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Singleton
 
-    static let shared = BackgroundProcessingManager()
+    private static var currentInstance: BackgroundProcessingManager?
+
+    static let shared: BackgroundProcessingManager = {
+        let instance = BackgroundProcessingManager()
+        currentInstance = instance
+        return instance
+    }()
+
+    /// Returns the manager only when another feature has already initialized it.
+    ///
+    /// Diagnostics must not access `shared` merely to inspect activity: its
+    /// initialization loads jobs and may resume queued work.
+    static var existingInstance: BackgroundProcessingManager? {
+        currentInstance
+    }
+
     private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
 
     private init(audioSessionManager: EnhancedAudioSessionManager = .shared) {
