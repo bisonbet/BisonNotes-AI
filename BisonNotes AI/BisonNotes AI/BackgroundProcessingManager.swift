@@ -44,11 +44,16 @@ struct ProcessingJob: Identifiable, Codable {
     /// transcription is enqueued. Persisting the snapshot prevents a resumed
     /// job from changing behavior after a settings edit or app relaunch.
     let localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration
+    /// Automatic cleanup is captured when the logical transcription job is
+    /// queued, so a delayed or resumed job cannot change behavior after a
+    /// settings edit.
+    let transcriptCleanupEnabled: Bool
 
     // Exclude processingStartTime from Codable to avoid forward-compatibility issues
     private enum CodingKeys: String, CodingKey {
         case id, type, recordingPath, recordingName, modelName, sourceAudioPath, status, progress,
-             startTime, completionTime, chunks, error, localSpeakerLabelsConfiguration
+             startTime, completionTime, chunks, error, localSpeakerLabelsConfiguration,
+             transcriptCleanupEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -75,6 +80,7 @@ struct ProcessingJob: Identifiable, Codable {
         } else {
             localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
+        transcriptCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .transcriptCleanupEnabled) ?? false
     }
 
     // Computed property to get absolute URL when needed
@@ -103,7 +109,8 @@ struct ProcessingJob: Identifiable, Codable {
         modelName: String? = nil,
         sourceAudioURL: URL? = nil,
         chunks: [AudioChunk]? = nil,
-        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration(),
+        transcriptCleanupEnabled: Bool = false
     ) {
         self.id = UUID()
         self.type = type
@@ -124,6 +131,7 @@ struct ProcessingJob: Identifiable, Codable {
         } else {
             self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
+        self.transcriptCleanupEnabled = transcriptCleanupEnabled
     }
 
     func withStatus(_ status: JobProcessingStatus) -> ProcessingJob {
@@ -141,7 +149,8 @@ struct ProcessingJob: Identifiable, Codable {
             completionTime: status == .completed || status.isCancelled || status.isError ? Date() : self.completionTime,
             chunks: self.chunks,
             error: status.errorMessage,
-            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration
+            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration,
+            transcriptCleanupEnabled: self.transcriptCleanupEnabled
         )
     }
 
@@ -160,7 +169,8 @@ struct ProcessingJob: Identifiable, Codable {
             completionTime: self.completionTime,
             chunks: self.chunks,
             error: self.error,
-            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration
+            localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration,
+            transcriptCleanupEnabled: self.transcriptCleanupEnabled
         )
     }
 
@@ -178,7 +188,8 @@ struct ProcessingJob: Identifiable, Codable {
         completionTime: Date?,
         chunks: [AudioChunk]?,
         error: String?,
-        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration(),
+        transcriptCleanupEnabled: Bool = false
     ) {
         self.id = id
         self.type = type
@@ -198,6 +209,7 @@ struct ProcessingJob: Identifiable, Codable {
         } else {
             self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
+        self.transcriptCleanupEnabled = transcriptCleanupEnabled
     }
 }
 
@@ -205,23 +217,25 @@ private struct ProcessingJobPersistenceEnvelope: Codable {
     let version: Int
     let modelName: String?
     let localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration
+    let transcriptCleanupEnabled: Bool?
 }
 
 extension ProcessingJob {
     static let persistenceEnvelopePrefix = "bisonnotes-processing-job-v1:"
 
     /// ProcessingJobEntry has no extensible metadata column. Store the
-    /// resumable Parakeet choice snapshot in its existing optional model-name
-    /// field while preserving the caller's actual model name inside a tagged
-    /// envelope. This avoids a Core Data migration.
+    /// resumable local-label and transcript-cleanup snapshots in its existing
+    /// optional model-name field while preserving the caller's actual model
+    /// name inside a tagged envelope. This avoids a Core Data migration.
     var persistedModelNameValue: String? {
-        guard case .transcription(engine: .fluidAudio) = type else {
+        guard case .transcription = type else {
             return modelName
         }
         let envelope = ProcessingJobPersistenceEnvelope(
             version: 1,
             modelName: modelName,
-            localSpeakerLabelsConfiguration: localSpeakerLabelsConfiguration
+            localSpeakerLabelsConfiguration: localSpeakerLabelsConfiguration,
+            transcriptCleanupEnabled: transcriptCleanupEnabled
         )
         guard let data = try? JSONEncoder().encode(envelope) else {
             return modelName
@@ -231,18 +245,26 @@ extension ProcessingJob {
 
     static func restoredPersistenceValues(
         from persistedModelName: String?
-    ) -> (modelName: String?, configuration: LocalSpeakerLabelsConfiguration) {
+    ) -> (
+        modelName: String?,
+        configuration: LocalSpeakerLabelsConfiguration,
+        transcriptCleanupEnabled: Bool
+    ) {
         guard let persistedModelName,
               persistedModelName.hasPrefix(persistenceEnvelopePrefix) else {
-            return (persistedModelName, LocalSpeakerLabelsConfiguration())
+            return (persistedModelName, LocalSpeakerLabelsConfiguration(), false)
         }
         let encoded = String(persistedModelName.dropFirst(persistenceEnvelopePrefix.count))
         guard let data = Data(base64Encoded: encoded),
               let envelope = try? JSONDecoder().decode(ProcessingJobPersistenceEnvelope.self, from: data),
               envelope.version == 1 else {
-            return (nil, LocalSpeakerLabelsConfiguration())
+            return (nil, LocalSpeakerLabelsConfiguration(), false)
         }
-        return (envelope.modelName, envelope.localSpeakerLabelsConfiguration)
+        return (
+            envelope.modelName,
+            envelope.localSpeakerLabelsConfiguration,
+            envelope.transcriptCleanupEnabled ?? false
+        )
     }
 }
 
@@ -476,7 +498,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Completion Handlers
 
-    var onTranscriptionCompleted: ((TranscriptData, ProcessingJob, LocalSpeakerLabelWarning?) -> Void)?
+    var onTranscriptionCompleted: ((TranscriptData, ProcessingJob, LocalSpeakerLabelWarning?, TranscriptCleanupWarning?) -> Void)?
 
     // MARK: - Private Properties
 
@@ -493,6 +515,7 @@ class BackgroundProcessingManager: ObservableObject {
     private var isCleaningUpStaleJobs = false
     private let chunkingService = AudioFileChunkingService()
     private let localSpeakerLabelingCoordinator = LocalSpeakerLabelingCoordinator()
+    private let transcriptCleanupCoordinator = TranscriptCleanupCoordinator.shared
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager: EnhancedAudioSessionManager
@@ -596,11 +619,14 @@ class BackgroundProcessingManager: ObservableObject {
         modelName: String? = nil,
         sourceAudioURL: URL? = nil,
         chunks: [AudioChunk]? = nil,
-        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration? = nil
+        localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration? = nil,
+        transcriptCleanupEnabled: Bool? = nil
     ) async throws {
         let capturedSpeakerLabelsConfiguration = engine == .fluidAudio
             ? (localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration.currentUserChoice())
             : LocalSpeakerLabelsConfiguration()
+        let capturedTranscriptCleanupEnabled = transcriptCleanupEnabled
+            ?? TranscriptCleanupSettings.isEnabled()
 
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
@@ -619,7 +645,8 @@ class BackgroundProcessingManager: ObservableObject {
             modelName: modelName,
             sourceAudioURL: sourceAudioURL,
             chunks: chunks,
-            localSpeakerLabelsConfiguration: capturedSpeakerLabelsConfiguration
+            localSpeakerLabelsConfiguration: capturedSpeakerLabelsConfiguration,
+            transcriptCleanupEnabled: capturedTranscriptCleanupEnabled
         )
 
         // For transcription jobs, check if we need to replace an existing job
@@ -1070,6 +1097,14 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Resolve the original recording before any transcription work can produce data to save.
         let recordingId = try resolveRecordingID(for: job.recordingURL)
+        // Filled in from the ASR result below when the engine reports its own
+        // language. Background jobs go through `transcribeChunk` rather than
+        // `transcribeAudioFile`, so this path has to collect the metadata
+        // itself instead of inheriting the configuration the direct paths build.
+        var detectedLanguageCode: String?
+        let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
+            transcript: coreDataManager.getTranscriptData(for: recordingId)
+        )
 
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
         let audioURL = job.audioSourceURL
@@ -1146,6 +1181,7 @@ class BackgroundProcessingManager: ObservableObject {
 
             // Transcribe the chunk
             let transcriptResult = try await transcribeChunk(chunk, engine: engine, recordingId: recordingId)
+            detectedLanguageCode = detectedLanguageCode ?? transcriptResult.languageCode
 
             // Create transcript chunk
             let transcriptChunk = chunkingService.createTranscriptChunk(
@@ -1163,6 +1199,9 @@ class BackgroundProcessingManager: ObservableObject {
         let shouldReassemble = transcriptChunks.count > 1
             || (engine == .fluidAudio && localSpeakerLabelsConfiguration?.isEnabled == true)
         var speakerLabelWarning: LocalSpeakerLabelWarning?
+        var transcriptCleanupWarning: TranscriptCleanupWarning?
+
+        var finalTranscriptData: TranscriptData?
 
         if shouldReassemble {
             EnhancedLogger.shared.logBackgroundProcessing(
@@ -1232,9 +1271,7 @@ class BackgroundProcessingManager: ObservableObject {
                 }
             }
 
-            // Save exactly once through the existing background persistence path.
-            try Task.checkCancellation()
-            try saveTranscript(transcriptData, speakerLabelWarning: speakerLabelWarning)
+            finalTranscriptData = transcriptData
         } else if let firstChunk = transcriptChunks.first {
             // Preserve the existing direct single-chunk save path for default-off
             // FluidAudio and for every non-Fluid engine.
@@ -1247,8 +1284,53 @@ class BackgroundProcessingManager: ObservableObject {
                 engine: engine
             )
 
+            finalTranscriptData = transcriptData
+        }
+
+        // Cleanup is a final-result operation. It runs once after reassembly and
+        // any speaker labeling, never inside transcribeChunk.
+        if let finalTranscriptData {
+            let cleanupConfiguration = TranscriptCleanupConfiguration(
+                enabled: job.transcriptCleanupEnabled,
+                mode: .automatic,
+                languageCode: detectedLanguageCode
+            )
+            let cleanupPreparation = await prepareTranscriptCleanup(
+                for: finalTranscriptData,
+                recordingId: recordingId,
+                sourceSnapshot: cleanupSourceSnapshot,
+                configuration: cleanupConfiguration
+            )
+            if !cleanupPreparation.isCleanupUsable {
+                // Only the derived cleanup is stale, never the ASR result. The
+                // transcript this job just produced is still saved — uncleaned —
+                // and the staleness is reported as a warning, the same way every
+                // other cleanup failure is. Failing the job here threw away a
+                // completed transcription and skipped the chunk cleanup below.
+                let warningCategory = cleanupPreparation.warning?.logCategory ?? "stale-result"
+                AppLog.shared.backgroundProcessing(
+                    "Discarded stale transcript cleanup result, saving uncleaned transcript: "
+                        + "recording=\(recordingId.uuidString), category=\(warningCategory)",
+                    level: .info
+                )
+            }
+
+            transcriptCleanupWarning = cleanupPreparation.warning
             try Task.checkCancellation()
-            try saveTranscript(transcriptData, speakerLabelWarning: nil)
+            guard coreDataManager.getRecording(id: recordingId) != nil else {
+                AppLog.shared.backgroundProcessing(
+                    "Discarded transcript cleanup because recording was deleted: recording=\(recordingId.uuidString)",
+                    level: .info
+                )
+                throw BackgroundProcessingError.processingFailed(
+                    TranscriptCleanupWarning.staleResult.userVisibleMessage
+                )
+            }
+            try saveTranscript(
+                cleanupPreparation.transcript,
+                speakerLabelWarning: speakerLabelWarning,
+                cleanupWarning: transcriptCleanupWarning
+            )
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
@@ -1281,9 +1363,13 @@ class BackgroundProcessingManager: ObservableObject {
         await updateJob(completedJob)
 
         // Send completion notification
-        let completionBody = speakerLabelWarning.map { warning in
-            "Successfully transcribed \(job.recordingName). \(warning.userVisibleMessage)"
-        } ?? "Successfully transcribed \(job.recordingName)"
+        let warnings = [
+            speakerLabelWarning?.userVisibleMessage,
+            transcriptCleanupWarning?.userVisibleMessage
+        ].compactMap { $0 }
+        let completionBody = warnings.isEmpty
+            ? "Successfully transcribed \(job.recordingName)"
+            : "Successfully transcribed \(job.recordingName).\n\n" + warnings.joined(separator: "\n\n")
         await sendNotification(
             title: "Transcription Complete",
             body: completionBody
@@ -1502,7 +1588,8 @@ class BackgroundProcessingManager: ObservableObject {
 
     private func saveTranscript(
         _ transcriptData: TranscriptData,
-        speakerLabelWarning: LocalSpeakerLabelWarning?
+        speakerLabelWarning: LocalSpeakerLabelWarning?,
+        cleanupWarning: TranscriptCleanupWarning? = nil
     ) throws {
         try Task.checkCancellation()
         let transcriptId = try persistBackgroundTranscript(
@@ -1515,8 +1602,56 @@ class BackgroundProcessingManager: ObservableObject {
         // Call completion handler if set
         if let completionHandler = onTranscriptionCompleted,
            let currentJob {
-            completionHandler(transcriptData, currentJob, speakerLabelWarning)
+            completionHandler(transcriptData, currentJob, speakerLabelWarning, cleanupWarning)
         }
+    }
+
+    /// The transcript is always saved; this only says whether the cleanup pass
+    /// produced a value that may be merged into it. `isCleanupUsable == false`
+    /// means the derived text was discarded, not that persistence is skipped.
+    private struct TranscriptCleanupSavePreparation {
+        let transcript: TranscriptData
+        let warning: TranscriptCleanupWarning?
+        let isCleanupUsable: Bool
+    }
+
+    private func prepareTranscriptCleanup(
+        for transcript: TranscriptData,
+        recordingId: UUID,
+        sourceSnapshot: TranscriptCleanupSourceSnapshot,
+        configuration: TranscriptCleanupConfiguration
+    ) async -> TranscriptCleanupSavePreparation {
+        guard configuration.enabled else {
+            return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, isCleanupUsable: true)
+        }
+
+        guard sourceSnapshot.matches(coreDataManager.getTranscriptData(for: recordingId)) else {
+            return TranscriptCleanupSavePreparation(
+                transcript: transcript,
+                warning: .staleResult,
+                isCleanupUsable: false
+            )
+        }
+
+        let result = await transcriptCleanupCoordinator.clean(
+            segments: transcript.segments,
+            configuration: configuration
+        )
+
+        guard sourceSnapshot.matches(coreDataManager.getTranscriptData(for: recordingId)) else {
+            return TranscriptCleanupSavePreparation(
+                transcript: transcript,
+                warning: .staleResult,
+                isCleanupUsable: false
+            )
+        }
+
+        let cleanedTranscript = transcript.preservingIdentity(segments: result.segments)
+        return TranscriptCleanupSavePreparation(
+            transcript: cleanedTranscript,
+            warning: result.warning,
+            isCleanupUsable: true
+        )
     }
 
     private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
@@ -2317,7 +2452,8 @@ class BackgroundProcessingManager: ObservableObject {
             completionTime: jobEntry.completionTime,
             chunks: nil,
             error: jobEntry.error,
-            localSpeakerLabelsConfiguration: restoredValues.configuration
+            localSpeakerLabelsConfiguration: restoredValues.configuration,
+            transcriptCleanupEnabled: restoredValues.transcriptCleanupEnabled
         )
     }
 

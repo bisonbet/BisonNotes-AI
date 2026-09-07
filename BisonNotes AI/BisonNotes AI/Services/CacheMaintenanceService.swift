@@ -262,6 +262,11 @@ final class CacheMaintenanceService {
             cloudCoordinator.endCacheMaintenance()
             return
         }
+        guard TranscriptCleanupModelManager.shared.beginCacheMaintenance() else {
+            MLXSwiftDownloadManager.shared.endCacheMaintenance()
+            cloudCoordinator.endCacheMaintenance()
+            return
+        }
         lastSweep = now
 
         Task.detached(priority: .utility) {
@@ -271,7 +276,10 @@ final class CacheMaintenanceService {
             // have the repository it is writing deleted out from under it.
             let report = await CacheMaintenanceSweep().run(
                 isDownloadInFlight: {
-                    await MainActor.run { MLXSwiftDownloadManager.shared.isDownloading }
+                    await MainActor.run {
+                        MLXSwiftDownloadManager.shared.isDownloading
+                            || TranscriptCleanupModelManager.shared.isDownloading
+                    }
                 },
                 isCloudSyncActive: {
                     await MainActor.run {
@@ -283,7 +291,8 @@ final class CacheMaintenanceService {
                     await MainActor.run {
                         let coordinator = SummaryManager.shared.getiCloudManager().operationCoordinator
                         return coordinator.shouldYieldCacheMaintenance ||
-                            MLXSwiftDownloadManager.shared.shouldYieldCacheMaintenance
+                            MLXSwiftDownloadManager.shared.shouldYieldCacheMaintenance ||
+                            TranscriptCleanupModelManager.shared.shouldYieldCacheMaintenance
                     }
                 }
             )
@@ -296,6 +305,7 @@ final class CacheMaintenanceService {
                 }
                 SummaryManager.shared.getiCloudManager().operationCoordinator.endCacheMaintenance()
                 MLXSwiftDownloadManager.shared.endCacheMaintenance()
+                TranscriptCleanupModelManager.shared.endCacheMaintenance()
                 guard report.didReclaimAnything else { return }
                 AppLog.shared.fileManagement(
                     "Cache maintenance reclaimed \(report.formattedReclaimedBytes) — "

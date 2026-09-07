@@ -744,6 +744,19 @@ private actor MLXSwiftService {
     }
 
     func processComplete(text: String) async throws -> SummarizationResult {
+        try await MLXModelResourceCoordinator.shared.withExclusive {
+            do {
+                let result = try await self.processCompleteUnlocked(text: text)
+                await self.unloadModel()
+                return result
+            } catch {
+                await self.unloadModel()
+                throw error
+            }
+        }
+    }
+
+    private func processCompleteUnlocked(text: String) async throws -> SummarizationResult {
         ensureMemoryObserver()
         receivedMemoryWarning = false
 
@@ -766,9 +779,6 @@ private actor MLXSwiftService {
             result = try await runCompletePrompt(transcript: text, contentHint: ContentAnalyzer.classifyContent(text))
         }
 
-        // Unload model after processing to free Metal memory for the rest of the app.
-        // Next summarization will reload it.
-        unloadModel()
         return result
     }
 
