@@ -522,6 +522,92 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
         XCTAssertTrue(result.skipped.isEmpty)
     }
 
+    func testReportFlagsARecordingWhoseColumnAndRelationshipNameDifferentRows() async throws {
+        let context = coreDataManager.managedObjectContext
+        let columnSummaryID = UUID()
+        let recording = insertRecording(name: "Conflicting summary", summaryID: columnSummaryID)
+
+        // Both summaries exist, so each side looks individually valid: only
+        // comparing the column against the relationship reveals the conflict.
+        insertSummary(id: columnSummaryID, recording: recording)
+        let relationshipSummary = insertSummary(id: UUID(), recording: recording)
+        recording.summary = relationshipSummary
+        try context.save()
+
+        let report = try await makeService().makeLocalDataReport()
+
+        XCTAssertTrue(
+            report.issues.contains { issue in
+                issue.category == .relationship
+                    && issue.message.contains("conflicting summary identities")
+            },
+            report.issues.map(\.message).joined(separator: "\n")
+        )
+    }
+
+    func testSidecarsSharedWithAnotherAudioFileSurviveTheDelete() async throws {
+        let orphan = try writeFile(named: "interview_2026-09-07_14-30-00.m4a", byteCount: 23)
+        let sibling = try writeFile(named: "interview_2026-09-07_14-30-00.wav", byteCount: 24)
+        let sharedLocation = documentsURL.appendingPathComponent("interview_2026-09-07_14-30-00.location")
+        let sharedMeta = documentsURL.appendingPathComponent("interview_2026-09-07_14-30-00.recordingmeta")
+        try Data(repeating: 0x03, count: 5).write(to: sharedLocation)
+        try Data(repeating: 0x04, count: 6).write(to: sharedMeta)
+
+        _ = insertRecording(name: "Kept sibling", url: sibling)
+        try coreDataManager.managedObjectContext.save()
+
+        let service = makeService()
+        let scan = try await service.scanUnreferencedAudio()
+        let candidate = try XCTUnwrap(scan.candidates.first { $0.path == canonicalPath(orphan) })
+
+        let result = try await service.deleteSelectedAudio(
+            candidates: scan.candidates,
+            selectedIDs: [candidate.id]
+        )
+
+        XCTAssertEqual(result.deletedAudioCount, 1)
+        XCTAssertEqual(result.deletedSidecarCount, 0)
+        XCTAssertEqual(result.skipped.first?.reason, .sidecarShared)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sibling.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sharedLocation.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sharedMeta.path))
+    }
+
+    func testCancellingTheReportStopsTheDetachedWork() async throws {
+        _ = insertRecording(
+            name: "Any recording",
+            url: documentsURL.appendingPathComponent("any.m4a")
+        )
+        try coreDataManager.managedObjectContext.save()
+
+        let started = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let service = makeService(
+            fileSystem: ControlledFileSystem(onDirectoryRead: {
+                started.signal()
+                release.wait()
+            })
+        )
+
+        let task = Task { try await service.makeLocalDataReport() }
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                started.wait()
+                continuation.resume()
+            }
+        }
+        task.cancel()
+        release.signal()
+
+        do {
+            _ = try await task.value
+            XCTFail("Cancelling the report must stop the work instead of returning a result.")
+        } catch is CancellationError {
+            // Expected: the detached work observes the caller's cancellation.
+        }
+    }
+
     private func makeService(
         fileSystem: any AdvancedTroubleshootingFileSystem = LocalAdvancedTroubleshootingFileSystem(),
         databaseReader: (any AdvancedTroubleshootingDatabaseReader)? = nil
@@ -591,6 +677,25 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
     }
 }
 
+/// Records what the fake file system has removed so a deleted file stops being
+/// reported as present, the way a real one would.
+private final class DeletedPathStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: Set<String> = []
+
+    func insert(_ path: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        paths.insert(path)
+    }
+
+    func contains(_ path: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return paths.contains(path)
+    }
+}
+
 private struct ControlledFileSystem: AdvancedTroubleshootingFileSystem, Sendable {
     enum Failure: Error, Sendable {
         case directory
@@ -603,16 +708,23 @@ private struct ControlledFileSystem: AdvancedTroubleshootingFileSystem, Sendable
     var directoryFails = false
     var metadataFailures: Set<String> = []
     var deletionFailures: Set<String> = []
+    /// Runs at the start of every directory read, so a test can hold the
+    /// detached work open long enough to cancel it.
+    var onDirectoryRead: (@Sendable () -> Void)?
+
+    private let deleted = DeletedPathStore()
 
     func regularFiles(
         in directory: URL,
         allowedExtensions: Set<String>
     ) throws -> [AudioFileFingerprint] {
+        onDirectoryRead?()
         if directoryFails {
             throw Failure.directory
         }
         return listedFiles.filter {
             allowedExtensions.contains(URL(fileURLWithPath: $0.path).pathExtension.lowercased())
+                && !deleted.contains($0.path)
         }
     }
 
@@ -621,7 +733,7 @@ private struct ControlledFileSystem: AdvancedTroubleshootingFileSystem, Sendable
         if metadataFailures.contains(path) {
             throw Failure.metadata
         }
-        guard let fingerprint = metadataByPath[path] else {
+        guard let fingerprint = metadataByPath[path], !deleted.contains(path) else {
             throw CocoaError(.fileNoSuchFile)
         }
         return fingerprint
@@ -632,6 +744,7 @@ private struct ControlledFileSystem: AdvancedTroubleshootingFileSystem, Sendable
         if deletionFailures.contains(path) {
             throw Failure.deletion
         }
+        deleted.insert(path)
     }
 }
 

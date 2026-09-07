@@ -424,7 +424,10 @@ struct AdvancedTroubleshootingView: View {
                 }
             }
 
-            ForEach(report.warnings, id: \.self) { warning in
+            // Two recordings that share a display name produce byte-identical
+            // warnings, so the position is the identity here — using the text
+            // would silently collapse them into one row.
+            ForEach(Array(report.warnings.enumerated()), id: \.offset) { _, warning in
                 Text(warning)
                     .font(.caption)
                     .foregroundColor(.orange)
@@ -650,7 +653,10 @@ struct AdvancedTroubleshootingView: View {
                     selectedIDs: selectedPaths,
                     activityProvider: { audioActivitySnapshot }
                 )
-                guard !Task.isCancelled else { return }
+                // A cancelled run still reports the files it had already
+                // deleted, so the result is applied either way: dropping it
+                // would leave removed files sitting in the reviewed list with
+                // no record that anything happened.
                 audioCleanupResult = result
                 selectedAudioPaths.subtract(result.deletedPaths)
                 if !result.deletedPaths.isEmpty {
@@ -671,10 +677,12 @@ struct AdvancedTroubleshootingView: View {
         }
     }
 
+    /// Only asks the running work to stop. Clearing `operation` here would
+    /// reopen the guard in `startAudioDeletion` while the previous loop was
+    /// still deleting, letting two runs interleave over the same files; the
+    /// task's own `defer` clears it once it has actually finished.
     private func cancelOperation() {
         operationTask?.cancel()
-        operation = nil
-        operationTask = nil
     }
 
     private func startCloudErase() {
@@ -810,7 +818,7 @@ struct AdvancedTroubleshootingView: View {
         recorderIsBusy = recorderIsBusy || recorderVM.isFinalizingMacRecording
 #endif
         let importIsBusy = fileImportManager.isImporting || transcriptImportManager.isImporting
-        let restoreIsBusy = iCloudManager.operationCoordinator.runningIntent == .restoreToThisDevice
+        let restoreIsBusy = iCloudManager.operationCoordinator.runningIntent?.installsLocalAudio == true
 
         if importIsBusy {
             return AdvancedTroubleshootingActivitySnapshot(
@@ -831,7 +839,7 @@ struct AdvancedTroubleshootingView: View {
         if restoreIsBusy {
             return AdvancedTroubleshootingActivitySnapshot(
                 blockAllDeletion: true,
-                reason: "An iCloud restore is active. Finish the restore before deleting audio.",
+                reason: "An iCloud sync that can restore audio is active. Let it finish before deleting audio.",
                 ownedPaths: ownedPaths,
                 kind: .restore
             )
@@ -847,7 +855,8 @@ struct AdvancedTroubleshootingView: View {
         return AdvancedTroubleshootingActivitySnapshot(
             blockAllDeletion: false,
             reason: nil,
-            ownedPaths: ownedPaths
+            ownedPaths: ownedPaths,
+            kind: .idle
         )
     }
 

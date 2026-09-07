@@ -330,17 +330,34 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // Decode URL-encoded characters (like %20 for spaces)
-        let decodedPath = relativePath.removingPercentEncoding ?? relativePath
+        return Self.storedURLCandidates(relativePath, documentsURL: documentsURL).first
+    }
 
-        // If it's just a filename, append directly to documents
-        if !decodedPath.contains("/") {
-            return documentsURL.appendingPathComponent(decodedPath)
+    /// The pure form of the rules `getAbsoluteURL` applies to a stored
+    /// `recordingURL`: the path the string names, plus the Documents-relative
+    /// filename fallback used when a container path changed.
+    ///
+    /// This is the single definition of those rules. Read-only callers — the
+    /// troubleshooting report and the reviewed-audio scan — use it instead of
+    /// restating them, so a change here cannot leave one of them protecting a
+    /// different set of files than `getAbsoluteURL` resolves. Unlike
+    /// `getAbsoluteURL` it touches neither the file system nor the managed
+    /// object, so a diagnostic can call it without rewriting a row.
+    nonisolated static func storedURLCandidates(_ storedURL: String, documentsURL: URL) -> [URL] {
+        let primaryURL: URL?
+        if storedURL.hasPrefix("/") {
+            primaryURL = URL(fileURLWithPath: storedURL)
+        } else if let parsed = URL(string: storedURL), parsed.scheme != nil {
+            primaryURL = parsed.isFileURL ? parsed : nil
+        } else {
+            // Decode URL-encoded characters (like %20 for spaces)
+            let decoded = storedURL.removingPercentEncoding ?? storedURL
+            primaryURL = documentsURL.appendingPathComponent(decoded)
         }
 
-        // If it's a relative path, construct the full URL using appendingPathComponent
-        // This is more reliable than URL(string:relativeTo:) for file paths
-        return documentsURL.appendingPathComponent(decodedPath)
+        guard let primaryURL else { return [] }
+        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
+        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
     }
 
     /// Gets the current absolute URL for a recording, handling container ID changes

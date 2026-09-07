@@ -59,6 +59,22 @@ enum CloudSyncIntent: String, CaseIterable, Sendable {
         }
     }
 
+    /// True when running this can write audio files into Documents.
+    ///
+    /// The restore leg installs a CloudKit asset and only then assigns the
+    /// recording's URL, with the save batched after the loop, so a file on disk
+    /// may not yet be referenced by a saved row. Maintenance that deletes
+    /// unreferenced audio must stand down for all of these — not only the
+    /// user-initiated restore, since `routineSnapshot` runs the same leg.
+    var installsLocalAudio: Bool {
+        switch self {
+        case .restoreToThisDevice, .routineSnapshot, .fullRepair:
+            return true
+        case .seedFromThisDevice, .deletionFlush, .reviewScan, .erase:
+            return false
+        }
+    }
+
     /// True when a run of `self` already does everything `other` would have done.
     func subsumes(_ other: CloudSyncIntent) -> Bool {
         if self == other { return true }

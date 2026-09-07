@@ -23,8 +23,16 @@ struct AdvancedTroubleshootingDatabaseSnapshot: Equatable, Sendable {
         let storedURL: String?
         let audioQuality: String?
         let isArchived: Bool
+        /// The denormalized column, falling back to the relationship when the
+        /// column is empty. Existence and classification use this.
         let transcriptID: UUID?
         let summaryID: UUID?
+        /// The relationship's own identity, kept beside the column rather than
+        /// coalesced into it. When a row's column names one existing transcript
+        /// and its relationship names a different one, both look individually
+        /// valid, so only comparing the two can surface the conflict.
+        let relationshipTranscriptID: UUID?
+        let relationshipSummaryID: UUID?
     }
 
     struct Transcript: Equatable, Sendable {
@@ -52,6 +60,20 @@ struct AdvancedTroubleshootingDatabaseSnapshot: Equatable, Sendable {
     let transcripts: [Transcript]
     let summaries: [Summary]
     let processingJobs: [ProcessingJob]
+
+    var protection: TroubleshootingProtectionSnapshot {
+        TroubleshootingProtectionSnapshot(recordings: recordings, processingJobs: processingJobs)
+    }
+}
+
+/// The only rows the reviewed-audio guards actually read.
+///
+/// `TranscriptEntry.segments` and `SummaryEntry.summary` hold entire transcript
+/// and summary bodies, and revalidation never looks at either, so the delete
+/// path fetches this instead of the full report snapshot.
+struct TroubleshootingProtectionSnapshot: Equatable, Sendable {
+    let recordings: [AdvancedTroubleshootingDatabaseSnapshot.Recording]
+    let processingJobs: [AdvancedTroubleshootingDatabaseSnapshot.ProcessingJob]
 }
 
 // MARK: - Local data report
@@ -191,19 +213,9 @@ struct AdvancedTroubleshootingActivitySnapshot: Equatable, Sendable {
     let blockAllDeletion: Bool
     let reason: String?
     let ownedPaths: Set<String>
+    /// Required at every construction site: it is the only thing that decides
+    /// how a block is reported, so no caller may fall back to a default.
     let kind: AdvancedTroubleshootingActivityKind
-
-    init(
-        blockAllDeletion: Bool,
-        reason: String?,
-        ownedPaths: Set<String>,
-        kind: AdvancedTroubleshootingActivityKind = .recording
-    ) {
-        self.blockAllDeletion = blockAllDeletion
-        self.reason = reason
-        self.ownedPaths = ownedPaths
-        self.kind = kind
-    }
 
     static let idle = AdvancedTroubleshootingActivitySnapshot(
         blockAllDeletion: false,
@@ -222,6 +234,11 @@ enum AudioCleanupSkipReason: String, Equatable, Sendable {
     case activeProcessingJob
     case activeRestore
     case outsideScope
+    /// The audio was removed, but its sidecars are shared with another audio
+    /// file of the same base name and were left in place.
+    case sidecarShared
+    /// The run stopped before this selection could be checked.
+    case notEvaluated
 
     var displayName: String {
         switch self {
@@ -241,6 +258,10 @@ enum AudioCleanupSkipReason: String, Equatable, Sendable {
             return "Owned by an active restore"
         case .outsideScope:
             return "Outside the reviewed folder"
+        case .sidecarShared:
+            return "Sidecars shared with another audio file"
+        case .notEvaluated:
+            return "Not evaluated"
         }
     }
 }
@@ -401,39 +422,56 @@ final class AdvancedTroubleshootingService {
             ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
     }
 
+    /// Runs blocking file work off the main actor while keeping it cancellable.
+    ///
+    /// `Task.detached` inherits neither cancellation nor priority, and awaiting
+    /// an unstructured task's `value` is not a cancellation point, so without
+    /// this handler a cancelled report or scan would keep running to completion.
+    nonisolated private static func runCancellable<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        let task = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try work()
+        }
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
     func makeLocalDataReport() async throws -> LocalDataReport {
         let snapshot = try makeDatabaseSnapshot()
         let documentsURL = try requiredDocumentsURL()
         let fileSystem = self.fileSystem
 
-        return try await Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try Self.buildLocalDataReport(
+        return try await Self.runCancellable {
+            try Self.buildLocalDataReport(
                 snapshot: snapshot,
                 documentsURL: documentsURL,
                 fileSystem: fileSystem,
                 generatedAt: Date()
             )
-        }.value
+        }
     }
 
     func scanUnreferencedAudio(
         activity: AdvancedTroubleshootingActivitySnapshot = .idle
     ) async throws -> UnreferencedAudioScanResult {
-        let snapshot = try makeDatabaseSnapshot()
+        let snapshot = try makeProtectionSnapshot()
         let documentsURL = try requiredDocumentsURL()
         let fileSystem = self.fileSystem
 
-        return try await Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try Self.buildAudioScan(
+        return try await Self.runCancellable {
+            try Self.buildAudioScan(
                 snapshot: snapshot,
                 documentsURL: documentsURL,
                 fileSystem: fileSystem,
                 activity: activity,
                 generatedAt: Date()
             )
-        }.value
+        }
     }
 
     // swiftlint:disable cyclomatic_complexity function_body_length
@@ -517,18 +555,44 @@ final class AdvancedTroubleshootingService {
 
         // Verify that the store and directory are readable before any delete.
         // A failure here must never be interpreted as an empty folder.
-        let initialSnapshot = try makeDatabaseSnapshot()
         let documentsURL = try requiredDocumentsURL()
+        // Rebuilding the reference and protection sets per candidate meant one
+        // full-store fetch and a `resolvingSymlinksInPath` syscall per recording
+        // for every selected file. They are derived from the store alone, so the
+        // watcher recomputes them only once the store has actually changed —
+        // which is still "immediately before deletion" for every guard below.
+        let storeWatcher = DatabaseChangeWatcher()
+        defer { storeWatcher.stop() }
+        var cachedEvaluation: ProtectionEvaluation?
+
+        func currentEvaluation() throws -> ProtectionEvaluation {
+            if let cachedEvaluation, !storeWatcher.hasChanged {
+                return cachedEvaluation
+            }
+            storeWatcher.markEvaluated()
+            let evaluation = Self.protectionEvaluation(
+                snapshot: try makeProtectionSnapshot(),
+                documentsURL: documentsURL
+            )
+            cachedEvaluation = evaluation
+            return evaluation
+        }
+
+        func appendUnevaluatedSkips(after index: Int, detail: String) {
+            let remaining = index + 1
+            guard remaining < selectedCandidates.count else { return }
+            for candidate in selectedCandidates[remaining...] {
+                appendSkip(candidate, reason: .notEvaluated, detail: detail)
+            }
+        }
+
         let initialFiles = try await regularAudioFiles(in: documentsURL)
         let initialFilesByPath = Dictionary(
             initialFiles.map { ($0.path, $0) },
             uniquingKeysWith: { first, _ in first }
         )
 
-        let initialProcessingProtection = Self.processingProtection(
-            snapshot: initialSnapshot,
-            documentsURL: documentsURL
-        )
+        let initialProcessingProtection = try currentEvaluation().processing
         if initialProcessingProtection.blocksAll {
             selectedCandidates.forEach {
                 appendSkip(
@@ -540,7 +604,7 @@ final class AdvancedTroubleshootingService {
             return result()
         }
 
-        for candidate in selectedCandidates {
+        for (candidateIndex, candidate) in selectedCandidates.enumerated() {
             do {
                 try Task.checkCancellation()
             } catch {
@@ -577,13 +641,16 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            let firstSnapshot: AdvancedTroubleshootingDatabaseSnapshot
+            let firstEvaluation: ProtectionEvaluation
             do {
-                firstSnapshot = try makeDatabaseSnapshot()
+                firstEvaluation = try currentEvaluation()
             } catch {
-                appendFailure(
-                    candidate.path,
-                    AdvancedTroubleshootingError.databaseReadFailed(error.localizedDescription).localizedDescription
+                let message = AdvancedTroubleshootingError
+                    .databaseReadFailed(error.localizedDescription).localizedDescription
+                appendFailure(candidate.path, message)
+                appendUnevaluatedSkips(
+                    after: candidateIndex,
+                    detail: "The run stopped because the local database could not be read."
                 )
                 break
             }
@@ -610,11 +677,7 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            let firstReferencedPaths = Self.referencedPaths(
-                in: firstSnapshot,
-                documentsURL: documentsURL
-            )
-            if firstReferencedPaths.contains(candidate.path) {
+            if firstEvaluation.referencedPaths.contains(candidate.path) {
                 appendSkip(
                     candidate,
                     reason: .becameReferenced,
@@ -623,10 +686,7 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            let firstProcessingProtection = Self.processingProtection(
-                snapshot: firstSnapshot,
-                documentsURL: documentsURL
-            )
+            let firstProcessingProtection = firstEvaluation.processing
             if firstProcessingProtection.blocksAll
                 || firstProcessingProtection.protectedPaths.contains(candidate.path) {
                 appendSkip(
@@ -655,21 +715,52 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            // The second read closes the most important review-to-delete race:
-            // a reference or processing job may have appeared while metadata
-            // was being checked.
-            let finalSnapshot: AdvancedTroubleshootingDatabaseSnapshot
+            // Identity is confirmed before the ownership guards, not after, so
+            // that no suspension separates those guards from the delete. Reading
+            // metadata hands the main actor back, and a recording, import,
+            // processing job, or restore that starts in that gap would otherwise
+            // claim this path after the last check had already passed.
+            let finalMetadata: AudioFileFingerprint
             do {
-                finalSnapshot = try makeDatabaseSnapshot()
+                finalMetadata = try await metadata(for: candidateURL)
             } catch {
-                appendFailure(
-                    candidate.path,
-                    AdvancedTroubleshootingError.databaseReadFailed(error.localizedDescription).localizedDescription
+                if Self.isMissingFileError(error) {
+                    appendSkip(candidate, reason: .missing, detail: "The reviewed audio file is no longer present.")
+                } else {
+                    appendFailure(candidate.path, error.localizedDescription)
+                }
+                continue
+            }
+
+            guard Self.fingerprintsMatch(candidate.fingerprint, finalMetadata) else {
+                appendSkip(
+                    candidate,
+                    reason: .changedOrReplaced,
+                    detail: "Its identity changed during final revalidation."
+                )
+                continue
+            }
+
+            // Everything from here to `deleteFile` runs without an `await`, so
+            // the store and the owning operations cannot change underneath these
+            // last checks. This second read closes the review-to-delete race: a
+            // reference or processing job may have appeared while metadata was
+            // being checked just above.
+            let finalEvaluation: ProtectionEvaluation
+            do {
+                finalEvaluation = try currentEvaluation()
+            } catch {
+                let message = AdvancedTroubleshootingError
+                    .databaseReadFailed(error.localizedDescription).localizedDescription
+                appendFailure(candidate.path, message)
+                appendUnevaluatedSkips(
+                    after: candidateIndex,
+                    detail: "The run stopped because the local database could not be read."
                 )
                 break
             }
 
-            if Self.referencedPaths(in: finalSnapshot, documentsURL: documentsURL).contains(candidate.path) {
+            if finalEvaluation.referencedPaths.contains(candidate.path) {
                 appendSkip(
                     candidate,
                     reason: .becameReferenced,
@@ -678,10 +769,7 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            let finalProcessingProtection = Self.processingProtection(
-                snapshot: finalSnapshot,
-                documentsURL: documentsURL
-            )
+            let finalProcessingProtection = finalEvaluation.processing
             if finalProcessingProtection.blocksAll
                 || finalProcessingProtection.protectedPaths.contains(candidate.path) {
                 appendSkip(
@@ -710,30 +798,13 @@ final class AdvancedTroubleshootingService {
                 continue
             }
 
-            let finalMetadata: AudioFileFingerprint
-            do {
-                finalMetadata = try await metadata(for: candidateURL)
-            } catch {
-                if Self.isMissingFileError(error) {
-                    appendSkip(candidate, reason: .missing, detail: "The reviewed audio file is no longer present.")
-                } else {
-                    appendFailure(candidate.path, error.localizedDescription)
-                }
-                continue
-            }
-
-            guard Self.fingerprintsMatch(candidate.fingerprint, finalMetadata) else {
-                appendSkip(
-                    candidate,
-                    reason: .changedOrReplaced,
-                    detail: "Its identity changed during final revalidation."
-                )
-                continue
-            }
-
             do {
                 try Task.checkCancellation()
-                try await deleteFile(at: candidateURL)
+                // Removed without hopping off the main actor, so the guards
+                // above and the removal are one uninterrupted step. Unlinking a
+                // single file is a single syscall; handing it to a detached task
+                // would reopen the very window those guards just closed.
+                try fileSystem.deleteFile(at: candidateURL)
                 deletedAudioCount += 1
                 deletedAudioBytes += candidate.byteCount
                 deletedPaths.append(candidate.path)
@@ -741,6 +812,30 @@ final class AdvancedTroubleshootingService {
                 return result(cancelled: true)
             } catch {
                 appendFailure(candidate.path, error.localizedDescription)
+                continue
+            }
+
+            // Sidecars are keyed by base name, not by audio extension, so
+            // `interview_2026-01-01_10-00-00.m4a` and the `.wav` beside it share
+            // one `.location` and one `.recordingmeta`. Removing the sidecars of
+            // an unreferenced file would then strip the location and metadata off
+            // whichever sibling is still referenced, so they survive unless this
+            // base name belongs to the deleted file alone. A failed check leaves
+            // them in place too: an unprovable sibling is treated as a real one.
+            let sidecarsAreShared: Bool
+            do {
+                sidecarsAreShared = try await hasOtherAudioSibling(
+                    ofCandidatePath: candidate.path
+                )
+            } catch {
+                sidecarsAreShared = true
+            }
+            guard !sidecarsAreShared else {
+                appendSkip(
+                    candidate,
+                    reason: .sidecarShared,
+                    detail: "Its sidecars are shared with another audio file of the same name and were kept."
+                )
                 continue
             }
 
@@ -785,6 +880,51 @@ final class AdvancedTroubleshootingService {
 
     // MARK: Snapshot construction
 
+    /// Fetches only the rows the reviewed-audio guards read.
+    ///
+    /// Deliberately does not touch `TranscriptEntry` or `SummaryEntry`: both
+    /// carry the full text bodies, and nothing in `deleteSelectedAudio` or
+    /// `buildAudioScan` consults them.
+    private func makeProtectionSnapshot() throws -> TroubleshootingProtectionSnapshot {
+        do {
+            let recordings = try databaseReader.fetchRecordingsForDiagnostics()
+            let processingJobs = try databaseReader.fetchProcessingJobsForDiagnostics()
+            return TroubleshootingProtectionSnapshot(
+                recordings: recordings.map(Self.recordingValue),
+                processingJobs: processingJobs.map(Self.processingJobValue)
+            )
+        } catch {
+            throw AdvancedTroubleshootingError.databaseReadFailed(error.localizedDescription)
+        }
+    }
+
+    private static func recordingValue(
+        _ entry: RecordingEntry
+    ) -> AdvancedTroubleshootingDatabaseSnapshot.Recording {
+        AdvancedTroubleshootingDatabaseSnapshot.Recording(
+            id: entry.id,
+            name: entry.recordingName,
+            storedURL: entry.recordingURL,
+            audioQuality: entry.audioQuality,
+            isArchived: entry.isArchived,
+            transcriptID: entry.transcriptId ?? entry.transcript?.id,
+            summaryID: entry.summaryId ?? entry.summary?.id,
+            relationshipTranscriptID: entry.transcript?.id,
+            relationshipSummaryID: entry.summary?.id
+        )
+    }
+
+    private static func processingJobValue(
+        _ entry: ProcessingJobEntry
+    ) -> AdvancedTroubleshootingDatabaseSnapshot.ProcessingJob {
+        AdvancedTroubleshootingDatabaseSnapshot.ProcessingJob(
+            id: entry.id,
+            recordingURL: entry.recordingURL,
+            recordingID: entry.recording?.id,
+            status: entry.status
+        )
+    }
+
     private func makeDatabaseSnapshot() throws -> AdvancedTroubleshootingDatabaseSnapshot {
         do {
             let recordings = try databaseReader.fetchRecordingsForDiagnostics()
@@ -793,17 +933,7 @@ final class AdvancedTroubleshootingService {
             let processingJobs = try databaseReader.fetchProcessingJobsForDiagnostics()
 
             return AdvancedTroubleshootingDatabaseSnapshot(
-                recordings: recordings.map {
-                    AdvancedTroubleshootingDatabaseSnapshot.Recording(
-                        id: $0.id,
-                        name: $0.recordingName,
-                        storedURL: $0.recordingURL,
-                        audioQuality: $0.audioQuality,
-                        isArchived: $0.isArchived,
-                        transcriptID: $0.transcriptId ?? $0.transcript?.id,
-                        summaryID: $0.summaryId ?? $0.summary?.id
-                    )
-                },
+                recordings: recordings.map(Self.recordingValue),
                 transcripts: transcripts.map {
                     AdvancedTroubleshootingDatabaseSnapshot.Transcript(
                         id: $0.id,
@@ -820,14 +950,7 @@ final class AdvancedTroubleshootingService {
                         relationshipTranscriptID: $0.transcript?.id
                     )
                 },
-                processingJobs: processingJobs.map {
-                    AdvancedTroubleshootingDatabaseSnapshot.ProcessingJob(
-                        id: $0.id,
-                        recordingURL: $0.recordingURL,
-                        recordingID: $0.recording?.id,
-                        status: $0.status
-                    )
-                }
+                processingJobs: processingJobs.map(Self.processingJobValue)
             )
         } catch {
             throw AdvancedTroubleshootingError.databaseReadFailed(error.localizedDescription)
@@ -844,13 +967,12 @@ final class AdvancedTroubleshootingService {
     private func regularAudioFiles(in documentsURL: URL) async throws -> [AudioFileFingerprint] {
         let fileSystem = self.fileSystem
         do {
-            return try await Task.detached(priority: .userInitiated) {
-                try Task.checkCancellation()
-                return try fileSystem.regularFiles(
+            return try await Self.runCancellable {
+                try fileSystem.regularFiles(
                     in: documentsURL,
                     allowedExtensions: Self.orphanedAudioExtensions
                 )
-            }.value
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as AdvancedTroubleshootingError {
@@ -862,18 +984,39 @@ final class AdvancedTroubleshootingService {
 
     private func metadata(for url: URL) async throws -> AudioFileFingerprint {
         let fileSystem = self.fileSystem
-        return try await Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
-            return try fileSystem.metadata(for: url)
-        }.value
+        return try await Self.runCancellable {
+            try fileSystem.metadata(for: url)
+        }
     }
 
     private func deleteFile(at url: URL) async throws {
         let fileSystem = self.fileSystem
-        try await Task.detached(priority: .userInitiated) {
-            try Task.checkCancellation()
+        try await Self.runCancellable {
             try fileSystem.deleteFile(at: url)
-        }.value
+        }
+    }
+
+    /// True when another audio file in the same folder shares this file's base
+    /// name, which means the `.location` and `.recordingmeta` sidecars beside it
+    /// may belong to that sibling rather than to the file being removed.
+    ///
+    /// Every audio extension the report understands is checked, not just the
+    /// four the scan offers for deletion: an `.aiff` sibling owns its sidecars
+    /// exactly as much as an `.m4a` one does.
+    private func hasOtherAudioSibling(ofCandidatePath path: String) async throws -> Bool {
+        let base = URL(fileURLWithPath: path).deletingPathExtension()
+        for fileExtension in Self.reportAudioExtensions.sorted() {
+            let siblingURL = base.appendingPathExtension(fileExtension)
+            guard Self.canonicalPath(for: siblingURL) != path else { continue }
+            do {
+                _ = try await metadata(for: siblingURL)
+                return true
+            } catch {
+                if Self.isMissingFileError(error) { continue }
+                throw error
+            }
+        }
+        return false
     }
 
     // MARK: Pure evaluation
@@ -976,20 +1119,43 @@ final class AdvancedTroubleshootingService {
 
         for recording in snapshot.recordings {
             guard let recordingID = recording.id else { continue }
+            let recordingLabel = displayName(recording.name, fallback: recordingID.uuidString)
+
             if let transcriptID = recording.transcriptID, !transcriptIDs.contains(transcriptID) {
                 addIssue(
                     .relationship,
                     "recording-transcript-\(recordingID.uuidString)",
-                    "Recording \(displayName(recording.name, fallback: recordingID.uuidString)) "
-                        + "points to a missing transcript."
+                    "Recording \(recordingLabel) points to a missing transcript."
                 )
             }
             if let summaryID = recording.summaryID, !summaryIDs.contains(summaryID) {
                 addIssue(
                     .relationship,
                     "recording-summary-\(recordingID.uuidString)",
-                    "Recording \(displayName(recording.name, fallback: recordingID.uuidString)) "
-                        + "points to a missing summary."
+                    "Recording \(recordingLabel) points to a missing summary."
+                )
+            }
+
+            // Both sides can name a row that exists, so the missing-row checks
+            // above pass while the two still disagree. `transcriptID` only falls
+            // back to the relationship when the column is empty, so a mismatch
+            // here means the column and the relationship name different rows.
+            if let transcriptID = recording.transcriptID,
+               let relationshipTranscriptID = recording.relationshipTranscriptID,
+               relationshipTranscriptID != transcriptID {
+                addIssue(
+                    .relationship,
+                    "recording-transcript-conflict-\(recordingID.uuidString)",
+                    "Recording \(recordingLabel) has conflicting transcript identities."
+                )
+            }
+            if let summaryID = recording.summaryID,
+               let relationshipSummaryID = recording.relationshipSummaryID,
+               relationshipSummaryID != summaryID {
+                addIssue(
+                    .relationship,
+                    "recording-summary-conflict-\(recordingID.uuidString)",
+                    "Recording \(recordingLabel) has conflicting summary identities."
                 )
             }
         }
@@ -1108,8 +1274,16 @@ final class AdvancedTroubleshootingService {
             )
         }
 
+        // The listing answers "is this recording's audio present?" for every
+        // file directly inside Documents, so it is kept as a lookup set rather
+        // than stat'ed once here and then re-stat'ed per recording below.
+        var documentsAudioPaths: Set<String> = []
         do {
-            _ = try fileSystem.regularFiles(in: documentsURL, allowedExtensions: reportAudioExtensions)
+            let documentsAudio = try fileSystem.regularFiles(
+                in: documentsURL,
+                allowedExtensions: reportAudioExtensions
+            )
+            documentsAudioPaths = Set(documentsAudio.map(\.path))
         } catch {
             status = .failed
             let message = "The local Documents audio scan failed: \(error.localizedDescription)"
@@ -1118,6 +1292,8 @@ final class AdvancedTroubleshootingService {
         }
 
         for recording in snapshot.recordings {
+            try Task.checkCancellation()
+
             guard !recording.isArchived,
                   recording.audioQuality?.lowercased() != "imported",
                   recording.storedURL != nil,
@@ -1131,6 +1307,13 @@ final class AdvancedTroubleshootingService {
             var foundAudio = false
             var inspectionError: Error?
             for candidateURL in storedURLCandidates(storedURL, documentsURL: documentsURL) {
+                // Anything the listing already found needs no second stat. Only
+                // paths it could not cover — a nested folder, or a run where the
+                // listing itself failed — fall through to the file system.
+                if documentsAudioPaths.contains(canonicalPath(for: candidateURL)) {
+                    foundAudio = true
+                    break
+                }
                 do {
                     _ = try fileSystem.metadata(for: candidateURL)
                     foundAudio = true
@@ -1175,15 +1358,16 @@ final class AdvancedTroubleshootingService {
     }
 
     nonisolated private static func buildAudioScan(
-        snapshot: AdvancedTroubleshootingDatabaseSnapshot,
+        snapshot: TroubleshootingProtectionSnapshot,
         documentsURL: URL,
         fileSystem: any AdvancedTroubleshootingFileSystem,
         activity: AdvancedTroubleshootingActivitySnapshot,
         generatedAt: Date
     ) throws -> UnreferencedAudioScanResult {
         let files = try fileSystem.regularFiles(in: documentsURL, allowedExtensions: orphanedAudioExtensions)
-        let referencedPaths = referencedPaths(in: snapshot, documentsURL: documentsURL)
-        let processingProtection = processingProtection(snapshot: snapshot, documentsURL: documentsURL)
+        let evaluation = protectionEvaluation(snapshot: snapshot, documentsURL: documentsURL)
+        let referencedPaths = evaluation.referencedPaths
+        let processingProtection = evaluation.processing
         let ownedPaths = activity.ownedPaths.union(processingProtection.protectedPaths)
 
         let candidates = files.compactMap { file -> UnreferencedAudioCandidate? in
@@ -1220,8 +1404,27 @@ final class AdvancedTroubleshootingService {
         )
     }
 
+    /// Everything the guards derive from one store read, computed together.
+    ///
+    /// Both halves walk every recording and resolve symlinks per stored URL, so
+    /// they are built once per snapshot rather than once per reviewed file.
+    private struct ProtectionEvaluation: Sendable {
+        let referencedPaths: Set<String>
+        let processing: ProcessingProtection
+    }
+
+    nonisolated private static func protectionEvaluation(
+        snapshot: TroubleshootingProtectionSnapshot,
+        documentsURL: URL
+    ) -> ProtectionEvaluation {
+        ProtectionEvaluation(
+            referencedPaths: referencedPaths(in: snapshot, documentsURL: documentsURL),
+            processing: processingProtection(snapshot: snapshot, documentsURL: documentsURL)
+        )
+    }
+
     nonisolated private static func referencedPaths(
-        in snapshot: AdvancedTroubleshootingDatabaseSnapshot,
+        in snapshot: TroubleshootingProtectionSnapshot,
         documentsURL: URL
     ) -> Set<String> {
         Set(snapshot.recordings.flatMap { (recording) -> [String] in
@@ -1237,8 +1440,23 @@ final class AdvancedTroubleshootingService {
         let protectedPaths: Set<String>
     }
 
+    /// Indexes recordings by id once, so resolving a job's recording does not
+    /// scan the whole array per job.
+    nonisolated private static func indexedRecordings(
+        in snapshot: TroubleshootingProtectionSnapshot
+    ) -> [UUID: AdvancedTroubleshootingDatabaseSnapshot.Recording] {
+        var indexed: [UUID: AdvancedTroubleshootingDatabaseSnapshot.Recording] = [:]
+        for recording in snapshot.recordings {
+            guard let id = recording.id else { continue }
+            // Duplicate ids are a reported issue, not a crash: keep the first
+            // row so the lookup stays deterministic.
+            if indexed[id] == nil { indexed[id] = recording }
+        }
+        return indexed
+    }
+
     nonisolated private static func processingProtection(
-        snapshot: AdvancedTroubleshootingDatabaseSnapshot,
+        snapshot: TroubleshootingProtectionSnapshot,
         documentsURL: URL
     ) -> ProcessingProtection {
         let terminalStatuses: Set<String> = ["completed", "failed", "cancelled", "canceled"]
@@ -1247,6 +1465,7 @@ final class AdvancedTroubleshootingService {
             "inprogress", "in-progress", "in progress"
         ]
         var protectedPaths: Set<String> = []
+        let recordingsByID = indexedRecordings(in: snapshot)
 
         for job in snapshot.processingJobs {
             guard let normalizedStatus = job.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
@@ -1274,7 +1493,7 @@ final class AdvancedTroubleshootingService {
                 )
             }
             if let recordingID = job.recordingID,
-               let recording = snapshot.recordings.first(where: { $0.id == recordingID }),
+               let recording = recordingsByID[recordingID],
                let storedURL = recording.storedURL {
                 jobPaths.formUnion(
                     storedURLCandidates(storedURL, documentsURL: documentsURL)
@@ -1299,27 +1518,16 @@ final class AdvancedTroubleshootingService {
         storedURLCandidates(storedURL, documentsURL: documentsURL).first
     }
 
-    /// Mirrors CoreDataManager's current URL rules, including the legacy
-    /// filename fallback used when a container path changed. Returning both
-    /// possibilities lets a diagnostic protect the current file without
-    /// mutating the managed recording row during a read-only report.
+    /// CoreDataManager owns these rules, including the legacy filename fallback
+    /// used when a container path changed. Calling its pure form rather than
+    /// restating it keeps this scan protecting exactly the files
+    /// `getAbsoluteURL` resolves, and returning both possibilities lets a
+    /// diagnostic protect the current file without mutating the managed row.
     nonisolated private static func storedURLCandidates(
         _ storedURL: String,
         documentsURL: URL
     ) -> [URL] {
-        let primaryURL: URL?
-        if storedURL.hasPrefix("/") {
-            primaryURL = URL(fileURLWithPath: storedURL)
-        } else if let parsed = URL(string: storedURL), parsed.scheme != nil {
-            primaryURL = parsed.isFileURL ? parsed : nil
-        } else {
-            let decoded = storedURL.removingPercentEncoding ?? storedURL
-            primaryURL = documentsURL.appendingPathComponent(decoded)
-        }
-
-        guard let primaryURL else { return [] }
-        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
-        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
+        CoreDataManager.storedURLCandidates(storedURL, documentsURL: documentsURL)
     }
 
     nonisolated static func canonicalPath(for url: URL) -> String {
@@ -1356,6 +1564,10 @@ final class AdvancedTroubleshootingService {
     nonisolated private static func cleanupSkipReason(
         for activity: AdvancedTroubleshootingActivitySnapshot
     ) -> AudioCleanupSkipReason {
+        // `kind` is the only input: it is required at every construction site,
+        // so classifying a block by sniffing its user-facing `reason` text for
+        // words like "import" would only add a way to get this wrong when that
+        // wording is reworded or localized.
         switch activity.kind {
         case .importing:
             return .activeImport
@@ -1363,19 +1575,7 @@ final class AdvancedTroubleshootingService {
             return .activeProcessingJob
         case .restore:
             return .activeRestore
-        case .idle:
-            return .activeRecording
-        case .recording:
-            let normalizedReason = activity.reason?.lowercased() ?? ""
-            if normalizedReason.contains("import") {
-                return .activeImport
-            }
-            if normalizedReason.contains("restore") {
-                return .activeRestore
-            }
-            if normalizedReason.contains("processing") || normalizedReason.contains("job") {
-                return .activeProcessingJob
-            }
+        case .recording, .idle:
             return .activeRecording
         }
     }
@@ -1383,6 +1583,43 @@ final class AdvancedTroubleshootingService {
     nonisolated private static func displayName(_ name: String?, fallback: String) -> String {
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? fallback : trimmed
+    }
+}
+
+/// Reports whether any Core Data context has changed since the last check.
+///
+/// The reviewed-audio guards must see the store as it is immediately before
+/// each delete, but rereading it per file cost a full fetch and a symlink
+/// resolution per recording every time. Watching for change notifications
+/// instead keeps the same guarantee while collapsing an unchanged run to a
+/// single read. It deliberately does not filter by context: a change anywhere
+/// re-reads, so an unexpected source of mutation makes the guards more
+/// conservative rather than less.
+@MainActor
+private final class DatabaseChangeWatcher {
+    private(set) var hasChanged = true
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            .NSManagedObjectContextObjectsDidChange,
+            .NSManagedObjectContextDidSave
+        ]
+        observers = names.map { name in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.hasChanged = true }
+            }
+        }
+    }
+
+    func markEvaluated() {
+        hasChanged = false
+    }
+
+    func stop() {
+        observers.forEach(NotificationCenter.default.removeObserver)
+        observers = []
     }
 }
 
