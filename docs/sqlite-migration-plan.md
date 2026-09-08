@@ -11,6 +11,38 @@ The current backend-independent safety slice makes durable-store failure explici
 and blocks normal startup when storage is unavailable; it does not change the
 authoritative Core Data backend or authorize a user-store migration.
 
+## Current handoff — 2026-09-07
+
+The last implementation commit is `d4e143b4` (`build: pin GRDB for SQLite
+migration`), following `76949b18` (`feat: harden storage before SQLite
+migration`). The branch is `v3.0`; these commits are ready to continue from and
+are not a production cutover.
+
+Completed in this slice:
+
+- Durable Core Data failure is explicit; startup-critical reads no longer turn
+  storage errors into an empty library or install an in-memory fallback.
+- GRDB `7.11.1` is pinned to the recorded revision with the system SQLite module
+  for the iOS app, native macOS app and XCTest target.
+- A disposable file-backed GRDB smoke test is compiled into the XCTest bundle.
+- The product decisions are recorded: no app export/restore or app-managed
+  encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
+  migration blocks first boot; audio reconciliation runs in the background.
+
+Not yet implemented or closed:
+
+- The SQLite migration coordinator, durable checkpoint store, repository boundary,
+  GRDB schema, Core Data importer, independent verifier and migration screen.
+- Watch/share/background caller gates and the full file-operation/media journal.
+- Runtime smoke-test execution, historical fixtures, performance measurements,
+  shadow qualification, activation, signed device-backup testing and two-device
+  CloudKit validation.
+
+The next safe work package is to close the remaining Phase 0/1 evidence and
+caller-gate gaps, then implement the repository/schema contract before writing
+the importer. Do not enable a migration screen or SQLite user-store cutover until
+it is driven by that real resumable coordinator.
+
 ## 1. Recommendation and decision
 
 Core Data is already using SQLite through `NSPersistentContainer` in

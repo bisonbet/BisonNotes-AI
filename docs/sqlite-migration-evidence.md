@@ -13,6 +13,8 @@ can be updated without rewriting the design.
 | Runtime source baseline | `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` |
 | Planning/implementation branch | `v3.0` |
 | Planning revision | `275ec590c17fd01d010a0e584e334ddc3760c5b4` before implementation changes |
+| Last implementation commit | `d4e143b47ec3fcbe737e36a228150c32b0b33a96` |
+| Safety commit | `76949b18f88c8084ed62f21bfeafd6bad6be2469` |
 | Reviewed date | 2026-09-07 |
 | Production store/CloudKit inspection | Not performed |
 | SQLite backend | GRDB 7.11.1 pinned for an isolated spike; no user-store cutover |
@@ -20,6 +22,21 @@ can be updated without rewriting the design.
 The source baseline and planning revision must remain distinct. A new source
 commit requires this ledger and the model hashes in
 `sqlite-migration-inventory.md` to be regenerated or explicitly compared.
+
+## Handoff state
+
+Core Data remains the only authoritative user store. No SQLite schema, importer,
+checkpoint coordinator, migration screen or media-copy worker is enabled. The
+current implementation is limited to the persistence safety slice, the GRDB
+dependency pin, the compiled disposable smoke test and the documented product
+policy. The smoke test has not executed as an XCTest assertion because the
+existing simulator launch path reaches CloudKit/CoreSimulator failures first.
+
+The next evidence-producing steps are to finish the runtime/defaults ledger and
+Watch/share/background gates, run host-independent disk-backed SQLite assertions,
+measure metadata first-boot cost and background media reconciliation, then build
+the repository/schema contract. No live user database, CloudKit record, app
+export/restore package or app-managed encryption key is in scope.
 
 ## Confirmed product and backend decisions
 

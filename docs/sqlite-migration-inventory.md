@@ -334,3 +334,11 @@ exclude any root; unknown files remain in recovery until classified. Metadata
 references migrate in the blocking first-boot phase, while audio and other large
 media are reconciled by a bounded background worker with durable receipts and no
 full-library duplicate.
+
+## Handoff status — 2026-09-07
+
+This inventory describes the source boundary only; it is not evidence that a
+SQLite destination exists. Core Data remains authoritative, and the GRDB
+dependency is currently an isolated, compiled spike. The importer, repository
+schema, migration screen, checkpoint coordinator and background media worker
+still need implementation and tests against disposable fixtures.
