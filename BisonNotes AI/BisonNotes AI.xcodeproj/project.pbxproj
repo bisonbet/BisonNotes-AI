@@ -657,6 +657,7 @@
 				14FA00022F30000000BBD2FA /* FluidAudio */,
 				14B0A0042F80000000BBD2FA /* MLXLLM */,
 				14B0A0052F80000000BBD2FA /* MLXLMCommon */,
+				C0DE7B110000000000000002 /* GRDB */,
 			);
 			productName = "BisonNotes AI";
 			productReference = 14DBC83D2E34F7B500DAD442 /* BisonNotes AI.app */;
@@ -680,6 +681,7 @@
 			);
 			name = "BisonNotes AITests";
 			packageProductDependencies = (
+				C0DE7B110000000000000002 /* GRDB */,
 			);
 			productName = "BisonNotes AITests";
 			productReference = 14DBC84F2E34F7B600DAD442 /* BisonNotes AITests.xctest */;
@@ -756,6 +758,7 @@
 				AC0000000000000000000027 /* FluidAudio */,
 				AC0000000000000000000028 /* MLXLLM */,
 				AC0000000000000000000029 /* MLXLMCommon */,
+				C0DE7B110000000000000002 /* GRDB */,
 			);
 			productName = "BisonNotes AI macOS";
 			productReference = AC0000000000000000000001 /* BisonNotes AI.app */;
@@ -868,6 +871,7 @@
 				1435711B2F2137E1000BFF00 /* XCRemoteSwiftPackageReference "textual" */,
 				14FA00032F30000000BBD2FA /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				C0DE7B110000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 14DBC83E2E34F7B500DAD442 /* Products */;
@@ -2129,6 +2133,14 @@
 				version = 0.15.5;
 			};
 		};
+		C0DE7B110000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 7.11.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -2171,6 +2183,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 14B0A0032F80000000BBD2FA /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
 			productName = MLXLMCommon;
+		};
+		C0DE7B110000000000000002 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0DE7B110000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

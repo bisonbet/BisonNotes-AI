@@ -1,9 +1,10 @@
 # SQLite migration evidence ledger
 
 Status: **Phase 0 in progress; Core Data remains authoritative and SQLite is not
-enabled.** This document records the evidence required before a backend or
-cutover decision. It is intentionally separate from the migration plan so
-measurements and dispositions can be updated without rewriting the design.
+enabled.** GRDB is pinned for an isolated file-backed spike only. This document
+records the evidence required before a backend or cutover decision. It is
+intentionally separate from the migration plan so measurements and dispositions
+can be updated without rewriting the design.
 
 ## Provenance
 
@@ -14,11 +15,22 @@ measurements and dispositions can be updated without rewriting the design.
 | Planning revision | `275ec590c17fd01d010a0e584e334ddc3760c5b4` before implementation changes |
 | Reviewed date | 2026-09-07 |
 | Production store/CloudKit inspection | Not performed |
-| SQLite backend | Not selected or added |
+| SQLite backend | GRDB 7.11.1 pinned for an isolated spike; no user-store cutover |
 
 The source baseline and planning revision must remain distinct. A new source
 commit requires this ledger and the model hashes in
 `sqlite-migration-inventory.md` to be regenerated or explicitly compared.
+
+## Confirmed product and backend decisions
+
+| Decision | Recorded choice | Evidence/status |
+| --- | --- | --- |
+| SQLite access | GRDB **v7.11.1**, exact revision `b83108d10f42680d78f23fe4d4d80fc88dab3212`, using the system SQLite module on Apple platforms | Xcode project and `Package.resolved` are pinned; file-backed smoke test is the Phase 0 gate |
+| App-managed encryption | None; no SQLCipher, custom encryption, key management or credential export | Product decision confirmed 2026-09-07 |
+| Backup/restore product | No app export, portable backup package, restore importer or recovery merge UI | Rely on Apple device backups and existing iCloud/CloudKit behavior; migration recovery is local and checkpointed |
+| First boot | Blocking migration screen on the first post-update launch for metadata only: recordings, transcripts, summaries, jobs, archive references, pending mutations and required settings | Progress/error state must be durable and resumable after crash, force-quit, background expiration or power loss |
+| Temporary storage | Up to 2x measured metadata footprint for source plus candidate database/index/WAL/checkpoints | No second full audio copy is permitted by this budget |
+| Media | Background, bounded, resumable reconciliation with source retention until per-asset receipt and validation | Audio is not part of the blocking metadata copy |
 
 ## Storage-boundary ledger
 
@@ -29,17 +41,17 @@ complete.
 | Category | Current evidence / entry points | Initial migration treatment | Fixture or test still required |
 | --- | --- | --- | --- |
 | Core Data store | `Persistence.swift`; `NSPersistentContainer` resolves the default Application Support store; store `-wal`/`-shm` sidecars are possible | Capture through a quiesced Core Data coordinator; never copy an active `.sqlite` alone; record resolved URL and model/store metadata | Closed-store/WAL snapshot fixture; reopen and compare through public Core Data APIs |
-| Recording assets and sidecars | Documents audio; `.location` in `AudioRecorderViewModel+Location.swift`; `.recordingmeta` in `AudioRecorderViewModel+Utilities.swift`; segment/merge files in `AudioRecorderViewModel+Segments.swift`; `deferred-recovery.json` in `AudioRecorderViewModel+RecoveryContinuation.swift` | Preserve exact relative paths and bytes; classify interrupted/recoverable sources separately from disposable work | Interrupted recording, segment merge, sidecar/hash and process-death fixtures |
+| Recording assets and sidecars | Documents audio; `.location` in `AudioRecorderViewModel+Location.swift`; `.recordingmeta` in `AudioRecorderViewModel+Utilities.swift`; segment/merge files in `AudioRecorderViewModel+Segments.swift`; `deferred-recovery.json` in `AudioRecorderViewModel+RecoveryContinuation.swift` | Keep exact source paths and bytes; migrate references in the blocking metadata phase, then reconcile media in the background without duplicating the full audio library | Interrupted recording, segment merge, sidecar/hash and process-death fixtures |
 | Legacy files and relationships | `DataMigrationManager.swift` reads top-level audio, `.transcript`, `.summary`, `.location`; `EnhancedFileManager.swift` persists `Documents/file_relationships.json` | Retain source files until independent validation; malformed metadata is recovery data, not empty content | Legacy-only and mixed-file fixtures with corrupt/unknown files |
-| Recovery and archive staging | `Application Support/Recording Recovery` in `MacRecordingReliability.swift`; `ArchiveStaging` and `AudioExportStaging` in `RecordingArchiveService.swift` | Include recoverable artifacts and bookmark/export metadata in recovery inventory; do not prune during migration | Interrupted recovery, external archive/bookmark and unavailable-provider fixtures |
-| Summary attachments | `Documents/SummaryAttachments/<summary UUID>/metadata.json` and `files/` in `SummaryAttachmentStore.swift` | Copy metadata and bytes, including orphan folders; preserve malformed metadata | Duplicate names, corrupt metadata, orphan-folder and round-trip restore tests |
+| Recovery and archive staging | `Application Support/Recording Recovery` in `MacRecordingReliability.swift`; `ArchiveStaging` and `AudioExportStaging` in `RecordingArchiveService.swift` | Migrate references and recovery metadata first; keep staged/recoverable bytes until a background receipt proves safe reconciliation; do not prune during migration | Interrupted recovery, external archive/bookmark and unavailable-provider fixtures |
+| Summary attachments | `Documents/SummaryAttachments/<summary UUID>/metadata.json` and `files/` in `SummaryAttachmentStore.swift` | Migrate metadata in the blocking phase; reconcile bytes without deleting the source; rely on Apple device backup rather than an app export | Duplicate names, corrupt metadata, orphan-folder and crash/restart tests |
 | Watch durable source and receipts | Watch `Documents/WatchRecordings/metadata.json` and `recordings/*.m4a` in `WatchRecordingStorage.swift`; `Documents/reliable_transfers.json` in `WatchConnectivityManager.swift` | Preserve source and acknowledgement order; do not delete the only unsynced Watch copy | Lost acknowledgement, duplicate transfer, process death at each phone commit boundary |
 | Phone Watch staging | `tmp/WatchTransferStaging` and phone Documents handoff in `WatchConnectivityManager.swift` and `AudioRecorderViewModel+WatchIntegration.swift` | Journal source ID, staging, asset commit, database commit and acknowledgement independently | Restart between every transition; failed transfer retention |
 | Share imports | App Group `group.bisonnotesai.shared/ShareInbox` and `.share-import-token` in `ShareExtensionProcessor.swift`; fallback `Documents/Inbox` cleanup in `BisonNotesAIApp.swift` | Preserve token/file/commit order and retry state; cleanup only after durable receipt | Token replay, unauthenticated fallback, duplicate and interrupted import fixtures |
-| Defaults and suites | Five pending queues plus `SavedEnhancedSummaries`; iCloud routine/backoff/signature/manifest/quarantine keys; setup/location/sync/backup flags; App Group action-button key and `processedWatchRecordingIds` | Classify authoritative, derived and device-specific values; migrate exact keys only; keep Keychain out of portable backups | Defaults-domain inventory and malformed/unknown queue fixtures |
-| Temporary import/cloud roots | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, and other file-operation staging | Keep until receipt/checksum proves the durable destination; unknown files enter recovery inventory | Interrupted copy, checksum mismatch, low-space and restart tests |
-| Caches and models | FluidAudio models, map snapshots and Hugging Face/model caches under Application Support/Library/Caches | Exclude only with an explicit manifest disposition; preserve preferences, never delete unknown files | Backup manifest exclusion and rebuild-after-restore tests |
-| Keychain and external dependencies | Credentials, security-scoped bookmarks, external archives and cloud-only assets | Preserve same-device access; portable backup reports exclusions/dependencies and does not export secrets by default | Sign-out/account switch, unavailable external provider and incomplete-backup tests |
+| Defaults and suites | Five pending queues plus `SavedEnhancedSummaries`; iCloud routine/backoff/signature/manifest/quarantine keys; setup/location/sync/backup flags; App Group action-button key and `processedWatchRecordingIds` | Classify authoritative, derived and device-specific values; migrate exact keys only; keep Keychain out of the SQLite schema and do not export it | Defaults-domain inventory and malformed/unknown queue fixtures |
+| Temporary import/cloud roots | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, and other file-operation staging | Keep until receipt/checksum proves the durable destination; unknown files enter recovery inventory; bound staging so it cannot become a full audio duplicate | Interrupted copy, checksum mismatch, low-space and restart tests |
+| Caches and models | FluidAudio models, map snapshots and Hugging Face/model caches under Application Support/Library/Caches | Keep outside the blocking metadata migration; preserve preferences and never delete unknown files; platform backup behavior is not app-controlled | Rebuild-after-migration and unknown-file retention tests |
+| Keychain and external dependencies | Credentials, security-scoped bookmarks, external archives and cloud-only assets | Preserve same-device access; do not export secrets or manage keys; report dependencies to migration health | Sign-out/account switch, unavailable external provider and incomplete-reconciliation tests |
 
 The direct Core Data touchpoint list in the inventory is not sufficient by
 itself. Storage-boundary review must also cover `EnhancedFileManager`,
@@ -70,14 +82,20 @@ CloudKit or two-device evidence gates.
 
 ## Working-tree validation on 2026-09-07
 
-The following checks were run against the uncommitted Phase 0/1 working tree on
-`v3.0`:
+The following checks were run against the Phase 0/1 working tree on `v3.0`:
 
 - `swiftc -parse` passed for every changed Swift file.
 - Native macOS Debug build passed with Xcode 26.6, using the existing package
   cache and isolated DerivedData at `/private/tmp/bisonnotes-storage-mac`.
+- GRDB package resolution passed at exactly `7.11.1` with revision
+  `b83108d10f42680d78f23fe4d4d80fc88dab3212`; the native macOS Debug build with
+  the package integrated passed using `/private/tmp/bisonnotes-grdb-mac`.
 - Generic iOS `build-for-testing` passed, including the changed XCTest bundle,
-  using `/private/tmp/bisonnotes-storage-ios`.
+  including `GRDBSystemSQLiteTests`, using `/private/tmp/bisonnotes-grdb-ios`.
+- The GRDB smoke test is compiled into the iOS XCTest bundle but has not yet run
+  as an XCTest assertion; the app's existing simulator CloudKit bootstrap and
+  the current CoreSimulator service state prevent treating the simulator test
+  path as a passing runtime result.
 - A temporary macOS Core Data probe verified the default Application Support
   URL, synchronous coordinator loading, the `/dev/null` in-memory path and a
   missing-parent failure path against the built model.
@@ -92,17 +110,19 @@ The following checks were run against the uncommitted Phase 0/1 working tree on
   rules disabled; no baseline-clean claim is made.
 - `git diff --check` passed.
 
-## Decisions required before backend selection
+## Open evidence gates before backend selection/cutover
 
-- Exact GRDB release, license review, Swift 6 support and deployment-target
-  compatibility.
-- System versus bundled SQLite and supported runtime/pragma settings.
-- Backup encryption, retention, external-asset inclusion and restore/cloud-intent
-  policy.
-- Maximum acceptable migration maintenance window versus a later journal/replay
-  design.
+- License review, Swift 6 and deployment-target compatibility for the pinned
+  release, plus supported system-SQLite runtime/pragma settings.
+- Complete historical Core Data model/source fixture set and exact defaults-suite
+  classification.
+- First-boot metadata duration, peak RSS and temporary disk usage against the 2x
+  metadata budget; background media reconciliation duration and interruption
+  behavior without full-audio duplication.
 - Measured bottleneck and performance go/no-go budget.
+- Crash/force-quit/background-expiration recovery evidence for every checkpoint,
+  including stale activation descriptors and unreconciled media.
 
-Until these decisions and the baseline measurements are recorded, implementation
-should remain in safety prerequisites, ledger coverage and backend-independent
-tests. It must not add a GRDB dependency or enable a user-store migration.
+These gates allow implementation of the isolated backend spike, schema and
+checkpoint machinery. They do not authorize a user-store migration, app-level
+export/restore feature, CloudKit protocol change or production cutover.

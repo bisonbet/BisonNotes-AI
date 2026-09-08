@@ -1,7 +1,7 @@
 # Reliable storage and safe SQLite migration plan
 
 Status: **design/source review plus Phase 0 and Phase 1 safety work in progress;
-no SQLite migration implemented or enabled**.
+GRDB is pinned for an isolated spike, but no SQLite migration is enabled**.
 Implementation branch: `v3.0`, created from `v2.5` for this work.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
 `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` (the pushed `origin/v2.5`).
@@ -15,18 +15,21 @@ authoritative Core Data backend or authorize a user-store migration.
 
 Core Data is already using SQLite through `NSPersistentContainer` in
 `Persistence.swift`. This proposal replaces its object-management layer with an
-app-owned SQLite schema, preferably accessed through **GRDB**, while retaining the
-existing CloudKit protocol initially. SQLite does not itself provide device sync,
-portable media backups, or protection from application-level deletion mistakes.
+app-owned SQLite schema accessed through **GRDB 7.11.1** and the system SQLite
+library, while retaining the existing CloudKit protocol initially. SQLite does
+not itself provide device sync or protection from application-level deletion
+mistakes. This release does not add an app-managed export/restore format: Apple
+device backups and the existing iCloud/CloudKit behavior are the backup paths in
+scope, while migration recovery is handled locally with durable checkpoints.
 Apple explicitly says not to manipulate Core Data's private SQLite schema with
 native SQLite APIs ([Apple store guidance](https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/CoreData/PersistentStoreFeatures.html)).
 
 Proceed in independently useful steps: strengthen persistence failure handling;
-create complete, verifiable backups; introduce a repository boundary over Core
-Data; benchmark; implement a separate SQLite backend and importer; validate it in
-shadow mode; cut over only after all safety gates pass. Keep Core Data if the
-measured benefit does not justify the migration. Do not make a rewrite a
-prerequisite for fixing reliability problems.
+define a complete, verifiable migration source/checkpoint protocol; introduce a
+repository boundary over Core Data; benchmark; implement a separate SQLite
+backend and importer; validate it in shadow mode; cut over only after all safety
+gates pass. Keep Core Data if the measured benefit does not justify the
+migration. Do not make a rewrite a prerequisite for fixing reliability problems.
 
 | Option | Benefit | Cost / recommendation |
 | --- | --- | --- |
@@ -35,15 +38,19 @@ prerequisite for fixing reliability problems.
 | Raw SQLite C API | Maximum control, fewer wrapper dependencies | More binding, lifecycle and concurrency code to get wrong; not the default |
 | SwiftData or a new sync provider | Potential alternative architecture | Separate evaluation; does not directly solve complete backup and conflict preservation; do not combine with this migration |
 
-Use GRDB's documented database access and migration facilities; pin a tested
-release and commit `Package.resolved`, check its license, Swift 6 support and both
-app deployment targets. Do not guess a version or update unrelated dependencies.
-The upstream project is the reference ([GRDB](https://github.com/groue/GRDB.swift)).
+Use GRDB's documented database access and migration facilities. The selected
+release is pinned exactly to **v7.11.1** (revision
+`b83108d10f42680d78f23fe4d4d80fc88dab3212`) in the Xcode project and
+`Package.resolved`; its `GRDB` product is wired to the system SQLite module on
+Apple platforms. The upstream references are the
+[GRDB v7.11.1 release](https://github.com/groue/GRDB.swift/releases/tag/v7.11.1)
+and its [pinned Package.swift](https://raw.githubusercontent.com/groue/GRDB.swift/v7.11.1/Package.swift).
+Do not update unrelated dependencies.
 
 **Non-negotiable safety contract:** no successful migration may silently omit,
 truncate, regenerate, deduplicate, or delete user content. Preserve source bytes
 and identities. Unsupported/corrupt data blocks activation and remains available
-for recovery. A backup verified only by counts is insufficient. No system can
+for recovery. A migration validation verified only by counts is insufficient. No system can
 promise zero loss from all hardware failures; this design makes loss prevention,
 recovery, and evidence explicit.
 
@@ -63,8 +70,8 @@ attribute, relationship, model hash, and direct Core Data consumer found by sear
 | `CoreDataManager`, `AppDataCoordinator`, `RecordingWorkflowManager`, `TranscriptManager`, views and sync expose managed objects and/or contexts | A database-file swap cannot replace Core Data. Migrate APIs and callers to immutable values and explicit commands before cutover. |
 | Active model `BisonNotes_AI_v2` has six entities, including archive locations and pending mutations | A three-table recording/transcript/summary migration would lose data. Preserve all six, both model versions, every relationship and redundant ID. |
 | Most model fields, including content IDs, are optional; scalar IDs coexist with object relationships | Existing stores may contain nil IDs, duplicate UUIDs or inconsistent links. Do not force uniqueness with `INSERT OR REPLACE`, silently drop orphans, or invent identity during import. |
-| `SummaryAttachmentStore` stores notes and files under `Documents/SummaryAttachments/<summary UUID>/` | Database and current cloud content backup alone are not a complete library backup. Preserve supplemental metadata and bytes, including folders not currently linked to a row. |
-| `RecordingArchiveService` stores security-scoped bookmarks and exported paths | Preserve bookmark bytes, archive flags, verification state and destinations. A bookmark's existence does not prove a usable external copy or portable authorization. |
+| `SummaryAttachmentStore` stores notes and files under `Documents/SummaryAttachments/<summary UUID>/` | Database and current CloudKit state alone do not prove that local supplemental data is recoverable. Preserve supplemental metadata and bytes, including folders not currently linked to a row, and rely on Apple device backup for platform-managed backup. |
+| `RecordingArchiveService` stores security-scoped bookmarks and exported paths | Preserve bookmark bytes, archive flags, verification state and destinations. A bookmark's existence does not prove a usable external copy or platform-backup coverage. |
 | `SummaryManager.migrateLegacySummariesIfNeeded`, `DataMigrationManager`, `.location` fallback reads | Older users can still have legacy content. Existing conversion helpers can apply defaults/filter records; do not use presentation DTOs as a lossless export. |
 | `iCloudStorageManager` implements custom CloudKit records, active manifest v2, quarantine and deletion arbitration; container is `NSPersistentContainer`, not `NSPersistentCloudKitContainer` | Retain existing wire protocol and account behavior. Model `usedWithCloudKit` flags are not evidence of automatic Core Data mirroring. |
 | Watch has JSON/audio storage and automatic cleanup, including failed transfers after repeated attempts | Phone database migration does not protect the watch's only copy. Harden transfer acknowledgement/retention as a separate prerequisite, without converting the watch to SQLite in the same release. |
@@ -101,21 +108,25 @@ claim that regex searches discover all runtime behavior.
    eligibility/backoff state, account identity scope, manifest migration state,
    quarantined cloud record names, signatures and timestamps. Extract exact keys
    and suite names in Phase 0; do not wholesale upload all UserDefaults.
-7. Keychain credentials stay in Keychain. Ordinary portable backups exclude
-   secrets; preserve them on same-device migration. Any credential export is an
-   explicit separate opt-in with reviewed encryption. Device-specific bookmarks,
-   local model paths and permission grants do not become portable by copying.
-8. Downloaded models and reproducible map/render caches can be excluded from
-   portable backups with a manifest explanation; retain model preferences.
-   Unknown files are preserved in a recovery inventory until classified, never
-   automatically removed because they do not match a known pattern.
-9. Cloud-only records/assets, quarantine, tombstones, and remote archive files
-   must be listed as external dependencies. An offline migration need not fetch
-   them; a backup claiming to be self-contained must actually include their
-   bytes, or clearly report that it is incomplete.
+7. Keychain credentials stay in Keychain. The app does not export credentials,
+   manage backup encryption or manage backup keys. Preserve same-device access
+   during migration. Device-specific bookmarks, local model paths and permission
+   grants are not copied into the SQLite metadata schema unless their ownership
+   is explicitly modeled.
+8. Downloaded models and reproducible map/render caches are not part of the
+   blocking metadata migration; retain model preferences and preserve unknown
+   files until classified. Do not delete anything merely because it is not a
+   database row.
+9. Cloud-only records/assets, quarantine, tombstones and remote archive files
+   must be listed as external dependencies. Existing iCloud/CloudKit behavior
+   remains in scope, but CloudKit state is not treated as proof that local audio,
+   attachments or external archives are backed up.
 
-Do not assume local-only content is unwanted in a user-selected offline backup.
-Do honor `isCloudSyncDisabled` for network uploads and automatic cloud backups.
+There is no app-created portable backup, export package, restore importer or
+app-managed backup encryption in this release. Apple device backup and iCloud/
+CloudKit are the supported backup/sync mechanisms; the migration itself relies on
+local durable checkpoints and retained source data until validation completes.
+Honor `isCloudSyncDisabled` for network uploads and automatic cloud activity.
 
 ## 4. Target architecture and contracts
 
@@ -146,8 +157,9 @@ Names below are proposed, not existing APIs.
   fallbacks, especially local-only checks and pending-context rebinding.
 - `AssetStore` and durable `FileOperationJournal`: immutable installed assets,
   explicit staged/install/delete states, checksums, deterministic recovery.
-- `BackupService`, `MigrationCoordinator`, `StorageHealthReport`: use the same
-  exclusive maintenance gate; diagnostics are non-destructive and redact content.
+- `MigrationCoordinator`, `FileOperationJournal`, `StorageHealthReport`: use the
+  same exclusive maintenance gate; diagnostics are non-destructive and redact
+  content. Do not add an app-level backup/export service for this migration.
 
 Use one injected database writer (GRDB queue initially, pool only if measured
 reads justify it). No `await`, CloudKit call, media copy, hashing, UI work, or
@@ -170,7 +182,7 @@ make mapping auditable. New operational tables:
 | Table | Required purpose |
 | --- | --- |
 | `schema_migrations`, `library_metadata` | Ordered immutable migration IDs, schema/minimum reader version, library/generation identity and revision |
-| `migration_runs`, `migration_row_map` | Source fingerprint, exporter version, per-batch cursor/count/hash, source row identity to destination row mapping |
+| `migration_runs`, `migration_row_map` | Source fingerprint, importer/schema version, per-batch cursor/count/hash, source row identity to destination row mapping |
 | `asset_catalog`, `file_operations` | Relative path, kind, byte length/hash, available/unavailable/external state; retryable install/delete with owner/revision |
 | `import_receipts` | Unique source transfer ID and durable commit outcome; duplicate retries return the same result |
 | `sync_state`, `sync_outbox` | Account-scoped eligibility/acknowledgements and future durable upload intents, distinct from legacy deletion semantics |
@@ -187,7 +199,7 @@ recording: older/redundant rows must survive even though sync selects one winner
 Preserve v2.5 original and optional cleaned transcript representations inside
 segment payloads, their provenance and mappings. Older clients may drop the
 derived representation when rewriting JSON; preserve originals and cover this
-known compatibility limit explicitly. Do not derive an export solely from
+known compatibility limit explicitly. Do not derive migration input solely from
 whichever representation is currently displayed.
 
 Data conversion rules: UUID strings use one canonical representation but retain
@@ -201,9 +213,9 @@ round timestamps. JSON may get an auxiliary parsed representation, never replace
 the original until a separately tested schema migration authorizes it.
 
 Before activation, unresolved duplicate IDs or contradictory links block normal
-migration. Preserve them in both the source and recovery export and report the
-specific issue. A later repair can create a documented mapping with user-visible
-recovery; the importer itself must not choose a winner. Valid multiple child
+migration. Preserve them in the source and a durable recovery record and report
+the specific issue. A later repair can create a documented mapping with
+user-visible recovery; the importer itself must not choose a winner. Valid multiple child
 rows and legitimately missing media are not automatically corruption.
 
 Configure and verify foreign-key enforcement per connection, a bounded busy
@@ -235,7 +247,7 @@ Specify the following protocol before implementation:
    by checksum and operation ID; file existence alone is not success.
 4. A delete transaction hides/deletes the row, records cloud intent as applicable,
    and journals file cleanup together. Remove files only after commit, with a
-   reference/backup/migration lease check. Retry failure; do not report cleanup
+   reference/migration lease check. Retry failure; do not report cleanup
    success while pending. Local cache/offload cleanup never synthesizes deletion
    intent for another device.
 5. A Watch/share import is acknowledged as durable only after asset and database
@@ -261,6 +273,31 @@ and a report retained. Any active-store failure → `recoveryRequired`; it must 
 select the older database automatically. State transitions are idempotent and
 crash-tested. A newer unsupported descriptor/schema blocks writes.
 
+### First post-update launch contract
+
+On the first launch of the release that enables migration, `StorageBootstrap`
+must acquire the gate before constructing the normal library, sync, Watch or share
+write paths. The foreground app presents a blocking migration screen with a
+plain-language explanation, current phase, completed/total metadata work and
+indeterminate progress when the source cannot provide a safe count. The user may
+quit or the OS may kill the app, but the app must not bypass the metadata gate and
+open a partially migrated library on relaunch.
+
+The blocking first-boot scope is metadata: recordings, transcripts, summaries,
+processing jobs, archive references, pending cloud mutations and the required
+settings/defaults disposition. Allow a temporary budget of up to **2x the measured
+metadata footprint** for the source plus candidate database, indexes, WAL and
+checkpoint state. This is a metadata budget only; it does not authorize a second
+full copy of audio. Audio and other large media are reconciled by a background,
+bounded, resumable file-operation worker after the metadata checkpoint is safe.
+
+Every visible progress step must correspond to a durable checkpoint. A crash,
+force-quit, background expiration or power loss resumes idempotently from the last
+committed batch, rechecks its source fingerprint and never trusts a lone
+`completed` preference. The coordinator writes the activation marker only after an
+independent validation pass, and it retains the legacy source plus any unreconciled
+media until their receipts and validation are durable.
+
 ### A. Preflight and quiescence
 
 Run before normal startup migrations, cleanup, cloud triggers and background job
@@ -272,11 +309,12 @@ entry points must observe the gate; Apple background expiration checkpoints and
 retries, never forces a partially completed cutover.
 
 Resolve actual store URLs, model version hashes, app group paths and available
-space. Estimate source snapshot + new database/index/WAL + media copy budget +
-operational headroom using measured sizes, not a fixed multiplier. On insufficient
-space, cancellation, locked protection or inaccessible files, keep normal legacy
-operation available after safely leaving the gate. Never reclaim user data to
-make migration space.
+space. Estimate source snapshot + new database/index/WAL + metadata checkpoint
+headroom using measured sizes, not a fixed multiplier; do not include a full audio
+copy in that budget. On insufficient space, locked protection or inaccessible
+files, leave the authoritative legacy store intact and show a recoverable blocked
+state. Quitting is safe, but the user cannot cancel into a partially migrated
+library. Never reclaim user data to make migration space.
 
 ### B. Capture a recoverable source
 
@@ -295,17 +333,20 @@ external assets ([SQLite backup API](https://sqlite.org/backup.html),
 [SQLite WAL](https://sqlite.org/wal.html)).
 
 For the first migration implementation, pause all library mutations during
-snapshot/import/activation, while providing responsive progress and safe cancel.
-If this is too slow for large libraries, add a separately tested change journal;
-do not quietly allow writes that the snapshot misses. On leaving the gate and
-allowing legacy writes, invalidate the candidate; a subsequent attempt takes a
-fresh snapshot unless journal replay is proven complete.
+snapshot/import/activation, while providing responsive progress and safe process
+termination. If this is too slow for large libraries, add a separately tested
+change journal; do not quietly allow writes that the snapshot misses. A process
+termination resumes the same verified run; if the source is allowed to change,
+invalidate the candidate and take a fresh snapshot unless journal replay is proven
+complete.
 
-Copy assets independently (APFS clones acceptable with verified copy semantics),
-not hard links vulnerable to later modification. Flush and verify source manifest,
-all required files and hashes, then reopen the snapshot using an isolated reader.
-External media that cannot be copied remains an explicitly missing dependency;
-retained references cannot justify a "complete backup" claim.
+Inventory assets independently (APFS clones are acceptable only with verified copy
+semantics), and never use hard links vulnerable to later modification. Flush and
+verify the metadata source snapshot, then reopen it using an isolated reader.
+Background media reconciliation records each source/destination/checksum receipt;
+external media that cannot be reconciled remains an explicitly missing dependency
+and its source is retained. The migration must not claim media completeness merely
+because a path is present.
 
 ### C. Lossless import
 
@@ -336,8 +377,8 @@ no “migration completed” state based merely on a successful context save.
 
 ### D. Independent validation
 
-A validator independent of importer mapping code compares source export to a
-freshly reopened destination. Check entity multisets, field values and nulls,
+A validator independent of importer mapping code compares the quiescent source
+snapshot to a freshly reopened destination. Check entity multisets, field values and nulls,
 exact raw JSON/binary content, relationship graph, ID map, timestamps, pending
 mutations including unknown payloads, file inventory/checksums, notes, bookmarks,
 archive state, jobs and receipts. Record duplicate/missing link anomalies
@@ -347,8 +388,8 @@ usable media: open representative audio, render transcripts/summaries and test
 notes/attachments, archive resolution and recovery UI.
 
 The validator must not call the importer to decide its expected results. Fixtures
-need explicit expected graphs and independent canonical exports. Unknown fields
-in a source model fail the coverage check rather than disappearing.
+need explicit expected graphs and independent canonical validation projections.
+Unknown fields in a source model fail the coverage check rather than disappearing.
 
 ### E. Activation and rollback boundaries
 
@@ -367,58 +408,50 @@ support: old releases cannot understand the new activation guard and may open a
 stale Core Data copy. Do not deliberately destroy that copy to stop them; document
 unsupported downgrade/reinstall behavior and test re-upgrade detection/recovery.
 
-Retain the recovery generation through at least two stable releases and until a
-verified user-exported backup exists; choose the final retention/storage policy
-before rollout. Never prune a retained database independently of its media or
-when it is the only recoverable copy. Keep historical model readers for supported
-skipped-version upgrades even after runtime Core Data use ends.
+Retain the legacy source and recovery generation through at least two stable
+releases and until metadata validation plus per-asset reconciliation are complete;
+there is no app-exported backup whose existence can replace this retention.
+Choose the final retention/storage policy before rollout. Never prune a retained
+database independently of its media or when it is the only recoverable copy. Keep
+historical model readers for supported skipped-version upgrades even after
+runtime Core Data use ends.
 
-## 7. Backup and restore product contract
+## 7. Apple device backup and iCloud product contract
 
-Ship a **local portable library backup before cutover**, usable without iCloud or
-an external AI service. The format should be a versioned package/archive containing
-`manifest.json`, a neutral lossless logical export, a consistent database snapshot
-(optional implementation-specific recovery payload), content-addressed asset
-copies, supplemental/legacy data and an explicit exclusions/dependencies report.
-Use deterministic records with documented types/encoding, not an opaque Swift
-object archive. A library backup is different from exporting rendered summaries
-or audio alone. Include format/minimum-reader version, source app/model version,
-library/generation ID, entity counts and per-file hashes/lengths.
+This release does **not** ship an app-created portable library backup, export
+package, restore importer or recovery merge operation. It does not add backup
+encryption, key management or a second app-owned copy of the audio library. The
+supported product mechanisms remain Apple device backup for platform-managed app
+data and the existing iCloud/CloudKit sync behavior. The app must not describe a
+CloudKit success as proof that local-only audio, attachments or external archive
+bookmarks are independently backed up.
 
-Capture a consistent database snapshot and lease its referenced immutable files
-until copy/verification finishes. With current mutable sidecars, use the exclusive
-maintenance gate. Write a temporary package, verify all members and a trial import,
-then publish atomically; incomplete files never replace the last good backup.
-Hashing is corruption detection, not authentication. Backups contain sensitive
-content: protect local staging like source data, make export destination explicit,
-and do not claim encryption unless an authenticated encrypted format and key/
-password recovery have been implemented and tested. Avoid plaintext export of
-Keychain secrets. Finalize encryption policy before enabling automatic exports to
-external locations; do not invent custom cryptography.
+Migration safety is provided by local recovery rather than an export format:
 
-Restore flow: validate versions, bounds, manifest and hashes → reject archive
-path traversal/symlinks, duplicate paths and decompression bombs → estimate space →
-import into a new generation offline → validate → show content/dependency counts
-and conflicts → back up current library → explicitly activate. A restore never
-partially overwrites the live database. Reopening the resulting library, with
-usable files and relationships, is the acceptance test. Unknown newer formats are
-rejected without modifying either library.
+1. Keep the unchanged Core Data source authoritative until the new metadata
+   database is independently validated and activated.
+2. Store the migration run, source fingerprint, batch cursor, row map, asset
+   receipt and validation result durably. A crash or app kill resumes from the
+   last committed checkpoint; it never treats a missing or torn completion marker
+   as success.
+3. Block the first post-update launch only for metadata migration: recordings,
+   transcripts, summaries, processing state, archive references, pending cloud
+   mutations and required settings. Permit up to **2x the measured metadata
+   footprint** for the source plus candidate database, indexes and WAL. This
+   allowance does not include a second full audio copy.
+4. Reconcile audio and other large media in the background with bounded,
+   resumable file operations. Retain each source until its destination receipt,
+   byte length and hash/format checks pass. If an individual asset needs staging,
+   bound that staging to the active work item; never duplicate the entire audio
+   library just to make the migration convenient.
+5. Continue to rely on platform backup/restore and normal iCloud account behavior
+   after activation. Any unreconciled asset or external dependency remains
+   visible to recovery/health reporting and is never silently deleted.
 
-Offer replacement and recovery-import as **distinct operations**. Initial release
-may implement only validated replacement plus a separate recovery viewer.
-Recovery-import/merge requires deterministic IDs, conflict preservation and tests;
-do not emulate it with SQL REPLACE. Do not immediately replay old pending deletes
-from a portable backup against today's cloud account. Same-device crash recovery
-preserves its queued intent; portable/time-travel restore binds to the chosen
-account and reviews/reconciles stale intent before cloud writes. Keep original
-intent in the package even when held from replay. Restoring old content must not
-silently defeat newer cloud deletions or erase newer edits.
-
-Keep multiple known-good generations with an explicit retention policy; test
-restore from an older backup, not just the latest. Distinguish "metadata complete",
-"local assets included", "external assets unavailable", and "fully self-contained"
-in status. A cloud success timestamp is not proof that every local attachment,
-archived file or recording is backed up.
+The first-boot migration screen is therefore an operational gate, not a backup
+wizard. It explains the current phase, completed/total metadata work, whether
+background media reconciliation is pending, and any actionable failure. It does
+not offer export/restore controls or ask the app to manage encryption keys.
 
 ## 8. Cloud sync compatibility and reliability
 
@@ -436,14 +469,14 @@ not opened from iCloud Drive or a network filesystem.
 
 Port the current rules into repository-independent tests before adapting callers:
 
-- Order: flush outbound deletions, apply inbound markers, backup, restore, prune
-  only genuinely superseded candidates under the existing policy.
+- Order: flush outbound deletions, apply inbound markers, reconcile existing cloud
+  records and prune only genuinely superseded candidates under the existing policy.
 - Content timestamps, not `syncUpdatedAt`, arbitrate; retain equal/missing-time
   behavior for compatibility. Preserve earliest `requestedAt`, revival grace,
   retention policy and the special imported-audio unlink marker semantics.
 - Distinguish whole deletion, local-only removal, summary removal, transcript
-  removal and imported-audio removal. Metadata-only restore must not unlink good
-  audio. Failed file cleanup stays retryable.
+  removal and imported-audio removal. Metadata-only cloud reconciliation must not
+  unlink good audio. Failed file cleanup stays retryable.
 - Newest-per-recording selection must agree locally and remotely without removing
   the selected link. Migration itself never prunes historical child rows.
 - Preserve exclusion of local-only content, active lifecycle/quarantine filtering,
@@ -472,9 +505,10 @@ lossless arbitrary-offline sync until that compatibility problem is resolved.
 
 Notes and attachments need an explicit future sync mapping and asset policy;
 there is no basis to assume moving their metadata into SQLite makes the current
-CloudKit backup include them. In the first release preserve them locally and in
-portable backup. Adding network upload changes the user's privacy expectations
-and needs a reviewed product policy plus production schema rollout tests.
+CloudKit records include them. In the first release preserve them locally and rely
+on Apple device backup for platform-managed backup. Adding network upload changes
+the user's privacy expectations and needs a reviewed product policy plus
+production schema rollout tests.
 
 On account sign-out/change, stop work and partition remote acknowledgements,
 outboxes, quarantine and retry state by account/library. Never apply account A's
@@ -493,16 +527,16 @@ or task unless the owner requests it.
 
 | Phase | Concrete deliverable and files | Exit gate |
 | --- | --- | --- |
-| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Select/pin candidate GRDB in an isolated spike only. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. Storage/backup decisions below settled before dependent phases. **In progress:** evidence ledger added; runtime/defaults classification and measurements remain open. |
+| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** runtime/defaults classification, migration coordinator and measurements remain open. |
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** Core Data health/startup gating and throwing startup reads are implemented; Watch/extension/background caller gates remain open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
-| 2: Backup / recovery | New storage snapshot and portable backup services, restore staging, recovery UI; adapt attachments/archive/file services. Keep Core Data authoritative. | Full offline round trip of all ledger categories, WAL fixture, interruption, malformed package and low-space tests; current library preserved on every failure. |
+| 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, file-operation journal and recovery UI; adapt attachments/archive/file services. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
 | 3: Repository boundary | Add domain values, protocols, observation and Core Data adapter. Convert `AppDataCoordinator` and `RecordingWorkflowManager`, then jobs/imports/transcript/summary/archive services, UI, cloud store access, test fixtures and previews. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapter and legacy importer; all callers/targets audited. |
-| 4: SQLite backend | New schema/migrations, repository implementation, file journal, receipts, backup support and metrics. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
+| 4: SQLite backend | New schema/migrations, repository implementation, file journal, receipts and metrics using the pinned GRDB product. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
 | 5: Import / verifier | New migration state machine, model-aware source reader, lossless row map, validation and recovery reports. | Both source models plus skipped-version legacy fixtures migrate; every transition survives process kill; anomalies block safely; no cloud side effects. |
 | 6: Shadow qualification | Read-only SQLite comparisons from a frozen source snapshot; retain Core Data as sole authority. Store per-field mismatch reports without content leakage. | Zero unexplained mismatches across representative fixtures/libraries. If legacy writes resume, candidate invalidated/rebuilt; do not pretend it remains current. |
-| 7: Guarded activation | Bootstrap generation selection, UI/error/progress recovery, stale-worker rejection, fresh-install SQLite path, mixed-version cloud testing. | Full automated matrix plus signed hardware/backup/upgrade/CloudKit gates pass; forward-fix and restore drill performed. Opt-in internal cohort first. |
+| 7: Guarded activation | Bootstrap generation selection, first-boot migration screen/error/progress recovery, stale-worker rejection, fresh-install SQLite path, mixed-version cloud testing and background media reconciliation. | Full automated matrix plus signed hardware/device-backup/upgrade/CloudKit gates pass; forward-fix and platform restore drill performed. Opt-in internal cohort first. |
 | 8: Rollout / retention | Internal → opt-in beta → small release cohort → wider release, with evidence at each expansion. Retain legacy recovery copies/models and backends as required. | Any unexplained loss, corruption, privacy regression, resurrection or divergence stops expansion. A rollout flag only prevents new migrations; it never flips active users to stale Core Data. |
-| 9: Later simplification | Remove runtime Core Data only after imports from supported historical releases still work; separately consider sync protocol enhancements and notes/attachment sync. | No unresolved ledger/test gaps. Keep model-reader compatibility and backups for supported users; removal is not a prerequisite for migration success. |
+| 9: Later simplification | Remove runtime Core Data only after imports from supported historical releases still work; separately consider sync protocol enhancements and notes/attachment sync. | No unresolved ledger/test gaps. Keep model-reader compatibility and platform-backup compatibility for supported users; removal is not a prerequisite for migration success. |
 
 Do not dual-write independently to Core Data and SQLite: a crash between commits
 creates two conflicting sources of truth. Shadow import/read comparison is safer.
@@ -565,7 +599,7 @@ Use real **disk-backed SQLite** for durability tests: `/dev/null`, in-memory
 contexts and mocks do not prove WAL, process death, file protection or migration.
 
 Suggested new suites: `StorageContractTests`, `StorageBootstrapTests`,
-`LibraryBackupRoundTripTests`, `CoreDataToSQLiteMigrationTests`,
+`CoreDataToSQLiteMigrationTests`,
 `MigrationCrashRecoveryTests`, `AssetJournalTests`, `StoragePerformanceTests`, and
 `MixedVersionSyncCompatibilityTests`. Names are proposed; do not add empty suites
 just to satisfy the plan.
@@ -578,13 +612,13 @@ just to satisfy the plan.
 | Outbox | All five mutation kinds, original timestamps/child sets, legacy malformed queues, duplicate/coalesced requests, save rollback, restart persistence, concurrent changed acknowledgement; no resurrection from lost intent |
 | Process death | Kill a subprocess after every state transition/batch/descriptor step, then relaunch; repeated kills and double-launch; committed input is represented exactly once and original recovery source remains intact |
 | Storage faults | `SQLITE_FULL`, IOERR, BUSY/LOCKED, corrupt/truncated DB, active WAL, denied permissions/protected device, interrupted copy, corrupt manifest, checksum mismatch, future schema; no empty fallback and no destructive cleanup |
-| Race ordering | Rename/delete/import/ASR completion during snapshot, restore or upload; stale generation callback; app background expiration; Watch duplicate after lost ACK; successful revision stream matches committed state |
-| Backup/restore | Complete offline restore to fresh container, old backup, partial/missing asset, truncated/tampered package, invalid path, low space, cancel, incompatible format, notes and archive state; original library unchanged until explicit activation |
+| Race ordering | Rename/delete/import/ASR completion during snapshot, activation or upload; stale generation callback; app background expiration; Watch duplicate after lost ACK; successful revision stream matches committed state |
+| Migration recovery / platform backup | Reopen after crash, kill, background expiration, low space, protected data and malformed source; verify Apple device-backup/reinstall/upgrade behavior where the platform permits; metadata and media receipts remain recoverable and the original library is unchanged until explicit activation |
 | Cloud fakes | Existing arbitration/manifest/partial failure/coalescing/erase/backoff/exclusion suites on both adapters, lost local ACK after remote save, account switch, quota and network loss, metadata-only audio semantics |
 | Real CloudKit | Signed old/new, new/new and upgrade-during-offline combinations; concurrent edit/delete, clock skew, beyond-retention offline return, quarantine and legacy records, local-only toggles, interrupted assets, account changes; inspect content on both devices after repeated sync/relaunch |
-| UI / platform | iOS/iPadOS and native macOS list/player/transcript/summary editing/export/archive, background recording/job recovery, Watch transfer, share extensions, Shortcuts/Action Button, migration progress/cancel/error accessibility |
+| UI / platform | iOS/iPadOS and native macOS list/player/transcript/summary editing/export/archive, first-boot migration progress/error accessibility, background media reconciliation, recording/job recovery, Watch transfer, share extensions and Shortcuts/Action Button |
 
-Use independent golden exports and randomized operation-sequence tests against a
+Use independent golden validation projections and randomized operation-sequence tests against a
 simple reference model. Random tests retain seed/operation trace on failure and
 assert invariants after every reopen. Inject failures at real commit boundaries;
 mocked throwing functions alone do not prove crash durability. Avoid committing
@@ -608,9 +642,10 @@ Before selecting the backend, use the same synthetic libraries (100, 1,000,
 10,000 recordings; representative 1-hour and long transcript payloads; sparse and
 large asset sets), same hardware/OS and release configuration. Separate metadata
 cost from audio copy/hash/network. Measure cold launch to usable library, first
-page, detail load, edit/delete commits, import throughput, backup/restore,
-migration duration/peak RSS/disk amplification, and steady-state sync requests/
-bytes. Compare original Core Data, optimized Core Data adapter and SQLite.
+page, detail load, edit/delete commits, import throughput, first-boot metadata
+migration duration/peak RSS/disk amplification, background media reconciliation,
+and steady-state sync requests/bytes. Compare original Core Data, optimized Core
+Data adapter and SQLite.
 
 Record at least 30 samples for routine operations with warm/cold cases separated.
 Proposed acceptance budget: no p95 regression over 10% on key operations and a
@@ -647,7 +682,7 @@ failure is not a passing test suite. Linux validation cannot close Apple runtime
 gates.
 
 CI on every storage-affecting change: schema coverage, both backend contracts,
-focused migration/backup/fault tests and existing sync policies. Nightly: expanded
+focused migration/recovery/fault tests and existing sync policies. Nightly: expanded
 crash seeds, all source-version fixtures and large-library benchmarks. Before
 release: full UI/platform tests, signed physical upgrade/restore drills and real
 two-device CloudKit matrix. Check in evidence summaries and artifact locations;
@@ -656,17 +691,33 @@ Do not add third-party scanning actions as part of this work.
 
 ## 11. Decisions and release blockers
 
-Recommended defaults are specified above; finalize these in Phase 0 with measured
-or product evidence before their dependent work:
+The following product decisions were confirmed on 2026-09-07:
+
+- Use GRDB **v7.11.1**, pinned exactly in the Xcode project and
+  `Package.resolved`, with the system SQLite library. Do not use SQLCipher or
+  another app-managed encryption/key layer.
+- Do not build app-level export/restore or portable backups. Rely on Apple device
+  backups and existing iCloud/CloudKit behavior; migration recovery is local,
+  checkpointed and resumable.
+- On the first post-update launch, block normal library access behind a
+  progress/error screen until metadata (including transcripts, summaries and
+  settings) is validated. Allow up to 2x temporary metadata usage, not a second
+  full audio copy.
+- Reconcile audio/media in the background with durable receipts, bounded staging,
+  crash/kill recovery and source retention until validation.
+
+The following remain Phase 0/5 evidence gates before a production cutover:
 
 - Supported historical release/model set and how authentic synthetic fixtures
   will be produced; both checked-in models alone do not establish all shipped
   upgrade paths.
-- Exact GRDB version, system versus bundled SQLite, supported SQLite runtime
-  fixes/settings and actual deployment-target compatibility.
-- Final backup encryption, retention, external-asset inclusion, portable restore
-  cloud-intent handling and recovery UX policies.
-- Large-library maintenance window versus a later transactional replay design.
+- Supported SQLite runtime fixes/settings and actual deployment-target
+  compatibility; the GRDB dependency pin itself is settled.
+- Exact legacy source/model fixture set and the retention period for the legacy
+  source and unreconciled media; the app-level backup/export decision is settled.
+- Large-library metadata maintenance duration and whether a later transactional
+  replay design is required. The first release uses a blocking metadata window;
+  no fixed millisecond promise is made.
 - Measured bottleneck and go/no-go performance budget; keeping Core Data remains
   a valid outcome if reliability and backup improvements satisfy the need.
 - Separate conflict-history/tombstone protocol design if the product requires
@@ -674,8 +725,9 @@ or product evidence before their dependent work:
 
 Stop release for any unexplained parity mismatch, unresolved user-content
 identity conflict, unreplayable deletion intent, post-commit loss, unsafe account
-crossing, inaccessible-only-copy deletion, unverifiable backup, schema coverage
-gap, failed required test, or unsupported rollback claim. Do not downgrade such
+crossing, inaccessible-only-copy deletion, unverifiable migration recovery,
+unproven platform-backup assumption, schema coverage gap, failed required test,
+or unsupported rollback claim. Do not downgrade such
 failures to logging or silently mark migration complete. Existing unrelated test
 failures require explicit recorded disposition, not a blanket "baseline" waiver.
 
@@ -684,9 +736,10 @@ failures require explicit recorded disposition, not a blanket "baseline" waiver.
 This task created planning documents and retired superseded documentation on
 `v3.0`; see `docs/README.md` for the cleanup rationale. Source/model/call-site and existing-test
 inspection was performed. The initial Phase 1 safety slice changes app startup
-and persistent-store failure handling but does not add a dependency, change a
-user store, or write CloudKit records. No production upgrade, backup restore or
-physical two-device validation was performed for this plan or safety slice.
+and persistent-store failure handling. The current Phase 0 slice pins GRDB and
+adds an isolated file-backed smoke test, but does not change a user store or
+write CloudKit records. No production upgrade, Apple device-backup restore or
+physical two-device validation was performed for this plan or safety slices.
 Tavily search was unavailable due to DNS resolution in the shell; official Apple,
 SQLite and GRDB references were checked through the web tool instead. The
 inventory is pinned to the reviewed HEAD and must be regenerated/compared before

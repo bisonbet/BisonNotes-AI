@@ -312,7 +312,10 @@ Add a fixture/assertion column to this inventory during implementation; schema c
 
 The schema inventory above is not a complete file/defaults inventory. Phase 0
 source review identified these additional roots and entry points that require an
-explicit owner, format, backup disposition and fixture before migration:
+explicit owner, format, platform-backup disposition and fixture before migration.
+The app will not create a portable export/restore package or manage encryption
+keys; Apple device backups and existing iCloud/CloudKit behavior remain the
+platform/product mechanisms in scope:
 
 | Category | Evidence to ledger |
 | --- | --- |
@@ -327,4 +330,7 @@ explicit owner, format, backup disposition and fixture before migration:
 
 See [the evidence ledger](sqlite-migration-evidence.md) for initial treatment
 and test dispositions. These additions are not permission to delete, rename or
-exclude any root; unknown files remain in recovery until classified.
+exclude any root; unknown files remain in recovery until classified. Metadata
+references migrate in the blocking first-boot phase, while audio and other large
+media are reconciled by a bounded background worker with durable receipts and no
+full-library duplicate.
