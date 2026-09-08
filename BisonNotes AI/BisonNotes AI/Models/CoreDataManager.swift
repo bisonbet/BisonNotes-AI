@@ -372,48 +372,37 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // First, try to parse as absolute URL (legacy format)
-        if let url = URL(string: urlString), url.scheme != nil {
-            // This is an absolute URL, check if file exists
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
+        // Resolved through the one definition of the stored-URL rules rather than a
+        // second `URL(string:) + scheme != nil` test of its own. That test reads an
+        // ordinary filename containing a colon — "meeting:notes.m4a" — as scheme
+        // "meeting", so this resolver used to return nil for audio that is sitting
+        // in Documents and that `getStoredURL` and the reviewed-audio scan both
+        // resolve correctly. Two resolvers disagreeing about one row is exactly what
+        // `storedURLCandidates` exists to prevent.
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
+            return nil
+        }
+        let candidates = Self.storedURLCandidates(urlString, documentsURL: documentsURL)
+        guard let primaryURL = candidates.first else {
+            AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
+            return nil
+        }
 
-            // File doesn't exist at absolute path, try to find by filename
-            if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                let filename = url.lastPathComponent
-                let newURL = documentsURL.appendingPathComponent(filename)
-                if FileManager.default.fileExists(atPath: newURL.path) {
-                    // Update the stored URL to relative path for future resilience
-                    recording.recordingURL = urlToRelativePath(newURL)
-                    try? context.save()
-                    return newURL
-                }
-            }
-        } else {
-            // This is a relative path, convert to absolute URL
-            if let absoluteURL = relativePathToURL(urlString) {
-                if FileManager.default.fileExists(atPath: absoluteURL.path) {
-                    return absoluteURL
-                }
+        if FileManager.default.fileExists(atPath: primaryURL.path) {
+            return primaryURL
+        }
 
-                AppLog.shared.coreData("File not found at relative path, trying filename search", level: .debug)
-                // File doesn't exist, try to find by filename
-                if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                    let filename = absoluteURL.lastPathComponent
-                    let newURL = documentsURL.appendingPathComponent(filename)
-                    AppLog.shared.coreData("Searching for file: \(newURL.lastPathComponent)", level: .debug)
-                    if FileManager.default.fileExists(atPath: newURL.path) {
-                        AppLog.shared.coreData("File found by filename, updating stored path")
-                        // Update the stored relative path
-                        recording.recordingURL = urlToRelativePath(newURL)
-                        try? context.save()
-                        return newURL
-                    }
-                }
-            } else {
-                AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
-            }
+        // The remaining candidate is the Documents-relative filename fallback used
+        // when the app's container path changed. Rewriting the row to it keeps the
+        // next lookup on the primary path.
+        AppLog.shared.coreData("File not found at stored path, trying filename search", level: .debug)
+        for fallbackURL in candidates.dropFirst()
+        where FileManager.default.fileExists(atPath: fallbackURL.path) {
+            AppLog.shared.coreData("File found by filename, updating stored path")
+            recording.recordingURL = urlToRelativePath(fallbackURL)
+            try? context.save()
+            return fallbackURL
         }
 
         AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)

@@ -481,6 +481,22 @@ class iCloudStorageManager: ObservableObject {
         EnhancedLogger.shared.enablePerformanceTracking(true)
     }
 
+    /// Registered once per process; the observer outlives every manager instance
+    /// and holds no reference to one, so there is nothing to tear down.
+    private static var isObservingAccountChangesForLegacySummaryMemo = false
+
+    private static func observeAccountChangesForLegacySummaryMemo() {
+        guard !isObservingAccountChangesForLegacySummaryMemo else { return }
+        isObservingAccountChangesForLegacySummaryMemo = true
+        NotificationCenter.default.addObserver(
+            forName: .CKAccountChanged,
+            object: nil,
+            queue: nil
+        ) { _ in
+            setLegacySummaryRecordsKnownAbsent(false)
+        }
+    }
+
     private func initializeCloudKit() async {
         guard !isInitialized else { return }
 
@@ -491,6 +507,13 @@ class iCloudStorageManager: ObservableObject {
         if isPreview {
             return
         }
+
+        // The legacy-summary absence memo is a device-wide key that describes one
+        // account, so it has to be dropped whenever the signed-in account can have
+        // changed. Clearing it here covers a switch made while the app was not
+        // running; the observer covers one made while it is.
+        Self.setLegacySummaryRecordsKnownAbsent(false)
+        Self.observeAccountChangesForLegacySummaryMemo()
 
         // Initialize CloudKit components safely
         self.container = Self.sharedCloudKitContainer()
@@ -7258,10 +7281,21 @@ extension iCloudStorageManager {
     /// Remembers a recently completed scan that found no legacy records. The memo is
     /// deliberately short-lived: another device can create a legacy record after
     /// this device scans, so a permanent per-device absence claim is unsafe.
-    private static let legacySummaryRecordsAbsentAtKey = "iCloudLegacySummaryRecordsAbsentAtV2"
-    private static let legacySummaryRecordsAbsenceTTL: TimeInterval = 15 * 60
+    ///
+    /// It describes *one account*, and the key is device-wide, so it also has to be
+    /// dropped whenever the signed-in account can have changed. Otherwise signing
+    /// into a second account inside the TTL suppresses its first scan, and a
+    /// tombstone replayed in that window leaves that account's legacy records in
+    /// place for the next restore to pull back as orphaned summaries. Both triggers
+    /// are needed: `CKAccountChanged` covers a switch while the app is running, and
+    /// the launch-time clear covers a switch made while it was not.
+    /// `nonisolated`, like the two accessors below, so the `CKAccountChanged`
+    /// observer can clear the memo without hopping to the main actor. Both are
+    /// immutable value types, so there is nothing for that to race with.
+    nonisolated private static let legacySummaryRecordsAbsentAtKey = "iCloudLegacySummaryRecordsAbsentAtV2"
+    nonisolated private static let legacySummaryRecordsAbsenceTTL: TimeInterval = 15 * 60
 
-    static var legacySummaryRecordsKnownAbsent: Bool {
+    nonisolated static var legacySummaryRecordsKnownAbsent: Bool {
         guard let absentAt = UserDefaults.standard.object(forKey: legacySummaryRecordsAbsentAtKey) as? Date else {
             return false
         }
@@ -7269,7 +7303,7 @@ extension iCloudStorageManager {
         return age >= 0 && age < legacySummaryRecordsAbsenceTTL
     }
 
-    private static func setLegacySummaryRecordsKnownAbsent(_ absent: Bool) {
+    nonisolated private static func setLegacySummaryRecordsKnownAbsent(_ absent: Bool) {
         if absent {
             UserDefaults.standard.set(Date(), forKey: legacySummaryRecordsAbsentAtKey)
         } else {
