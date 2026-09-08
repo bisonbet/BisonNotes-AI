@@ -228,7 +228,14 @@ class CoreDataManager: ObservableObject {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
-        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+        if resolvedPersistenceController.storageStatus.isOperational {
+            _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+        } else {
+            AppLog.shared.coreData(
+                "Skipping pending cloud mutation migration because persistent storage is unavailable.",
+                level: .error
+            )
+        }
     }
 
     // MARK: - Context Management
@@ -259,6 +266,17 @@ class CoreDataManager: ObservableObject {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
         return try context.fetch(fetchRequest)
+    }
+
+    /// Reads the startup-critical rows without converting a store error into an
+    /// empty library. The caller uses this only to decide whether legacy
+    /// migration or cleanup is appropriate; it deliberately returns managed
+    /// objects rather than presentation values that could invent defaults.
+    func fetchStartupSnapshot() throws -> (recordings: [RecordingEntry], transcripts: [TranscriptEntry]) {
+        (
+            recordings: try fetchRecordingsForDiagnostics(),
+            transcripts: try fetchTranscriptsForDiagnostics()
+        )
     }
 
     // MARK: - URL Management Helpers

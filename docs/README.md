@@ -10,6 +10,7 @@ retained plans are context, not instructions to reset or rerun completed work.
 
 - [SQLite migration plan](sqlite-migration-plan.md): v3.0 storage design, safe migration, backups, sync boundaries, implementation phases and release gates.
 - [SQLite migration inventory](sqlite-migration-inventory.md): both Core Data model versions, every attribute/relationship and persistence touchpoints.
+- [SQLite migration evidence ledger](sqlite-migration-evidence.md): Phase 0 runtime storage boundary, provenance, baseline commands and decisions still required before backend selection.
 - [Regression testing regimen](testing-regimen.md): current build, automated and physical-device release checks.
 - [Accessibility matrix](accessibility-matrix.md) and [App Store accessibility](app-store-accessibility.md): current accessibility contracts and evidence boundaries.
 - [Current user guide](bisonnotes-ai-guide.html) and [v2.5 release guide](bisonnotes-ai-v2-5.html): user-facing behavior. Older v2.2/v2.3/v2.4 guides remain historical release references.

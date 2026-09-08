@@ -307,3 +307,24 @@ The XML inventory cannot enumerate Codable keys nested in `segments`, `speakerMa
 - Keychain, security-scoped bookmarks, external archives and cloud-only assets require the separate policies in the plan.
 
 Add a fixture/assertion column to this inventory during implementation; schema coverage tests must fail when a new source field has no declared disposition.
+
+## Phase 0 runtime-boundary additions
+
+The schema inventory above is not a complete file/defaults inventory. Phase 0
+source review identified these additional roots and entry points that require an
+explicit owner, format, backup disposition and fixture before migration:
+
+| Category | Evidence to ledger |
+| --- | --- |
+| Recording sidecars and recovery | `.location`, `.recordingmeta`, segment/merge files, and `deferred-recovery.json` in the `AudioRecorderViewModel` persistence extensions |
+| Legacy relationship state | `Documents/file_relationships.json` in `EnhancedFileManager`; top-level `.transcript`, `.summary`, `.location` and audio files in `DataMigrationManager` |
+| Recovery/archive staging | `Application Support/Recording Recovery`, `ArchiveStaging` and `AudioExportStaging` |
+| Watch source and receipts | Watch `Documents/WatchRecordings/metadata.json`, `recordings/*.m4a`, and `Documents/reliable_transfers.json`; phone `tmp/WatchTransferStaging` |
+| Share imports | App Group `group.bisonnotesai.shared/ShareInbox`, `.share-import-token`, and the `Documents/Inbox` fallback |
+| Additional defaults | App Group action-button key `actionButtonShouldStartRecording`; `.standard` dedupe key `processedWatchRecordingIds`; sync timestamps, absence markers, throttles and backup flags |
+| Temporary roots and caches | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, FluidAudio models, map snapshots and model caches |
+| Omitted direct I/O callers | `EnhancedFileManager`, `ActionButtonLaunchManager`, `ShareExtensionProcessor`, Watch storage/connectivity, `CloudAudioAssetStaging`, `TemporaryFileCleanupService`, `WebImportDownloader`, `RestoredAudioFileInstaller`, and `AudioRecorderViewModel` persistence extensions |
+
+See [the evidence ledger](sqlite-migration-evidence.md) for initial treatment
+and test dispositions. These additions are not permission to delete, rename or
+exclude any root; unknown files remain in recovery until classified.

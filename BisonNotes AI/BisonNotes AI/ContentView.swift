@@ -36,7 +36,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Group {
-                if isInitialized {
+                if !appCoordinator.storageStatus.isOperational {
+                    storageUnavailableView
+                } else if isInitialized {
                     if isFirstLaunch {
                         firstLaunchView
                     } else {
@@ -141,6 +143,23 @@ struct ContentView: View {
     }
 
     // MARK: - Extracted Sub-Views
+
+    private var storageUnavailableView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "externaldrive.badge.xmark")
+                .font(.system(size: 42))
+                .foregroundColor(.red)
+            Text("Library storage unavailable")
+                .font(.title2.weight(.semibold))
+            Text(appCoordinator.storageStatus.userFacingMessage)
+                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: 520)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0.039, green: 0.086, blue: 0.157))
+    }
 
     private var firstLaunchView: some View {
         SimpleSettingsView()
@@ -364,6 +383,12 @@ struct ContentView: View {
 
     @MainActor
     private func initializeApp() {
+        guard appCoordinator.storageStatus.isOperational else {
+            initializationError = appCoordinator.storageStatus.userFacingMessage
+            isInitialized = true
+            return
+        }
+
         #if DEBUG
         BisonNotesUITestSupport.prepareLaunchDataIfNeeded(appCoordinator: appCoordinator)
         #endif
@@ -379,8 +404,10 @@ struct ContentView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             Task { @MainActor in
                 do {
-                    // Check if Core Data has recordings, if not, trigger migration
-                    let coreDataRecordings = appCoordinator.getAllRecordingsWithData()
+                    // Check the startup-critical rows with throwing reads. A
+                    // failed fetch must never be treated as an empty library.
+                    let startupSnapshot = try appCoordinator.fetchStartupSnapshot()
+                    let coreDataRecordings = startupSnapshot.recordings
                     if coreDataRecordings.isEmpty {
                         AppLog.shared.log("No recordings found in Core Data, triggering migration...", category: .general)
                         let migrationManager = DataMigrationManager()
@@ -404,9 +431,16 @@ struct ContentView: View {
                             AppLog.shared.log("Cleaned up \(totalCleaned) orphaned records (\(cleanedCount) orphaned, \(fixedCount) incomplete deletions, \(missingFileCount) missing files)", category: .general)
                         }
 
-                        // Check if any recordings have transcripts in Core Data
-                        let recordingsWithTranscripts = coreDataRecordings.filter { $0.transcript != nil }
-                        if recordingsWithTranscripts.isEmpty {
+                        // Check for transcripts linked to a known recording
+                        // without faulting through a presentation conversion.
+                        let recordingIDs = Set(coreDataRecordings.compactMap(\.id))
+                        let hasLinkedTranscript = startupSnapshot.transcripts.contains { transcript in
+                            guard let recordingID = transcript.recordingId ?? transcript.recording?.id else {
+                                return false
+                            }
+                            return recordingIDs.contains(recordingID)
+                        }
+                        if !hasLinkedTranscript {
                             AppLog.shared.log("Recordings found but no transcripts in Core Data, triggering migration...", category: .general)
                             let migrationManager = DataMigrationManager()
                             await migrationManager.performDataMigration()
@@ -483,8 +517,13 @@ struct ContentView: View {
                         }
                     }
                 } catch {
+                    AppLog.shared.coreData(
+                        "Startup library read failed; blocking normal library operation: \(error.localizedDescription)",
+                        level: .fault
+                    )
+                    appCoordinator.markStorageUnavailable()
                     initializationError = error.localizedDescription
-                    isInitialized = true // Still show the app even if there's an error
+                    isInitialized = true
                 }
             }
         }

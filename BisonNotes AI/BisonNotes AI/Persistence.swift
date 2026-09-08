@@ -474,6 +474,34 @@ enum PendingCloudMutationStore {
     }
 }
 
+enum PersistenceStoreStatus: Equatable {
+    case ready
+    case inMemory
+    case unavailable
+
+    var isOperational: Bool {
+        switch self {
+        case .ready, .inMemory:
+            return true
+        case .unavailable:
+            return false
+        }
+    }
+
+    var isDurable: Bool {
+        self == .ready
+    }
+
+    var userFacingMessage: String {
+        switch self {
+        case .ready, .inMemory:
+            return "Library storage is available."
+        case .unavailable:
+            return "The library database could not be opened. Existing data was not replaced, and the app will not accept library changes until storage is available. Relaunch the app and contact support if the problem continues."
+        }
+    }
+}
+
 struct PersistenceController {
     /// Core Data's container and view context are confined to the main actor.
     /// The shared controller is only used to construct the main-actor data
@@ -496,6 +524,7 @@ struct PersistenceController {
     }()
 
     let container: NSPersistentContainer
+    let storageStatus: PersistenceStoreStatus
 
     init(inMemory: Bool = false, storeURL: URL? = nil) {
         let persistentContainer = NSPersistentContainer(name: "BisonNotes_AI")
@@ -515,19 +544,27 @@ struct PersistenceController {
             )
             #endif
         }
-        persistentContainer.loadPersistentStores(completionHandler: { (storeDescription, error) in
-            if let error = error as NSError? {
-                Self.handlePersistentStoreLoadFailure(error, container: persistentContainer, inMemory: inMemory)
-                return
-            }
-
-            if let storeURL = storeDescription.url, !inMemory {
+        let persistentStoreDescription = persistentContainer.persistentStoreDescriptions[0]
+        let resolvedStorageStatus: PersistenceStoreStatus
+        do {
+            let persistentStore = try persistentContainer.persistentStoreCoordinator.addPersistentStore(
+                ofType: persistentStoreDescription.type,
+                configurationName: persistentStoreDescription.configuration,
+                at: persistentStoreDescription.url,
+                options: persistentStoreDescription.options
+            )
+            if let storeURL = persistentStore.url, !inMemory {
                 AppFileProtection.apply(to: storeURL)
                 AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-wal"))
                 AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-shm"))
             }
-        })
+            resolvedStorageStatus = inMemory ? .inMemory : .ready
+        } catch let error as NSError {
+            Self.handlePersistentStoreLoadFailure(error, container: persistentContainer, inMemory: inMemory)
+            resolvedStorageStatus = .unavailable
+        }
         container = persistentContainer
+        storageStatus = resolvedStorageStatus
         container.viewContext.automaticallyMergesChangesFromParent = true
     }
 
@@ -539,24 +576,11 @@ struct PersistenceController {
             level: .fault
         )
 
-        guard !inMemory else { return }
-
-        do {
-            try container.persistentStoreCoordinator.addPersistentStore(
-                ofType: NSInMemoryStoreType,
-                configurationName: nil,
-                at: nil,
-                options: nil
-            )
-            AppLog.shared.coreData(
-                "Loaded temporary in-memory Core Data fallback after persistent store failure. Existing recordings may be unavailable until the app restarts successfully.",
-                level: .error
-            )
-        } catch {
-            AppLog.shared.coreData(
-                "Failed to load in-memory Core Data fallback after persistent store failure: \(error.localizedDescription)",
-                level: .fault
-            )
-        }
+        AppLog.shared.coreData(
+            inMemory
+                ? "The requested in-memory Core Data store is unavailable; no fallback store was installed."
+                : "No in-memory Core Data fallback was installed after the durable store failed. The library remains unavailable so failed reads cannot look like an empty library and new data cannot be reported as saved.",
+            level: .fault
+        )
     }
 }

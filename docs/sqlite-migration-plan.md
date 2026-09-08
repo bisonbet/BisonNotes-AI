@@ -1,11 +1,15 @@
 # Reliable storage and safe SQLite migration plan
 
-Status: **design and source review only; no migration implemented or enabled**.
+Status: **design/source review plus Phase 0 and Phase 1 safety work in progress;
+no SQLite migration implemented or enabled**.
 Implementation branch: `v3.0`, created from `v2.5` for this work.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
 `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` (the pushed `origin/v2.5`).
 No production user database or live CloudKit account was inspected. Source review
 is not evidence that a particular user's store is healthy, nor a speed benchmark.
+The current backend-independent safety slice makes durable-store failure explicit
+and blocks normal startup when storage is unavailable; it does not change the
+authoritative Core Data backend or authorize a user-store migration.
 
 ## 1. Recommendation and decision
 
@@ -52,8 +56,8 @@ attribute, relationship, model hash, and direct Core Data consumer found by sear
 
 | Evidence | Implication and required treatment |
 | --- | --- |
-| `Persistence.swift`: `handlePersistentStoreLoadFailure` installs a temporary in-memory store | Durable-storage failure can leave a usable-looking data layer whose new data disappears at exit. Add an explicit unavailable/recovery state before migration; never run import/sync/cleanup against this fallback. Preserve any rescue recording through a separate durable spool with visible status. |
-| `CoreDataManager.getAllRecordings` returns `[]` on fetch failure; `ContentView.initializeApp` uses empty collections to initiate migration, and otherwise runs cleanup | Empty is not a trustworthy absence signal. Migration and cleanup must use throwing reads and a successfully opened, validated store. Replace collection-size migration triggers with durable version/state records. |
+| Baseline `Persistence.swift`: `handlePersistentStoreLoadFailure` installed a temporary in-memory store | Durable-storage failure can leave a usable-looking data layer whose new data disappears at exit. The current safety slice removes that fallback, reports an explicit unavailable state and blocks normal startup; migration still needs a separate durable recovery/spool policy. |
+| Baseline `CoreDataManager.getAllRecordings` returned `[]` on fetch failure; `ContentView.initializeApp` used empty collections to initiate migration, and otherwise ran cleanup | Empty is not a trustworthy absence signal. The current safety slice uses throwing startup reads and blocks normal library operation on failure; migration still needs durable version/state records and a repository-level maintenance lease before destructive cleanup. |
 | `CoreDataManager.cleanupRecordingsWithMissingFiles` deletes some metadata or clears URLs; startup invokes it | Missing or inaccessible audio is not proof of user deletion. During migration/recovery suspend all destructive cleanup. Retain path and metadata with explicit unavailable state rather than guessing. |
 | `Persistence.swift`: `PendingCloudMutationStore`; `CoreDataManager.save(committing:)` | Local deletes and five kinds of cloud intent already commit together. Preserve this invariant, original `requestedAt`, child IDs, payload versions, coalescing and snapshot-conditional acknowledgement. Do not move this queue back into UserDefaults. |
 | `CoreDataManager`, `AppDataCoordinator`, `RecordingWorkflowManager`, `TranscriptManager`, views and sync expose managed objects and/or contexts | A database-file swap cannot replace Core Data. Migrate APIs and callers to immutable values and explicit commands before cutover. |
@@ -489,8 +493,8 @@ or task unless the owner requests it.
 
 | Phase | Concrete deliverable and files | Exit gate |
 | --- | --- | --- |
-| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Select/pin candidate GRDB in an isolated spike only. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. Storage/backup decisions below settled before dependent phases. |
-| 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
+| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Select/pin candidate GRDB in an isolated spike only. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. Storage/backup decisions below settled before dependent phases. **In progress:** evidence ledger added; runtime/defaults classification and measurements remain open. |
+| 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** Core Data health/startup gating and throwing startup reads are implemented; Watch/extension/background caller gates remain open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
 | 2: Backup / recovery | New storage snapshot and portable backup services, restore staging, recovery UI; adapt attachments/archive/file services. Keep Core Data authoritative. | Full offline round trip of all ledger categories, WAL fixture, interruption, malformed package and low-space tests; current library preserved on every failure. |
 | 3: Repository boundary | Add domain values, protocols, observation and Core Data adapter. Convert `AppDataCoordinator` and `RecordingWorkflowManager`, then jobs/imports/transcript/summary/archive services, UI, cloud store access, test fixtures and previews. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapter and legacy importer; all callers/targets audited. |
 | 4: SQLite backend | New schema/migrations, repository implementation, file journal, receipts, backup support and metrics. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
@@ -679,11 +683,12 @@ failures require explicit recorded disposition, not a blanket "baseline" waiver.
 
 This task created planning documents and retired superseded documentation on
 `v3.0`; see `docs/README.md` for the cleanup rationale. Source/model/call-site and existing-test
-inspection was performed; no app code, dependency, user store or CloudKit record
-was changed. No build, XCTest run, performance measurement, production upgrade,
-backup restore or physical two-device validation was performed for this plan.
+inspection was performed. The initial Phase 1 safety slice changes app startup
+and persistent-store failure handling but does not add a dependency, change a
+user store, or write CloudKit records. No production upgrade, backup restore or
+physical two-device validation was performed for this plan or safety slice.
 Tavily search was unavailable due to DNS resolution in the shell; official Apple,
 SQLite and GRDB references were checked through the web tool instead. The
 inventory is pinned to the reviewed HEAD and must be regenerated/compared before
-implementation. This is a gated implementation specification, not certification
+any backend, import, or cutover implementation. This is a gated implementation specification, not certification
 that migration is safe to enable today.

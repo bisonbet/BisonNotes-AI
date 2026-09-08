@@ -12,6 +12,7 @@ class AppDataCoordinator: ObservableObject {
     @Published var workflowManager: RecordingWorkflowManager
 
     @Published var isInitialized = false
+    @Published private(set) var storageStatus: PersistenceStoreStatus
 
     /// The recording shown in the single native-macOS player window. The app
     /// deliberately supports only one player window at a time, so this drives a
@@ -22,6 +23,7 @@ class AppDataCoordinator: ObservableObject {
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.storageStatus = resolvedPersistenceController.storageStatus
         // Initialize Core Data system
         self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
@@ -33,17 +35,26 @@ class AppDataCoordinator: ObservableObject {
 
         // Set up the circular reference after initialization
         self.workflowManager.setAppCoordinator(self)
-        SummaryManager.shared.configure(with: self)
-        SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
-            to: coreDataManager.managedObjectContext
-        )
+        if storageStatus.isOperational {
+            SummaryManager.shared.configure(with: self)
+            SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
+                to: coreDataManager.managedObjectContext
+            )
 
-        Task {
-            await initializeSystem()
+            Task {
+                await initializeSystem()
+            }
+        } else {
+            AppLog.shared.coreData(
+                "AppDataCoordinator is paused because library storage is unavailable.",
+                level: .fault
+            )
         }
     }
 
     private func initializeSystem() async {
+        guard storageStatus.isOperational else { return }
+
         // Core Data system initialization
         isInitialized = true
 
@@ -56,6 +67,13 @@ class AppDataCoordinator: ObservableObject {
                 AppLog.shared.coreData(message, level: .error)
             }
         }
+    }
+
+    /// Moves the coordinator into the same safe state used when the persistent
+    /// store fails during construction. Startup-critical read failures must not
+    /// leave the UI treating a partially readable library as writable.
+    func markStorageUnavailable() {
+        storageStatus = .unavailable
     }
 
     // MARK: - Public Interface
@@ -195,6 +213,12 @@ class AppDataCoordinator: ObservableObject {
 
     func getAllRecordingsWithData() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
         return coreDataManager.getAllRecordingsWithData()
+    }
+
+    /// Startup-critical reads must preserve the distinction between an empty
+    /// library and a failed persistent store.
+    func fetchStartupSnapshot() throws -> (recordings: [RecordingEntry], transcripts: [TranscriptEntry]) {
+        try coreDataManager.fetchStartupSnapshot()
     }
 
 
