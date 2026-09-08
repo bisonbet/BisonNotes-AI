@@ -1,81 +1,83 @@
-# Documentation index
+# Documentation index and v3.0 planning cleanup
 
-Reviewed on 2026-09-07 from branch `v2.5` at
-`c0eecb4673e3bc7c09fd9e80d4c15c263c7f86c2`. This index records the documentation
-cleanup so a future agent can distinguish a current contract from an old
-execution checklist. Removing a plan does not certify its manual or release
-gates; the retained evidence and testing documents remain authoritative for
-those gates.
+Reviewed on 2026-09-07 against `v2.5` at
+`d64660ba85dc04e6bc2f1fa88263427cb76b37aa`; the storage plan is on `v3.0`.
+Removing an execution plan does not certify its historical manual tests or retire
+compatibility code. Historical branch names, prompts and file/line inventories in
+retained plans are context, not instructions to reset or rerun completed work.
 
-## Current product and release documentation
+## Start here
 
-- [Full user guide](bisonnotes-ai-guide.html), versioned release guides
-  (`bisonnotes-ai-v2-2.html` through `bisonnotes-ai-v2-5.html`), and
-  [Mistral setup](mistral-free-setup.md) are user-facing documentation.
-- [Regression testing regimen](testing-regimen.md) is the current validation
-  entry point. It separates source, build, simulator/XCTest, signed-app,
-  hardware, provider, CloudKit, accessibility, and two-device evidence.
-- [Accessibility matrix](accessibility-matrix.md), [App Store accessibility
-  artifact](app-store-accessibility.md), and [public accessibility page](accessibility.html)
-  are current product/release artifacts.
-- [For v2.5](for-v2.5.md) records the implemented follow-ups and their remaining
-  release gates; it is retained until that release history is no longer useful.
+- [SQLite migration plan](sqlite-migration-plan.md): v3.0 storage design, safe migration, backups, sync boundaries, implementation phases and release gates.
+- [SQLite migration inventory](sqlite-migration-inventory.md): both Core Data model versions, every attribute/relationship and persistence touchpoints.
+- [Regression testing regimen](testing-regimen.md): current build, automated and physical-device release checks.
+- [Accessibility matrix](accessibility-matrix.md) and [App Store accessibility](app-store-accessibility.md): current accessibility contracts and evidence boundaries.
+- [Current user guide](bisonnotes-ai-guide.html) and [v2.5 release guide](bisonnotes-ai-v2-5.html): user-facing behavior. Older v2.2/v2.3/v2.4 guides remain historical release references.
 
-## Retained engineering contracts and evidence
+## Current engineering references
 
-These files remain because they contain an unresolved acceptance gate, a
-compatibility contract, or unique evidence that is not reproduced elsewhere:
+These checked-in files remain relevant to product behavior or migration safety:
 
-- [iCloud sync performance](icloud-sync-performance-plan.md): implemented
-  batching/manifest/deletion rules plus the outstanding signed two-device matrix.
-- [iOS interruption recovery](ios-audio-interruption-recovery-delegation-plan.md):
-  recovery ownership, segment-preservation rules, an unresolved platform cause,
-  and physical-phone cases.
-- [Local speaker labels](local-speaker-labels-delegation-plan.md): completed-file
-  workflow and model/license/quality/performance/accessibility gates.
-- [Native Mac window UX](macos-window-ux-delegation-plan.md): detailed close,
-  editing, settings, and remaining manual presentation checks.
-- [Code quality and hardening](code-quality-cleanup-delegation-plan.md): an
-  unfinished backlog containing credential, migration, and caller-verification
-  work; it is not treated as completed merely because some packages landed.
-- [Transcript cleanup](transcript-cleanup-implementation-plan.md): implemented
-  original/cleaned-text contract and still-pending physical model and
-  two-device checks.
-- [Live transcription callback fix](live-transcription-callback-fix.md) and
-  [llama.cpp compatibility migration](llama-cpp-removal-migration.md): diagnostic
-  provenance and upgrade compatibility, respectively.
-- [Swift 6 evidence](swift-6-migration-evidence.md): target/build history and
-  the signed, hardware, provider, CloudKit, and accessibility limits of that
-  evidence.
-- [Native Mac phase 3 exit](macos-phase-3-exit-report.md), [phase 3.3 parity
-  audit](macos-phase-3.3-deferred-parity-audit.md), [phase 4.1 continuity
-  report](macos-phase-4.1-data-continuity-report.md), and [window presentation
-  audit](macos-window-presentation-audit.md): historical validation and data/
-  presentation evidence relevant to future storage work.
-- [Issue #106 A/V test regimen](issue-106-av-sync-test-regimen.md): the signed
-  native-Mac capture and salvage gate.
-
-## Retired execution plans
-
-These files were removed from the active `v2.5` documentation set because their
-implementation work is complete or their instructions are superseded. Their
-exact contents remain recoverable from Git history; no history was rewritten.
-
-| Retired file | Reason |
+| Document | Why it remains |
 | --- | --- |
-| `accessibility-implementation-plan.md` | Its proposed support layer, audit tests, matrix, and public artifact now exist; current acceptance lives in the retained accessibility files and testing regimen. |
-| `advanced-troubleshooting-implementation-plan.md` | The implementation landed in PR #128 and later fixes; the old handoff still incorrectly says implementation has not been performed. |
-| `macos-migration-plan.md` | Native macOS cutover is complete; continuity, parity, exit, and current testing documents carry the useful evidence and remaining gates. |
-| `swift-6-migration-delegation-plan.md` | Swift 6 target work is recorded in the retained evidence ledger and current testing regimen; the old checklist is no longer an execution source. |
-| `v2.4-dead-code-cleanup-delegation-plan.md` | The v2.4 deletion work was integrated; its old candidate/line lists must not be rerun against current source. |
-| `v2.5-follow-up-agent-plan.md` | The follow-up implementation is recorded in `for-v2.5.md`; its execution checklist is historical. |
+| [Local speaker labels](local-speaker-labels-delegation-plan.md) | Model, accuracy, performance, accessibility, and hardware constraints remain useful when validating transcript data. |
+| [Transcript cleanup](transcript-cleanup-implementation-plan.md) | Defines the original/cleaned text preservation contract and physical model/two-device gates. |
+| [Live transcription callback fix](live-transcription-callback-fix.md) | Preserves diagnostic provenance and the limits of crash attribution. |
+| [Mistral setup](mistral-free-setup.md) | User-facing provider setup instructions. |
 
-## Safeguards retained after cleanup
+Older engineering plans and evidence ledgers were retired from the active v2.5
+documentation set. Their exact contents remain recoverable from Git history;
+this cleanup does not retire runtime compatibility, migration, backup, sync, or
+hardware requirements.
 
-Documentation cleanup does not authorize removing runtime migration, recovery,
-`.location` sidecar, attachment, archive-bookmark, CloudKit tombstone, Watch
-transfer, or legacy-provider compatibility code. A failed read is not an empty
-library, missing audio is not proof of deletion, and a build or simulator run is
-not signed-device, hardware, provider, CloudKit, or accessibility proof. Any
-future storage migration must preserve those boundaries and use the current
-testing regimen plus the source-of-truth contracts above.
+## Removed execution plans
+
+The following files were removed because their implementation instructions were
+superseded. Retrieve their exact prior contents with `git show <commit>:docs/<filename>`;
+the six-file cleanup was recorded in `6d94fc5d`, and the later historical-docs
+cleanup in `5fa21603`. No history was rewritten.
+
+| Removed file | Evidence / retained replacement |
+| --- | --- |
+| `swift-6-migration-delegation-plan.md` | Its migration target matrix and final runs are historical; old wave/delegation instructions no longer control work. |
+| `macos-migration-plan.md` | Its Phase 4.3 says cutover implemented; native-only targets are current. Retain continuity, exit and parity reports; current testing regimen replaces old Catalyst build loops. |
+| `accessibility-implementation-plan.md` | Proposed matrix, support helpers, audit suite and public artifacts exist. Current matrix, App Store artifact and testing regimen preserve acceptance requirements; deletion does not assert all manual checks passed. |
+| `v2.5-follow-up-agent-plan.md` | Implementation merged in PR #126 (`78e09b7c`); its execution checklist is historical. |
+| `v2.4-dead-code-cleanup-delegation-plan.md` | Release README records dead-code implementation complete; old file/line candidate lists must not be rerun. Unchosen policy/retirement decisions are carried forward below. |
+| `advanced-troubleshooting-implementation-plan.md` | Implementation merged in PR #128 (`cdaf1563`) with subsequent race fixes; current service/tests enforce behavior. Maintenance safeguards are retained below. |
+
+The later cleanup also retired `code-quality-cleanup-delegation-plan.md`,
+`for-v2.5.md`, `icloud-sync-performance-plan.md`,
+`ios-audio-interruption-recovery-delegation-plan.md`,
+`issue-106-av-sync-test-regimen.md`, `llama-cpp-removal-migration.md`, the
+macOS phase/window reports, `macos-window-ux-delegation-plan.md`, and
+`swift-6-migration-evidence.md`. Recover those files from commit `5fa21603`
+when historical context is needed; do not treat their deletion as proof that
+the associated runtime or release gates are complete.
+
+## Carried-forward safeguards and unresolved work
+
+Advanced Troubleshooting stays read-only until the user selects and confirms
+specific unreferenced audio. Recheck ownership, file identity, active recording/
+combine/restore work and maintenance reservations at deletion time. A failed
+fetch/scan is an error, never evidence of an empty library. Archives, external
+media, detached metadata, sidecars, local-only records and in-flight files need
+explicit classification. Local cleanup must not publish cloud tombstones. Keep
+coordinated cloud erase, partial-failure reporting and fresh-backup behavior;
+opening diagnostics must never erase or repair data automatically. The v3.0 plan
+adds a storage/migration gate to these existing protections.
+
+The retired dead-code plan did **not** decide whether to remove coming-soon engine
+state, expose or remove unused cloud-conflict strategies, or redesign ownership of
+`EnhancedErrorHandler`. Those remain separately scoped choices requiring current
+call-site evidence. In particular, no `.location` fallback or legacy startup
+migration is retired by this documentation cleanup; that requires a supported
+upgrade-floor decision, lossless migration and recovery tests. Source cleanup
+still requires runtime/target/persistence checks, not just a search with no hits.
+
+Native macOS follow-up remains: signed permission/recording cases (including Poly
+Sync 10 and hot swap), long hidden-window jobs, archive bookmark restoration,
+share/widgets and Settings walkthrough. See the retained reports and current
+regimen; this cleanup does not mark them complete. Likewise keep physical
+accessibility, provider/model and two-device CloudKit gates separate from build
+success. Previously blocked test runs remain historical limitations until rerun.
