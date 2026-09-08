@@ -1332,14 +1332,19 @@ class BackgroundProcessingManager: ObservableObject {
 
             transcriptCleanupWarning = cleanupPreparation.warning
             try Task.checkCancellation()
+            // The recording row being gone is the only reason to drop a completed
+            // transcription: there is nothing left to attach it to. That is not a
+            // cleanup failure — the whole transcript goes, and cleanup may not even
+            // be enabled — so it must not borrow the cleanup warning above, which
+            // tells the user only a derived cleanup result was discarded. Matches
+            // the wording the direct rerun path already uses in `TranscriptViews`.
             guard coreDataManager.getRecording(id: recordingId) != nil else {
                 AppLog.shared.backgroundProcessing(
-                    "Discarded transcript cleanup because recording was deleted: recording=\(recordingId.uuidString)",
+                    "Discarded the completed transcription because the recording was deleted: "
+                        + "recording=\(recordingId.uuidString)",
                     level: .info
                 )
-                throw BackgroundProcessingError.processingFailed(
-                    TranscriptCleanupWarning.staleResult.userVisibleMessage
-                )
+                throw BackgroundProcessingError.recordingDeletedDuringProcessing
             }
             try saveTranscript(
                 cleanupPreparation.transcript,
@@ -3125,6 +3130,9 @@ enum BackgroundProcessingError: LocalizedError {
     case fileNotFound(String)
     case invalidAudioFormat(String)
     case recordingIdentityUnavailable(URL)
+    /// The recording row was deleted while its transcription was still running, so
+    /// the finished transcript has nothing to attach to.
+    case recordingDeletedDuringProcessing
 
     var errorDescription: String? {
         switch self {
@@ -3150,6 +3158,9 @@ enum BackgroundProcessingError: LocalizedError {
             return "Invalid audio format: \(message)"
         case .recordingIdentityUnavailable:
             return "Recording identity is unavailable for the selected audio source"
+        case .recordingDeletedDuringProcessing:
+            return "This recording was deleted while the transcription was running, "
+                + "so the new transcript could not be saved."
         }
     }
 }
