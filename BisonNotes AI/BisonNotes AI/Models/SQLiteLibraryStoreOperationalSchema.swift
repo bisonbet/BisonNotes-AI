@@ -195,7 +195,7 @@ enum SQLiteLibraryStoreOperationalSchema {
             "CREATE INDEX summaries_by_recording_id ON summaries (recordingId)",
             "CREATE INDEX summaries_by_transcript_storage_id ON summaries (transcriptStorageID)",
             "CREATE INDEX jobs_by_recording_storage_id ON processing_jobs (recordingStorageID)",
-            "CREATE INDEX jobs_by_status ON processing_jobs (status, updatedAt)",
+            "CREATE INDEX jobs_by_status ON processing_jobs (status, lastModified)",
             "CREATE INDEX archive_locations_by_recording_id ON archive_locations (recordingId)",
             "CREATE INDEX migration_rows_by_source ON migration_row_map (sourceEntity, sourceObjectID)",
             "CREATE INDEX assets_by_state ON asset_catalog (state, updatedAt)",

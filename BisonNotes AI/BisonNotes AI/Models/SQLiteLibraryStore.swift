@@ -151,10 +151,10 @@ actor SQLiteLibraryStore {
         let queue = try DatabaseQueue(path: normalizedURL.path, configuration: configuration)
 
         // GRDB sets WAL connections to NORMAL synchronous mode as part of its
-        // journal setup. This queue is the only connection owned by this
-        // actor, so restore and verify FULL before any migration transaction
-        // or future database access can occur.
-        try queue.write { database in
+        // journal setup. SQLite does not allow changing the safety level from
+        // inside a transaction, so use GRDB's explicit non-transactional write
+        // before any migration transaction or future database access occurs.
+        try queue.writeWithoutTransaction { database in
             try database.execute(sql: "PRAGMA synchronous = FULL")
             let synchronousMode = try Int.fetchOne(database, sql: "PRAGMA synchronous") ?? 0
             guard synchronousMode == 2 else { // FULL
