@@ -10,6 +10,16 @@ final class SQLiteMigrationSettingsCatalogTests: XCTestCase {
         try LibrarySettingsCatalog.validateSourceKeys(sourceKeys)
     }
 
+    func testLegacySettingsSourceKeysAreClassified() throws {
+        try LibrarySettingsCatalog.validateSourceKeys(
+            Array(LegacyLlamaMigration.legacySettingsKeys)
+        )
+        XCTAssertEqual(
+            LibrarySettingsCatalog.definition(for: "onDeviceLLMEnableExperimentalModels")?.disposition,
+            .owningStore
+        )
+    }
+
     func testReviewedSourceOmissionsRemainClassified() throws {
         let omittedUserFacingKeys = [
             "enableFluidAudio",

@@ -247,6 +247,7 @@ private extension LibrarySettingsCatalog {
             definition("whisperKitModelPath", .string, disposition: .owningStore),
             definition("enableOnDeviceLLM", .bool, disposition: .owningStore),
             definition("onDeviceLLMSelectedModel", .string, disposition: .owningStore),
+            definition("onDeviceLLMEnableExperimentalModels", .bool, disposition: .owningStore),
             definition("onDeviceLLMTemperature", .real, disposition: .owningStore),
             definition("onDeviceLLMMaxTokens", .integer, disposition: .owningStore),
             definition("onDeviceLLMTopK", .integer, disposition: .owningStore),
