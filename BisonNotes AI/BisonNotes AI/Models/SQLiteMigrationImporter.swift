@@ -2,6 +2,15 @@ import CryptoKit
 import Foundation
 import GRDB
 
+private struct SQLiteMigrationBatchImportRequest {
+    let rows: [SQLiteMigrationExpectedRow]
+    let runID: String
+    let batchSize: Int
+    let store: SQLiteLibraryStore
+    let date: Date
+    let progress: (@Sendable (SQLiteMigrationBatchResult) async -> Void)?
+}
+
 enum SQLiteMigrationImportSupport {
     static let dependencyOrder: [SQLiteMigrationSourceEntity] = [
         .recordings,
@@ -152,7 +161,8 @@ struct SQLiteMigrationMetadataImporter: Sendable {
         into store: SQLiteLibraryStore,
         batchSize: Int = 100,
         runID: String? = nil,
-        at date: Date = Date()
+        at date: Date = Date(),
+        progress: (@Sendable (SQLiteMigrationBatchResult) async -> Void)? = nil
     ) async throws -> SQLiteMigrationImportResult {
         guard batchSize > 0 else {
             throw SQLiteMigrationImportError.invalidSnapshot(
@@ -174,12 +184,16 @@ struct SQLiteMigrationMetadataImporter: Sendable {
             at: date
         )
         let counts = try await importBatches(
-            orderedRows,
-            runID: run.id,
-            batchSize: batchSize,
-            store: store,
-            at: date
+            SQLiteMigrationBatchImportRequest(
+                rows: orderedRows,
+                runID: run.id,
+                batchSize: batchSize,
+                store: store,
+                date: date,
+                progress: progress
+            )
         )
+        try Task.checkCancellation()
         let completedRun = try await completeRun(
             runID: run.id,
             snapshotRowCount: snapshot.rows.count,
@@ -221,22 +235,20 @@ struct SQLiteMigrationMetadataImporter: Sendable {
     }
 
     private static func importBatches(
-        _ rows: [SQLiteMigrationExpectedRow],
-        runID: String,
-        batchSize: Int,
-        store: SQLiteLibraryStore,
-        at date: Date
+        _ request: SQLiteMigrationBatchImportRequest
     ) async throws -> (importedRowCount: Int, skippedRowCount: Int) {
         var importedRowCount = 0
         var skippedRowCount = 0
-        for batch in batches(rows, size: batchSize) {
-            let result = try await store.importMetadataBatch(
-                runID: runID,
+        for batch in batches(request.rows, size: request.batchSize) {
+            try Task.checkCancellation()
+            let result = try await request.store.importMetadataBatch(
+                runID: request.runID,
                 rows: batch,
-                at: date
+                at: request.date
             )
             importedRowCount += result.importedRowCount
             skippedRowCount += result.skippedRowCount
+            await request.progress?(result)
         }
         return (importedRowCount, skippedRowCount)
     }
