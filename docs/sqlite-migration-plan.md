@@ -16,7 +16,7 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The current settings-classification checkpoint is `9e672793` (`feat: add
+The current settings-classification checkpoint is `5232640` (`feat: add
 classified SQLite settings catalog`).
 
 The preceding implementation checkpoint is `82e687e8` (`test: cover SQLite
