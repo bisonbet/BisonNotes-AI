@@ -16,8 +16,9 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The current settings-classification checkpoint is `5232640` (`feat: add
-classified SQLite settings catalog`).
+The current settings-classification checkpoint is `52101ae0` (`test: validate
+SQLite settings catalog values`), following `5232640` (`feat: add classified
+SQLite settings catalog`).
 
 The preceding implementation checkpoint is `82e687e8` (`test: cover SQLite
 schema upgrade and observation contracts`), following `cdd0bf8e` (`feat: add
@@ -60,7 +61,7 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs twenty-six
+- A root SwiftPM host-independent macOS runtime harness now runs twenty-eight
   disposable SQLite tests against the canonical store sources with the exact
   GRDB 7.11.1 pin. It caught and fixed two issues before any live-data work:
   SQLite's synchronous pragma must be set outside a transaction, and the
@@ -101,7 +102,7 @@ Completed in this slice:
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
-  twenty-six tests with zero failures, including a disposable v2-to-v3 upgrade
+  twenty-eight tests with zero failures, including a disposable v2-to-v3 upgrade
   fixture that verifies existing settings stores receive the observation schema.
   The app-hosted Core Data fixture test is compile-checked with
   `build-for-testing`; the simulator runner still has not executed XCTest.
@@ -110,15 +111,16 @@ Completed in this slice:
   it never copies an entire defaults domain, credentials or device-specific
   state. SQLite schema v2 adds a constrained `library_settings` table and a
   matching allowlisted adapter. SQLite schema v3 now records each settings
- insert/update in the durable observation log. The production key
- classification and startup wiring are intentionally still open.
- An initial `LibrarySettingsCatalog` now classifies the reviewed CloudKit
- settings candidates plus source-observed omissions, lifecycle/CloudKit
- protocol state, legacy migration keys, device/cache state and credentials.
- Only the blocking-metadata subset can be read for a future SQLite import;
- unknown keys, derived/runtime values and non-migratable classifications fail
- closed. Endpoint, range, enum and platform normalization rules and startup
- wiring remain open.
+  insert/update in the durable observation log. Catalog source coverage,
+  platform normalization and startup wiring are intentionally still open.
+  An initial `LibrarySettingsCatalog` now classifies the reviewed CloudKit
+  settings candidates plus source-observed omissions, lifecycle/CloudKit
+  protocol state, legacy migration keys, device/cache state and credentials.
+  Only the blocking-metadata subset can be read for a future SQLite import;
+  unknown keys, derived/runtime values and non-migratable classifications fail
+  closed. It also rejects non-finite values, out-of-range integers/reals,
+  unknown enum strings and endpoint credentials. Platform normalization and
+  startup wiring remain open.
 - The first write command is now explicit: recording rename references support
   Core Data legacy IDs and SQLite storage IDs, normalize the existing `[Watch]`
   suffix rule, and optionally enforce an expected `lastModified` revision.
@@ -146,7 +148,8 @@ Completed in this slice:
 
 Not yet implemented or closed:
 
-- The production SQLite migration coordinator, settings-catalog completion and
+- The production SQLite migration coordinator, remaining settings-catalog source
+  coverage/platform normalization and
   startup wiring, Core Data observation stream and broader read/write repository
   contracts, app-wired Core Data source reader/importer and
   migration screen. The current read-only metadata repository adapters, schema, snapshot
@@ -163,7 +166,7 @@ Not yet implemented or closed:
   activation, signed device-backup testing and two-device CloudKit validation.
 
 The next safe work package is to finish source-key/catalog coverage and
-normalization rules, connect observation to the Core Data adapter/startup
+platform normalization rules, connect observation to the Core Data adapter/startup
 contract and expand commands while converting additional non-startup callers
 behind the Core Data adapter with shared behavior tests. In parallel, close the
 remaining Phase 0/1 evidence and caller-gate gaps.
