@@ -197,9 +197,11 @@ final class SQLiteMigrationCoordinatorRuntimeTests: XCTestCase {
         let recorder = MigrationProgressRecorder()
 
         let result = try await SQLiteMigrationCoordinator().migrate(
-            snapshot: snapshot,
+            input: CoreDataMigrationInputSnapshot(
+                metadata: snapshot,
+                settings: settings
+            ),
             into: store,
-            settings: settings,
             batchSize: 2,
             at: Date(timeIntervalSinceReferenceDate: 1_000),
             progress: { progress in

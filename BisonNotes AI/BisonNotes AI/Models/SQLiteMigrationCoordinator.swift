@@ -107,6 +107,25 @@ enum SQLiteMigrationCoordinatorError: LocalizedError, Equatable {
 /// pause or a blocking failure. Audio/media copying and activation remain
 /// separate phases.
 struct SQLiteMigrationCoordinator: Sendable {
+    func migrate(
+        input: CoreDataMigrationInputSnapshot,
+        into store: SQLiteLibraryStore,
+        batchSize: Int = 100,
+        runID: String? = nil,
+        at date: Date = Date(),
+        progress: SQLiteMigrationProgressHandler? = nil
+    ) async throws -> SQLiteMigrationCoordinatorResult {
+        try await migrate(
+            snapshot: input.metadata,
+            into: store,
+            settings: input.settings,
+            batchSize: batchSize,
+            runID: runID,
+            at: date,
+            progress: progress
+        )
+    }
+
     // swiftlint:disable:next function_body_length
     func migrate(
         snapshot: SQLiteMigrationSourceSnapshot,
