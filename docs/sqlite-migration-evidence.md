@@ -13,7 +13,7 @@ can be updated without rewriting the design.
 | Runtime source baseline | `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` |
 | Planning/implementation branch | `v3.0` |
 | Planning revision | `275ec590c17fd01d010a0e584e334ddc3760c5b4` before implementation changes |
-| Last implementation commit | `c8f8d2f5a7e112b417783751c5e5ef3a0c325013` |
+| Last implementation commit | `1a03ed6dde5e5f10e3dfd05f8db53046bacd276c` |
 | GRDB dependency commit | `d4e143b47ec3fcbe737e36a228150c32b0b33a96` |
 | Safety commit | `76949b18f88c8084ed62f21bfeafd6bad6be2469` |
 | Reviewed date | 2026-09-07 |
@@ -27,19 +27,20 @@ commit requires this ledger and the model hashes in
 ## Handoff state
 
 Core Data remains the only authoritative user store. An isolated
-`SQLiteLibraryStore` actor and v1 schema now exist, but no SQLite importer,
-repository, checkpoint coordinator, migration screen or media-copy worker is
-enabled. The store is not connected to startup or user data. Its focused tests
-are compiled into the existing app-hosted XCTest target; a runtime attempt on
-the iPhone 17 Pro simulator exited before XCTest bootstrapping, so no assertion
-has been counted as passing.
+`SQLiteLibraryStore` actor and v1 schema now exist, with typed durable
+migration-run begin/read/checkpoint operations, but no SQLite importer,
+repository, production checkpoint coordinator, migration screen or media-copy
+worker is enabled. The store is not connected to startup or user data. Its
+focused tests are compiled into the existing app-hosted XCTest target; a runtime
+attempt on the iPhone 17 Pro simulator exited before XCTest bootstrapping, so no
+assertion has been counted as passing.
 
 The next evidence-producing steps are to add a host-independent disk-backed
 SQLite test target, finish the runtime/defaults ledger and Watch/share/background
 gates, measure metadata first-boot cost and background media reconciliation, then
-build the typed repository and checkpoint contracts. No live user database,
-CloudKit record, app export/restore package or app-managed encryption key is in
-scope.
+build the typed repository, Core Data importer and production coordinator around
+the checkpoint contract. No live user database, CloudKit record, app
+export/restore package or app-managed encryption key is in scope.
 
 ## Confirmed product and backend decisions
 
@@ -116,6 +117,11 @@ The following checks were run against the Phase 0/1 working tree on `v3.0`:
   focused tests, using `/private/tmp/bisonnotes-sqlite-schema-ios-20260909`.
 - Native macOS Debug build passed after adding the isolated store, using
   `/private/tmp/bisonnotes-sqlite-schema-mac-20260909`.
+- Generic iOS `build-for-testing` passed after adding the durable checkpoint
+  operations and focused tests, using
+  `/private/tmp/bisonnotes-sqlite-checkpoint-ios-20260909`.
+- Native macOS Debug build passed after adding the durable checkpoint operations,
+  using `/private/tmp/bisonnotes-sqlite-checkpoint-mac-20260909`.
 - The GRDB smoke test is compiled into the iOS XCTest bundle but has not yet run
   as an XCTest assertion; the app's existing simulator CloudKit bootstrap and
   the current CoreSimulator service state prevent treating the simulator test
@@ -123,17 +129,19 @@ The following checks were run against the Phase 0/1 working tree on `v3.0`:
 - A temporary macOS Core Data probe verified the default Application Support
   URL, synchronous coordinator loading, the `/dev/null` in-memory path and a
   missing-parent failure path against the built model.
-- The focused iOS Simulator test command reached app launch but failed before
-  XCTest bootstrapping: `BisonNotes AI` exited early and the test runner never
-  established a connection. The result bundle is
-  `/private/tmp/bisonnotes-sqlite-schema-ios-focused-20260909.xcresult`; 0
-  assertions ran, so this is not a passing test result.
+- The focused iOS Simulator test command for the checkpoint slice reached app
+  launch but failed before XCTest bootstrapping: `BisonNotes AI` exited early
+  and the test runner never established a connection. The result bundle is
+  `/private/tmp/bisonnotes-sqlite-checkpoint-focused-20260909.xcresult`; its
+  summary reports 0 passed tests, 1 runner failure and 0 assertions, so this is
+  not a passing test result.
 - The new tests cover schema bootstrap, seeded identity/reopen, restrictive
-  relationship foreign keys and GRDB migration rollback, but their runtime
-  assertions remain open until a host-independent test target can execute them.
-- Focused SwiftLint on the three new app files and the new test file reported 0
-  violations with SourceKit disabled; SwiftLint emitted only its expected
-  SourceKit-rule skip notice.
+  relationship foreign keys, GRDB migration rollback and checkpoint
+  persistence/validation, but their runtime assertions remain open until a
+  host-independent test target can execute them.
+- Focused SwiftLint on the SQLite store/checkpoint app files and test file
+  reported 0 violations with SourceKit disabled; SwiftLint emitted only its
+  expected SourceKit-rule skip notice.
 - Full SwiftLint reported 1,979 violations (271 serious) across 206 files and
   ended with a cache permission warning. A five-file diagnostic run reported
   98 violations in the five changed files (18 serious) with SourceKit-dependent
