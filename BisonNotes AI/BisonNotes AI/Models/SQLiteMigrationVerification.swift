@@ -106,6 +106,55 @@ struct SQLiteMigrationSourceSnapshot: Equatable, Sendable {
     let rows: [SQLiteMigrationExpectedRow]
 }
 
+struct SQLiteMigrationBatchResult: Equatable, Sendable {
+    let run: SQLiteMigrationRun
+    let importedRowCount: Int
+    let skippedRowCount: Int
+}
+
+struct SQLiteMigrationImportResult: Equatable, Sendable {
+    let run: SQLiteMigrationRun
+    let importedRowCount: Int
+    let skippedRowCount: Int
+}
+
+enum SQLiteMigrationImportError: LocalizedError, Equatable {
+    case invalidSnapshot(String)
+    case runNotFound(String)
+    case runConfigurationMismatch(String)
+    case destinationRowConflict(
+        entity: SQLiteMigrationSourceEntity,
+        storageID: String,
+        detail: String
+    )
+    case sourceRowConflict(
+        entity: SQLiteMigrationSourceEntity,
+        sourceObjectID: String,
+        detail: String
+    )
+    case runNotResumable(String)
+    case incompleteImport(expected: Int, actual: Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSnapshot(let detail):
+            return "The SQLite migration snapshot is invalid: \(detail)"
+        case .runNotFound(let runID):
+            return "The SQLite migration run was not found: \(runID)"
+        case .runConfigurationMismatch(let detail):
+            return "The SQLite migration run does not match the source snapshot: \(detail)"
+        case .destinationRowConflict(let entity, let storageID, let detail):
+            return "The SQLite migration destination row \(entity.rawValue)/\(storageID) conflicts: \(detail)"
+        case .sourceRowConflict(let entity, let sourceObjectID, let detail):
+            return "The SQLite migration source row \(entity.rawValue)/\(sourceObjectID) conflicts: \(detail)"
+        case .runNotResumable(let detail):
+            return "The SQLite migration run cannot be resumed: \(detail)"
+        case .incompleteImport(let expected, let actual):
+            return "The SQLite migration imported \(actual) metadata rows; expected \(expected)."
+        }
+    }
+}
+
 enum SQLiteMigrationVerificationMismatchKind: String, Equatable, Sendable {
     case migrationRun
     case missingRow

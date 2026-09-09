@@ -127,7 +127,7 @@ actor SQLiteLibraryStore {
     }
 
     let databaseURL: URL
-    private let databaseQueue: DatabaseQueue
+    let databaseQueue: DatabaseQueue
 
     init(databaseURL: URL, fileManager: FileManager = .default) throws {
         guard databaseURL.isFileURL, !databaseURL.path.isEmpty else {
@@ -351,4 +351,5 @@ actor SQLiteLibraryStore {
             return updatedRun
         }
     }
+
 }
