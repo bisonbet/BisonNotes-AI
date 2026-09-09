@@ -11,12 +11,13 @@ The current backend-independent safety slice makes durable-store failure explici
 and blocks normal startup when storage is unavailable; it does not change the
 authoritative Core Data backend or authorize a user-store migration.
 
-## Current handoff — 2026-09-07
+## Current handoff — 2026-09-09
 
-The last implementation commit is `d4e143b4` (`build: pin GRDB for SQLite
-migration`), following `76949b18` (`feat: harden storage before SQLite
-migration`). The branch is `v3.0`; these commits are ready to continue from and
-are not a production cutover.
+The latest implementation commit is `c8f8d2f5` (`feat: add isolated SQLite
+schema foundation`), following `d4e143b4` (`build: pin GRDB for SQLite
+migration`) and `76949b18` (`feat: harden storage before SQLite migration`).
+The branch is `v3.0`; these commits are ready to continue from and are not a
+production cutover.
 
 Completed in this slice:
 
@@ -25,23 +26,38 @@ Completed in this slice:
 - GRDB `7.11.1` is pinned to the recorded revision with the system SQLite module
   for the iOS app, native macOS app and XCTest target.
 - A disposable file-backed GRDB smoke test is compiled into the XCTest bundle.
+- An isolated `SQLiteLibraryStore` actor now owns a GRDB `DatabaseQueue` for a
+  disposable v1 schema. The schema covers all six Core Data entities, durable
+  library/generation metadata, migration row maps/checkpoints, asset and file
+  operation journals, receipts, account-scoped sync state/outbox, recovery
+  payloads and content revisions. It retains legacy UUID columns while using
+  independent storage IDs and restrictive foreign keys for resolved links;
+  file-operation paths are root-relative rather than absolute.
+- The isolated store verifies `foreign_keys`, WAL, `synchronous=FULL`, the
+  SQLite version/compile options and `PRAGMA integrity_check`; focused tests
+  cover bootstrap, identity/reopen, relationship constraints and migration
+  rollback. These tests are compiled into the existing app-hosted XCTest target
+  but have not yet executed because the current simulator test runner exits
+  before XCTest bootstrapping.
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
 
 Not yet implemented or closed:
 
-- The SQLite migration coordinator, durable checkpoint store, repository boundary,
-  GRDB schema, Core Data importer, independent verifier and migration screen.
+- The production SQLite migration coordinator, repository boundary, Core Data
+  importer, independent verifier and migration screen. The current schema is
+  an isolated foundation only and is not a user-data destination.
 - Watch/share/background caller gates and the full file-operation/media journal.
-- Runtime smoke-test execution, historical fixtures, performance measurements,
+- A host-independent runtime smoke-test target, historical fixtures, performance measurements,
   shadow qualification, activation, signed device-backup testing and two-device
   CloudKit validation.
 
-The next safe work package is to close the remaining Phase 0/1 evidence and
-caller-gate gaps, then implement the repository/schema contract before writing
-the importer. Do not enable a migration screen or SQLite user-store cutover until
-it is driven by that real resumable coordinator.
+The next safe work package is to add a host-independent runtime harness, close
+the remaining Phase 0/1 evidence and caller-gate gaps, then implement the typed
+repository contract and durable migration coordinator around this isolated
+schema. Do not enable a migration screen or SQLite user-store cutover until it
+is driven by that real resumable coordinator.
 
 ## 1. Recommendation and decision
 

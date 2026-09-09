@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema foundation: `c8f8d2f5a7e112b417783751c5e5ef3a0c325013`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -335,10 +335,15 @@ references migrate in the blocking first-boot phase, while audio and other large
 media are reconciled by a bounded background worker with durable receipts and no
 full-library duplicate.
 
-## Handoff status — 2026-09-07
+## Handoff status — 2026-09-09
 
-This inventory describes the source boundary only; it is not evidence that a
-SQLite destination exists. Core Data remains authoritative, and the GRDB
-dependency is currently an isolated, compiled spike. The importer, repository
-schema, migration screen, checkpoint coordinator and background media worker
-still need implementation and tests against disposable fixtures.
+This inventory describes the source boundary and the intended first SQLite
+schema; it is not evidence that user data has migrated. Core Data remains
+authoritative. The isolated `SQLiteLibraryStore` v1 foundation mirrors all six
+model entities and adds the operational tables, seeded library/generation
+metadata, independent storage IDs, restrictive resolved-link foreign keys,
+root-relative asset-operation paths, and integrity diagnostics. It is not wired
+to app startup, the production repository, CloudKit, or any user database. The
+importer, repository, migration screen, durable checkpoint coordinator,
+host-independent runtime tests and background media worker still need
+implementation against disposable fixtures.
