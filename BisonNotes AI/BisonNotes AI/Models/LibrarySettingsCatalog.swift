@@ -173,6 +173,7 @@ private extension LibrarySettingsCatalog {
             definition("mistralMaxTokens", .integer),
             definition("enableMistralAI", .bool),
             definition("mistralSupportsJsonResponseFormat", .bool),
+            definition("mistralTranscribeModel", .string),
             definition("mistralTranscribeDiarize", .bool),
             definition("mistralTranscribeLanguage", .string),
             definition("ollamaServerURL", .string),
@@ -272,7 +273,8 @@ private extension LibrarySettingsCatalog {
             definition("PreferredAudioInputUID", .string, disposition: .deviceLocal),
             definition("MacSystemAudioCaptureEnabled", .bool, disposition: .deviceLocal),
             definition("actionButtonShouldStartRecording", .bool, disposition: .deviceLocal),
-            definition("bisonnotes.mac.settings.selectedPane", .string, disposition: .deviceLocal)
+            definition("bisonnotes.mac.settings.selectedPane", .string, disposition: .deviceLocal),
+            definition("PlatformDeviceVendorIdentifier", .string, disposition: .deviceLocal)
         ]
     }
 
@@ -283,8 +285,7 @@ private extension LibrarySettingsCatalog {
             definition("maxChunkDuration", .real, disposition: .derivedRuntime),
             definition("maxTranscriptionTime", .real, disposition: .derivedRuntime),
             definition("chunkOverlap", .real, disposition: .derivedRuntime),
-            definition("lastGeneratedTitle", .string, disposition: .derivedRuntime),
-            definition("mistralTranscribeModel", .string, disposition: .derivedRuntime)
+            definition("lastGeneratedTitle", .string, disposition: .derivedRuntime)
         ]
     }
 

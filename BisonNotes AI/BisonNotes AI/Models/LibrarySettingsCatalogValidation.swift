@@ -55,8 +55,19 @@ extension LibrarySettingsCatalog {
     ]
 
     private static let allowedStringValues: [String: Set<String>] = [
+        "SelectedAIEngine": [
+            "Mistral AI", "OpenAI API Compatible", "Ollama", "Google AI Studio",
+            "MLX Swift", "Apple Native", "None"
+        ],
+        "selectedTranscriptionEngine": [
+            "Not Configured", "On Device", "Whisper (Local Server)", "Mistral AI"
+        ],
         "user_preference_time_format": ["12h", "24h"],
         "fluidAudioSelectedModelVersion": ["v2", "v3"],
+        "fluidAudioSelectedLocalSpeakerLabelMethod": ["offlineVBx", "experimentalLSEEND"],
+        "mistralTranscribeModel": ["voxtral-mini-latest"],
+        "openAICompatibleManualFormat": ["string", "blocks"],
+        "comedyModeStyle": ["off", "snarky", "funny"],
         "whisperProtocol": ["REST API", "Wyoming"]
     ]
 
@@ -132,6 +143,7 @@ extension LibrarySettingsCatalog {
             throw LibrarySettingsCatalogError.invalidValue(key: key, reason: "expected URL string")
         }
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
         let candidate = trimmed.contains("://") ? trimmed : "http://\(trimmed)"
         guard let components = URLComponents(string: candidate),
               let scheme = components.scheme?.lowercased(),

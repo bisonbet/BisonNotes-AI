@@ -218,7 +218,8 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
         entityName: String
     ) throws -> String {
         let prefix = entityName.replacingOccurrences(of: "Entry", with: "").lowercased()
-        if let legacyID = identifier(from: object.value(forKey: "id")) {
+        if object.entity.attributesByName["id"] != nil,
+           let legacyID = identifier(from: object.value(forKey: "id")) {
             return "core-data-\(prefix)-\(legacyID)"
         }
 

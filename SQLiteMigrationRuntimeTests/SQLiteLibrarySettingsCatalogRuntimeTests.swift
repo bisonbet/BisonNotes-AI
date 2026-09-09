@@ -20,11 +20,15 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
 
         XCTAssertEqual(
             LibrarySettingsCatalog.definition(for: "mistralTranscribeModel")?.disposition,
-            .derivedRuntime
+            .blockingMetadata
         )
         XCTAssertEqual(
             LibrarySettingsCatalog.definition(for: "SelectedAIModel")?.disposition,
             .derivedRuntime
+        )
+        XCTAssertEqual(
+            LibrarySettingsCatalog.definition(for: "PlatformDeviceVendorIdentifier")?.disposition,
+            .deviceLocal
         )
         XCTAssertEqual(
             LibrarySettingsCatalog.definition(for: "KeychainSecretStore.revision.demo.openAIAPIKey")?.disposition,
@@ -82,6 +86,12 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
             ("summarizationTimeout", .real(601)),
             ("user_preference_time_format", .string("18h")),
             ("fluidAudioSelectedModelVersion", .string("v1")),
+            ("fluidAudioSelectedLocalSpeakerLabelMethod", .string("unknown")),
+            ("mistralTranscribeModel", .string("unknown-model")),
+            ("openAICompatibleManualFormat", .string("json")),
+            ("comedyModeStyle", .string("sarcastic")),
+            ("SelectedAIEngine", .string("Unknown Engine")),
+            ("selectedTranscriptionEngine", .string("Unknown Transcriber")),
             ("whisperProtocol", .string("gRPC")),
             ("ollamaPort", .integer(65_536)),
             ("mlxSwiftMaxTokens", .integer(0)),
@@ -114,11 +124,18 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
             "summarizationTimeout": .real(600),
             "user_preference_time_format": .string("24h"),
             "fluidAudioSelectedModelVersion": .string("v3"),
+            "fluidAudioSelectedLocalSpeakerLabelMethod": .string("offlineVBx"),
+            "mistralTranscribeModel": .string("voxtral-mini-latest"),
+            "openAICompatibleManualFormat": .string("blocks"),
+            "comedyModeStyle": .string("funny"),
+            "SelectedAIEngine": .string("MLX Swift"),
+            "selectedTranscriptionEngine": .string("On Device"),
             "whisperProtocol": .string("REST API"),
             "ollamaPort": .integer(65_535),
             "mlxSwiftMaxTokens": .integer(1_000_000),
             "openAICompatibleTemperature": .real(1),
-            "openAICompatibleBaseURL": .string("localhost:8080")
+            "openAICompatibleBaseURL": .string("localhost:8080"),
+            "mistralBaseURL": .string("")
         ])
 
         try LibrarySettingsCatalog.validateMigratableSnapshot(snapshot)

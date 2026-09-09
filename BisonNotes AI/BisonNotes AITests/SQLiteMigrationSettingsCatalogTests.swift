@@ -38,7 +38,11 @@ final class SQLiteMigrationSettingsCatalogTests: XCTestCase {
         )
         XCTAssertEqual(
             LibrarySettingsCatalog.definition(for: "mistralTranscribeModel")?.disposition,
-            .derivedRuntime
+            .blockingMetadata
+        )
+        XCTAssertEqual(
+            LibrarySettingsCatalog.definition(for: "PlatformDeviceVendorIdentifier")?.disposition,
+            .deviceLocal
         )
     }
 }
