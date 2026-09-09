@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`; Core Data migration source reader/catalog: `630a513e`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -355,9 +355,11 @@ it covers only the checked-in models, not every shipped historical hash. The
 isolated metadata importer now writes those rows and row-map entries in
 dependency order with transactional batch checkpoints and idempotent reopen/
 resume behavior; it is not wired to app startup, the production repository,
-CloudKit, or any user database. The production source reader/coordinator,
-remaining settings catalog source coverage/platform normalization, Core Data startup subscription wiring,
-migration screen, historical release fixtures and background media worker still
+CloudKit, or any user database. The read-only Core Data source reader is now
+implemented and tested against disposable six-entity models; the production
+coordinator, remaining settings catalog source coverage/platform normalization,
+Core Data startup subscription wiring, migration screen, historical release
+fixtures and background media worker still
 need implementation against disposable fixtures. The first repository slice now
 defines storage-neutral snapshots for all six migrated metadata entities and the
 `LibraryRepository` contract, with Core Data and SQLite adapters over copied
@@ -378,7 +380,7 @@ The startup subscription and history-retention/purge policy remain intentionally
 open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed twenty-nine disposable macOS tests; the
+standalone runtime harness has passed thirty disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
@@ -393,22 +395,25 @@ FluidAudio/MLX preference. An initial independently typed catalog now records
 those candidates and the source-observed omissions. An app-hosted contract test
 compares the actual CloudKit and legacy on-device LLM source lists to the
 catalog, but it has not executed because the current Xcode build cannot resolve
-external packages. The catalog is not wired to startup and is not yet the final
-production allowlist.
+external packages. The catalog now explicitly keeps the macOS vendor identifier
+device-local, treats the backed-up Mistral transcription model as blocking
+metadata, validates the reviewed enum values, and accepts empty optional
+endpoints. Exhaustive app-key inventory, platform normalization and startup
+wiring remain open; the catalog is not yet the final production allowlist.
 
 | Disposition | Current source-observed examples | Migration treatment |
 | --- | --- | --- |
-| Candidate blocking metadata settings | Selected AI/transcription engines, summary detail/thinking, transcription-progress display, time format, Watch preferences, location preference, provider endpoints/models/limits, FluidAudio speaker-label choices, MLX inference choices, and the seven clear UI omissions | Copy only through the typed allowlist after key-by-key value and platform normalization rules are approved; record changes in the SQLite settings table. The catalog currently holds back derived/runtime and owner-controlled legacy values. |
+| Candidate blocking metadata settings | Selected AI/transcription engines, summary detail/thinking, transcription-progress display, time format, Watch preferences, location preference, provider endpoints/models/limits, Mistral transcription model, FluidAudio speaker-label choices, MLX inference choices, and the seven clear UI omissions | Copy only through the typed allowlist after key-by-key value and platform normalization rules are approved; record changes in the SQLite settings table. The catalog currently holds back derived/runtime and owner-controlled legacy values. |
 | Retain in owning defaults/sync stores for now | `lastSyncDate`, routine-sync/backup timestamps, first-launch/setup markers, migration-completed flags, CloudKit manifest/quarantine state, pending cloud deletion markers, clean-shutdown state, and retry/backoff state | Do not duplicate derived lifecycle or cloud protocol state into the SQLite metadata table until its owner is migrated; preserve it durably during first boot. |
 | Device/download/watch state | Preferred audio input UID, Mac capture flags, downloaded/in-flight model markers, processed Watch transfer IDs and similar local capability/cache state | Keep device-local or in its existing journal/cache; never copy it as portable library metadata. |
 | Excluded secrets and credentials | API keys, legacy AWS credential/session values, Keychain-backed provider secrets and token-like values | Never copy to SQLite; continue using Keychain and existing one-time legacy-secret cleanup. |
 
 This is a source classification checkpoint, not a production allowlist: any
 unclassified key must block activation until its owner, value type, device scope,
-and normalization rule are recorded. `mistralTranscribeModel`, legacy OpenAI
-settings, `SelectedAIModel`, MLX context/chunk tuning and similar derived/runtime
-values are deliberately classified outside the blocking-metadata subset until
-their owning behavior is resolved.
+and normalization rule are recorded. Legacy OpenAI settings, `SelectedAIModel`,
+MLX context/chunk tuning and similar derived/runtime values are deliberately
+classified outside the blocking-metadata subset until their owning behavior is
+resolved.
 
 ## First repository-boundary slice
 
@@ -417,6 +422,7 @@ their owning behavior is resolved.
 | Immutable recording values | `LibraryRecordingSnapshot` preserves nullable legacy IDs, names, dates, durations, sizes, URLs, archive state and modification dates without exposing managed objects or SQL rows. | Root SwiftPM contract test asserts the imported recording projection exactly; app-hosted test asserts the Core Data projection against the active compiled model. |
 | Remaining metadata values | `LibraryTranscriptSnapshot`, `LibrarySummarySnapshot`, `LibraryProcessingJobSnapshot`, `LibraryArchiveLocationSnapshot` and `LibraryPendingCloudMutationSnapshot` preserve nullable scalar, payload and resolved-link values. | Root SwiftPM contract test asserts all five imported projections; app-hosted test asserts the active-model fixture, including relationship-derived storage IDs. |
 | Core Data read adapter | `CoreDataLibraryRepository` fetches all six entities through a supplied context, copies values inside the context operation, and applies deterministic ordering. | Uses only a disposable `BisonNotes_AI_v2` fixture; no production `PersistenceController` or `CoreDataManager` is constructed. |
+| Core Data migration source reader | `CoreDataMigrationSnapshotReader` captures all supported metadata entities from one quiescent context, preserves public attribute/relationship values, rejects temporary/incomplete graphs, and fingerprints the canonical snapshot without copying audio bytes. | Runtime fixture covers all six entities and relationship storage IDs; app-hosted tests cover original and active compiled models but remain compile-only until the app target can resolve external packages. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsCatalog` classifies the source keys, exposes only the blocking-metadata subset to a future reader, and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, and prove unrelated defaults are untouched. Startup wiring, remaining source coverage and platform normalization are still open. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |
