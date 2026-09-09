@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -339,7 +339,8 @@ full-library duplicate.
 
 This inventory describes the source boundary and the intended first SQLite
 schema; it is not evidence that user data has migrated. Core Data remains
-authoritative. The isolated `SQLiteLibraryStore` v1 foundation mirrors all six
+authoritative. The isolated `SQLiteLibraryStore` foundation now runs schema v3;
+its initial v1 schema mirrored all six
 model entities and adds the operational tables, seeded library/generation
 metadata, independent storage IDs, restrictive resolved-link foreign keys,
 root-relative asset-operation paths, integrity diagnostics and typed durable
@@ -369,12 +370,35 @@ display-name-only `AudioPlayerView` caller uses the Core Data adapter; the AI
 file-renaming workflow remains on its existing path until file operations have
 a journaled command. Neither backend is wired to startup or user-data
 migration.
+The SQLite-only `LibraryObservation` implementation persists a global
+`library_changes` cursor and emits recording-rename/settings events atomically;
+the Core Data adapter and startup subscription remain intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed twenty-one disposable macOS tests; the
+standalone runtime harness has passed twenty-two disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
+
+## Settings classification checkpoint
+
+The existing `iCloudStorageManager.backedUpSettingsKeys` list is the starting
+source inventory for user-facing preferences, but it is not reused as the
+SQLite migration allowlist. CloudKit restore applies platform-specific rules
+and model normalization, and the list does not include every current
+FluidAudio/MLX preference. The migration catalog must be independently typed
+and reviewed.
+
+| Disposition | Current source-observed examples | Migration treatment |
+| --- | --- | --- |
+| Candidate blocking metadata settings | Selected AI/transcription engines, summary detail/thinking, transcription-progress display, time format, Watch preferences, location preference, provider endpoints/models/limits, FluidAudio speaker-label choices, and MLX inference choices | Copy only through the typed allowlist after key-by-key value and platform normalization rules are approved; record changes in the SQLite settings table. |
+| Retain in owning defaults/sync stores for now | `lastSyncDate`, routine-sync/backup timestamps, first-launch/setup markers, migration-completed flags, CloudKit manifest/quarantine state, pending cloud deletion markers, clean-shutdown state, and retry/backoff state | Do not duplicate derived lifecycle or cloud protocol state into the SQLite metadata table until its owner is migrated; preserve it durably during first boot. |
+| Device/download/watch state | Preferred audio input UID, Mac capture flags, downloaded/in-flight model markers, processed Watch transfer IDs and similar local capability/cache state | Keep device-local or in its existing journal/cache; never copy it as portable library metadata. |
+| Excluded secrets and credentials | API keys, legacy AWS credential/session values, Keychain-backed provider secrets and token-like values | Never copy to SQLite; continue using Keychain and existing one-time legacy-secret cleanup. |
+
+This is a source classification checkpoint, not a production allowlist: any
+unclassified key must block activation until its owner, value type, device scope,
+and normalization rule are recorded.
 
 ## First repository-boundary slice
 
@@ -386,9 +410,9 @@ modifies a live user store.
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. | Host tests round-trip all six value kinds, verify six durable setting changes, reject an out-of-allowlist key, and prove an unrelated defaults key is untouched. Production key classification and startup wiring are not yet implemented. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |
-| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. | Host tests reject negative/ahead cursors and verify exact rename events survive database reopen. Core Data observation, startup subscription wiring and the remaining write commands are still open. |
+| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, and upgrade a disposable v2 store to v3. Core Data observation, startup subscription wiring and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
-next inventory update must classify the production settings keys, connect the
+next inventory update must finish the production settings catalog, connect the
 observation contract to Core Data/startup and expand command/error coverage before
 production services can depend on the repository.

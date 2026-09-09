@@ -16,8 +16,9 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The preceding implementation checkpoint is `b71d9984` (`feat: add repository
-settings and rename contracts`), following `40b431a0` (`feat: add redacted migration
+The preceding implementation checkpoint is `cdd0bf8e` (`feat: add durable SQLite
+observation cursor`), following `b71d9984` (`feat: add repository settings and
+rename contracts`), `40b431a0` (`feat: add redacted migration
 recovery reports`), `9731e69a` (`feat: add resumable metadata
 importer`), `5f9744d` (`test: add Core Data source snapshot fixtures`),
 `444542ac` (`test: add closed-source SQLite verifier`),
@@ -55,7 +56,7 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs twenty-one
+- A root SwiftPM host-independent macOS runtime harness now runs twenty-two
   disposable SQLite tests against the canonical store sources with the exact
   GRDB 7.11.1 pin. It caught and fixed two issues before any live-data work:
   SQLite's synchronous pragma must be set outside a transaction, and the
@@ -96,7 +97,8 @@ Completed in this slice:
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
-  twenty-one tests with zero failures.
+  twenty-two tests with zero failures, including a disposable v2-to-v3 upgrade
+  fixture that verifies existing settings stores receive the observation schema.
   The app-hosted Core Data fixture test is compile-checked with
   `build-for-testing`; the simulator runner still has not executed XCTest.
 - The first settings boundary is now explicit and typed. An allowlisted
@@ -122,6 +124,14 @@ Completed in this slice:
   verify invalid cursors, reopen behavior and exact committed timestamps.
   Core Data observation, startup subscription wiring and the remaining SQLite
   write commands are intentionally not implemented yet.
+- The settings audit now identifies `iCloudStorageManager.backedUpSettingsKeys`
+  as an existing source list for user-facing preferences, not as the SQLite
+  migration allowlist. It omits some current FluidAudio/MLX preferences and is
+  coupled to CloudKit restore rules that normalize platform-specific values.
+  Migration must therefore keep a separate typed catalog: user choices can be
+  copied during the blocking metadata phase; sync timestamps, migration flags,
+  download/in-flight markers, device-specific audio/watch state and pending
+  cloud markers remain in their owning stores; credentials remain in Keychain.
 
 Not yet implemented or closed:
 
@@ -141,8 +151,8 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to classify the production settings allowlist,
-connect observation to the Core Data adapter/startup contract and expand commands while
+The next safe work package is to finish the production settings catalog from
+the source audit, connect observation to the Core Data adapter/startup contract and expand commands while
 converting additional non-startup callers behind the Core Data adapter with
 shared behavior tests. In parallel, close the remaining Phase 0/1 evidence and
 caller-gate gaps.
