@@ -1,8 +1,8 @@
 # Reliable storage and safe SQLite migration plan
 
 Status: **design/source review plus Phase 0 and Phase 1 safety work in progress;
-GRDB and a durable checkpoint slice are implemented for an isolated spike, but
-no SQLite migration is enabled**.
+GRDB, durable checkpoints and a closed-snapshot verifier are implemented for an
+isolated spike, but no SQLite migration is enabled**.
 Implementation branch: `v3.0`, created from `v2.5` for this work.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
 `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` (the pushed `origin/v2.5`).
@@ -14,10 +14,11 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The latest implementation commit is `e612ebdc` (`test: add host-independent
-SQLite runtime harness`), following `1a03ed6d` (`feat: persist SQLite migration
-checkpoints`), `c8f8d2f5` (`feat: add isolated SQLite schema foundation`),
-`d4e143b4` (`build: pin GRDB for SQLite migration`) and
+The latest implementation commit is `444542ac` (`test: add closed-source SQLite
+verifier`), following `e612ebdc` (`test: add host-independent SQLite runtime
+harness`), `1a03ed6d` (`feat: persist SQLite migration checkpoints`),
+`c8f8d2f5` (`feat: add isolated SQLite schema foundation`), `d4e143b4`
+(`build: pin GRDB for SQLite migration`) and
 `76949b18` (`feat: harden storage before SQLite migration`).
 The branch is `v3.0`; these commits are ready to continue from and are not a
 production cutover.
@@ -47,27 +48,36 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs five disposable
-  SQLite tests against the canonical store sources with the exact GRDB 7.11.1
-  pin. It caught and fixed two issues before any live-data work: SQLite's
-  synchronous pragma must be set outside a transaction, and the processing-job
-  status index must use the model's `lastModified` column.
+- A root SwiftPM host-independent macOS runtime harness now runs eight
+  disposable SQLite tests against the canonical store sources with the exact
+  GRDB 7.11.1 pin. It caught and fixed two issues before any live-data work:
+  SQLite's synchronous pragma must be set outside a transaction, and the
+  processing-job status index must use the model's `lastModified` column.
+- A read-only verifier now checks an explicit closed source snapshot across all
+  six migrated entities. It validates the destination schema, migration-run
+  fingerprint, row identity sets and every declared value, and reports missing,
+  unexpected and changed rows deterministically. Disposable fixtures cover
+  complete data plus malformed snapshots and all three row/value mismatch
+  classes.
 
 Not yet implemented or closed:
 
 - The production SQLite migration coordinator, repository boundary, Core Data
-  importer, independent verifier and migration screen. The current schema is
-  an isolated foundation only and is not a user-data destination.
+  importer and migration screen. The current schema and verifier are isolated
+  foundations only and are not a user-data destination.
+- Closed fixtures generated from real Core Data model stores for every supported
+  historical model/version, rather than the current synthetic destination
+  snapshot fixtures.
 - Watch/share/background caller gates and the full file-operation/media journal.
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
 The next safe work package is to add disposable closed-Core-Data source fixtures
-and an independent verifier contract, close the remaining Phase 0/1 evidence
-and caller-gate gaps, then implement the typed repository, Core Data importer
-and production migration coordinator around this isolated schema and checkpoint
-contract. Do not enable a migration screen or SQLite user-store cutover until it
-is driven by that real resumable coordinator.
+that emit the snapshot contract, close the remaining Phase 0/1 evidence and
+caller-gate gaps, then implement the typed repository, Core Data importer and
+production migration coordinator around this isolated schema, checkpoint and
+verifier contract. Do not enable a migration screen or SQLite user-store
+cutover until it is driven by that real resumable coordinator.
 
 ### Live-data testing gate
 
@@ -808,9 +818,12 @@ This task created planning documents and retired superseded documentation on
 `v3.0`; see `docs/README.md` for the cleanup rationale. Source/model/call-site and existing-test
 inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
-adds an isolated file-backed smoke test, but does not change a user store or
-write CloudKit records. No production upgrade, Apple device-backup restore or
-physical two-device validation was performed for this plan or safety slices.
+adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
+but does not change a user store or write CloudKit records. The
+host-independent suite passed 8 tests with 0 failures; iOS `build-for-testing`
+and native macOS builds also passed. No production upgrade, Apple device-backup
+restore or physical two-device validation was performed for this plan or safety
+slices.
 Tavily search was unavailable due to DNS resolution in the shell; official Apple,
 SQLite and GRDB references were checked through the web tool instead. The
 inventory is pinned to the reviewed HEAD and must be regenerated/compared before

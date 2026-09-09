@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -343,9 +343,12 @@ authoritative. The isolated `SQLiteLibraryStore` v1 foundation mirrors all six
 model entities and adds the operational tables, seeded library/generation
 metadata, independent storage IDs, restrictive resolved-link foreign keys,
 root-relative asset-operation paths, integrity diagnostics and typed durable
-migration-run checkpoints. It is not wired to app startup, the production
+migration-run checkpoints. A read-only verifier now validates closed snapshots
+against those six tables by schema, migration-run fingerprint, row identity and
+declared value. Its fixtures are synthetic destination fixtures, not extracted
+Core Data stores. The foundation is not wired to app startup, the production
 repository, CloudKit, or any user database. The importer, repository, production
-checkpoint coordinator, migration screen, broader source-fixture runtime tests
+checkpoint coordinator, migration screen, historical Core Data source fixtures
 and background media worker still need implementation against disposable
-fixtures. The standalone runtime harness has now passed five disposable macOS
+fixtures. The standalone runtime harness has passed eight disposable macOS
 tests; it does not inspect or modify a live user store.
