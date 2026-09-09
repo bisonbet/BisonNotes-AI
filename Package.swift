@@ -56,8 +56,12 @@ let package = Package(
             ],
             sources: [
                 "LibraryRepository.swift",
+                "LibraryObservation.swift",
                 "LibrarySettingsStore.swift",
                 "SQLiteLibraryStore.swift",
+                "SQLiteLibraryObservation.swift",
+                "SQLiteLibraryStoreMigrations.swift",
+                "SQLiteLibrarySettingsPersistence.swift",
                 "SQLiteLibraryStoreOperationalSchema.swift",
                 "SQLiteLibraryStoreSchema.swift",
                 "SQLiteLibraryStoreMigrationImport.swift",

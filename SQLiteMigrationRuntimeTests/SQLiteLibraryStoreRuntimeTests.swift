@@ -25,6 +25,7 @@ final class SQLiteLibraryStoreRuntimeTests: XCTestCase {
         XCTAssertEqual(diagnostics.journalMode, "wal")
         XCTAssertEqual(diagnostics.integrityCheck, "ok")
         XCTAssertTrue(tables.contains("migration_runs"))
+        XCTAssertTrue(tables.contains("library_changes"))
         XCTAssertTrue(tables.contains("library_metadata"))
     }
 

@@ -3,6 +3,8 @@ import GRDB
 
 enum SQLiteLibraryStoreSchema {
     static let initialSchemaVersion = 1
+    static let settingsSchemaVersion = 2
+    static let changesSchemaVersion = 3
 
     static func createInitial(in database: Database) throws {
         try createMetadata(in: database)
@@ -45,7 +47,41 @@ enum SQLiteLibraryStoreSchema {
             WHERE id = 1
             """,
             arguments: [
-                SQLiteLibraryStore.schemaVersion,
+                settingsSchemaVersion,
+                Date().timeIntervalSinceReferenceDate
+            ]
+        )
+    }
+
+    static func addChanges(in database: Database) throws {
+        try database.execute(sql: """
+            CREATE TABLE library_changes (
+                revision INTEGER NOT NULL PRIMARY KEY,
+                entity TEXT NOT NULL CHECK (entity IN (
+                    'recording', 'transcript', 'summary', 'processingJob',
+                    'archiveLocation', 'pendingCloudMutation', 'setting'
+                )),
+                storageID TEXT NOT NULL,
+                operation TEXT NOT NULL CHECK (operation IN ('inserted', 'updated', 'deleted')),
+                committedAt REAL NOT NULL
+            )
+            """)
+
+        try database.execute(
+            sql: """
+            CREATE INDEX library_changes_by_entity
+            ON library_changes (entity, storageID, revision)
+            """
+        )
+
+        try database.execute(
+            sql: """
+            UPDATE library_metadata
+            SET schemaVersion = ?, updatedAt = ?
+            WHERE id = 1
+            """,
+            arguments: [
+                changesSchemaVersion,
                 Date().timeIntervalSinceReferenceDate
             ]
         )

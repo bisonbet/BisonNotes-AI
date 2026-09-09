@@ -111,10 +111,11 @@ private func readSQLiteRuntimeSnapshot(from database: Database) throws -> SQLite
 /// durable schema migrations and the operational tables required by the import
 /// and recovery work that follows.
 actor SQLiteLibraryStore {
-    static let schemaVersion = 2
+    static let schemaVersion = 3
     static let minimumReaderVersion = 1
     static let initialSchemaMigrationIdentifier = "v1"
-    static let schemaMigrationIdentifier = "v2"
+    static let settingsSchemaMigrationIdentifier = "v2"
+    static let changesSchemaMigrationIdentifier = "v3"
 
     struct Diagnostics: Equatable, Sendable {
         let libraryID: String
@@ -168,37 +169,7 @@ actor SQLiteLibraryStore {
             }
         }
 
-        var migrator = DatabaseMigrator()
-        migrator.registerMigration(Self.initialSchemaMigrationIdentifier) { database in
-            try SQLiteLibraryStoreSchema.createInitial(in: database)
-            try database.execute(
-                sql: """
-                INSERT INTO schema_migrations (version, identifier, appliedAt)
-                VALUES (?, ?, ?)
-                """,
-                arguments: [
-                    SQLiteLibraryStoreSchema.initialSchemaVersion,
-                    Self.initialSchemaMigrationIdentifier,
-                    Date().timeIntervalSinceReferenceDate
-                ]
-            )
-        }
-
-        migrator.registerMigration(Self.schemaMigrationIdentifier) { database in
-            try SQLiteLibraryStoreSchema.addSettings(in: database)
-            try database.execute(
-                sql: """
-                INSERT INTO schema_migrations (version, identifier, appliedAt)
-                VALUES (?, ?, ?)
-                """,
-                arguments: [
-                    Self.schemaVersion,
-                    Self.schemaMigrationIdentifier,
-                    Date().timeIntervalSinceReferenceDate
-                ]
-            )
-        }
-
+        let migrator = Self.makeMigrator()
         try migrator.migrate(queue)
 
         self.databaseURL = normalizedURL

@@ -6,8 +6,16 @@ import GRDB
 /// This adapter is intentionally not connected to production app startup yet.
 /// It provides the storage-neutral boundary and contract-test target needed
 /// before any caller is moved away from Core Data.
-struct SQLiteLibraryRepository: LibraryRepository, Sendable {
+struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable {
     let store: SQLiteLibraryStore
+
+    func currentRevision() async throws -> Int64 {
+        try await store.currentLibraryRevision()
+    }
+
+    func changes(since revision: Int64) async throws -> [LibraryChange] {
+        try await store.libraryChanges(since: revision)
+    }
 
     func fetchRecordingSummaries() async throws -> [LibraryRecordingSnapshot] {
         try await store.fetchRecordingSummaries()
@@ -53,6 +61,13 @@ extension SQLiteLibraryStore {
                 command: command
             )
             try Self.updateRecording(current: current, command: command, in: database)
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.modifiedAt
+            )
             return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
         }
     }
