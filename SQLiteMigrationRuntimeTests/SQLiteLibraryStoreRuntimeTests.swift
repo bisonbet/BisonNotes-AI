@@ -171,4 +171,5 @@ final class SQLiteLibraryStoreRuntimeTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
+
 }

@@ -58,7 +58,9 @@ let package = Package(
                 "SQLiteLibraryStoreOperationalSchema.swift",
                 "SQLiteLibraryStoreSchema.swift",
                 "SQLiteMigrationModels.swift",
-                "SQLiteMigrationStoreSupport.swift"
+                "SQLiteMigrationStoreSupport.swift",
+                "SQLiteMigrationVerification.swift",
+                "SQLiteMigrationVerifier.swift"
             ]
         ),
         .testTarget(
