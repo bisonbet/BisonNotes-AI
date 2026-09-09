@@ -80,7 +80,11 @@ let package = Package(
                 "SQLiteMigrationRecovery.swift",
                 "SQLiteMigrationStoreSupport.swift",
                 "SQLiteMigrationVerification.swift",
-                "SQLiteMigrationVerifier.swift"
+                "SQLiteMigrationVerifier.swift",
+                "SQLiteMediaFileOperationModels.swift",
+                "SQLiteLibraryStoreMediaOperations.swift",
+                "SQLiteLibraryStoreMediaOperationQueries.swift",
+                "SQLiteMediaFileOperationWorker.swift"
             ]
         ),
         .testTarget(
