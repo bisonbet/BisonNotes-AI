@@ -66,6 +66,91 @@ final class SQLiteLibraryStoreTests: XCTestCase {
         XCTAssertEqual(secondDiagnostics, firstResult.diagnostics)
     }
 
+    func testMigrationCheckpointPersistsAndReopens() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("library.sqlite")
+        let checkpoint: SQLiteMigrationRun
+        do {
+            let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+            let run = try await store.beginMigrationRun(
+                sourceFingerprint: "core-data-fixture-sha256",
+                importerVersion: "sqlite-importer-1",
+                sourceModel: "BisonNotes_AI_v2",
+                metadataTotal: 10,
+                at: Date(timeIntervalSinceReferenceDate: 100)
+            )
+            XCTAssertEqual(run.phase, "preparing")
+            XCTAssertEqual(run.status, "pending")
+
+            checkpoint = try await store.checkpointMigrationRun(
+                id: run.id,
+                phase: "importing",
+                status: "running",
+                metadataCompleted: 3,
+                batchCursor: Data([3, 0]),
+                batchCount: 3,
+                batchSHA256: "batch-sha256",
+                at: Date(timeIntervalSinceReferenceDate: 200)
+            )
+            XCTAssertEqual(checkpoint.metadataCompleted, 3)
+            XCTAssertEqual(checkpoint.batchCursor, Data([3, 0]))
+            XCTAssertEqual(checkpoint.updatedAt, Date(timeIntervalSinceReferenceDate: 200))
+        }
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let persisted = try await reopenedStore.migrationRun(id: checkpoint.id)
+        XCTAssertEqual(persisted, checkpoint)
+    }
+
+    func testInvalidMigrationCheckpointDoesNotChangeRun() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("library.sqlite")
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let run = try await store.beginMigrationRun(
+            sourceFingerprint: "source",
+            importerVersion: "importer",
+            metadataTotal: 5
+        )
+
+        do {
+            _ = try await store.checkpointMigrationRun(
+                id: run.id,
+                phase: "importing",
+                status: "running",
+                metadataCompleted: 6,
+                batchCount: 1
+            )
+            XCTFail("Expected an invalid progress error")
+        } catch {
+            guard case .invalidMigrationCheckpoint = error as? SQLiteLibraryStoreError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        let persisted = try await store.migrationRun(id: run.id)
+        XCTAssertEqual(persisted?.metadataCompleted, 0)
+        XCTAssertEqual(persisted?.phase, "preparing")
+
+        do {
+            _ = try await store.checkpointMigrationRun(
+                id: "missing-run",
+                phase: "importing",
+                status: "running",
+                metadataCompleted: 0,
+                batchCount: 0
+            )
+            XCTFail("Expected a missing migration run error")
+        } catch {
+            guard case .migrationRunNotFound = error as? SQLiteLibraryStoreError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
     func testRelationshipForeignKeysRejectMissingRowsAndRestrictDeletes() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

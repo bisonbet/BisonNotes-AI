@@ -7,6 +7,8 @@ enum SQLiteLibraryStoreError: LocalizedError, Equatable {
     case parentDirectoryMissing(URL)
     case invalidMetadata
     case unsupportedConfiguration(String)
+    case invalidMigrationCheckpoint(String)
+    case migrationRunNotFound(String)
 
     var errorDescription: String? {
         switch self {
@@ -18,6 +20,10 @@ enum SQLiteLibraryStoreError: LocalizedError, Equatable {
             return "The SQLite database metadata is incomplete."
         case .unsupportedConfiguration(let detail):
             return "The SQLite database configuration is unsupported: \(detail)"
+        case .invalidMigrationCheckpoint(let detail):
+            return "The SQLite migration checkpoint is invalid: \(detail)"
+        case .migrationRunNotFound(let runID):
+            return "The SQLite migration run was not found: \(runID)"
         }
     }
 }
@@ -214,6 +220,135 @@ actor SQLiteLibraryStore {
                 ORDER BY name
                 """
             )
+        }
+    }
+
+    func beginMigrationRun(
+        sourceFingerprint: String,
+        importerVersion: String,
+        sourceModel: String? = nil,
+        metadataTotal: Int? = nil,
+        at date: Date = Date()
+    ) throws -> SQLiteMigrationRun {
+        guard !sourceFingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SQLiteLibraryStoreError.invalidMigrationCheckpoint(
+                "sourceFingerprint must not be empty"
+            )
+        }
+        guard !importerVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SQLiteLibraryStoreError.invalidMigrationCheckpoint(
+                "importerVersion must not be empty"
+            )
+        }
+        try SQLiteMigrationStoreSupport.validateProgress(
+            phase: "preparing",
+            status: "pending",
+            metadataTotal: metadataTotal,
+            metadataCompleted: 0,
+            batchCount: 0
+        )
+
+        let runID = UUID().uuidString
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            try database.execute(
+                sql: """
+                INSERT INTO migration_runs (
+                    id, sourceFingerprint, importerVersion, sourceModel,
+                    phase, status, metadataTotal, startedAt, updatedAt
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    runID,
+                    sourceFingerprint,
+                    importerVersion,
+                    sourceModel,
+                    "preparing",
+                    "pending",
+                    metadataTotal,
+                    timestamp,
+                    timestamp
+                ]
+            )
+
+            guard let run = try SQLiteMigrationStoreSupport.fetchRun(id: runID, from: database) else {
+                throw SQLiteLibraryStoreError.invalidMetadata
+            }
+            return run
+        }
+    }
+
+    func migrationRun(id: String) throws -> SQLiteMigrationRun? {
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SQLiteLibraryStoreError.invalidMigrationCheckpoint("run ID must not be empty")
+        }
+        return try databaseQueue.read { database in
+            try SQLiteMigrationStoreSupport.fetchRun(id: id, from: database)
+        }
+    }
+
+    func checkpointMigrationRun(
+        id: String,
+        phase: String,
+        status: String,
+        metadataCompleted: Int,
+        batchCursor: Data? = nil,
+        batchCount: Int,
+        batchSHA256: String? = nil,
+        errorMessage: String? = nil,
+        at date: Date = Date()
+    ) throws -> SQLiteMigrationRun {
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SQLiteLibraryStoreError.invalidMigrationCheckpoint("run ID must not be empty")
+        }
+        try SQLiteMigrationStoreSupport.validateProgress(
+            phase: phase,
+            status: status,
+            metadataTotal: nil,
+            metadataCompleted: metadataCompleted,
+            batchCount: batchCount
+        )
+
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            try SQLiteMigrationStoreSupport.validateCheckpointTarget(
+                id: id,
+                metadataCompleted: metadataCompleted,
+                from: database
+            )
+
+            try database.execute(
+                sql: """
+                UPDATE migration_runs
+                SET phase = ?,
+                    status = ?,
+                    metadataCompleted = ?,
+                    batchCursor = ?,
+                    batchCount = ?,
+                    batchSHA256 = ?,
+                    updatedAt = ?,
+                    errorMessage = ?
+                WHERE id = ?
+                """,
+                arguments: [
+                    phase,
+                    status,
+                    metadataCompleted,
+                    batchCursor,
+                    batchCount,
+                    batchSHA256,
+                    timestamp,
+                    errorMessage,
+                    id
+                ]
+            )
+
+            guard database.changesCount == 1,
+                  let updatedRun = try SQLiteMigrationStoreSupport.fetchRun(id: id, from: database) else {
+                throw SQLiteLibraryStoreError.invalidMetadata
+            }
+            return updatedRun
         }
     }
 }
