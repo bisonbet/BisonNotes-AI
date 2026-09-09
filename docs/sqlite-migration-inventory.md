@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -356,7 +356,7 @@ isolated metadata importer now writes those rows and row-map entries in
 dependency order with transactional batch checkpoints and idempotent reopen/
 resume behavior; it is not wired to app startup, the production repository,
 CloudKit, or any user database. The production source reader/coordinator,
-remaining settings catalog source coverage/platform normalization, Core Data observation/startup wiring,
+remaining settings catalog source coverage/platform normalization, Core Data startup subscription wiring,
 migration screen, historical release fixtures and background media worker still
 need implementation against disposable fixtures. The first repository slice now
 defines storage-neutral snapshots for all six migrated metadata entities and the
@@ -371,11 +371,14 @@ file-renaming workflow remains on its existing path until file operations have
 a journaled command. Neither backend is wired to startup or user-data
 migration.
 The SQLite-only `LibraryObservation` implementation persists a global
-`library_changes` cursor and emits recording-rename/settings events atomically;
-the Core Data adapter and startup subscription remain intentionally open.
+`library_changes` cursor and emits recording-rename/settings events atomically.
+`CoreDataLibraryObservation` reads retained persistent-history transactions using
+the same cursor contract; durable Core Data stores now enable history tracking.
+The startup subscription and history-retention/purge policy remain intentionally
+open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed twenty-eight disposable macOS tests; the
+standalone runtime harness has passed twenty-nine disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
@@ -417,10 +420,10 @@ their owning behavior is resolved.
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsCatalog` classifies the source keys, exposes only the blocking-metadata subset to a future reader, and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, and prove unrelated defaults are untouched. Startup wiring, remaining source coverage and platform normalization are still open. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |
-| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, and upgrade a disposable v2 store to v3. Core Data observation, startup subscription wiring and the remaining write commands are still open. |
+| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, upgrade a disposable v2 store to v3, and exercise Core Data insert/update/delete history while filtering an unrelated entity. Startup subscription, history retention/purge policy and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
 next inventory update must finish source-key/catalog coverage and platform
-normalization, connect the
-observation contract to Core Data/startup and expand command/error coverage before
+normalization, connect the observation contract to startup and expand
+command/error coverage before
 production services can depend on the repository.
