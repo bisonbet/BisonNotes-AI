@@ -345,10 +345,15 @@ metadata, independent storage IDs, restrictive resolved-link foreign keys,
 root-relative asset-operation paths, integrity diagnostics and typed durable
 migration-run checkpoints. A read-only verifier now validates closed snapshots
 against those six tables by schema, migration-run fingerprint, row identity and
-declared value. Its fixtures are synthetic destination fixtures, not extracted
-Core Data stores. The foundation is not wired to app startup, the production
-repository, CloudKit, or any user database. The importer, repository, production
-checkpoint coordinator, migration screen, historical Core Data source fixtures
-and background media worker still need implementation against disposable
-fixtures. The standalone runtime harness has passed eight disposable macOS
-tests; it does not inspect or modify a live user store.
+declared value. An app-hosted fixture factory now loads the compiled original
+and active v2 Core Data models into disposable SQLite-backed stores, populates
+representative rows, projects every destination column and relationship, and
+fingerprints the projection. Its XCTest coverage is compiled but has not
+executed because the current simulator runner exits before XCTest bootstrapping;
+it covers only the checked-in models, not every shipped historical hash. The
+foundation is not wired to app startup, the production repository, CloudKit, or
+any user database. The importer, repository, production checkpoint coordinator,
+migration screen, historical release fixtures and background media worker still
+need implementation against disposable fixtures. The standalone runtime harness
+has passed eight disposable macOS tests; it does not inspect or modify a live
+user store.

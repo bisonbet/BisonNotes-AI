@@ -14,9 +14,10 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The latest implementation commit is `444542ac` (`test: add closed-source SQLite
-verifier`), following `e612ebdc` (`test: add host-independent SQLite runtime
-harness`), `1a03ed6d` (`feat: persist SQLite migration checkpoints`),
+The latest implementation commit is `5f9744d` (`test: add Core Data source
+snapshot fixtures`), following `444542ac` (`test: add closed-source SQLite
+verifier`), `e612ebdc` (`test: add host-independent SQLite runtime harness`),
+`1a03ed6d` (`feat: persist SQLite migration checkpoints`),
 `c8f8d2f5` (`feat: add isolated SQLite schema foundation`), `d4e143b4`
 (`build: pin GRDB for SQLite migration`) and
 `76949b18` (`feat: harden storage before SQLite migration`).
@@ -59,25 +60,33 @@ Completed in this slice:
   unexpected and changed rows deterministically. Disposable fixtures cover
   complete data plus malformed snapshots and all three row/value mismatch
   classes.
+- An app-hosted fixture factory now loads the compiled original
+  `BisonNotes_AI.mom` and active `BisonNotes_AI_v2.mom` models into disposable
+  SQLite-backed Core Data stores. It populates representative rows for every
+  supported entity in each model, projects all destination columns and
+  relationships into the snapshot contract, and fingerprints the complete
+  projection. The fixture XCTest methods are compiled into the app test bundle;
+  they have not executed because the current simulator runner exits before
+  XCTest bootstrapping.
 
 Not yet implemented or closed:
 
 - The production SQLite migration coordinator, repository boundary, Core Data
   importer and migration screen. The current schema and verifier are isolated
   foundations only and are not a user-data destination.
-- Closed fixtures generated from real Core Data model stores for every supported
-  historical model/version, rather than the current synthetic destination
-  snapshot fixtures.
+- Fixtures for every supported shipped historical model hash, legacy-file-only
+  users and skipped-release paths. The current source fixture covers only the
+  checked-in original and active v2 compiled models with synthetic rows.
 - Watch/share/background caller gates and the full file-operation/media journal.
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to add disposable closed-Core-Data source fixtures
-that emit the snapshot contract, close the remaining Phase 0/1 evidence and
-caller-gate gaps, then implement the typed repository, Core Data importer and
-production migration coordinator around this isolated schema, checkpoint and
-verifier contract. Do not enable a migration screen or SQLite user-store
-cutover until it is driven by that real resumable coordinator.
+The next safe work package is to use these disposable Core Data snapshots to
+implement the typed repository/importer row-map writer and its validation
+reports, while closing the remaining Phase 0/1 evidence and caller-gate gaps.
+Then implement the production migration coordinator around the isolated schema,
+checkpoint and verifier contract. Do not enable a migration screen or SQLite
+user-store cutover until it is driven by that real resumable coordinator.
 
 ### Live-data testing gate
 
