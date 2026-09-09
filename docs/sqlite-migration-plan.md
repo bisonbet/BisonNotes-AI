@@ -16,8 +16,9 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The current settings-classification checkpoint is `e2ff6c0` (`test: compare
-settings catalog with CloudKit source`), following `52101ae0` (`test: validate
+The current settings-classification checkpoint is `f8b4d6c7` (`test: cover
+legacy settings classifications`), following `e2ff6c0` (`test: compare
+settings catalog with CloudKit source`) and `52101ae0` (`test: validate
 SQLite settings catalog values`) and `5232640` (`feat: add classified SQLite
 settings catalog`).
 
@@ -122,9 +123,10 @@ Completed in this slice:
   closed. It also rejects non-finite values, out-of-range integers/reals,
   unknown enum strings and endpoint credentials. Platform normalization and
   startup wiring remain open. An app-hosted contract test now compares the
-  production CloudKit settings source list and the seven reviewed UI omissions
-  against the independent catalog; it has not executed because the current
-  Xcode build cannot resolve external packages in this environment.
+  production CloudKit settings source list, legacy on-device LLM settings and
+  the seven reviewed UI omissions against the independent catalog; it has not
+  executed because the current Xcode build cannot resolve external packages in
+  this environment.
 - The first write command is now explicit: recording rename references support
   Core Data legacy IDs and SQLite storage IDs, normalize the existing `[Watch]`
   suffix rule, and optionally enforce an expected `lastModified` revision.

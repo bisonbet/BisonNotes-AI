@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -388,9 +388,10 @@ SQLite migration allowlist. CloudKit restore applies platform-specific rules
 and model normalization, and the list does not include every current
 FluidAudio/MLX preference. An initial independently typed catalog now records
 those candidates and the source-observed omissions. An app-hosted contract test
-compares the actual CloudKit source list to the catalog, but it has not executed
-because the current Xcode build cannot resolve external packages. The catalog
-is not wired to startup and is not yet the final production allowlist.
+compares the actual CloudKit and legacy on-device LLM source lists to the
+catalog, but it has not executed because the current Xcode build cannot resolve
+external packages. The catalog is not wired to startup and is not yet the final
+production allowlist.
 
 | Disposition | Current source-observed examples | Migration treatment |
 | --- | --- | --- |
