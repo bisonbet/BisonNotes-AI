@@ -80,26 +80,27 @@ Completed in this slice:
   and destination conflicts, run-state/configuration failures, incomplete
   imports and verifier mismatches without retaining raw values. Reports use
   hashed identifiers, persist through the existing `recovery_items` table, and
-  can be read after reopening the isolated store. Fourteen host-side disposable
+  can be read after reopening the isolated store. Fifteen host-side disposable
   tests cover the complete storage/importer/recovery slice.
-- The first storage-neutral repository boundary is now defined by
-  `LibraryRecordingSnapshot` and the read-only `LibraryRepository` protocol.
-  `CoreDataLibraryRepository` copies recording values out of the authoritative
-  Core Data context, while `SQLiteLibraryRepository` reads the isolated
-  GRDB-backed generation. Both use deterministic ordering and return immutable
-  values; no managed objects, Core Data contexts or GRDB rows escape the
-  adapters.
+- The first storage-neutral repository boundary is now defined by immutable
+  snapshots for all six migrated metadata entities and the read-only
+  `LibraryRepository` protocol. `CoreDataLibraryRepository` copies values
+  out of the authoritative Core Data context, while
+  `SQLiteLibraryRepository` reads the isolated GRDB-backed generation. Both
+  use deterministic ordering and return immutable values; no managed objects,
+  Core Data contexts or GRDB rows escape the adapters.
 - Disposable contract coverage now exercises the SQLite adapter against the
-  imported fixture and the Core Data adapter against a disposable active-model
-  fixture. The root macOS harness passes fourteen tests with zero failures.
+  imported fixture across all six metadata tables and the Core Data adapter
+  against a disposable active-model fixture. The root macOS harness passes
+  fifteen tests with zero failures.
   The app-hosted Core Data fixture test is compile-checked with
   `build-for-testing`; the simulator runner still has not executed XCTest.
 
 Not yet implemented or closed:
 
-- The production SQLite migration coordinator, broader repository domain
-  contracts, app-wired Core Data source reader/importer and migration screen.
-  The current read-only recording repository adapters, schema, snapshot
+- The production SQLite migration coordinator, settings and broader read/write
+  repository contracts, app-wired Core Data source reader/importer and
+  migration screen. The current read-only metadata repository adapters, schema, snapshot
   importer and verifier are isolated foundations only and are not a user-data
   destination.
 - Coordinator policy for when to persist recovery reports and how to present
@@ -112,10 +113,10 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to expand the repository contract to the
-remaining metadata entities and read/write command boundaries, then convert
-one non-startup caller behind the Core Data adapter with shared behavior tests.
-In parallel, close the remaining Phase 0/1 evidence and caller-gate gaps.
+The next safe work package is to add the settings projection and explicit
+read/write command and error boundaries, then convert one non-startup caller
+behind the Core Data adapter with shared behavior tests. In parallel, close
+the remaining Phase 0/1 evidence and caller-gate gaps.
 Only after those contracts are stable should a production migration coordinator
 be connected to the importer, checkpoints and redacted recovery reports,
 followed by the first-boot progress screen. Do not enable a migration screen or
@@ -653,7 +654,7 @@ or task unless the owner requests it.
 | 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** runtime/defaults classification, migration coordinator and measurements remain open. |
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** Core Data health/startup gating and throwing startup reads are implemented; Watch/extension/background caller gates remain open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
 | 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, file-operation journal and recovery UI; adapt attachments/archive/file services. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
-| 3: Repository boundary | **Started:** add immutable recording values, the read-only protocol, Core Data adapter, SQLite adapter and disposable contract tests. Convert `AppDataCoordinator` and `RecordingWorkflowManager`, then jobs/imports/transcript/summary/archive services, UI, cloud store access, test fixtures and previews. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapter and legacy importer; all callers/targets audited. |
+| 3: Repository boundary | **Started:** add immutable snapshots for all six metadata entities, the read-only protocol, Core Data adapter, SQLite adapter and disposable contract tests. Add settings and write/observation commands, then convert `AppDataCoordinator` and `RecordingWorkflowManager`, jobs/imports/transcript/summary/archive services, UI, cloud store access, test fixtures and previews. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapter and legacy importer; all callers/targets audited. |
 | 4: SQLite backend | Extend the isolated read-only adapter into the complete repository implementation, file journal, receipts and metrics using the pinned GRDB product. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
 | 5: Import / verifier | New migration state machine, model-aware source reader, lossless row map, validation and recovery reports. | Both source models plus skipped-version legacy fixtures migrate; every transition survives process kill; anomalies block safely; no cloud side effects. |
 | 6: Shadow qualification | Read-only SQLite comparisons from a frozen source snapshot; retain Core Data as sole authority. Store per-field mismatch reports without content leakage. | Zero unexplained mismatches across representative fixtures/libraries. If legacy writes resume, candidate invalidated/rebuilt; do not pretend it remains current. |
