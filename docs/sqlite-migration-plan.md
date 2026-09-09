@@ -14,9 +14,10 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The latest implementation commit is `1a03ed6d` (`feat: persist SQLite migration
-checkpoints`), following `c8f8d2f5` (`feat: add isolated SQLite schema
-foundation`), `d4e143b4` (`build: pin GRDB for SQLite migration`) and
+The latest implementation commit is `e612ebdc` (`test: add host-independent
+SQLite runtime harness`), following `1a03ed6d` (`feat: persist SQLite migration
+checkpoints`), `c8f8d2f5` (`feat: add isolated SQLite schema foundation`),
+`d4e143b4` (`build: pin GRDB for SQLite migration`) and
 `76949b18` (`feat: harden storage before SQLite migration`).
 The branch is `v3.0`; these commits are ready to continue from and are not a
 production cutover.
@@ -46,6 +47,11 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
+- A root SwiftPM host-independent macOS runtime harness now runs five disposable
+  SQLite tests against the canonical store sources with the exact GRDB 7.11.1
+  pin. It caught and fixed two issues before any live-data work: SQLite's
+  synchronous pragma must be set outside a transaction, and the processing-job
+  status index must use the model's `lastModified` column.
 
 Not yet implemented or closed:
 
@@ -53,15 +59,28 @@ Not yet implemented or closed:
   importer, independent verifier and migration screen. The current schema is
   an isolated foundation only and is not a user-data destination.
 - Watch/share/background caller gates and the full file-operation/media journal.
-- A host-independent runtime smoke-test target, historical fixtures, performance
-  measurements, shadow qualification, activation, signed device-backup testing
-  and two-device CloudKit validation.
+- Historical source fixtures, performance measurements, shadow qualification,
+  activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to add a host-independent runtime harness, close
-the remaining Phase 0/1 evidence and caller-gate gaps, then implement the typed
-repository, Core Data importer and production migration coordinator around this
-isolated schema and checkpoint contract. Do not enable a migration screen or
-SQLite user-store cutover until it is driven by that real resumable coordinator.
+The next safe work package is to add disposable closed-Core-Data source fixtures
+and an independent verifier contract, close the remaining Phase 0/1 evidence
+and caller-gate gaps, then implement the typed repository, Core Data importer
+and production migration coordinator around this isolated schema and checkpoint
+contract. Do not enable a migration screen or SQLite user-store cutover until it
+is driven by that real resumable coordinator.
+
+### Live-data testing gate
+
+No live user database is part of the current work. The first real-data test is
+appropriate only after the importer and verifier operate from a frozen source
+snapshot, all supported model versions have fixtures, crash/kill/background-
+expiration/low-space recovery passes, anomalies block activation, the progress
+screen and durable checkpoints are wired, media receipts retain the source, and
+the signed app has completed Apple device-backup/restore and CloudKit validation.
+The sequence is: disposable fixtures, synthetic or consented real-shaped data,
+then a dedicated physical test device/account with a preserved source copy. A
+production user's active library is the final rollout gate, not a development
+test.
 
 ## 1. Recommendation and decision
 

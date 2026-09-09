@@ -13,7 +13,7 @@ can be updated without rewriting the design.
 | Runtime source baseline | `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` |
 | Planning/implementation branch | `v3.0` |
 | Planning revision | `275ec590c17fd01d010a0e584e334ddc3760c5b4` before implementation changes |
-| Last implementation commit | `1a03ed6dde5e5f10e3dfd05f8db53046bacd276c` |
+| Last implementation commit | `e612ebdcbbabb9522cdb4e9b15489324af1476a4` |
 | GRDB dependency commit | `d4e143b47ec3fcbe737e36a228150c32b0b33a96` |
 | Safety commit | `76949b18f88c8084ed62f21bfeafd6bad6be2469` |
 | Reviewed date | 2026-09-07 |
@@ -35,12 +35,19 @@ focused tests are compiled into the existing app-hosted XCTest target; a runtime
 attempt on the iPhone 17 Pro simulator exited before XCTest bootstrapping, so no
 assertion has been counted as passing.
 
-The next evidence-producing steps are to add a host-independent disk-backed
-SQLite test target, finish the runtime/defaults ledger and Watch/share/background
-gates, measure metadata first-boot cost and background media reconciliation, then
-build the typed repository, Core Data importer and production coordinator around
-the checkpoint contract. No live user database, CloudKit record, app
-export/restore package or app-managed encryption key is in scope.
+A separate root SwiftPM package now executes five host-independent macOS tests
+against the canonical SQLite sources. It uses the same exact GRDB 7.11.1
+resolution and passed all five tests after exposing and fixing the
+non-transactional synchronous-pragma requirement and the processing-job index
+column error. This is disposable runtime evidence, not live-data evidence.
+
+The next evidence-producing steps are to add closed-Core-Data source fixtures and
+an independent verifier contract, finish the runtime/defaults ledger and
+Watch/share/background gates, measure metadata first-boot cost and background
+media reconciliation, then build the typed repository, Core Data importer and
+production coordinator around the checkpoint contract. No live user database,
+CloudKit record, app export/restore package or app-managed encryption key is in
+scope.
 
 ## Confirmed product and backend decisions
 
@@ -122,6 +129,15 @@ The following checks were run against the Phase 0/1 working tree on `v3.0`:
   `/private/tmp/bisonnotes-sqlite-checkpoint-ios-20260909`.
 - Native macOS Debug build passed after adding the durable checkpoint operations,
   using `/private/tmp/bisonnotes-sqlite-checkpoint-mac-20260909`.
+- `swift test --package-path . --disable-sandbox` passed all 5 host-independent
+  runtime tests with GRDB 7.11.1, including schema bootstrap, checkpoint
+  reopen, validation rollback, foreign-key restrictions and migration rollback.
+  The final run was warning-free after the package explicitly excluded unrelated
+  app model files.
+- Generic iOS `build-for-testing` passed after the runtime-harness fixes, using
+  `/private/tmp/bisonnotes-sqlite-runtime-ios-20260909`.
+- Native macOS Debug build passed after the runtime-harness fixes, using
+  `/private/tmp/bisonnotes-sqlite-runtime-mac-20260909`.
 - The GRDB smoke test is compiled into the iOS XCTest bundle but has not yet run
   as an XCTest assertion; the app's existing simulator CloudKit bootstrap and
   the current CoreSimulator service state prevent treating the simulator test
