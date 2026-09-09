@@ -33,6 +33,7 @@ let package = Package(
                 "AudioModels.swift",
                 "ConfigurationWarningHelper.swift",
                 "CoreDataManager.swift",
+                "CoreDataLibraryRepository.swift",
                 "DataMigrationManager.swift",
                 "DeviceCompatibility.swift",
                 "EnhancedSummaryData.swift",
@@ -54,11 +55,13 @@ let package = Package(
                 "UserPreferences.swift"
             ],
             sources: [
+                "LibraryRepository.swift",
                 "SQLiteLibraryStore.swift",
                 "SQLiteLibraryStoreOperationalSchema.swift",
                 "SQLiteLibraryStoreSchema.swift",
                 "SQLiteLibraryStoreMigrationImport.swift",
                 "SQLiteLibraryStoreRecovery.swift",
+                "SQLiteLibraryRepository.swift",
                 "SQLiteMigrationModels.swift",
                 "SQLiteMigrationImporter.swift",
                 "SQLiteMigrationRecovery.swift",

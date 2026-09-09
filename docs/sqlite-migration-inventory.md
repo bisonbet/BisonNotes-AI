@@ -355,9 +355,30 @@ isolated metadata importer now writes those rows and row-map entries in
 dependency order with transactional batch checkpoints and idempotent reopen/
 resume behavior; it is not wired to app startup, the production repository,
 CloudKit, or any user database. The production source reader/coordinator,
-repository boundary, migration screen, historical release fixtures and
-background media worker still need implementation against disposable fixtures.
+broader repository command/observation boundary, migration screen, historical
+release fixtures and background media worker still need implementation against
+disposable fixtures. The first read-only repository slice now defines the
+storage-neutral `LibraryRecordingSnapshot` and `LibraryRepository` contract,
+with a Core Data adapter over copied values and a SQLite adapter over the
+isolated GRDB generation. Contract coverage imports the synthetic snapshot into
+SQLite and reads the active Core Data fixture; neither adapter is wired to
+startup or application callers.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed twelve disposable macOS tests; it does
-not inspect or modify a live user store.
+standalone runtime harness has passed fourteen disposable macOS tests; the
+app-hosted adapter fixture is compile-checked but has not executed because the
+current simulator runner exits before XCTest bootstrapping. No test inspects or
+modifies a live user store.
+
+## First repository-boundary slice
+
+| Boundary | Implementation | Fixture/assertion disposition |
+| --- | --- | --- |
+| Immutable recording values | `LibraryRecordingSnapshot` preserves nullable legacy IDs, names, dates, durations, sizes, URLs, archive state and modification dates without exposing managed objects or SQL rows. | Root SwiftPM contract test asserts the imported recording projection exactly; app-hosted test asserts the Core Data projection against the active compiled model. |
+| Core Data read adapter | `CoreDataLibraryRepository` fetches `RecordingEntry` through a supplied context, copies values inside the context operation, and applies deterministic ordering. | Uses only a disposable `BisonNotes_AI_v2` fixture; no production `PersistenceController` or `CoreDataManager` is constructed. |
+| SQLite read adapter | `SQLiteLibraryRepository` reads the isolated `recordings` table through `SQLiteLibraryStore` and maps database dates/booleans into the same value type. | Imports the closed synthetic snapshot into a temporary file, verifies one recording, and separately verifies an empty pre-import database. |
+
+This is a read-only boundary, not caller conversion or cutover evidence. The
+next inventory update must add the remaining metadata projections and explicit
+command/error contracts before production services can depend on the
+repository.
