@@ -145,7 +145,12 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .uncertainLanguage:
             return "The language could not be confirmed as English, so the original transcript was kept."
         case .resourceFailure:
-            return "Transcript cleanup could not run because the on-device model was unavailable. The original transcript was kept."
+            // Deliberately does not name the model as the cause. This case also
+            // covers the per-generation timeout, the whole-run deadline, and a
+            // request that could not be chunked under the input budget — none of
+            // which mean the model is missing. Genuine unavailability has its own
+            // case, `.missingModel`, which tells the user to download S1-mini.
+            return "Transcript cleanup could not finish on this device. The original transcript was kept."
         case .invalidOutput:
             return "Transcript cleanup returned an invalid result. The original transcript was kept."
         case .staleResult:
