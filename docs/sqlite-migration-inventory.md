@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -357,5 +357,7 @@ resume behavior; it is not wired to app startup, the production repository,
 CloudKit, or any user database. The production source reader/coordinator,
 repository boundary, migration screen, historical release fixtures and
 background media worker still need implementation against disposable fixtures.
-The standalone runtime harness has passed ten disposable macOS tests; it does
+The redacted recovery-report API is persisted in `recovery_items` but is not
+yet connected to coordinator policy or user-facing recovery state. The
+standalone runtime harness has passed twelve disposable macOS tests; it does
 not inspect or modify a live user store.

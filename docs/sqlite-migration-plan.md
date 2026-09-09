@@ -14,9 +14,10 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The latest implementation commit is `9731e69a` (`feat: add resumable metadata
-importer`), following `5f9744d` (`test: add Core Data source snapshot
-fixtures`), `444542ac` (`test: add closed-source SQLite verifier`),
+The latest implementation commit is `40b431a0` (`feat: add redacted migration
+recovery reports`), following `9731e69a` (`feat: add resumable metadata
+importer`), `5f9744d` (`test: add Core Data source snapshot fixtures`),
+`444542ac` (`test: add closed-source SQLite verifier`),
 `e612ebdc` (`test: add host-independent SQLite runtime harness`),
 `1a03ed6d` (`feat: persist SQLite migration checkpoints`),
 `c8f8d2f5` (`feat: add isolated SQLite schema foundation`), `d4e143b4`
@@ -75,6 +76,12 @@ Completed in this slice:
   conflicts and resumes idempotently after a committed batch. Ten host-side
   disposable tests cover complete import, reopen/resume, verifier parity and
   the existing storage/checkpoint behavior.
+- Structured migration recovery reports now classify invalid snapshots, source
+  and destination conflicts, run-state/configuration failures, incomplete
+  imports and verifier mismatches without retaining raw values. Reports use
+  hashed identifiers, persist through the existing `recovery_items` table, and
+  can be read after reopening the isolated store. Twelve host-side disposable
+  tests cover the complete storage/importer/recovery slice.
 
 Not yet implemented or closed:
 
@@ -82,6 +89,9 @@ Not yet implemented or closed:
   Core Data source reader/importer and migration screen. The current schema,
   snapshot importer and verifier are isolated foundations only and are not a
   user-data destination.
+- Coordinator policy for when to persist recovery reports and how to present
+  them to a user; the current report API is explicit and intentionally not
+  wired to app startup or a live migration.
 - Fixtures for every supported shipped historical model hash, legacy-file-only
   users and skipped-release paths. The current source fixture covers only the
   checked-in original and active v2 compiled models with synthetic rows.
@@ -89,12 +99,13 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to add importer validation/recovery reports and
-the typed repository boundary, while closing the remaining Phase 0/1 evidence
-and caller-gate gaps. Then implement the production migration coordinator and
-first-boot progress screen around the isolated schema, checkpoint and verifier
-contract. Do not enable a migration screen or SQLite user-store cutover until it
-is driven by that real resumable coordinator.
+The next safe work package is to add the typed repository domain contracts and
+Core Data adapter with shared disposable contract tests, while closing the
+remaining Phase 0/1 evidence and caller-gate gaps. Then connect a production
+migration coordinator to the importer, checkpoints and redacted recovery
+reports, followed by the first-boot progress screen. Do not enable a migration
+screen or SQLite user-store cutover until it is driven by that real resumable
+coordinator.
 
 ### Live-data testing gate
 
