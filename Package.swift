@@ -59,6 +59,7 @@ let package = Package(
                 "LibraryObservation.swift",
                 "LibrarySettingsStore.swift",
                 "LibrarySettingsCatalog.swift",
+                "LibrarySettingsCatalogValidation.swift",
                 "SQLiteLibraryStore.swift",
                 "SQLiteLibraryObservation.swift",
                 "SQLiteLibraryStoreMigrations.swift",

@@ -28,6 +28,7 @@ enum LibrarySettingsCatalogError: LocalizedError, Equatable {
     case duplicateDefinition(String)
     case unclassifiedKeys([String])
     case nonMigratableKey(String)
+    case invalidValue(key: String, reason: String)
     case valueKindMismatch(
         key: String,
         expected: LibrarySettingValueKind,
@@ -42,6 +43,8 @@ enum LibrarySettingsCatalogError: LocalizedError, Equatable {
             return "The settings catalog has unclassified keys: \(keys.joined(separator: ", "))"
         case .nonMigratableKey(let key):
             return "The settings key is not approved for SQLite metadata migration: \(key)"
+        case .invalidValue(let key, let reason):
+            return "The settings key \(key) has an invalid value: \(reason)"
         case let .valueKindMismatch(key, expected, actual):
             return "The settings key \(key) has value kind \(actual.rawValue); expected \(expected.rawValue)."
         }
@@ -111,24 +114,6 @@ enum LibrarySettingsCatalog {
         }
     }
 
-    static func validateMigratableSnapshot(_ snapshot: LibrarySettingsSnapshot) throws {
-        for (key, value) in snapshot.values.sorted(by: { $0.key < $1.key }) {
-            guard let definition = definition(for: key) else {
-                throw LibrarySettingsCatalogError.unclassifiedKeys([key])
-            }
-            guard definition.disposition == .blockingMetadata else {
-                throw LibrarySettingsCatalogError.nonMigratableKey(key)
-            }
-            guard definition.valueKind == value.kind else {
-                throw LibrarySettingsCatalogError.valueKindMismatch(
-                    key: key,
-                    expected: definition.valueKind,
-                    actual: value.kind
-                )
-            }
-        }
-    }
-
     static func readMigratableSettings(
         from defaults: UserDefaults = .standard
     ) async throws -> LibrarySettingsSnapshot {
@@ -139,19 +124,6 @@ enum LibrarySettingsCatalog {
         let snapshot = try await store.read()
         try validateMigratableSnapshot(snapshot)
         return snapshot
-    }
-}
-
-private extension LibrarySettingValue {
-    var kind: LibrarySettingValueKind {
-        switch self {
-        case .string: return .string
-        case .integer: return .integer
-        case .real: return .real
-        case .bool: return .bool
-        case .data: return .data
-        case .date: return .date
-        }
     }
 }
 

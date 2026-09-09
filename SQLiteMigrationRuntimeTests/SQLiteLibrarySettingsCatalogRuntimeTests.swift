@@ -75,6 +75,55 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
         }
     }
 
+    func testCatalogRejectsInvalidBoundaryValues() {
+        let invalidValues: [(String, LibrarySettingValue)] = [
+            ("summaryDetailLevel", .integer(3)),
+            ("summaryThinkingLevel", .integer(-1)),
+            ("summarizationTimeout", .real(601)),
+            ("user_preference_time_format", .string("18h")),
+            ("fluidAudioSelectedModelVersion", .string("v1")),
+            ("whisperProtocol", .string("gRPC")),
+            ("ollamaPort", .integer(65_536)),
+            ("mlxSwiftMaxTokens", .integer(0)),
+            ("openAICompatibleTemperature", .real(.nan)),
+            ("openAICompatibleBaseURL", .string("https://user:password@example.com"))
+        ]
+
+        for (key, value) in invalidValues {
+            XCTAssertThrowsError(
+                try LibrarySettingsCatalog.validateMigratableSnapshot(
+                    LibrarySettingsSnapshot(values: [key: value])
+                ),
+                "Expected catalog to reject \(key)"
+            ) { error in
+                guard let catalogError = error as? LibrarySettingsCatalogError else {
+                    return XCTFail("Unexpected error for \(key): \(error)")
+                }
+                guard case .invalidValue(let actualKey, _) = catalogError else {
+                    return XCTFail("Unexpected catalog error for \(key): \(catalogError)")
+                }
+                XCTAssertEqual(actualKey, key)
+            }
+        }
+    }
+
+    func testCatalogAcceptsNormalizedBoundaryValues() throws {
+        let snapshot = LibrarySettingsSnapshot(values: [
+            "summaryDetailLevel": .integer(2),
+            "summaryThinkingLevel": .integer(1),
+            "summarizationTimeout": .real(600),
+            "user_preference_time_format": .string("24h"),
+            "fluidAudioSelectedModelVersion": .string("v3"),
+            "whisperProtocol": .string("REST API"),
+            "ollamaPort": .integer(65_535),
+            "mlxSwiftMaxTokens": .integer(1_000_000),
+            "openAICompatibleTemperature": .real(1),
+            "openAICompatibleBaseURL": .string("localhost:8080")
+        ])
+
+        try LibrarySettingsCatalog.validateMigratableSnapshot(snapshot)
+    }
+
     func testReadMigratableSettingsUsesOnlyBlockingMetadataKeys() async throws {
         let suiteName = "BisonNotesSQLiteRuntimeTests-\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suiteName) else {
