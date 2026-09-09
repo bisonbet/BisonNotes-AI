@@ -58,8 +58,10 @@ let package = Package(
                 "SQLiteLibraryStoreOperationalSchema.swift",
                 "SQLiteLibraryStoreSchema.swift",
                 "SQLiteLibraryStoreMigrationImport.swift",
+                "SQLiteLibraryStoreRecovery.swift",
                 "SQLiteMigrationModels.swift",
                 "SQLiteMigrationImporter.swift",
+                "SQLiteMigrationRecovery.swift",
                 "SQLiteMigrationStoreSupport.swift",
                 "SQLiteMigrationVerification.swift",
                 "SQLiteMigrationVerifier.swift"

@@ -9,6 +9,7 @@ enum SQLiteLibraryStoreError: LocalizedError, Equatable {
     case unsupportedConfiguration(String)
     case invalidMigrationCheckpoint(String)
     case migrationRunNotFound(String)
+    case invalidRecoveryReport(String)
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum SQLiteLibraryStoreError: LocalizedError, Equatable {
             return "The SQLite migration checkpoint is invalid: \(detail)"
         case .migrationRunNotFound(let runID):
             return "The SQLite migration run was not found: \(runID)"
+        case .invalidRecoveryReport(let detail):
+            return "The SQLite migration recovery report is invalid: \(detail)"
         }
     }
 }

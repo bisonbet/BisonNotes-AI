@@ -118,6 +118,36 @@ struct SQLiteMigrationImportResult: Equatable, Sendable {
     let skippedRowCount: Int
 }
 
+enum SQLiteMigrationRecoveryIssueKind: String, Codable, Equatable, Sendable {
+    case invalidSnapshot
+    case destinationConflict
+    case sourceConflict
+    case runConfigurationMismatch
+    case runStateConflict
+    case incompleteImport
+    case verificationMismatch
+}
+
+struct SQLiteMigrationRecoveryIssue: Codable, Equatable, Sendable {
+    let kind: SQLiteMigrationRecoveryIssueKind
+    let entity: String?
+    let column: String?
+    let identifierDigest: String?
+    let detail: String
+}
+
+struct SQLiteMigrationRecoveryReport: Codable, Equatable, Sendable {
+    let runID: String?
+    let sourceModel: String
+    let sourceFingerprint: String
+    let generatedAt: Date
+    let issues: [SQLiteMigrationRecoveryIssue]
+
+    var isBlocking: Bool {
+        !issues.isEmpty
+    }
+}
+
 enum SQLiteMigrationImportError: LocalizedError, Equatable {
     case invalidSnapshot(String)
     case runNotFound(String)
