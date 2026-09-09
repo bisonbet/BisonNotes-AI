@@ -1218,11 +1218,15 @@ class SummaryManager: ObservableObject {
 
         AppLog.shared.summarization("Found recording in Core Data with ID: \(recordingId)", level: .debug)
 
-        // Use the Core Data workflow manager to update the recording name
-        // This will handle both the Core Data update and file renaming
-        coordinator.updateRecordingName(recordingId: recordingId, newName: newName)
+        // This AI path also owns the existing audio-file rename behavior, so
+        // keep it on the workflow manager until file operations have their own
+        // journaled repository command.
+        coordinator.workflowManager.updateRecordingName(
+            recordingId: recordingId,
+            newName: newName
+        )
 
-        AppLog.shared.summarization("Recording name updated using Core Data workflow", level: .debug)
+        AppLog.shared.summarization("Recording name updated through the workflow manager", level: .debug)
 
         // Notify UI to refresh recordings list
         await MainActor.run {

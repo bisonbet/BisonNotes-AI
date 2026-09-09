@@ -7,7 +7,7 @@ import Foundation
 /// The adapter copies values while it owns the fetch and never returns managed
 /// objects. It is intentionally standalone: application startup still uses
 /// the existing Core Data manager until the migration coordinator is ready.
-final class CoreDataLibraryRepository: LibraryRepository {
+final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
     private let context: NSManagedObjectContext
 
     init(context: NSManagedObjectContext) {
@@ -276,5 +276,83 @@ final class CoreDataLibraryRepository: LibraryRepository {
         SHA256.hash(data: Data(value.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+}
+
+extension CoreDataLibraryRepository {
+    func renameRecording(
+        _ command: LibraryRecordingRenameCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        let context = context
+        return try context.performAndWait {
+            let request = Self.fetchRequest(entityName: "RecordingEntry")
+            request.fetchLimit = 2
+            request.predicate = try Self.recordingPredicate(for: command.reference)
+
+            let matches = try context.fetch(request)
+            guard !matches.isEmpty else {
+                throw LibraryRepositoryError.recordingNotFound(
+                    reference: command.reference.displayValue
+                )
+            }
+            guard matches.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: command.reference.displayValue
+                )
+            }
+
+            let recording = matches[0]
+            let current = try Self.snapshot(from: recording)
+            guard command.expectedLastModified == nil
+                    || command.expectedLastModified == current.lastModified else {
+                throw LibraryRepositoryError.staleRecording(
+                    reference: command.reference.displayValue,
+                    expected: command.expectedLastModified,
+                    actual: current.lastModified
+                )
+            }
+
+            recording.setValue(command.normalizedName, forKey: "recordingName")
+            recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "rename recording",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.snapshot(from: recording)
+        }
+    }
+
+    private static func recordingPredicate(
+        for reference: LibraryRecordingReference
+    ) throws -> NSPredicate {
+        if let legacyID = reference.legacyID {
+            guard let uuid = UUID(uuidString: legacyID) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "recording legacy ID is not a UUID"
+                )
+            }
+            return NSPredicate(format: "id == %@", uuid as CVarArg)
+        }
+
+        guard let storageID = reference.storageID,
+              storageID.hasPrefix("core-data-recording-") else {
+            throw LibraryRepositoryError.invalidCommand(
+                "Core Data requires a recording legacy ID or a resolvable storage ID"
+            )
+        }
+
+        let legacyID = String(storageID.dropFirst("core-data-recording-".count))
+        guard let uuid = UUID(uuidString: legacyID) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "Core Data storage ID does not contain a resolvable UUID"
+            )
+        }
+        return NSPredicate(format: "id == %@", uuid as CVarArg)
     }
 }

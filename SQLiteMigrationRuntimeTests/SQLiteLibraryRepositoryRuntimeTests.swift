@@ -78,6 +78,144 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(pendingMutations, [expectedPendingMutation()])
     }
 
+    func testRepositoryRenamesRecordingWithExpectedRevision() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+
+        let repository = SQLiteLibraryRepository(store: store)
+        let updated = try await repository.renameRecording(
+            LibraryRecordingRenameCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                name: "Renamed [Watch]",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+            )
+        )
+
+        XCTAssertEqual(updated.name, "Renamed")
+        XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 300))
+        let persistedRecordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(persistedRecordings.first?.name, "Renamed")
+    }
+
+    func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        do {
+            _ = try await repository.renameRecording(
+                LibraryRecordingRenameCommand(
+                    reference: LibraryRecordingReference(storageID: "recording-storage"),
+                    name: "Should not persist",
+                    expectedLastModified: Date(timeIntervalSinceReferenceDate: 999),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+                )
+            )
+            XCTFail("Expected the stale revision to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleRecording(
+                    reference: "recording-storage",
+                    expected: Date(timeIntervalSinceReferenceDate: 999),
+                    actual: Date(timeIntervalSinceReferenceDate: 101)
+                )
+            )
+        }
+
+        let persistedRecordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(persistedRecordings.first?.name, "Fixture recording")
+    }
+
+    func testSQLiteSettingsStoreRoundTripsTypedAllowlistedValues() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let settings = try SQLiteLibrarySettingsStore(
+            store: store,
+            allowedKeys: ["timeFormat", "enabled", "count", "timeout", "payload", "date"]
+        )
+        let snapshot = LibrarySettingsSnapshot(values: [
+            "timeFormat": .string("24h"),
+            "enabled": .bool(true),
+            "count": .integer(42),
+            "timeout": .real(180.5),
+            "payload": .data(Data([1, 2, 3])),
+            "date": .date(Date(timeIntervalSinceReferenceDate: 123))
+        ])
+
+        try await settings.apply(snapshot)
+        let persistedSnapshot = try await settings.read()
+        XCTAssertEqual(persistedSnapshot, snapshot)
+
+        do {
+            try await settings.apply(
+                LibrarySettingsSnapshot(values: ["notAllowed": .string("secret")])
+            )
+            XCTFail("Expected the settings allowlist to reject the key")
+        } catch let error as LibrarySettingsStoreError {
+            XCTAssertEqual(error, .disallowedKey("notAllowed"))
+        }
+    }
+
+    func testUserDefaultsSettingsStoreUsesOnlyItsAllowlist() async throws {
+        let suiteName = "BisonNotesSQLiteRuntimeTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create an isolated defaults suite")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("untouched", forKey: "outsideAllowlist")
+        let settings = try UserDefaultsLibrarySettingsStore(
+            defaults: defaults,
+            allowedKeys: ["timeFormat", "enabled"]
+        )
+        let snapshot = LibrarySettingsSnapshot(values: [
+            "timeFormat": .string("12h"),
+            "enabled": .bool(false)
+        ])
+
+        try await settings.apply(snapshot)
+        let persistedSnapshot = try await settings.read()
+        XCTAssertEqual(persistedSnapshot, snapshot)
+        XCTAssertEqual(defaults.string(forKey: "outsideAllowlist"), "untouched")
+
+        do {
+            try await settings.apply(
+                LibrarySettingsSnapshot(values: ["outsideAllowlist": .string("changed")])
+            )
+            XCTFail("Expected the defaults allowlist to reject the key")
+        } catch let error as LibrarySettingsStoreError {
+            XCTAssertEqual(error, .disallowedKey("outsideAllowlist"))
+        }
+    }
+
     private func expectedTranscript() -> LibraryTranscriptSnapshot {
         LibraryTranscriptSnapshot(
             storageID: "transcript-storage",

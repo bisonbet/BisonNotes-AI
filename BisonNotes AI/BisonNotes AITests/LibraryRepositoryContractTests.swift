@@ -75,6 +75,39 @@ final class LibraryRepositoryContractTests: XCTestCase {
         try assertPendingMutation(try XCTUnwrap(pendingMutations.first))
     }
 
+    func testCoreDataRepositoryRenamesRecordingThroughStorageNeutralCommand() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-rename.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = "10000000-0000-0000-0000-000000000001"
+        let updated = try await repository.renameRecording(
+            LibraryRecordingRenameCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID),
+                name: "Renamed [Watch]",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+            )
+        )
+
+        XCTAssertEqual(updated.legacyID, recordingID)
+        XCTAssertEqual(updated.name, "Renamed")
+        XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 300))
+        let persistedRecordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(persistedRecordings.first?.name, "Renamed")
+    }
+
     private func assertTranscript(
         _ transcript: LibraryTranscriptSnapshot,
         recordingStorageID: String

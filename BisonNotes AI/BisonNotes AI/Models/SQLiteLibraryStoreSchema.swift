@@ -2,7 +2,9 @@ import Foundation
 import GRDB
 
 enum SQLiteLibraryStoreSchema {
-    static func create(in database: Database) throws {
+    static let initialSchemaVersion = 1
+
+    static func createInitial(in database: Database) throws {
         try createMetadata(in: database)
         try createRecordings(in: database)
         try createSummaries(in: database)
@@ -11,6 +13,42 @@ enum SQLiteLibraryStoreSchema {
         try createArchiveLocations(in: database)
         try createPendingCloudMutations(in: database)
         try SQLiteLibraryStoreOperationalSchema.create(in: database)
+    }
+
+    static func addSettings(in database: Database) throws {
+        try database.execute(sql: """
+            CREATE TABLE library_settings (
+                key TEXT NOT NULL PRIMARY KEY CHECK (key <> ''),
+                valueType TEXT NOT NULL CHECK (valueType IN ('string', 'integer', 'real', 'bool', 'data', 'date')),
+                stringValue TEXT,
+                integerValue INTEGER,
+                realValue REAL,
+                blobValue BLOB,
+                updatedAt REAL NOT NULL,
+                CHECK (
+                    (valueType = 'string' AND stringValue IS NOT NULL
+                        AND integerValue IS NULL AND realValue IS NULL AND blobValue IS NULL) OR
+                    (valueType IN ('integer', 'bool') AND stringValue IS NULL
+                        AND integerValue IS NOT NULL AND realValue IS NULL AND blobValue IS NULL) OR
+                    (valueType IN ('real', 'date') AND stringValue IS NULL
+                        AND integerValue IS NULL AND realValue IS NOT NULL AND blobValue IS NULL) OR
+                    (valueType = 'data' AND stringValue IS NULL
+                        AND integerValue IS NULL AND realValue IS NULL AND blobValue IS NOT NULL)
+                )
+            )
+            """)
+
+        try database.execute(
+            sql: """
+            UPDATE library_metadata
+            SET schemaVersion = ?, updatedAt = ?
+            WHERE id = 1
+            """,
+            arguments: [
+                SQLiteLibraryStore.schemaVersion,
+                Date().timeIntervalSinceReferenceDate
+            ]
+        )
     }
 
     private static func createMetadata(in database: Database) throws {
@@ -48,7 +86,7 @@ enum SQLiteLibraryStoreSchema {
                 1,
                 UUID().uuidString,
                 UUID().uuidString,
-                SQLiteLibraryStore.schemaVersion,
+                initialSchemaVersion,
                 SQLiteLibraryStore.minimumReaderVersion,
                 0,
                 now,

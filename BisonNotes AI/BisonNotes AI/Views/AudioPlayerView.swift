@@ -514,9 +514,12 @@ struct AudioPlayerView: View {
 
         Task {
             do {
-                // Updates the display name only (recordingName field in Core Data).
-                // Physical audio file renaming is not performed here, consistent with SummaryDetailView.
-                try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
+                // Updates the display name only. Physical audio file renaming
+                // remains outside this metadata repository command.
+                try await appCoordinator.updateRecordingName(
+                    recordingId: recordingId,
+                    newName: trimmedName
+                )
 
                 await MainActor.run {
                     isUpdatingTitle = false

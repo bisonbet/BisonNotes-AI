@@ -33,6 +33,58 @@ struct LibraryRecordingSnapshot: Equatable, Sendable {
     }
 }
 
+/// Stable identifiers used by repository commands.
+///
+/// Existing Core Data rows are addressed by their legacy UUID, while the
+/// app-owned SQLite generation also has an independent storage ID. Commands
+/// may carry either or both so adapters can resolve the same operation without
+/// exposing managed objects or database rows to callers.
+struct LibraryRecordingReference: Equatable, Sendable {
+    let storageID: String?
+    let legacyID: String?
+
+    init(storageID: String? = nil, legacyID: String? = nil) {
+        self.storageID = storageID
+        self.legacyID = legacyID
+    }
+
+    var displayValue: String {
+        storageID ?? legacyID ?? "<missing recording identity>"
+    }
+}
+
+/// The first write command shared by the Core Data and SQLite adapters.
+///
+/// `expectedLastModified` is an optimistic-concurrency guard. A nil value
+/// means the caller intentionally accepts the current revision. The timestamp
+/// is supplied by the caller so tests and future coordinators can make the
+/// commit deterministic without creating time-dependent work inside a write
+/// transaction.
+struct LibraryRecordingRenameCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let name: String
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        name: String,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.name = name
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+
+    /// Preserve the existing Watch-import cleanup rule at the domain boundary
+    /// so both backends apply the same behavior.
+    var normalizedName: String {
+        name.replacingOccurrences(of: " [Watch]", with: "")
+    }
+}
+
 struct LibraryTranscriptSnapshot: Equatable, Sendable {
     let storageID: String
     let legacyID: String?
@@ -114,22 +166,40 @@ struct LibraryPendingCloudMutationSnapshot: Equatable, Sendable {
 /// The deliberately small read-only contract used while the migration is
 /// being introduced. Existing Core Data callers remain authoritative until a
 /// later checkpoint wires this capability into application startup.
-protocol LibraryRepository {
+protocol LibraryRepository: Sendable {
     func fetchRecordingSummaries() async throws -> [LibraryRecordingSnapshot]
     func fetchTranscriptSnapshots() async throws -> [LibraryTranscriptSnapshot]
     func fetchSummarySnapshots() async throws -> [LibrarySummarySnapshot]
     func fetchProcessingJobSnapshots() async throws -> [LibraryProcessingJobSnapshot]
     func fetchArchiveLocationSnapshots() async throws -> [LibraryArchiveLocationSnapshot]
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot]
+    func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
 }
 
 enum LibraryRepositoryError: LocalizedError, Equatable {
     case invalidRecord(entity: String, field: String)
+    case invalidCommand(String)
+    case recordingNotFound(reference: String)
+    case ambiguousRecording(reference: String)
+    case staleRecording(reference: String, expected: Date?, actual: Date?)
+    case writeFailed(operation: String, reason: String)
 
     var errorDescription: String? {
         switch self {
         case .invalidRecord(let entity, let field):
             return "The \(entity) record has an invalid \(field) value."
+        case .invalidCommand(let detail):
+            return "The library command is invalid: \(detail)"
+        case .recordingNotFound(let reference):
+            return "The recording could not be found: \(reference)"
+        case .ambiguousRecording(let reference):
+            return "The recording identity is ambiguous: \(reference)"
+        case .staleRecording(let reference, let expected, let actual):
+            return "The recording changed before it could be updated (\(reference)); "
+                + "expected last modified \(String(describing: expected)), "
+                + "found \(String(describing: actual))."
+        case .writeFailed(let operation, let reason):
+            return "The library could not complete \(operation): \(reason)"
         }
     }
 }

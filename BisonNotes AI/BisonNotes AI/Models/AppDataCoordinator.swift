@@ -14,6 +14,11 @@ class AppDataCoordinator: ObservableObject {
     @Published var isInitialized = false
     @Published private(set) var storageStatus: PersistenceStoreStatus
 
+    /// Storage-neutral access used by callers that have already moved off
+    /// managed-object mutation. Core Data remains authoritative until the
+    /// migration coordinator selects a SQLite generation.
+    private let libraryRepository: any LibraryRepository
+
     /// The recording shown in the single native-macOS player window. The app
     /// deliberately supports only one player window at a time, so this drives a
     /// singleton Window scene rather than a per-recording WindowGroup.
@@ -24,9 +29,11 @@ class AppDataCoordinator: ObservableObject {
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.storageStatus = resolvedPersistenceController.storageStatus
+        let viewContext = resolvedPersistenceController.container.viewContext
         // Initialize Core Data system
         self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
+        self.libraryRepository = CoreDataLibraryRepository(context: viewContext)
 
         // SummaryManager initializes its engine registry during first access.
         // Migrate the Mac-only Ollama selection before that access so an older
@@ -367,8 +374,16 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
-    func updateRecordingName(recordingId: UUID, newName: String) {
-        workflowManager.updateRecordingName(recordingId: recordingId, newName: newName)
+    func updateRecordingName(recordingId: UUID, newName: String) async throws {
+        _ = try await libraryRepository.renameRecording(
+            LibraryRecordingRenameCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: recordingId.uuidString
+                ),
+                name: newName
+            )
+        )
+        objectWillChange.send()
     }
 
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {

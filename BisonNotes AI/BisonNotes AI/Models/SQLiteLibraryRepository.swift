@@ -32,9 +32,144 @@ struct SQLiteLibraryRepository: LibraryRepository, Sendable {
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot] {
         try await store.fetchPendingCloudMutationSnapshots()
     }
+
+    func renameRecording(
+        _ command: LibraryRecordingRenameCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await store.renameRecording(command)
+    }
 }
 
 extension SQLiteLibraryStore {
+    func renameRecording(
+        _ command: LibraryRecordingRenameCommand
+    ) throws -> LibraryRecordingSnapshot {
+        let reference = try Self.normalizedReference(command.reference)
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRenameTarget(
+                rows: rows,
+                reference: reference,
+                command: command
+            )
+            try Self.updateRecording(current: current, command: command, in: database)
+            return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    private static func normalizedReference(
+        _ reference: LibraryRecordingReference
+    ) throws -> LibraryRecordingReference {
+        let storageID = reference.storageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyID = reference.legacyID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storageID?.isEmpty == false || legacyID?.isEmpty == false else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording reference must contain a storage ID or legacy ID"
+            )
+        }
+        return LibraryRecordingReference(
+            storageID: storageID?.isEmpty == false ? storageID : nil,
+            legacyID: legacyID?.isEmpty == false ? legacyID : nil
+        )
+    }
+
+    private static func fetchRecordingRows(
+        for reference: LibraryRecordingReference,
+        in database: Database
+    ) throws -> [Row] {
+        let columns = """
+            storageID, id, recordingName, recordingDate, duration,
+            fileSize, recordingURL, isArchived, lastModified
+            """
+        if let storageID = reference.storageID {
+            return try Row.fetchAll(
+                database,
+                sql: "SELECT \(columns) FROM recordings WHERE storageID = ? LIMIT 2",
+                arguments: [storageID]
+            )
+        }
+        guard let legacyID = reference.legacyID else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording reference must contain a storage ID or legacy ID"
+            )
+        }
+        return try Row.fetchAll(
+            database,
+            sql: "SELECT \(columns) FROM recordings WHERE id = ? LIMIT 2",
+            arguments: [legacyID]
+        )
+    }
+
+    private static func validateRenameTarget(
+        rows: [Row],
+        reference: LibraryRecordingReference,
+        command: LibraryRecordingRenameCommand
+    ) throws -> LibraryRecordingSnapshot {
+        guard !rows.isEmpty else {
+            throw LibraryRepositoryError.recordingNotFound(reference: reference.displayValue)
+        }
+        guard rows.count == 1 else {
+            throw LibraryRepositoryError.ambiguousRecording(reference: reference.displayValue)
+        }
+
+        let current = try SQLiteLibraryRepositoryMapper.snapshot(from: rows[0])
+        guard command.expectedLastModified == nil
+                || command.expectedLastModified == current.lastModified else {
+            throw LibraryRepositoryError.staleRecording(
+                reference: reference.displayValue,
+                expected: command.expectedLastModified,
+                actual: current.lastModified
+            )
+        }
+        return current
+    }
+
+    private static func updateRecording(
+        current: LibraryRecordingSnapshot,
+        command: LibraryRecordingRenameCommand,
+        in database: Database
+    ) throws {
+        try database.execute(
+            sql: """
+            UPDATE recordings
+            SET recordingName = ?, lastModified = ?
+            WHERE storageID = ?
+            """,
+            arguments: [
+                command.normalizedName,
+                command.modifiedAt.timeIntervalSinceReferenceDate,
+                current.storageID
+            ]
+        )
+        guard database.changesCount == 1 else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "rename recording",
+                reason: "the recording row was not updated"
+            )
+        }
+    }
+
+    private static func fetchUpdatedRecording(
+        storageID: String,
+        in database: Database
+    ) throws -> LibraryRecordingSnapshot {
+        let columns = """
+            storageID, id, recordingName, recordingDate, duration,
+            fileSize, recordingURL, isArchived, lastModified
+            """
+        guard let updatedRow = try Row.fetchOne(
+            database,
+            sql: "SELECT \(columns) FROM recordings WHERE storageID = ?",
+            arguments: [storageID]
+        ) else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "rename recording",
+                reason: "the updated recording row could not be read"
+            )
+        }
+        return try SQLiteLibraryRepositoryMapper.snapshot(from: updatedRow)
+    }
+
     func fetchRecordingSummaries() throws -> [LibraryRecordingSnapshot] {
         try databaseQueue.read { database in
             let rows = try Row.fetchAll(
@@ -134,142 +269,5 @@ extension SQLiteLibraryStore {
                 .map(SQLiteLibraryRepositoryMapper.pendingCloudMutation(from:))
                 .sorted { $0.storageID < $1.storageID }
         }
-    }
-}
-
-private enum SQLiteLibraryRepositoryMapper {
-    static func snapshot(from row: Row) throws -> LibraryRecordingSnapshot {
-        guard let storageID: String = row["storageID"], !storageID.isEmpty else {
-            throw LibraryRepositoryError.invalidRecord(
-                entity: "recordings",
-                field: "storageID"
-            )
-        }
-
-        let archivedValue: Int64? = row["isArchived"]
-        return LibraryRecordingSnapshot(
-            storageID: storageID,
-            legacyID: row["id"],
-            name: row["recordingName"],
-            recordingDate: date(from: row["recordingDate"]),
-            duration: row["duration"],
-            fileSize: row["fileSize"],
-            recordingURL: row["recordingURL"],
-            isArchived: archivedValue.map { $0 != 0 },
-            lastModified: date(from: row["lastModified"])
-        )
-    }
-
-    static func transcript(from row: Row) throws -> LibraryTranscriptSnapshot {
-        let storageID = try requireStorageID(from: row, entity: "transcripts")
-        return LibraryTranscriptSnapshot(
-            storageID: storageID,
-            legacyID: row["id"],
-            confidence: row["confidence"],
-            createdAt: date(from: row["createdAt"]),
-            engine: row["engine"],
-            lastModified: date(from: row["lastModified"]),
-            processingTime: row["processingTime"],
-            recordingStorageID: row["recordingStorageID"],
-            recordingLegacyID: row["recordingId"],
-            segments: row["segments"],
-            speakerMappings: row["speakerMappings"]
-        )
-    }
-
-    static func summary(from row: Row) throws -> LibrarySummarySnapshot {
-        let storageID = try requireStorageID(from: row, entity: "summaries")
-        return LibrarySummarySnapshot(
-            storageID: storageID,
-            aiMethod: row["aiMethod"],
-            compressionRatio: row["compressionRatio"],
-            confidence: row["confidence"],
-            contentType: row["contentType"],
-            generatedAt: date(from: row["generatedAt"]),
-            legacyID: row["id"],
-            originalLength: row["originalLength"],
-            processingTime: row["processingTime"],
-            recordingStorageID: row["recordingStorageID"],
-            recordingLegacyID: row["recordingId"],
-            reminders: row["reminders"],
-            summary: row["summary"],
-            tasks: row["tasks"],
-            titles: row["titles"],
-            transcriptStorageID: row["transcriptStorageID"],
-            transcriptLegacyID: row["transcriptId"],
-            version: row["version"],
-            wordCount: row["wordCount"]
-        )
-    }
-
-    static func processingJob(from row: Row) throws -> LibraryProcessingJobSnapshot {
-        let storageID = try requireStorageID(from: row, entity: "processing_jobs")
-        return LibraryProcessingJobSnapshot(
-            storageID: storageID,
-            completionTime: date(from: row["completionTime"]),
-            engine: row["engine"],
-            error: row["error"],
-            legacyID: row["id"],
-            jobType: row["jobType"],
-            lastModified: date(from: row["lastModified"]),
-            modelName: row["modelName"],
-            progress: row["progress"],
-            recordingName: row["recordingName"],
-            recordingURL: row["recordingURL"],
-            recordingStorageID: row["recordingStorageID"],
-            startTime: date(from: row["startTime"]),
-            status: row["status"]
-        )
-    }
-
-    static func archiveLocation(from row: Row) throws -> LibraryArchiveLocationSnapshot {
-        let storageID = try requireStorageID(from: row, entity: "archive_locations")
-        return LibraryArchiveLocationSnapshot(
-            storageID: storageID,
-            bookmarkData: row["bookmarkData"],
-            destinationURLString: row["destinationURLString"],
-            displayName: row["displayName"],
-            exportedAt: date(from: row["exportedAt"]),
-            exportedFilename: row["exportedFilename"],
-            fileSize: row["fileSize"],
-            legacyID: row["id"],
-            lastVerifiedAt: date(from: row["lastVerifiedAt"]),
-            providerDisplayName: row["providerDisplayName"],
-            recordingLegacyID: row["recordingId"],
-            status: row["status"]
-        )
-    }
-
-    static func pendingCloudMutation(from row: Row) throws -> LibraryPendingCloudMutationSnapshot {
-        let storageID = try requireStorageID(
-            from: row,
-            entity: "pending_cloud_mutations"
-        )
-        return LibraryPendingCloudMutationSnapshot(
-            storageID: storageID,
-            kind: row["kind"],
-            payload: row["payload"],
-            recordingLegacyID: row["recordingId"],
-            requestedAt: date(from: row["requestedAt"]),
-            targetID: row["targetId"],
-            version: row["version"]
-        )
-    }
-
-    private static func requireStorageID(
-        from row: Row,
-        entity: String
-    ) throws -> String {
-        guard let storageID: String = row["storageID"], !storageID.isEmpty else {
-            throw LibraryRepositoryError.invalidRecord(
-                entity: entity,
-                field: "storageID"
-            )
-        }
-        return storageID
-    }
-
-    private static func date(from value: Double?) -> Date? {
-        value.map(Date.init(timeIntervalSinceReferenceDate:))
     }
 }
