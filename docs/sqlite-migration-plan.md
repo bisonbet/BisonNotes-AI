@@ -16,8 +16,9 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The preceding implementation checkpoint is `cdd0bf8e` (`feat: add durable SQLite
-observation cursor`), following `b71d9984` (`feat: add repository settings and
+The preceding implementation checkpoint is `82e687e8` (`test: cover SQLite
+schema upgrade and observation contracts`), following `cdd0bf8e` (`feat: add
+durable SQLite observation cursor`) and `b71d9984` (`feat: add repository settings and
 rename contracts`), `40b431a0` (`feat: add redacted migration
 recovery reports`), `9731e69a` (`feat: add resumable metadata
 importer`), `5f9744d` (`test: add Core Data source snapshot fixtures`),

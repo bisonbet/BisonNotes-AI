@@ -35,6 +35,13 @@ final class SQLiteLibrarySettingsRuntimeTests: XCTestCase {
             Array(repeating: .setting, count: 6)
         )
 
+        let updateDate = Date(timeIntervalSinceReferenceDate: 456)
+        try await store.applyLibrarySettings(snapshot, at: updateDate)
+        let updatedSettingChanges = try await repository.changes(since: 6)
+        XCTAssertEqual(updatedSettingChanges.count, 6)
+        XCTAssertTrue(updatedSettingChanges.allSatisfy { $0.operation == .updated })
+        XCTAssertTrue(updatedSettingChanges.allSatisfy { $0.committedAt == updateDate })
+
         do {
             try await settings.apply(
                 LibrarySettingsSnapshot(values: ["notAllowed": .string("secret")])
