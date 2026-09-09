@@ -153,10 +153,42 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
         defaults.set("do-not-copy", forKey: "openAIAPIKey")
         defaults.set(true, forKey: "fluidAudioModelDownloaded")
 
-        let snapshot = try await LibrarySettingsCatalog.readMigratableSettings(from: defaults)
+        let snapshot = try await LibrarySettingsCatalog.readMigratableSettings(
+            from: defaults,
+            sourceKeys: [
+                "SelectedAIEngine",
+                "openAIAPIKey",
+                "fluidAudioModelDownloaded"
+            ]
+        )
 
         XCTAssertEqual(snapshot.values["SelectedAIEngine"], .string("MLX Swift"))
         XCTAssertNil(snapshot.values["openAIAPIKey"])
         XCTAssertNil(snapshot.values["fluidAudioModelDownloaded"])
+    }
+
+    func testReadMigratableSettingsRejectsUnclassifiedSourceKey() async throws {
+        let suiteName = "BisonNotesSQLiteRuntimeTests-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Could not create an isolated defaults suite")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("MLX Swift", forKey: "SelectedAIEngine")
+        defaults.set("must block", forKey: "futureUnclassifiedSetting")
+
+        do {
+            _ = try await LibrarySettingsCatalog.readMigratableSettings(
+                from: defaults,
+                sourceKeys: ["SelectedAIEngine", "futureUnclassifiedSetting"]
+            )
+            XCTFail("Expected an unclassified source key to block settings capture")
+        } catch let error as LibrarySettingsCatalogError {
+            XCTAssertEqual(
+                error,
+                .unclassifiedKeys(["futureUnclassifiedSetting"])
+            )
+        }
     }
 }

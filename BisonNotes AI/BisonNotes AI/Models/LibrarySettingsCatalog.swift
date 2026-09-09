@@ -115,8 +115,10 @@ enum LibrarySettingsCatalog {
     }
 
     static func readMigratableSettings(
-        from defaults: UserDefaults = .standard
+        from defaults: UserDefaults = .standard,
+        sourceKeys: [String]
     ) async throws -> LibrarySettingsSnapshot {
+        try validateSourceKeys(sourceKeys)
         let store = try UserDefaultsLibrarySettingsStore(
             defaults: defaults,
             allowedKeys: blockingMetadataKeys
