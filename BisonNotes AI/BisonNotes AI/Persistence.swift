@@ -232,6 +232,7 @@ enum PendingCloudMutationStore {
         // has since changed in the store.
         isolated.stalenessInterval = 0
         isolated.mergePolicy = NSMergePolicy(merge: .mergeByPropertyStoreTrumpMergePolicyType)
+        isolated.transactionAuthor = CoreDataLibraryObservation.applicationTransactionAuthor
         return isolated
     }
 
@@ -536,6 +537,16 @@ struct PersistenceController {
         persistentContainer.persistentStoreDescriptions.forEach { description in
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
             description.setOption(true as NSNumber, forKey: NSInferMappingModelAutomaticallyOption)
+            if !inMemory {
+                // Retain durable history for the migration coordinator and
+                // crash-safe source observation. Purging belongs to a later
+                // policy that can prove every consumer has advanced.
+                description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+                description.setOption(
+                    true as NSNumber,
+                    forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey
+                )
+            }
             #if os(iOS)
             // iOS Data Protection; macOS relies on FileVault for encryption at rest.
             description.setOption(
@@ -566,6 +577,7 @@ struct PersistenceController {
         container = persistentContainer
         storageStatus = resolvedStorageStatus
         container.viewContext.automaticallyMergesChangesFromParent = true
+        container.viewContext.transactionAuthor = CoreDataLibraryObservation.applicationTransactionAuthor
     }
 
     private static func handlePersistentStoreLoadFailure(_ error: NSError,

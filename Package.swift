@@ -57,6 +57,7 @@ let package = Package(
             sources: [
                 "LibraryRepository.swift",
                 "LibraryObservation.swift",
+                "CoreDataLibraryObservation.swift",
                 "LibrarySettingsStore.swift",
                 "LibrarySettingsCatalog.swift",
                 "LibrarySettingsCatalogValidation.swift",

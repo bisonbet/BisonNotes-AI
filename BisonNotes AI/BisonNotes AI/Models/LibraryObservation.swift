@@ -38,6 +38,7 @@ enum LibraryObservationError: LocalizedError, Equatable {
     case cursorAhead(current: Int64, requested: Int64)
     case missingStoredChange(revision: Int64)
     case invalidStoredChange(revision: Int64)
+    case historyUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -49,6 +50,8 @@ enum LibraryObservationError: LocalizedError, Equatable {
             return "The library change at revision \(revision) is missing."
         case .invalidStoredChange(let revision):
             return "The library change at revision \(revision) is invalid."
+        case .historyUnavailable(let reason):
+            return "Core Data persistent history is unavailable: \(reason)"
         }
     }
 }
