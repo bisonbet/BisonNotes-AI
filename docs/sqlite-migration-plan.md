@@ -14,9 +14,10 @@ authoritative Core Data backend or authorize a user-store migration.
 
 ## Current handoff — 2026-09-09
 
-The latest implementation commit is `5f9744d` (`test: add Core Data source
-snapshot fixtures`), following `444542ac` (`test: add closed-source SQLite
-verifier`), `e612ebdc` (`test: add host-independent SQLite runtime harness`),
+The latest implementation commit is `9731e69a` (`feat: add resumable metadata
+importer`), following `5f9744d` (`test: add Core Data source snapshot
+fixtures`), `444542ac` (`test: add closed-source SQLite verifier`),
+`e612ebdc` (`test: add host-independent SQLite runtime harness`),
 `1a03ed6d` (`feat: persist SQLite migration checkpoints`),
 `c8f8d2f5` (`feat: add isolated SQLite schema foundation`), `d4e143b4`
 (`build: pin GRDB for SQLite migration`) and
@@ -49,7 +50,7 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs eight
+- A root SwiftPM host-independent macOS runtime harness now runs ten
   disposable SQLite tests against the canonical store sources with the exact
   GRDB 7.11.1 pin. It caught and fixed two issues before any live-data work:
   SQLite's synchronous pragma must be set outside a transaction, and the
@@ -68,12 +69,19 @@ Completed in this slice:
   projection. The fixture XCTest methods are compiled into the app test bundle;
   they have not executed because the current simulator runner exits before
   XCTest bootstrapping.
+- A typed metadata importer now consumes those closed snapshots in dependency
+  order, writes each destination row and its source row-map entry in one
+  transaction, records batch hashes/cursors, rejects destination/source
+  conflicts and resumes idempotently after a committed batch. Ten host-side
+  disposable tests cover complete import, reopen/resume, verifier parity and
+  the existing storage/checkpoint behavior.
 
 Not yet implemented or closed:
 
-- The production SQLite migration coordinator, repository boundary, Core Data
-  importer and migration screen. The current schema and verifier are isolated
-  foundations only and are not a user-data destination.
+- The production SQLite migration coordinator, repository boundary, app-wired
+  Core Data source reader/importer and migration screen. The current schema,
+  snapshot importer and verifier are isolated foundations only and are not a
+  user-data destination.
 - Fixtures for every supported shipped historical model hash, legacy-file-only
   users and skipped-release paths. The current source fixture covers only the
   checked-in original and active v2 compiled models with synthetic rows.
@@ -81,12 +89,12 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to use these disposable Core Data snapshots to
-implement the typed repository/importer row-map writer and its validation
-reports, while closing the remaining Phase 0/1 evidence and caller-gate gaps.
-Then implement the production migration coordinator around the isolated schema,
-checkpoint and verifier contract. Do not enable a migration screen or SQLite
-user-store cutover until it is driven by that real resumable coordinator.
+The next safe work package is to add importer validation/recovery reports and
+the typed repository boundary, while closing the remaining Phase 0/1 evidence
+and caller-gate gaps. Then implement the production migration coordinator and
+first-boot progress screen around the isolated schema, checkpoint and verifier
+contract. Do not enable a migration screen or SQLite user-store cutover until it
+is driven by that real resumable coordinator.
 
 ### Live-data testing gate
 

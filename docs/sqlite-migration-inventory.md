@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0`. Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -351,9 +351,11 @@ representative rows, projects every destination column and relationship, and
 fingerprints the projection. Its XCTest coverage is compiled but has not
 executed because the current simulator runner exits before XCTest bootstrapping;
 it covers only the checked-in models, not every shipped historical hash. The
-foundation is not wired to app startup, the production repository, CloudKit, or
-any user database. The importer, repository, production checkpoint coordinator,
-migration screen, historical release fixtures and background media worker still
-need implementation against disposable fixtures. The standalone runtime harness
-has passed eight disposable macOS tests; it does not inspect or modify a live
-user store.
+isolated metadata importer now writes those rows and row-map entries in
+dependency order with transactional batch checkpoints and idempotent reopen/
+resume behavior; it is not wired to app startup, the production repository,
+CloudKit, or any user database. The production source reader/coordinator,
+repository boundary, migration screen, historical release fixtures and
+background media worker still need implementation against disposable fixtures.
+The standalone runtime harness has passed ten disposable macOS tests; it does
+not inspect or modify a live user store.
