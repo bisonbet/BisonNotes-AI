@@ -11,6 +11,14 @@ private struct SQLiteMigrationBatchImportRequest {
     let progress: (@Sendable (SQLiteMigrationBatchResult) async -> Void)?
 }
 
+struct SQLiteMigrationImportOptions {
+    let batchSize: Int
+    let runID: String?
+    let date: Date
+    let finalizeRun: Bool
+    let progress: (@Sendable (SQLiteMigrationBatchResult) async -> Void)?
+}
+
 enum SQLiteMigrationImportSupport {
     static let dependencyOrder: [SQLiteMigrationSourceEntity] = [
         .recordings,
@@ -164,7 +172,25 @@ struct SQLiteMigrationMetadataImporter: Sendable {
         at date: Date = Date(),
         progress: (@Sendable (SQLiteMigrationBatchResult) async -> Void)? = nil
     ) async throws -> SQLiteMigrationImportResult {
-        guard batchSize > 0 else {
+        try await importSnapshot(
+            snapshot,
+            into: store,
+            options: SQLiteMigrationImportOptions(
+                batchSize: batchSize,
+                runID: runID,
+                date: date,
+                finalizeRun: true,
+                progress: progress
+            )
+        )
+    }
+
+    static func importSnapshot(
+        _ snapshot: SQLiteMigrationSourceSnapshot,
+        into store: SQLiteLibraryStore,
+        options: SQLiteMigrationImportOptions
+    ) async throws -> SQLiteMigrationImportResult {
+        guard options.batchSize > 0 else {
             throw SQLiteMigrationImportError.invalidSnapshot(
                 "batch size must be greater than zero"
             )
@@ -179,30 +205,38 @@ struct SQLiteMigrationMetadataImporter: Sendable {
         let orderedRows = SQLiteMigrationImportSupport.orderedRows(snapshot.rows)
         let run = try await resolveRun(
             snapshot: snapshot,
-            runID: runID,
+            runID: options.runID,
             store: store,
-            at: date
+            at: options.date
         )
         let counts = try await importBatches(
             SQLiteMigrationBatchImportRequest(
                 rows: orderedRows,
                 runID: run.id,
-                batchSize: batchSize,
+                batchSize: options.batchSize,
                 store: store,
-                date: date,
-                progress: progress
+                date: options.date,
+                progress: options.progress
             )
         )
         try Task.checkCancellation()
-        let completedRun = try await completeRun(
-            runID: run.id,
-            snapshotRowCount: snapshot.rows.count,
-            store: store,
-            at: date
-        )
+        let resultingRun: SQLiteMigrationRun
+        if options.finalizeRun {
+            resultingRun = try await completeRun(
+                runID: run.id,
+                snapshotRowCount: snapshot.rows.count,
+                store: store,
+                at: options.date
+            )
+        } else {
+            guard let currentRun = try await store.migrationRun(id: run.id) else {
+                throw SQLiteMigrationImportError.runNotFound(run.id)
+            }
+            resultingRun = currentRun
+        }
 
         return SQLiteMigrationImportResult(
-            run: completedRun,
+            run: resultingRun,
             importedRowCount: counts.importedRowCount,
             skippedRowCount: counts.skippedRowCount
         )

@@ -1,8 +1,14 @@
 import Foundation
 
+// The coordinator keeps the durable phase transitions and failure policy in
+// one reviewable state machine; splitting these cases solely for size limits
+// would make the resumability rules harder to audit.
+// swiftlint:disable file_length
+
 enum SQLiteMigrationCoordinatorPhase: String, Equatable, Sendable {
     case preparing
     case importingMetadata
+    case applyingSettings
     case verifying
     case completed
     case paused
@@ -19,12 +25,16 @@ struct SQLiteMigrationProgress: Equatable, Sendable {
     let batchCount: Int
     let importedRowCount: Int
     let skippedRowCount: Int
+    let settingsCompleted: Int
+    let settingsTotal: Int
 
     var fractionCompleted: Double {
-        guard metadataTotal > 0 else {
+        let totalUnits = metadataTotal + settingsTotal
+        guard totalUnits > 0 else {
             return phase == .completed ? 1 : 0
         }
-        return min(1, max(0, Double(metadataCompleted) / Double(metadataTotal)))
+        let completedUnits = metadataCompleted + settingsCompleted
+        return min(1, max(0, Double(completedUnits) / Double(totalUnits)))
     }
 }
 
@@ -32,6 +42,7 @@ typealias SQLiteMigrationProgressHandler = @Sendable (SQLiteMigrationProgress) a
 
 private struct SQLiteMigrationImportContext {
     let snapshot: SQLiteMigrationSourceSnapshot
+    let settings: LibrarySettingsSnapshot?
     let store: SQLiteLibraryStore
     let batchSize: Int
     let run: SQLiteMigrationRun?
@@ -43,6 +54,26 @@ private struct SQLiteMigrationFailureContext {
     let snapshot: SQLiteMigrationSourceSnapshot
     let store: SQLiteLibraryStore
     let activeRun: SQLiteMigrationRun?
+    let settingsTotal: Int
+    let date: Date
+    let progress: SQLiteMigrationProgressHandler?
+}
+
+private struct SQLiteMigrationSettingsContext {
+    let snapshot: SQLiteMigrationSourceSnapshot
+    let settings: LibrarySettingsSnapshot
+    let importResult: SQLiteMigrationImportResult
+    let store: SQLiteLibraryStore
+    let date: Date
+    let progress: SQLiteMigrationProgressHandler?
+}
+
+private struct SQLiteMigrationFinalizationContext {
+    let snapshot: SQLiteMigrationSourceSnapshot
+    let importResult: SQLiteMigrationImportResult
+    let activeRun: SQLiteMigrationRun
+    let settingsTotal: Int
+    let store: SQLiteLibraryStore
     let date: Date
     let progress: SQLiteMigrationProgressHandler?
 }
@@ -54,11 +85,14 @@ struct SQLiteMigrationCoordinatorResult: Equatable, Sendable {
 
 enum SQLiteMigrationCoordinatorError: LocalizedError, Equatable {
     case verificationFailed(SQLiteMigrationVerificationReport)
+    case settingsVerificationFailed
 
     var errorDescription: String? {
         switch self {
         case .verificationFailed:
             return "The SQLite metadata migration did not pass destination verification."
+        case .settingsVerificationFailed:
+            return "The SQLite settings migration did not pass destination verification."
         }
     }
 }
@@ -73,9 +107,11 @@ enum SQLiteMigrationCoordinatorError: LocalizedError, Equatable {
 /// pause or a blocking failure. Audio/media copying and activation remain
 /// separate phases.
 struct SQLiteMigrationCoordinator: Sendable {
+    // swiftlint:disable:next function_body_length
     func migrate(
         snapshot: SQLiteMigrationSourceSnapshot,
         into store: SQLiteLibraryStore,
+        settings: LibrarySettingsSnapshot? = nil,
         batchSize: Int = 100,
         runID: String? = nil,
         at date: Date = Date(),
@@ -85,20 +121,28 @@ struct SQLiteMigrationCoordinator: Sendable {
 
         do {
             try validate(snapshot: snapshot, batchSize: batchSize)
+            try validate(settings: settings)
             activeRun = try await resolveRun(
                 snapshot: snapshot,
                 store: store,
                 runID: runID
             )
+            if activeRun?.phase == "settings", settings == nil {
+                throw SQLiteMigrationImportError.runConfigurationMismatch(
+                    "settings snapshot is required to resume the settings phase"
+                )
+            }
             await emitPreparation(
                 for: snapshot,
                 run: activeRun,
+                settingsTotal: settings?.values.count ?? 0,
                 progress: progress
             )
 
             let importResult = try await importMetadata(
                 SQLiteMigrationImportContext(
                     snapshot: snapshot,
+                    settings: settings,
                     store: store,
                     batchSize: batchSize,
                     run: activeRun,
@@ -108,18 +152,36 @@ struct SQLiteMigrationCoordinator: Sendable {
             )
             activeRun = importResult.run
 
-            let verification = try await verify(
-                snapshot: snapshot,
-                importResult: importResult,
-                store: store,
-                progress: progress
+            if let settings {
+                activeRun = try await applySettingsPhase(
+                    SQLiteMigrationSettingsContext(
+                        snapshot: snapshot,
+                        settings: settings,
+                        importResult: importResult,
+                        store: store,
+                        date: date,
+                        progress: progress
+                    )
+                )
+            }
+
+            guard let activeRun else {
+                throw SQLiteMigrationImportError.incompleteImport(
+                    expected: snapshot.rows.count,
+                    actual: 0
+                )
+            }
+            return try await finalizeMigration(
+                SQLiteMigrationFinalizationContext(
+                    snapshot: snapshot,
+                    importResult: importResult,
+                    activeRun: activeRun,
+                    settingsTotal: settings?.values.count ?? 0,
+                    store: store,
+                    date: date,
+                    progress: progress
+                )
             )
-            await emitCompletion(
-                for: importResult,
-                total: snapshot.rows.count,
-                progress: progress
-            )
-            return SQLiteMigrationCoordinatorResult(run: importResult.run, verification: verification)
         } catch {
             await handleFailure(
                 error,
@@ -127,6 +189,7 @@ struct SQLiteMigrationCoordinator: Sendable {
                     snapshot: snapshot,
                     store: store,
                     activeRun: activeRun,
+                    settingsTotal: settings?.values.count ?? 0,
                     date: date,
                     progress: progress
                 )
@@ -152,6 +215,11 @@ struct SQLiteMigrationCoordinator: Sendable {
         }
     }
 
+    private func validate(settings: LibrarySettingsSnapshot?) throws {
+        guard let settings else { return }
+        try LibrarySettingsCatalog.validateMigratableSnapshot(settings)
+    }
+
     private func resolveRun(
         snapshot: SQLiteMigrationSourceSnapshot,
         store: SQLiteLibraryStore,
@@ -161,6 +229,11 @@ struct SQLiteMigrationCoordinator: Sendable {
             let run = try await store.migrationRun(id: runID)
             guard run != nil else {
                 throw SQLiteMigrationImportError.runNotFound(runID)
+            }
+            guard run?.status != "failed" else {
+                throw SQLiteMigrationImportError.runNotResumable(
+                    "the run is already failed"
+                )
             }
             return run
         }
@@ -174,6 +247,7 @@ struct SQLiteMigrationCoordinator: Sendable {
     private func emitPreparation(
         for snapshot: SQLiteMigrationSourceSnapshot,
         run: SQLiteMigrationRun?,
+        settingsTotal: Int,
         progress: SQLiteMigrationProgressHandler?
     ) async {
         let completed = run?.metadataCompleted ?? 0
@@ -186,7 +260,9 @@ struct SQLiteMigrationCoordinator: Sendable {
                 metadataTotal: snapshot.rows.count,
                 batchCount: batches,
                 importedRowCount: 0,
-                skippedRowCount: 0
+                skippedRowCount: 0,
+                settingsCompleted: 0,
+                settingsTotal: settingsTotal
             ),
             to: progress
         )
@@ -203,7 +279,9 @@ struct SQLiteMigrationCoordinator: Sendable {
                 metadataTotal: context.snapshot.rows.count,
                 batchCount: context.run?.batchCount ?? 0,
                 importedRowCount: 0,
-                skippedRowCount: 0
+                skippedRowCount: 0,
+                settingsCompleted: 0,
+                settingsTotal: context.settings?.values.count ?? 0
             ),
             to: context.progress
         )
@@ -211,28 +289,190 @@ struct SQLiteMigrationCoordinator: Sendable {
         return try await SQLiteMigrationMetadataImporter.importSnapshot(
             context.snapshot,
             into: context.store,
-            batchSize: context.batchSize,
-            runID: context.run?.id,
+            options: SQLiteMigrationImportOptions(
+                batchSize: context.batchSize,
+                runID: context.run?.id,
+                date: context.date,
+                finalizeRun: context.settings == nil,
+                progress: { [progress = context.progress] batch in
+                    await progress?(
+                        SQLiteMigrationProgress(
+                            phase: .importingMetadata,
+                            runID: batch.run.id,
+                            metadataCompleted: batch.run.metadataCompleted,
+                            metadataTotal: batch.run.metadataTotal ?? context.snapshot.rows.count,
+                            batchCount: batch.run.batchCount,
+                            importedRowCount: batch.importedRowCount,
+                            skippedRowCount: batch.skippedRowCount,
+                            settingsCompleted: 0,
+                            settingsTotal: context.settings?.values.count ?? 0
+                        )
+                    )
+                }
+            )
+        )
+    }
+
+    private func applySettingsPhase(
+        _ context: SQLiteMigrationSettingsContext
+    ) async throws -> SQLiteMigrationRun {
+        let settingsRun = try await beginSettingsImport(
+            run: context.importResult.run,
+            store: context.store,
             at: context.date
-        ) { [progress = context.progress] batch in
-            await progress?(
-                SQLiteMigrationProgress(
-                    phase: .importingMetadata,
-                    runID: batch.run.id,
-                    metadataCompleted: batch.run.metadataCompleted,
-                    metadataTotal: batch.run.metadataTotal ?? context.snapshot.rows.count,
-                    batchCount: batch.run.batchCount,
-                    importedRowCount: batch.importedRowCount,
-                    skippedRowCount: batch.skippedRowCount
-                )
+        )
+        await emitSettingsProgress(
+            settingsCompleted: 0,
+            settingsTotal: context.settings.values.count,
+            run: settingsRun,
+            metadataTotal: context.snapshot.rows.count,
+            progress: context.progress
+        )
+        try Task.checkCancellation()
+        try await applySettings(context.settings, to: context.store)
+        try Task.checkCancellation()
+        await emitSettingsProgress(
+            settingsCompleted: context.settings.values.count,
+            settingsTotal: context.settings.values.count,
+            run: settingsRun,
+            metadataTotal: context.snapshot.rows.count,
+            progress: context.progress
+        )
+        try await verifySettings(context.settings, in: context.store)
+        return settingsRun
+    }
+
+    private func finalizeMigration(
+        _ context: SQLiteMigrationFinalizationContext
+    ) async throws -> SQLiteMigrationCoordinatorResult {
+        let verification = try await verify(
+            snapshot: context.snapshot,
+            importResult: context.importResult,
+            store: context.store,
+            settingsTotal: context.settingsTotal,
+            progress: context.progress
+        )
+        try Task.checkCancellation()
+        let completedRun = try await completeRun(
+            context.activeRun,
+            store: context.store,
+            phase: context.settingsTotal == 0 ? context.importResult.run.phase : "completed",
+            at: context.date
+        )
+        await emitCompletion(
+            for: SQLiteMigrationImportResult(
+                run: completedRun,
+                importedRowCount: context.importResult.importedRowCount,
+                skippedRowCount: context.importResult.skippedRowCount
+            ),
+            total: context.snapshot.rows.count,
+            settingsTotal: context.settingsTotal,
+            progress: context.progress
+        )
+        return SQLiteMigrationCoordinatorResult(run: completedRun, verification: verification)
+    }
+
+    private func beginSettingsImport(
+        run: SQLiteMigrationRun,
+        store: SQLiteLibraryStore,
+        at date: Date
+    ) async throws -> SQLiteMigrationRun {
+        guard run.status != "failed" else {
+            throw SQLiteMigrationImportError.runNotResumable(
+                "the run is already failed"
             )
         }
+        return try await store.checkpointMigrationRun(
+            id: run.id,
+            phase: "settings",
+            status: "running",
+            metadataCompleted: run.metadataCompleted,
+            batchCursor: run.batchCursor,
+            batchCount: run.batchCount,
+            batchSHA256: run.batchSHA256,
+            at: date
+        )
+    }
+
+    private func emitSettingsProgress(
+        settingsCompleted: Int,
+        settingsTotal: Int,
+        run: SQLiteMigrationRun,
+        metadataTotal: Int,
+        progress: SQLiteMigrationProgressHandler?
+    ) async {
+        await emit(
+            SQLiteMigrationProgress(
+                phase: .applyingSettings,
+                runID: run.id,
+                metadataCompleted: run.metadataCompleted,
+                metadataTotal: metadataTotal,
+                batchCount: run.batchCount,
+                importedRowCount: 0,
+                skippedRowCount: 0,
+                settingsCompleted: settingsCompleted,
+                settingsTotal: settingsTotal
+            ),
+            to: progress
+        )
+    }
+
+    private func applySettings(
+        _ settings: LibrarySettingsSnapshot,
+        to store: SQLiteLibraryStore
+    ) async throws {
+        let destination = try SQLiteLibrarySettingsStore(
+            store: store,
+            allowedKeys: LibrarySettingsCatalog.blockingMetadataKeys
+        )
+        try await destination.apply(settings)
+    }
+
+    private func verifySettings(
+        _ expected: LibrarySettingsSnapshot,
+        in store: SQLiteLibraryStore
+    ) async throws {
+        let destination = try SQLiteLibrarySettingsStore(
+            store: store,
+            allowedKeys: LibrarySettingsCatalog.blockingMetadataKeys
+        )
+        let actual = try await destination.read()
+        guard actual == expected else {
+            throw SQLiteMigrationCoordinatorError.settingsVerificationFailed
+        }
+    }
+
+    private func completeRun(
+        _ run: SQLiteMigrationRun,
+        store: SQLiteLibraryStore,
+        phase: String,
+        at date: Date
+    ) async throws -> SQLiteMigrationRun {
+        guard run.status != "failed" else {
+            throw SQLiteMigrationImportError.runNotResumable(
+                "the run is already failed"
+            )
+        }
+        guard run.status != "completed" || run.phase != phase else {
+            return run
+        }
+        return try await store.checkpointMigrationRun(
+            id: run.id,
+            phase: phase,
+            status: "completed",
+            metadataCompleted: run.metadataCompleted,
+            batchCursor: run.batchCursor,
+            batchCount: run.batchCount,
+            batchSHA256: run.batchSHA256,
+            at: date
+        )
     }
 
     private func verify(
         snapshot: SQLiteMigrationSourceSnapshot,
         importResult: SQLiteMigrationImportResult,
         store: SQLiteLibraryStore,
+        settingsTotal: Int,
         progress: SQLiteMigrationProgressHandler?
     ) async throws -> SQLiteMigrationVerificationReport {
         await emit(
@@ -243,7 +483,9 @@ struct SQLiteMigrationCoordinator: Sendable {
                 metadataTotal: snapshot.rows.count,
                 batchCount: importResult.run.batchCount,
                 importedRowCount: importResult.importedRowCount,
-                skippedRowCount: importResult.skippedRowCount
+                skippedRowCount: importResult.skippedRowCount,
+                settingsCompleted: settingsTotal,
+                settingsTotal: settingsTotal
             ),
             to: progress
         )
@@ -267,6 +509,7 @@ struct SQLiteMigrationCoordinator: Sendable {
     private func emitCompletion(
         for result: SQLiteMigrationImportResult,
         total: Int,
+        settingsTotal: Int,
         progress: SQLiteMigrationProgressHandler?
     ) async {
         await emit(
@@ -277,7 +520,9 @@ struct SQLiteMigrationCoordinator: Sendable {
                 metadataTotal: total,
                 batchCount: result.run.batchCount,
                 importedRowCount: result.importedRowCount,
-                skippedRowCount: result.skippedRowCount
+                skippedRowCount: result.skippedRowCount,
+                settingsCompleted: settingsTotal,
+                settingsTotal: settingsTotal
             ),
             to: progress
         )
@@ -298,14 +543,21 @@ struct SQLiteMigrationCoordinator: Sendable {
             )
         }
 
-        if error is CancellationError {
+        if error is CancellationError ||
+            (!Self.shouldPersistFailure(for: error) && resumableRun != nil) {
+            let pausedRun = await awaitPauseMigrationRun(
+                runID: resumableRun?.id,
+                store: context.store,
+                at: context.date
+            )
             await emitStatus(
                 .paused,
-                run: resumableRun,
+                run: pausedRun ?? resumableRun,
                 total: context.snapshot.rows.count,
+                settingsTotal: context.settingsTotal,
                 progress: context.progress
             )
-        } else if Self.shouldPersistFailure(for: error) || resumableRun == nil {
+        } else {
             let failedRun: SQLiteMigrationRun?
             if let resumableRun {
                 failedRun = await awaitFailMigrationRun(
@@ -320,13 +572,7 @@ struct SQLiteMigrationCoordinator: Sendable {
                 .failed,
                 run: failedRun ?? resumableRun,
                 total: context.snapshot.rows.count,
-                progress: context.progress
-            )
-        } else {
-            await emitStatus(
-                .paused,
-                run: resumableRun,
-                total: context.snapshot.rows.count,
+                settingsTotal: context.settingsTotal,
                 progress: context.progress
             )
         }
@@ -340,10 +586,20 @@ struct SQLiteMigrationCoordinator: Sendable {
         try? await store.failMigrationRun(id: runID, at: date)
     }
 
+    private func awaitPauseMigrationRun(
+        runID: String?,
+        store: SQLiteLibraryStore,
+        at date: Date
+    ) async -> SQLiteMigrationRun? {
+        guard let runID else { return nil }
+        return try? await store.pauseMigrationRun(id: runID, at: date)
+    }
+
     private func emitStatus(
         _ phase: SQLiteMigrationCoordinatorPhase,
         run: SQLiteMigrationRun?,
         total: Int,
+        settingsTotal: Int,
         progress: SQLiteMigrationProgressHandler?
     ) async {
         await emit(
@@ -354,7 +610,9 @@ struct SQLiteMigrationCoordinator: Sendable {
                 metadataTotal: total,
                 batchCount: run?.batchCount ?? 0,
                 importedRowCount: 0,
-                skippedRowCount: 0
+                skippedRowCount: 0,
+                settingsCompleted: 0,
+                settingsTotal: settingsTotal
             ),
             to: progress
         )
@@ -384,3 +642,4 @@ struct SQLiteMigrationCoordinator: Sendable {
     }
 }
 // swiftlint:enable type_body_length
+// swiftlint:enable file_length

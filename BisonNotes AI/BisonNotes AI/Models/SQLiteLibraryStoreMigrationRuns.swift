@@ -31,7 +31,7 @@ extension SQLiteLibraryStore {
                     WHERE sourceFingerprint = ?
                       AND importerVersion = ?
                       AND sourceModel = ?
-                      AND status IN ('pending', 'running')
+                      AND status IN ('pending', 'running', 'paused')
                     ORDER BY updatedAt DESC, startedAt DESC, id DESC
                     LIMIT 1
                     """,
@@ -46,7 +46,7 @@ extension SQLiteLibraryStore {
                     WHERE sourceFingerprint = ?
                       AND importerVersion = ?
                       AND sourceModel IS NULL
-                      AND status IN ('pending', 'running')
+                      AND status IN ('pending', 'running', 'paused')
                     ORDER BY updatedAt DESC, startedAt DESC, id DESC
                     LIMIT 1
                     """,
@@ -84,6 +84,35 @@ extension SQLiteLibraryStore {
             batchCount: run.batchCount,
             batchSHA256: run.batchSHA256,
             errorMessage: "metadata migration stopped; recovery report required",
+            at: date
+        )
+    }
+
+    /// Marks a run paused without retaining transient error text.
+    ///
+    /// A paused run is still eligible for exact-source resume after the app is
+    /// relaunched. The checkpoint preserves the last committed metadata batch
+    /// and any settings-phase marker, so cancellation cannot look like a
+    /// successful completion or require an in-memory run ID.
+    func pauseMigrationRun(
+        id: String,
+        at date: Date = Date()
+    ) throws -> SQLiteMigrationRun {
+        guard let run = try migrationRun(id: id) else {
+            throw SQLiteLibraryStoreError.migrationRunNotFound(id)
+        }
+        guard run.status != "failed", run.status != "completed" else {
+            return run
+        }
+        return try checkpointMigrationRun(
+            id: run.id,
+            phase: run.phase,
+            status: "paused",
+            metadataCompleted: run.metadataCompleted,
+            batchCursor: run.batchCursor,
+            batchCount: run.batchCount,
+            batchSHA256: run.batchSHA256,
+            errorMessage: nil,
             at: date
         )
     }
