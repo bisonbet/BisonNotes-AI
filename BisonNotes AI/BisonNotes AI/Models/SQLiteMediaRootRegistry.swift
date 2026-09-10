@@ -32,6 +32,28 @@ struct SQLiteMediaRootRegistry: Sendable {
             destination: [destinationRoot: destination]
         )
     }
+
+    func sourceURL(
+        root: String,
+        relativePath: String
+    ) throws -> URL {
+        try resolve(
+            root: root,
+            relativePath: relativePath,
+            from: sourceRoots
+        )
+    }
+
+    func destinationURL(
+        root: String,
+        relativePath: String
+    ) throws -> URL {
+        try resolve(
+            root: root,
+            relativePath: relativePath,
+            from: destinationRoots
+        )
+    }
 }
 
 private extension SQLiteMediaRootRegistry {
@@ -52,5 +74,54 @@ private extension SQLiteMediaRootRegistry {
             normalizedRoots[identifier] = normalizedURL
         }
         return normalizedRoots
+    }
+
+    func resolve(
+        root: String,
+        relativePath: String,
+        from roots: [String: URL]
+    ) throws -> URL {
+        try SQLiteMediaFileOperationValidation.root(root)
+        try SQLiteMediaFileOperationValidation.relativePath(relativePath)
+        guard let baseURL = roots[root] else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+        return try SQLiteMediaRootPathResolver.resolve(
+            relativePath: relativePath,
+            under: baseURL
+        )
+    }
+}
+
+enum SQLiteMediaRootPathResolver {
+    static func resolve(relativePath: String, under root: URL) throws -> URL {
+        try SQLiteMediaFileOperationValidation.relativePath(relativePath)
+        guard root.isFileURL, !root.path.isEmpty else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+
+        let normalizedRoot = root.standardizedFileURL
+        let candidate = normalizedRoot
+            .appendingPathComponent(relativePath, isDirectory: false)
+            .standardizedFileURL
+        guard isWithin(candidate, root: normalizedRoot) else {
+            throw SQLiteMediaFileOperationError.invalidRelativePath
+        }
+
+        let resolvedRoot = normalizedRoot
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let resolvedCandidate = candidate
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        guard isWithin(resolvedCandidate, root: resolvedRoot) else {
+            throw SQLiteMediaFileOperationError.invalidRelativePath
+        }
+        return candidate
+    }
+
+    private static func isWithin(_ candidate: URL, root: URL) -> Bool {
+        let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        return candidate.path == root.path || candidate.path.hasPrefix(rootPath)
     }
 }

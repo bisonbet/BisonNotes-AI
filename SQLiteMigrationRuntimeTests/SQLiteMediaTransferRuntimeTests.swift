@@ -136,7 +136,7 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
     }
 }
 
-private struct SQLiteMediaTransferFixture {
+struct SQLiteMediaTransferFixture {
     let directory: URL
     let sourceURL: URL
     let destinationURL: URL
@@ -144,7 +144,7 @@ private struct SQLiteMediaTransferFixture {
     let transfer: SQLiteMediaTransferPlan
 }
 
-private func makeMediaTransferFixture(
+func makeMediaTransferFixture(
     expectedSHA256: String? = nil
 ) throws -> SQLiteMediaTransferFixture {
     let directory = try makeVerifierTemporaryDirectory()
