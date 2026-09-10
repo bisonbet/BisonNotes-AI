@@ -84,7 +84,9 @@ let package = Package(
                 "SQLiteMediaFileOperationModels.swift",
                 "SQLiteLibraryStoreMediaOperations.swift",
                 "SQLiteLibraryStoreMediaOperationQueries.swift",
-                "SQLiteMediaFileOperationWorker.swift"
+                "SQLiteMediaFileOperationWorker.swift",
+                "SQLiteImportReceiptModels.swift",
+                "SQLiteLibraryStoreImportReceipts.swift"
             ]
         ),
         .testTarget(
