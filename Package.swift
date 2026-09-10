@@ -85,6 +85,9 @@ let package = Package(
                 "SQLiteLibraryStoreMediaOperations.swift",
                 "SQLiteLibraryStoreMediaOperationQueries.swift",
                 "SQLiteMediaFileOperationWorker.swift",
+                "SQLiteMediaRootRegistry.swift",
+                "SQLiteMediaTransferModels.swift",
+                "SQLiteMediaTransferCoordinator.swift",
                 "SQLiteImportReceiptModels.swift",
                 "SQLiteLibraryStoreImportReceipts.swift"
             ]

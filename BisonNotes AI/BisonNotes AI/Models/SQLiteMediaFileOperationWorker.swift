@@ -17,6 +17,25 @@ struct SQLiteMediaFileOperationWorker: Sendable {
 
     func run(
         operationID: String,
+        rootRegistry: SQLiteMediaRootRegistry,
+        at date: Date = Date()
+    ) async throws -> SQLiteMediaFileOperation {
+        guard let operation = try await store.mediaFileOperation(id: operationID) else {
+            throw SQLiteMediaFileOperationError.operationNotFound
+        }
+        guard let sourceRoot = operation.sourceRoot,
+              let destinationRoot = operation.destinationRoot else {
+            throw SQLiteMediaFileOperationError.operationConflict
+        }
+        let roots = try rootRegistry.roots(
+            sourceRoot: sourceRoot,
+            destinationRoot: destinationRoot
+        )
+        return try await run(operationID: operationID, roots: roots, at: date)
+    }
+
+    func run(
+        operationID: String,
         roots: SQLiteMediaFileOperationRoots,
         at date: Date = Date()
     ) async throws -> SQLiteMediaFileOperation {
