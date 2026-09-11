@@ -2483,9 +2483,12 @@ struct EditableTranscriptView: View {
 
         Task {
             do {
-                // Updates the display name only (recordingName field in Core Data).
-                // Physical audio file renaming is not performed here, consistent with SummaryDetailView.
-                try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: trimmedName)
+                // Persist the display name through the storage-neutral repository.
+                // Physical audio file renaming is intentionally not performed here.
+                try await appCoordinator.updateRecordingName(
+                    recordingId: recordingId,
+                    newName: trimmedName
+                )
 
                 await MainActor.run {
                     isUpdatingRecordingName = false

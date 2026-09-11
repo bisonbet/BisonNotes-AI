@@ -86,9 +86,9 @@ class SummaryRegenerationManager: ObservableObject {
                 // Update the recording name if it changed during regeneration
                 if newEnhancedSummary.recordingName != summary.recordingName {
                     AppLog.shared.summarization("Bulk regeneration: Recording name was updated by AI")
-                    // Update recording name in Core Data
-                    try appCoordinator.coreDataManager.updateRecordingName(
-                        for: recordingId,
+                    // Persist the display name through the storage-neutral repository.
+                    try await appCoordinator.updateRecordingName(
+                        recordingId: recordingId,
                         newName: newEnhancedSummary.recordingName
                     )
                 } else {
@@ -169,9 +169,9 @@ class SummaryRegenerationManager: ObservableObject {
             // Update the recording name if it changed during regeneration
             if newEnhancedSummary.recordingName != summary.recordingName {
                 AppLog.shared.summarization("Recording name was updated by AI for recording \(recordingId)")
-                // Update recording name in Core Data
-                try appCoordinator.coreDataManager.updateRecordingName(
-                    for: recordingId,
+                // Persist the display name through the storage-neutral repository.
+                try await appCoordinator.updateRecordingName(
+                    recordingId: recordingId,
                     newName: newEnhancedSummary.recordingName
                 )
             } else {

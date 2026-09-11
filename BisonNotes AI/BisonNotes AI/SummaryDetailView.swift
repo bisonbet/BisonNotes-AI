@@ -1518,9 +1518,9 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                // Update the recording name in Core Data
-                try appCoordinator.coreDataManager.updateRecordingName(
-                    for: recordingId,
+                // Persist the display name through the storage-neutral repository.
+                try await appCoordinator.updateRecordingName(
+                    recordingId: recordingId,
                     newName: newName.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
 
