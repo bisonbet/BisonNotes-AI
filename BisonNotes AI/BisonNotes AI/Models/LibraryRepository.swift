@@ -113,6 +113,74 @@ struct LibraryRecordingCloudSyncCommand: Equatable, Sendable {
     }
 }
 
+/// Creates or replaces the transcript attached to one recording.
+///
+/// The command carries the already-encoded payloads used by both Core Data and
+/// SQLite. An adapter preserves the existing transcript identity when the
+/// recording already has one; `id` is the requested identity only for a new
+/// transcript. This makes a lost acknowledgement safe to retry without
+/// creating a second transcript for the recording.
+struct LibraryTranscriptUpsertCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingReference: LibraryRecordingReference
+    let createdAt: Date
+    let segments: String
+    let speakerMappings: String?
+    let engine: String?
+    let processingTime: Double
+    let confidence: Double
+    let modifiedAt: Date
+
+    init(
+        id: UUID,
+        recordingReference: LibraryRecordingReference,
+        createdAt: Date = Date(),
+        segments: String,
+        speakerMappings: String? = nil,
+        engine: String? = nil,
+        processingTime: Double = 0,
+        confidence: Double = 0.5,
+        modifiedAt: Date = Date()
+    ) {
+        self.id = id
+        self.recordingReference = recordingReference
+        self.createdAt = createdAt
+        self.segments = segments
+        self.speakerMappings = speakerMappings
+        self.engine = engine
+        self.processingTime = processingTime
+        self.confidence = confidence
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryTranscriptUpsertCommand {
+    func validate() throws {
+        guard !segments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "transcript segments must not be empty"
+            )
+        }
+        guard processingTime.isFinite, processingTime >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "transcript processing time must be finite and non-negative"
+            )
+        }
+        guard confidence.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "transcript confidence must be finite"
+            )
+        }
+        guard [createdAt, modifiedAt].allSatisfy({
+            $0.timeIntervalSinceReferenceDate.isFinite
+        }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "transcript dates must be finite"
+            )
+        }
+    }
+}
+
 /// Stable identifiers used by processing-job commands.
 struct LibraryProcessingJobReference: Equatable, Sendable {
     let storageID: String?
@@ -504,6 +572,9 @@ protocol LibraryRepository: Sendable {
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot
+    func upsertTranscript(
+        _ command: LibraryTranscriptUpsertCommand
+    ) async throws -> LibraryTranscriptSnapshot
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot
@@ -527,6 +598,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case recordingNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
+    case transcriptAlreadyExists(reference: String)
+    case ambiguousTranscript(reference: String)
     case processingJobAlreadyExists(reference: String)
     case processingJobNotFound(reference: String)
     case ambiguousProcessingJob(reference: String)
@@ -547,6 +620,10 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The recording changed before it could be updated (\(reference)); "
                 + "expected last modified \(String(describing: expected)), "
                 + "found \(String(describing: actual))."
+        case .transcriptAlreadyExists(let reference):
+            return "The transcript already exists: \(reference)"
+        case .ambiguousTranscript(let reference):
+            return "The transcript identity is ambiguous: \(reference)"
         case .processingJobAlreadyExists(let reference):
             return "The processing job already exists: \(reference)"
         case .processingJobNotFound(let reference):

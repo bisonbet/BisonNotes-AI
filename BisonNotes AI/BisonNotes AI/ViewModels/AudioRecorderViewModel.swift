@@ -1207,8 +1207,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				startTime: 0,
 				endTime: duration
 			)
-			_ = coordinator.addTranscript(
-				for: recordingId,
+				_ = await coordinator.addTranscriptUsingRepository(
+					for: recordingId,
 				segments: [segment],
 				speakerMappings: [:],
 				engine: .fluidAudio,

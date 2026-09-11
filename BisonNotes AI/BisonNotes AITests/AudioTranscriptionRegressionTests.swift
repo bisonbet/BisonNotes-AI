@@ -272,7 +272,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testMissingRecordingIdentityFailsBeforeTranscriptPersistence() throws {
+    func testMissingRecordingIdentityFailsBeforeTranscriptPersistence() async throws {
         let persistence = PersistenceController(inMemory: true)
         let coordinator = AppDataCoordinator(persistenceController: persistence)
         let audioURL = tempDirectory.appendingPathComponent("missing-identity.m4a")
@@ -293,7 +293,10 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             segments: [TranscriptSegment(speaker: "Speaker", text: "Unsaved transcript", startTime: 0, endTime: 1)]
         )
 
-        XCTAssertThrowsError(try persistBackgroundTranscript(transcriptData, using: coordinator)) { error in
+        do {
+            _ = try await persistBackgroundTranscript(transcriptData, using: coordinator)
+            XCTFail("Expected a typed recording identity error")
+        } catch {
             guard case .recordingIdentityUnavailable(let failedURL) = error as? BackgroundProcessingError else {
                 return XCTFail("Expected a typed recording identity error")
             }
@@ -303,7 +306,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
     }
 
     @MainActor
-    func testBackgroundTranscriptPersistenceReturnsSavedIdentity() throws {
+    func testBackgroundTranscriptPersistenceReturnsSavedIdentity() async throws {
         let persistence = PersistenceController(inMemory: true)
         let coordinator = AppDataCoordinator(persistenceController: persistence)
         let audioURL = tempDirectory.appendingPathComponent("persisted-transcript.m4a")
@@ -327,7 +330,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
             confidence: 0.9
         )
 
-        let transcriptId = try persistBackgroundTranscript(transcriptData, using: coordinator)
+        let transcriptId = try await persistBackgroundTranscript(transcriptData, using: coordinator)
 
         XCTAssertEqual(coordinator.getTranscript(for: recordingId)?.id, transcriptId)
         XCTAssertEqual(coordinator.getTranscriptData(for: recordingId)?.recordingId, recordingId)

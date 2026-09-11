@@ -79,6 +79,113 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(pendingMutations, [expectedPendingMutation()])
     }
 
+    func testRepositoryReplacesTranscriptByRecordingAndUpdatesRecordingAtomically() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let replacementID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000015")
+        )
+
+        let updated = try await repository.upsertTranscript(
+            LibraryTranscriptUpsertCommand(
+                id: replacementID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: "recording-storage"
+                ),
+                createdAt: Date(timeIntervalSinceReferenceDate: 300),
+                segments: "[{\"text\":\"replacement\"}]",
+                speakerMappings: "{\"Speaker 1\":\"A\"}",
+                engine: "replacement-engine",
+                processingTime: 4.5,
+                confidence: 0.91,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(updated.storageID, "transcript-storage")
+        XCTAssertEqual(updated.legacyID, "transcript-legacy")
+        XCTAssertEqual(updated.createdAt, Date(timeIntervalSinceReferenceDate: 102))
+        XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(updated.engine, "replacement-engine")
+        XCTAssertEqual(updated.processingTime, 4.5)
+        XCTAssertEqual(updated.confidence, 0.91)
+        XCTAssertEqual(updated.segments, "[{\"text\":\"replacement\"}]")
+        XCTAssertEqual(updated.speakerMappings, "{\"Speaker 1\":\"A\"}")
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.transcript, .recording])
+        XCTAssertEqual(changes.map(\.operation), [.updated, .updated])
+        XCTAssertEqual(changes.map(\.revision), [1, 2])
+    }
+
+    func testRepositoryCreatesTranscriptWithStableStorageIdentityAndRetryDoesNotDuplicate() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let recordingOnlySnapshot = SQLiteMigrationSourceSnapshot(
+            sourceModel: sourceSnapshot.sourceModel,
+            sourceFingerprint: "recording-only-fixture",
+            migrationRunID: nil,
+            rows: sourceSnapshot.rows.filter { $0.entity == .recordings }
+        )
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            recordingOnlySnapshot,
+            into: store,
+            batchSize: 1,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000016")
+        )
+        let command = LibraryTranscriptUpsertCommand(
+            id: transcriptID,
+            recordingReference: LibraryRecordingReference(
+                legacyID: "recording-legacy"
+            ),
+            createdAt: Date(timeIntervalSinceReferenceDate: 400),
+            segments: "[]",
+            modifiedAt: Date(timeIntervalSinceReferenceDate: 401)
+        )
+
+        let created = try await repository.upsertTranscript(command)
+        let retried = try await repository.upsertTranscript(command)
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+
+        XCTAssertEqual(created.storageID, "sqlite-transcript-\(transcriptID.uuidString.lowercased())")
+        XCTAssertEqual(created.legacyID, transcriptID.uuidString.lowercased())
+        XCTAssertEqual(created.recordingStorageID, "recording-storage")
+        XCTAssertEqual(created.createdAt, Date(timeIntervalSinceReferenceDate: 400))
+        XCTAssertEqual(retried.storageID, created.storageID)
+        XCTAssertEqual(retried.legacyID, created.legacyID)
+        XCTAssertEqual(transcripts.count, 1)
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [
+            .transcript, .recording, .transcript, .recording
+        ])
+    }
+
     func testRepositoryRenamesRecordingWithExpectedRevision() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

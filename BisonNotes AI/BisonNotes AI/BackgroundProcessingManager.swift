@@ -1479,7 +1479,7 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 throw BackgroundProcessingError.recordingDeletedDuringProcessing
             }
-            try saveTranscript(
+            try await saveTranscript(
                 cleanupPreparation.transcript,
                 speakerLabelWarning: speakerLabelWarning,
                 cleanupWarning: transcriptCleanupWarning
@@ -1743,9 +1743,9 @@ class BackgroundProcessingManager: ObservableObject {
         _ transcriptData: TranscriptData,
         speakerLabelWarning: LocalSpeakerLabelWarning?,
         cleanupWarning: TranscriptCleanupWarning? = nil
-    ) throws {
+    ) async throws {
         try Task.checkCancellation()
-        let transcriptId = try persistBackgroundTranscript(
+        let transcriptId = try await persistBackgroundTranscript(
             transcriptData,
             using: enhancedFileManager.getCoordinator()
         )
@@ -3220,7 +3220,7 @@ class BackgroundProcessingManager: ObservableObject {
 func persistBackgroundTranscript(
     _ transcriptData: TranscriptData,
     using appCoordinator: AppDataCoordinator?
-) throws -> UUID {
+) async throws -> UUID {
     try Task.checkCancellation()
     guard let appCoordinator else {
         throw BackgroundProcessingError.processingFailed(
@@ -3234,7 +3234,7 @@ func persistBackgroundTranscript(
     }
 
     try Task.checkCancellation()
-    guard let transcriptId = appCoordinator.addTranscript(
+    guard let transcriptId = await appCoordinator.addTranscriptUsingRepository(
         for: recordingId,
         segments: transcriptData.segments,
         speakerMappings: transcriptData.speakerMappings,

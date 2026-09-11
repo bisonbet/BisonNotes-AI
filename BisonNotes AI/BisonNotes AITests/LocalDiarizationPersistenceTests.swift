@@ -22,7 +22,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         persistenceController = nil
     }
 
-    func testLabeledTranscriptPersistsSpeakerMappingsAndSummaryText() throws {
+    func testLabeledTranscriptPersistsSpeakerMappingsAndSummaryText() async throws {
         let recordingID = try makeRecording(named: "Labeled Recording")
         let audioURL = tempDirectory.appendingPathComponent("labeled-recording.m4a")
         let transcriptData = TranscriptData(
@@ -38,7 +38,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
             engine: .fluidAudio
         )
 
-        _ = try persistBackgroundTranscript(transcriptData, using: appCoordinator)
+        _ = try await persistBackgroundTranscript(transcriptData, using: appCoordinator)
 
         let persisted = try XCTUnwrap(appCoordinator.getTranscriptData(for: recordingID))
         XCTAssertEqual(persisted.plainText, "Hello there General Kenobi")
@@ -47,7 +47,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         XCTAssertTrue(persisted.textForSummarization.contains("Speaker 2: General Kenobi"))
     }
 
-    func testSpeakerBoundarySpacingSurvivesPersistence() throws {
+    func testSpeakerBoundarySpacingSurvivesPersistence() async throws {
         let recordingID = try makeRecording(named: "Boundary Spacing")
         let audioURL = tempDirectory.appendingPathComponent("boundary-spacing.m4a")
         let transcriptData = TranscriptData(
@@ -76,14 +76,14 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         )
 
         XCTAssertEqual(transcriptData.plainText, "hello(world)")
-        _ = try persistBackgroundTranscript(transcriptData, using: appCoordinator)
+        _ = try await persistBackgroundTranscript(transcriptData, using: appCoordinator)
 
         let persisted = try XCTUnwrap(appCoordinator.getTranscriptData(for: recordingID))
         XCTAssertEqual(persisted.plainText, "hello(world)")
         XCTAssertEqual(persisted.segments.map(\.hasLeadingSpace), [false, false])
     }
 
-    func testRetryAndRerunReplaceLabelStateWithoutDuplicatingTranscript() throws {
+    func testRetryAndRerunReplaceLabelStateWithoutDuplicatingTranscript() async throws {
         let recordingID = try makeRecording(named: "Rerun Recording")
         let audioURL = tempDirectory.appendingPathComponent("rerun-recording.m4a")
         let first = TranscriptData(
@@ -108,8 +108,8 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
             engine: .fluidAudio
         )
 
-        let firstID = try persistBackgroundTranscript(first, using: appCoordinator)
-        let secondID = try persistBackgroundTranscript(second, using: appCoordinator)
+        let firstID = try await persistBackgroundTranscript(first, using: appCoordinator)
+        let secondID = try await persistBackgroundTranscript(second, using: appCoordinator)
 
         XCTAssertEqual(firstID, secondID)
         XCTAssertEqual(appCoordinator.getAllTranscripts().count, 1)
@@ -152,7 +152,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
                 segments: labeled.segments,
                 speakerMappings: labeled.speakerMappings ?? [:]
             )
-            _ = try persistBackgroundTranscript(data, using: appCoordinator)
+            _ = try await persistBackgroundTranscript(data, using: appCoordinator)
             XCTFail("A cancellation must not reach transcript persistence")
         } catch is CancellationError {
             // Expected.
@@ -271,7 +271,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
             withUnsafeCurrentTask { task in
                 task?.cancel()
             }
-            return try persistBackgroundTranscript(transcriptData, using: appCoordinator)
+            return try await persistBackgroundTranscript(transcriptData, using: appCoordinator)
         }
 
         do {

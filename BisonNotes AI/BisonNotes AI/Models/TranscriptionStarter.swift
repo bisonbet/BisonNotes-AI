@@ -255,7 +255,7 @@ final class TranscriptionStarter: ObservableObject {
                             processingTime: result.processingTime
                         )
                         try Task.checkCancellation()
-                        let transcriptId = appCoordinator.addTranscript(
+                        let transcriptId = await appCoordinator.addTranscriptUsingRepository(
                             for: recordingId,
                             segments: transcriptData.segments,
                             speakerMappings: transcriptData.speakerMappings,

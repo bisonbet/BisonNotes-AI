@@ -232,6 +232,79 @@ class AppDataCoordinator: ObservableObject {
         return result
     }
 
+    /// Persists a transcript through the storage-neutral repository. The
+    /// synchronous API above remains for legacy/test callers while production
+    /// transcription paths move to this async boundary.
+    func addTranscriptUsingRepository(
+        for recordingId: UUID,
+        segments: [TranscriptSegment],
+        speakerMappings: [String: String] = [:],
+        engine: TranscriptionEngine? = nil,
+        processingTime: TimeInterval = 0,
+        confidence: Double = 0.5
+    ) async -> UUID? {
+        let encoder = JSONEncoder()
+        guard let segmentsData = try? encoder.encode(segments),
+              let segmentsJSON = String(data: segmentsData, encoding: .utf8) else {
+            AppLog.shared.backgroundProcessing(
+                "Failed to encode transcript segments for repository persistence",
+                level: .error
+            )
+            return nil
+        }
+
+        let speakerMappingsJSON: String?
+        if speakerMappings.isEmpty {
+            speakerMappingsJSON = nil
+        } else if let mappingsData = try? encoder.encode(speakerMappings),
+                  let mappingsString = String(data: mappingsData, encoding: .utf8) {
+            speakerMappingsJSON = mappingsString
+        } else {
+            AppLog.shared.backgroundProcessing(
+                "Failed to encode transcript speaker mappings for repository persistence",
+                level: .error
+            )
+            return nil
+        }
+
+        let now = Date()
+        do {
+            let snapshot = try await libraryRepository.upsertTranscript(
+                LibraryTranscriptUpsertCommand(
+                    id: UUID(),
+                    recordingReference: LibraryRecordingReference(
+                        legacyID: recordingId.uuidString
+                    ),
+                    createdAt: now,
+                    segments: segmentsJSON,
+                    speakerMappings: speakerMappingsJSON,
+                    engine: engine?.rawValue,
+                    processingTime: processingTime,
+                    confidence: confidence,
+                    modifiedAt: now
+                )
+            )
+            if shouldBackUpToiCloud(recordingId: recordingId) {
+                scheduleAutoBackupIfEnabled()
+            }
+            guard let legacyID = snapshot.legacyID,
+                  let transcriptID = UUID(uuidString: legacyID) else {
+                AppLog.shared.backgroundProcessing(
+                    "Repository returned a transcript without a UUID identity",
+                    level: .error
+                )
+                return nil
+            }
+            return transcriptID
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to persist transcript through repository: \(error.localizedDescription)",
+                level: .error
+            )
+            return nil
+        }
+    }
+
     func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
         let result = workflowManager.createSummary(
             for: recordingId,

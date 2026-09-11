@@ -402,6 +402,116 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func upsertTranscript(
+        _ command: LibraryTranscriptUpsertCommand
+    ) async throws -> LibraryTranscriptSnapshot {
+        try command.validate()
+        let context = context
+        return try context.performAndWait {
+            let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+            recordingRequest.fetchLimit = 2
+            recordingRequest.predicate = try Self.recordingPredicate(
+                for: command.recordingReference
+            )
+
+            let recordings = try context.fetch(recordingRequest)
+            guard !recordings.isEmpty else {
+                throw LibraryRepositoryError.recordingNotFound(
+                    reference: command.recordingReference.displayValue
+                )
+            }
+            guard recordings.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: command.recordingReference.displayValue
+                )
+            }
+
+            let recording = recordings[0]
+            guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "RecordingEntry",
+                    field: "id"
+                )
+            }
+
+            let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+            transcriptRequest.fetchLimit = 2
+            transcriptRequest.predicate = NSPredicate(
+                format: "recording == %@ OR recordingId == %@",
+                recording,
+                recordingID as CVarArg
+            )
+            let transcripts = try context.fetch(transcriptRequest)
+            guard transcripts.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousTranscript(
+                    reference: command.recordingReference.displayValue
+                )
+            }
+
+            let transcript: NSManagedObject
+            let transcriptID: UUID
+            let isNewTranscript = transcripts.isEmpty
+            if let existingTranscript = transcripts.first {
+                guard let existingID = existingTranscript.value(forKey: "id") as? UUID else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "TranscriptEntry",
+                        field: "id"
+                    )
+                }
+                transcript = existingTranscript
+                transcriptID = existingID
+            } else {
+                let collisionRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                collisionRequest.fetchLimit = 2
+                collisionRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                guard try context.fetch(collisionRequest).isEmpty else {
+                    throw LibraryRepositoryError.transcriptAlreadyExists(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                transcript = NSEntityDescription.insertNewObject(
+                    forEntityName: "TranscriptEntry",
+                    into: context
+                )
+                transcriptID = command.id
+                transcript.setValue(command.id, forKey: "id")
+                transcript.setValue(command.createdAt, forKey: "createdAt")
+            }
+
+            transcript.setValue(recordingID, forKey: "recordingId")
+            transcript.setValue(command.modifiedAt, forKey: "lastModified")
+            transcript.setValue(command.engine, forKey: "engine")
+            transcript.setValue(command.processingTime, forKey: "processingTime")
+            transcript.setValue(command.confidence, forKey: "confidence")
+            transcript.setValue(command.segments, forKey: "segments")
+            transcript.setValue(command.speakerMappings, forKey: "speakerMappings")
+            transcript.setValue(recording, forKey: "recording")
+
+            recording.setValue(transcript, forKey: "transcript")
+            recording.setValue(transcriptID, forKey: "transcriptId")
+            recording.setValue("Completed", forKey: "transcriptionStatus")
+            recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+            do {
+                try context.save()
+            } catch {
+                if isNewTranscript {
+                    context.delete(transcript)
+                }
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "upsert transcript",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.transcriptSnapshot(from: transcript)
+        }
+    }
+
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot {

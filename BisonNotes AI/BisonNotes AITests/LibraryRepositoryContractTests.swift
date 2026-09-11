@@ -163,6 +163,59 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertTrue(pendingAfterEnable.isEmpty)
     }
 
+    func testCoreDataRepositoryReplacesTranscriptByRecordingAndPreservesIdentity() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-transcript-upsert.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let updated = try await repository.upsertTranscript(
+            LibraryTranscriptUpsertCommand(
+                id: try XCTUnwrap(
+                    UUID(uuidString: "10000000-0000-0000-0000-000000000015")
+                ),
+                recordingReference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                createdAt: Date(timeIntervalSinceReferenceDate: 300),
+                segments: "[{\"text\":\"replacement\"}]",
+                speakerMappings: "{\"Speaker 1\":\"A\"}",
+                engine: "replacement-engine",
+                processingTime: 4.5,
+                confidence: 0.91,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(
+            updated.storageID,
+            "core-data-transcript-10000000-0000-0000-0000-000000000002"
+        )
+        XCTAssertEqual(updated.legacyID, "10000000-0000-0000-0000-000000000002")
+        XCTAssertEqual(updated.createdAt, Date(timeIntervalSinceReferenceDate: 102))
+        XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(updated.engine, "replacement-engine")
+        XCTAssertEqual(updated.processingTime, 4.5)
+        XCTAssertEqual(updated.confidence, 0.91)
+        XCTAssertEqual(updated.segments, "[{\"text\":\"replacement\"}]")
+        XCTAssertEqual(updated.speakerMappings, "{\"Speaker 1\":\"A\"}")
+
+        let persisted = try await repository.fetchTranscriptSnapshots()
+        XCTAssertEqual(persisted, [updated])
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+    }
+
     func testCoreDataRepositoryUpdatesProcessingJobWithoutExposingManagedObject() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

@@ -2308,14 +2308,16 @@ struct EditableTranscriptView: View {
         guard !isSaving, !isReloadingTranscript else { return }
 
         isSaving = true
-        let didSave = saveTranscript()
-        isSaving = false
+        Task { @MainActor in
+            let didSave = await saveTranscript()
+            isSaving = false
 
-        if didSave {
-            savedTranscriptSnapshot = currentTranscriptSnapshot
-            showingSaveSuccessAlert = true
-        } else {
-            showingSaveErrorAlert = true
+            if didSave {
+                savedTranscriptSnapshot = currentTranscriptSnapshot
+                showingSaveSuccessAlert = true
+            } else {
+                showingSaveErrorAlert = true
+            }
         }
     }
 
@@ -2325,16 +2327,18 @@ struct EditableTranscriptView: View {
 
         showingCloseConfirmation = false
         isSaving = true
-        let didSave = saveTranscript()
-        isSaving = false
+        Task { @MainActor in
+            let didSave = await saveTranscript()
+            isSaving = false
 
-        guard didSave else {
-            showingSaveErrorAlert = true
-            return
+            guard didSave else {
+                showingSaveErrorAlert = true
+                return
+            }
+
+            savedTranscriptSnapshot = currentTranscriptSnapshot
+            closeAfterCloseDecision()
         }
-
-        savedTranscriptSnapshot = currentTranscriptSnapshot
-        closeAfterCloseDecision()
     }
 
     private func discardChangesAndClose() {
@@ -2351,14 +2355,14 @@ struct EditableTranscriptView: View {
     }
     #endif
 
-    private func saveTranscript() -> Bool {
+    private func saveTranscript() async -> Bool {
         guard let recordingId = recording.id else {
             AppLog.shared.transcription("Cannot save transcript: missing recording ID", level: .error)
             saveErrorMessage = "Unable to save transcript because the recording is missing an identifier."
             return false
         }
 
-        let transcriptId = appCoordinator.addTranscript(
+        let transcriptId = await appCoordinator.addTranscriptUsingRepository(
             for: recordingId,
             segments: editedSegments,
             speakerMappings: speakerMappings,
@@ -2449,7 +2453,7 @@ struct EditableTranscriptView: View {
                 return
             }
 
-            let transcriptId = appCoordinator.addTranscript(
+            let transcriptId = await appCoordinator.addTranscriptUsingRepository(
                 for: recordingId,
                 segments: result.segments,
                 speakerMappings: sourceMappings,
@@ -2635,13 +2639,10 @@ struct EditableTranscriptView: View {
                             engine: selectedEngine
                         )
                         try Task.checkCancellation()
-                        try await MainActor.run {
-                            try Task.checkCancellation()
-                            // Save the new transcript to Core Data first (this will replace the existing transcript)
-                            saveNewTranscriptToCoreData(
-                                replacement: replacement
-                            )
+                        try Task.checkCancellation()
+                        await saveNewTranscriptToCoreData(replacement: replacement)
 
+                        await MainActor.run {
                             AppLog.shared.transcription("Transcript UI updated with rerun results")
 
                             // Force the parent view to refresh by posting a notification
@@ -2723,10 +2724,11 @@ struct EditableTranscriptView: View {
         }
     }
 
+    @MainActor
     private func saveNewTranscriptToCoreData(
         replacement: TranscriptRerunReplacement
-    ) {
-        AppLog.shared.transcription("Saving new transcript to Core Data...", level: .debug)
+    ) async {
+        AppLog.shared.transcription("Saving new transcript through the repository...", level: .debug)
 
         // We need to find and update the existing transcript in Core Data
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
@@ -2745,8 +2747,8 @@ struct EditableTranscriptView: View {
             // The Core Data system will update the existing transcript instead of creating a new one
             AppLog.shared.transcription("Replacing transcript for recording ID: \(recordingId)", level: .debug)
 
-            // Add the new transcript
-            let transcriptId = coordinator.addTranscript(
+            // Add the new transcript through the storage-neutral boundary.
+            let transcriptId = await coordinator.addTranscriptUsingRepository(
                 for: recordingId,
                 segments: replacement.segments,
                 speakerMappings: replacement.speakerMappings,
@@ -2756,7 +2758,7 @@ struct EditableTranscriptView: View {
             )
 
             if transcriptId != nil {
-                AppLog.shared.transcription("Transcript replaced in Core Data with ID: \(transcriptId!)")
+                AppLog.shared.transcription("Transcript replaced through repository with ID: \(transcriptId!)")
                 speakerLabelWarningMessage = replacement.speakerLabelWarning?.userVisibleMessage
                 transcriptCleanupWarningMessage = replacement.transcriptCleanupWarning?.userVisibleMessage
 
@@ -2776,7 +2778,7 @@ struct EditableTranscriptView: View {
                 AppLog.shared.transcription("Failed to replace transcript in Core Data", level: .error)
             }
         } else {
-            AppLog.shared.transcription("Could not find recording entry in Core Data for transcript save", level: .error)
+            AppLog.shared.transcription("Could not find recording entry for transcript save", level: .error)
         }
     }
 
