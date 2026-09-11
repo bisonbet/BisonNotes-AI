@@ -20,10 +20,10 @@ transcript-upsert command with Core Data/SQLite adapters plus asynchronous
 production transcription callers, a summary-upsert command with Core
 Data/SQLite adapters plus asynchronous background and regeneration callers,
 and recording archive-state/archive-location commands with Core Data/SQLite
-adapters, a recording-create command with Core Data/SQLite adapters and an
-asynchronous background creation caller, plus shared maintenance-gate adoption
-by the production repository adapters, are implemented, but no SQLite
-migration is enabled**.
+adapters, a recording-create command with Core Data/SQLite adapters and
+asynchronous background and file-import creation callers, plus shared
+maintenance-gate adoption by the production repository adapters, are
+implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -182,7 +182,7 @@ shared `LibraryMaintenanceGate`; `AppDataCoordinator` and
 and the SQLite repository gates all `LibraryRepository` reads and commands.
 Its observation polling methods remain ungated so the source coordinator can
 poll while holding the exclusive lease. The standalone runtime suite passes
-90/90, and the macOS/iOS app-hosted build-for-testing checks pass. Direct
+91/91, and the macOS/iOS app-hosted build-for-testing checks pass. Direct
 managed-object and file-owning legacy callers still require separate
 conversion or an explicitly documented exclusion; no repository backend is
 selected for production startup and no SQLite cutover is enabled.
@@ -200,6 +200,16 @@ source retention remain outside this command. The standalone suite passes
 91/91, both app-hosted build-for-testing checks pass, and the Core Data contract
 test is compile-checked in the app-hosted target; no repository backend is
 selected for production startup and no SQLite cutover is enabled.
+
+The current file-import checkpoint is `0403d053` (`refactor: route file imports
+through repository`). `FileImportManager` retains ownership of copying and
+validating imported audio, archive-token handling and duplicate-name policy,
+but commits the new recording metadata through the shared repository command.
+The importer preserves the source file's modification date as the recording
+date and created-at value, and a failed metadata commit still causes its
+existing file-cleanup defer to run. The macOS/iOS app-hosted build-for-testing
+checks and the 91-test standalone suite pass; other direct recording creation
+and import paths remain open.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
@@ -472,8 +482,9 @@ Completed in this slice:
   adapter; the AI workflow remains on its existing file-renaming path until
   file operations have a journaled repository command. Production transcription
   persistence uses the async transcript command, while background summarization
-  and summary regeneration use the async summary command; host and app-hosted
-  contract coverage exercises both adapters.
+  and summary regeneration use the async summary command. `FileImportManager`
+  now uses the recording-create command after it owns and validates the copied
+  audio file; host and app-hosted contract coverage exercises both adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
   maintenance gate in production construction paths. Repository-backed reads
   and commands wait behind an exclusive source-capture/migration lease; the
