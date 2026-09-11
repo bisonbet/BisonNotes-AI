@@ -1740,22 +1740,6 @@ class CoreDataManager: ObservableObject {
         AppLog.shared.coreData("Deleted processing job: \(job.id?.uuidString ?? "nil")")
     }
 
-    func deleteCompletedProcessingJobs() {
-        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "status IN %@", ["completed", "failed"])
-
-        do {
-            let completedJobs = try context.fetch(fetchRequest)
-            for job in completedJobs {
-                context.delete(job)
-            }
-            try? saveContext()
-            AppLog.shared.coreData("Deleted \(completedJobs.count) completed processing jobs")
-        } catch {
-            AppLog.shared.coreData("Error deleting completed processing jobs: \(error)", level: .error)
-        }
-    }
-
     // MARK: - Cleanup Operations
 
     /// Cleans up orphaned recordings that have no audio file and no meaningful content
