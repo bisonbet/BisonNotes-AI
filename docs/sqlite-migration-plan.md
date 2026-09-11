@@ -492,7 +492,9 @@ Completed in this slice:
   existing summary identity and updates both rows atomically; archive-state
   changes commit recording archive metadata with the same revision guard;
   archive-location upsert records verified destination metadata with stable
-  retry and conflict semantics.
+  retry and conflict semantics; the import-only transient-recording discard
+  command refuses dependent rows and records SQLite deletes durably without
+  creating a CloudKit tombstone.
   Core Data and SQLite adapters return
   committed snapshots and distinguish invalid, missing, ambiguous, stale and
   failed writes. The
@@ -504,9 +506,10 @@ Completed in this slice:
   and summary regeneration use the async summary command. `FileImportManager`
   now uses the recording-create command after it owns and validates the copied
   audio file. `TranscriptImportManager` uses repository snapshot reads,
-  recording creation and transcript upsert for its normal path; its rollback
-  delete remains a separate recording-lifecycle command. Host and app-hosted
-  contract coverage exercises both adapters.
+  recording creation and transcript upsert for its normal path; failed
+  transcript persistence now uses the import-only discard command. Full user
+  deletion remains a separate lifecycle command. Host and app-hosted contract
+  coverage exercises both adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
   maintenance gate in production construction paths. Repository-backed reads
   and commands wait behind an exclusive source-capture/migration lease; the
@@ -529,9 +532,9 @@ Completed in this slice:
   `LibraryObservationSubscription` anchors before an initial snapshot and
   advances only across validated contiguous batches. The pre-cutover startup
   boundary now anchors a durable Core Data subscription and polls it on remote
-  store changes and activation; history-retention/purge policy and the remaining
-  recording, archive-location and file-owning repository write commands are
-  intentionally not implemented yet. Repository observation polling remains
+  store changes and activation; history-retention/purge policy, full user
+  recording deletion and the remaining archive-location/file-owning repository
+  write commands are intentionally not implemented yet. Repository observation polling remains
   outside the normal-access gate so an exclusive source lease cannot deadlock
   while it validates the source revision.
 - The isolated migration coordinator now composes source validation, durable
@@ -582,7 +585,7 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every remaining direct
   Core Data, settings, Watch, share and background caller, and broader read/write
-  repository contracts (including recording deletion, production
+  repository contracts (including full user deletion, production
   archive-location caller/order and file-owning operations) and app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only

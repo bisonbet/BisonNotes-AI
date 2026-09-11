@@ -484,10 +484,12 @@ The transcript-import checkpoint `8bbbe283` routes the normal
 use repository snapshots, dummy-audio metadata uses the recording-create
 command, and encoded imported segments use the transcript-upsert command.
 Dummy-audio creation, ownership and failure cleanup remain with the importer.
-The rollback delete remains a direct Core Data operation until the recording
-deletion command models dependent rows and the existing durable CloudKit
-outbox behavior. The macOS/iOS app-hosted build-for-testing checks and the
-91-test standalone suite pass; no backend is wired to startup.
+The later `3fe7d86d` checkpoint replaces the rollback delete with the
+import-only `LibraryRecordingDiscardCommand`: both adapters refuse dependent
+metadata/outbox rows, and SQLite records a clean discard in its durable change
+log without creating a CloudKit tombstone. Full user deletion remains a
+separate lifecycle command. The macOS/iOS app-hosted build-for-testing checks
+and the 93-test standalone suite pass; no backend is wired to startup.
 
 The durable media-operation checkpoint `44515c52` adds transactional asset and
 file-operation enqueueing, root-relative path validation, streaming checksum/
