@@ -25,6 +25,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+    private let libraryRepository: any LibraryRepository
     nonisolated static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
     nonisolated static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
@@ -60,6 +61,20 @@ class TranscriptImportManager: NSObject, ObservableObject {
     override init() {
         self.persistenceController = PersistenceController.shared
         self.context = persistenceController.container.viewContext
+        self.libraryRepository = CoreDataLibraryRepository(
+            context: persistenceController.container.viewContext,
+            maintenanceGate: persistenceController.maintenanceGate
+        )
+        super.init()
+    }
+
+    init(persistenceController: PersistenceController) {
+        self.persistenceController = persistenceController
+        self.context = persistenceController.container.viewContext
+        self.libraryRepository = CoreDataLibraryRepository(
+            context: persistenceController.container.viewContext,
+            maintenanceGate: persistenceController.maintenanceGate
+        )
         super.init()
     }
 
@@ -185,12 +200,9 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Check if a recording with the given name already exists
     private func recordingExists(name: String) async throws -> Bool {
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingName == %@", name)
-
         do {
-            let count = try context.count(for: fetchRequest)
-            return count > 0
+            let recordings = try await libraryRepository.fetchRecordingSummaries()
+            return recordings.contains { $0.name == name }
         } catch {
             AppLog.shared.transcription("Error checking for existing recording: \(error)", level: .error)
             throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
@@ -819,48 +831,59 @@ class TranscriptImportManager: NSObject, ObservableObject {
     /// Create a recording entry for the imported transcript
     /// Note: Duplicate check should be done before calling this function to avoid orphaned audio files
     private func createRecordingEntryForImportedTranscript(audioURL: URL, name: String) async throws -> UUID {
-        // Create new recording entry
-        let recordingEntry = RecordingEntry(context: context)
         let recordingId = UUID()
-        recordingEntry.id = recordingId
-        recordingEntry.recordingName = name
-
-        // Store relative path instead of absolute URL
-        recordingEntry.recordingURL = urlToRelativePath(audioURL)
 
         // Get file metadata
+        let metadataDate: Date
+        let fileSize: Int64
+        let duration: TimeInterval
         do {
             let resourceValues = try audioURL.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
-            recordingEntry.recordingDate = resourceValues.creationDate ?? Date()
-            recordingEntry.createdAt = resourceValues.creationDate ?? Date()
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
+            metadataDate = resourceValues.creationDate ?? Date()
+            fileSize = Int64(resourceValues.fileSize ?? 0)
 
             // Get duration (should be ~0.1 seconds)
-            let duration = await getAudioDuration(url: audioURL)
-            recordingEntry.duration = duration
+            let measuredDuration = await getAudioDuration(url: audioURL)
+            duration = measuredDuration.isFinite && measuredDuration >= 0
+                ? measuredDuration
+                : DummyAudioConstants.durationSeconds
 
         } catch {
             AppLog.shared.transcription("Error getting file metadata: \(error)", level: .error)
-            recordingEntry.recordingDate = Date()
-            recordingEntry.createdAt = Date()
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = 0
-            recordingEntry.duration = 0.1
+            metadataDate = Date()
+            fileSize = 0
+            duration = DummyAudioConstants.durationSeconds
         }
 
-        // Set default values
-        recordingEntry.audioQuality = "imported"
-        recordingEntry.transcriptionStatus = ProcessingStatus.completed.rawValue // Mark as completed since we're importing
-        recordingEntry.summaryStatus = ProcessingStatus.notStarted.rawValue
+        guard let recordingURL = urlToRelativePath(audioURL) else {
+            throw TranscriptImportError.databaseError(
+                "Could not represent imported transcript audio path"
+            )
+        }
 
-        // Save the context
+        let modifiedAt = Date()
         do {
-            try context.save()
-            AppLog.shared.transcription("Created Core Data entry for imported transcript: \(name)")
+            _ = try await libraryRepository.createRecording(
+                LibraryRecordingCreateCommand(
+                    id: recordingId,
+                    recordingURL: recordingURL,
+                    name: name,
+                    recordingDate: metadataDate,
+                    createdAt: metadataDate,
+                    duration: duration,
+                    fileSize: fileSize,
+                    audioQuality: "imported",
+                    transcriptionStatus: ProcessingStatus.completed.rawValue,
+                    summaryStatus: ProcessingStatus.notStarted.rawValue,
+                    modifiedAt: modifiedAt
+                )
+            )
+            AppLog.shared.transcription("Created repository entry for imported transcript: \(name)")
         } catch {
-            AppLog.shared.transcription("Failed to save Core Data entry: \(error)", level: .error)
-            throw TranscriptImportError.databaseError("Failed to save to database: \(error.localizedDescription)")
+            AppLog.shared.transcription("Failed to save imported transcript entry: \(error)", level: .error)
+            throw TranscriptImportError.databaseError(
+                "Failed to save to database: \(error.localizedDescription)"
+            )
         }
 
         return recordingId
@@ -868,47 +891,42 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Create a transcript entry for the imported text
     private func createTranscriptEntry(for recordingId: UUID, segments: [TranscriptSegment]) async throws {
-        guard let recording = getRecording(id: recordingId) else {
-            throw TranscriptImportError.databaseError("Recording not found for ID: \(recordingId)")
-        }
-
-        // Create transcript entry
-        let transcriptEntry = TranscriptEntry(context: context)
         let transcriptId = UUID()
-        transcriptEntry.id = transcriptId
-        transcriptEntry.recordingId = recordingId
-        transcriptEntry.engine = "imported" // Mark as imported
-        transcriptEntry.confidence = 1.0 // Full confidence since it's user-provided
-        transcriptEntry.processingTime = 0
-        transcriptEntry.createdAt = Date()
-        transcriptEntry.lastModified = Date()
 
         // Encode segments to JSON with proper error handling
+        let segmentsString: String
         do {
             let segmentsData = try JSONEncoder().encode(segments)
-            guard let segmentsString = String(data: segmentsData, encoding: .utf8) else {
+            guard let encodedSegments = String(data: segmentsData, encoding: .utf8) else {
                 throw TranscriptImportError.databaseError("Failed to encode segments to UTF-8 string")
             }
-            transcriptEntry.segments = segmentsString
+            segmentsString = encodedSegments
         } catch let encodingError {
             throw TranscriptImportError.databaseError("Failed to encode transcript segments: \(encodingError.localizedDescription)")
         }
 
-        // No speaker mappings for imported transcripts (users can edit later)
-        transcriptEntry.speakerMappings = nil
-
-        // Link to recording
-        transcriptEntry.recording = recording
-        recording.transcript = transcriptEntry
-        recording.transcriptId = transcriptId
-
-        // Save the context
+        let now = Date()
         do {
-            try context.save()
-            AppLog.shared.transcription("Created transcript entry for imported transcript")
+            _ = try await libraryRepository.upsertTranscript(
+                LibraryTranscriptUpsertCommand(
+                    id: transcriptId,
+                    recordingReference: LibraryRecordingReference(
+                        legacyID: recordingId.uuidString
+                    ),
+                    createdAt: now,
+                    segments: segmentsString,
+                    engine: "imported",
+                    processingTime: 0,
+                    confidence: 1.0,
+                    modifiedAt: now
+                )
+            )
+            AppLog.shared.transcription("Created repository transcript entry for imported transcript")
         } catch {
             AppLog.shared.transcription("Failed to save transcript entry: \(error)", level: .error)
-            throw TranscriptImportError.databaseError("Failed to save transcript: \(error.localizedDescription)")
+            throw TranscriptImportError.databaseError(
+                "Failed to save transcript: \(error.localizedDescription)"
+            )
         }
     }
 
