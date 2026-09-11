@@ -5,6 +5,7 @@ enum SQLiteLibraryStoreSchema {
     static let initialSchemaVersion = 1
     static let settingsSchemaVersion = 2
     static let changesSchemaVersion = 3
+    static let mediaTransferSchemaVersion = 4
 
     static func createInitial(in database: Database) throws {
         try createMetadata(in: database)

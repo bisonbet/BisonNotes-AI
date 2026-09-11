@@ -2,22 +2,44 @@ import Foundation
 import GRDB
 
 extension SQLiteLibraryStore {
+    /// Enqueues a media transfer while persisting the source acknowledgement
+    /// identity needed to finish the receipt after a process restart.
+    func enqueueMediaCopy(
+        _ transfer: SQLiteMediaTransferPlan,
+        at date: Date = Date()
+    ) throws -> SQLiteMediaFileOperation {
+        try transfer.validate()
+        return try enqueueMediaCopy(
+            transfer.copyPlan,
+            sourceTransferID: transfer.sourceTransferID,
+            at: date
+        )
+    }
+
     /// Enqueues a root-relative media copy and its asset catalog row together.
     ///
     /// Repeating the exact operation ID and plan is idempotent. Reusing an ID
     /// for different content is a hard conflict rather than an overwrite.
     func enqueueMediaCopy(
         _ plan: SQLiteMediaCopyPlan,
+        sourceTransferID: String? = nil,
         at date: Date = Date()
     ) throws -> SQLiteMediaFileOperation {
         try plan.validate()
+        if let sourceTransferID {
+            try SQLiteImportReceiptValidation.identifier(sourceTransferID)
+        }
         let timestamp = date.timeIntervalSinceReferenceDate
         return try databaseQueue.write { database in
             if let existing = try Self.fetchMediaFileOperation(
                 id: plan.operationID,
                 from: database
             ) {
-                guard Self.matches(existing, plan: plan) else {
+                guard Self.matches(
+                    existing,
+                    plan: plan,
+                    sourceTransferID: sourceTransferID
+                ) else {
                     throw SQLiteMediaFileOperationError.operationConflict
                 }
                 return existing
@@ -34,6 +56,7 @@ extension SQLiteLibraryStore {
 
             try Self.insertAssetCatalog(
                 plan: plan,
+                sourceTransferID: sourceTransferID,
                 timestamp: timestamp,
                 in: database
             )
@@ -57,6 +80,39 @@ extension SQLiteLibraryStore {
         try SQLiteMediaFileOperationValidation.identifier(id)
         return try databaseQueue.read { database in
             try Self.fetchMediaFileOperation(id: id, from: database)
+        }
+    }
+
+    /// Returns self-describing operations that can be resumed by a background
+    /// worker. Completed operations without a receipt are included so a
+    /// process kill between publication and receipt recording is recoverable.
+    func mediaOperationsNeedingReconciliation(
+        limit: Int = 8
+    ) throws -> [SQLiteMediaFileOperation] {
+        try SQLiteMediaFileOperationValidation.batchLimit(limit)
+        return try databaseQueue.read { database in
+            let operationIDs = try String.fetchAll(
+                database,
+                sql: """
+                SELECT file_operations.id
+                FROM file_operations
+                JOIN asset_catalog
+                    ON asset_catalog.storageID = file_operations.assetID
+                LEFT JOIN import_receipts
+                    ON import_receipts.sourceTransferID = asset_catalog.sourceTransferID
+                WHERE asset_catalog.sourceTransferID IS NOT NULL
+                  AND (
+                      file_operations.state IN ('pending', 'failed') OR
+                      (file_operations.state = 'completed' AND import_receipts.receiptID IS NULL)
+                  )
+                ORDER BY file_operations.updatedAt, file_operations.id
+                LIMIT ?
+                """,
+                arguments: [limit]
+            )
+            return try operationIDs.compactMap { operationID in
+                try Self.fetchMediaFileOperation(id: operationID, from: database)
+            }
         }
     }
 

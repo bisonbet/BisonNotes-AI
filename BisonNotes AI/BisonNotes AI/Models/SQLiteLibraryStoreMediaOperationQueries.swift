@@ -118,6 +118,7 @@ extension SQLiteLibraryStore {
 
     static func insertAssetCatalog(
         plan: SQLiteMediaCopyPlan,
+        sourceTransferID: String?,
         timestamp: Double,
         in database: Database
     ) throws {
@@ -126,9 +127,9 @@ extension SQLiteLibraryStore {
             INSERT INTO asset_catalog (
                 storageID, sourceRoot, sourceRelativePath, destinationRoot,
                 destinationRelativePath, kind, byteLength, sha256, state,
-                isExternal, createdAt, updatedAt
+                isExternal, createdAt, updatedAt, sourceTransferID
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 plan.assetID,
@@ -142,7 +143,8 @@ extension SQLiteLibraryStore {
                 "pending",
                 false,
                 timestamp,
-                timestamp
+                timestamp,
+                sourceTransferID
             ]
         )
     }
@@ -190,12 +192,19 @@ extension SQLiteLibraryStore {
         guard let row = try Row.fetchOne(
             database,
             sql: """
-            SELECT id, assetID, operation, state, ownerStorageID, ownerRevision,
-                   sourceRoot, sourceRelativePath, destinationRoot,
-                   destinationRelativePath, expectedByteLength, expectedSHA256,
-                   attemptCount, lastError, createdAt, updatedAt
+            SELECT file_operations.id, file_operations.assetID,
+                   file_operations.operation, file_operations.state,
+                   file_operations.ownerStorageID, file_operations.ownerRevision,
+                   file_operations.sourceRoot, file_operations.sourceRelativePath,
+                   file_operations.destinationRoot, file_operations.destinationRelativePath,
+                   file_operations.expectedByteLength, file_operations.expectedSHA256,
+                   file_operations.attemptCount, file_operations.lastError,
+                   file_operations.createdAt, file_operations.updatedAt,
+                   asset_catalog.sourceTransferID AS sourceTransferID
             FROM file_operations
-            WHERE id = ?
+            LEFT JOIN asset_catalog
+                ON asset_catalog.storageID = file_operations.assetID
+            WHERE file_operations.id = ?
             """,
             arguments: [id]
         ) else {
@@ -213,6 +222,7 @@ extension SQLiteLibraryStore {
         return SQLiteMediaFileOperation(
             id: operationID,
             assetID: row["assetID"],
+            sourceTransferID: row["sourceTransferID"],
             operation: operation,
             state: state,
             ownerStorageID: row["ownerStorageID"],
@@ -232,10 +242,12 @@ extension SQLiteLibraryStore {
 
     static func matches(
         _ operation: SQLiteMediaFileOperation,
-        plan: SQLiteMediaCopyPlan
+        plan: SQLiteMediaCopyPlan,
+        sourceTransferID: String?
     ) -> Bool {
         operation.id == plan.operationID &&
             operation.assetID == plan.assetID &&
+            operation.sourceTransferID == sourceTransferID &&
             operation.operation == "copy" &&
             operation.ownerStorageID == plan.ownerStorageID &&
             operation.ownerRevision == plan.ownerRevision &&

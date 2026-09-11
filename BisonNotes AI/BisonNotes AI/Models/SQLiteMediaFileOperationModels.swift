@@ -35,6 +35,7 @@ struct SQLiteMediaCopyPlan: Equatable, Sendable {
 struct SQLiteMediaFileOperation: Equatable, Sendable {
     let id: String
     let assetID: String?
+    let sourceTransferID: String?
     let operation: String
     let state: String
     let ownerStorageID: String?
@@ -57,6 +58,7 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
     case invalidRelativePath
     case invalidByteLength
     case invalidSHA256
+    case invalidBatchLimit
     case operationNotFound
     case operationConflict
     case unsupportedOperation
@@ -77,6 +79,8 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
             return "The media operation byte length is invalid."
         case .invalidSHA256:
             return "The media operation checksum is invalid."
+        case .invalidBatchLimit:
+            return "The media operation batch limit is invalid."
         case .operationNotFound:
             return "The media operation was not found."
         case .operationConflict:
@@ -128,6 +132,12 @@ enum SQLiteMediaFileOperationValidation {
         guard normalized.count == 64,
               normalized.allSatisfy({ $0.isHexDigit }) else {
             throw SQLiteMediaFileOperationError.invalidSHA256
+        }
+    }
+
+    static func batchLimit(_ value: Int) throws {
+        guard (1...100).contains(value) else {
+            throw SQLiteMediaFileOperationError.invalidBatchLimit
         }
     }
 }

@@ -4,7 +4,7 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
-    func testExistingV2StoreMigratesToV3ObservationSchema() async throws {
+    func testExistingV2StoreMigratesToV4MediaTransferSchema() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -36,10 +36,28 @@ final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
         let store = try SQLiteLibraryStore(databaseURL: databaseURL)
         let diagnostics = try await store.diagnostics()
         let tables = Set(try await store.tableNames())
-        XCTAssertEqual(diagnostics.schemaVersion, 3)
+        XCTAssertEqual(diagnostics.schemaVersion, 4)
         XCTAssertEqual(diagnostics.revision, 0)
         XCTAssertTrue(tables.contains("library_settings"))
         XCTAssertTrue(tables.contains("library_changes"))
+
+        let transfer = SQLiteMediaTransferPlan(
+            sourceTransferID: "migrated-source-transfer",
+            copyPlan: SQLiteMediaCopyPlan(
+                operationID: "migrated-operation",
+                assetID: "migrated-asset",
+                ownerStorageID: nil,
+                ownerRevision: nil,
+                sourceRoot: "legacy-source",
+                sourceRelativePath: "recording.m4a",
+                destinationRoot: "sqlite-media",
+                destinationRelativePath: "recording.m4a",
+                expectedByteLength: 0,
+                expectedSHA256: String(repeating: "0", count: 64)
+            )
+        )
+        let operation = try await store.enqueueMediaCopy(transfer)
+        XCTAssertEqual(operation.sourceTransferID, transfer.sourceTransferID)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

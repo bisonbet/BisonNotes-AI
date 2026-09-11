@@ -7,6 +7,7 @@ extension SQLiteLibraryStore {
         registerInitialSchemaMigration(on: &migrator)
         registerSettingsSchemaMigration(on: &migrator)
         registerChangesSchemaMigration(on: &migrator)
+        registerMediaTransferSchemaMigration(on: &migrator)
         return migrator
     }
 
@@ -61,6 +62,25 @@ extension SQLiteLibraryStore {
                 arguments: [
                     SQLiteLibraryStoreSchema.changesSchemaVersion,
                     Self.changesSchemaMigrationIdentifier,
+                    Date().timeIntervalSinceReferenceDate
+                ]
+            )
+        }
+    }
+
+    private static func registerMediaTransferSchemaMigration(
+        on migrator: inout DatabaseMigrator
+    ) {
+        migrator.registerMigration(Self.mediaTransferSchemaMigrationIdentifier) { database in
+            try SQLiteLibraryStoreSchema.addMediaTransferSource(in: database)
+            try database.execute(
+                sql: """
+                INSERT INTO schema_migrations (version, identifier, appliedAt)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [
+                    SQLiteLibraryStoreSchema.mediaTransferSchemaVersion,
+                    Self.mediaTransferSchemaMigrationIdentifier,
                     Date().timeIntervalSinceReferenceDate
                 ]
             )

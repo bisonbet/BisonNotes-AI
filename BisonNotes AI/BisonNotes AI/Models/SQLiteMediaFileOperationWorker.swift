@@ -41,9 +41,12 @@ struct SQLiteMediaFileOperationWorker: Sendable {
     ) async throws -> SQLiteMediaFileOperation {
         try Task.checkCancellation()
         let claimed = try await store.claimMediaOperation(id: operationID, at: date)
-        guard claimed.state != "completed" else { return claimed }
 
         do {
+            if claimed.state == "completed" {
+                try await verifyPublishedCopy(for: claimed, roots: roots)
+                return claimed
+            }
             let result = try await executeCopy(for: claimed, roots: roots)
             try Task.checkCancellation()
             return try await store.completeMediaOperation(
@@ -77,6 +80,23 @@ private extension SQLiteMediaFileOperationWorker {
                 expectedByteLength: operation.expectedByteLength,
                 expectedSHA256: operation.expectedSHA256
             ).run()
+        }.value
+    }
+
+    func verifyPublishedCopy(
+        for operation: SQLiteMediaFileOperation,
+        roots: SQLiteMediaFileOperationRoots
+    ) async throws {
+        let urls = try Self.resolveURLs(for: operation, roots: roots)
+        try Task.checkCancellation()
+        try await Task.detached(priority: .utility) {
+            try SQLiteMediaFileCopyExecutor(
+                sourceURL: urls.source,
+                destinationURL: urls.destination,
+                partialURL: urls.partial,
+                expectedByteLength: operation.expectedByteLength,
+                expectedSHA256: operation.expectedSHA256
+            ).verifyInstalled()
         }.value
     }
 }
@@ -146,6 +166,19 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
             try? Self.removeIfPresent(partialURL, using: fileManager)
             throw error
         }
+    }
+
+    func verifyInstalled() throws {
+        guard let expectedByteLength,
+              let expectedSHA256 else {
+            throw SQLiteMediaFileOperationError.operationConflict
+        }
+        try Self.verify(
+            destinationURL,
+            missingError: .copyFailed,
+            expectedByteLength: expectedByteLength,
+            expectedSHA256: expectedSHA256
+        )
     }
 
     private static func publish(

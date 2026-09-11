@@ -50,6 +50,9 @@ struct SQLiteMediaSourceRetentionExecutor: Sendable {
         ) == .eligibleForRemoval else {
             throw SQLiteMediaSourceRetentionError.sourceNotEligible
         }
+        guard operation.sourceTransferID == sourceTransferID else {
+            throw SQLiteMediaSourceRetentionError.sourceNotEligible
+        }
         let urls = try Self.resolveURLs(for: operation, using: rootRegistry)
         guard urls.source.resolvingSymlinksInPath().standardizedFileURL
                 != urls.destination.resolvingSymlinksInPath().standardizedFileURL else {

@@ -18,7 +18,7 @@ struct SQLiteMediaTransferCoordinator: Sendable {
             sourceRoot: transfer.copyPlan.sourceRoot,
             destinationRoot: transfer.copyPlan.destinationRoot
         )
-        return try await store.enqueueMediaCopy(transfer.copyPlan, at: date)
+        return try await store.enqueueMediaCopy(transfer, at: date)
     }
 
     func reconcile(
