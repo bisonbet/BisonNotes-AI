@@ -14,6 +14,7 @@ struct LibraryRecordingSnapshot: Equatable, Sendable {
     let fileSize: Int64?
     let recordingURL: String?
     let isArchived: Bool?
+    let isCloudSyncDisabled: Bool?
     let lastModified: Date?
 
     static func stableOrder(
@@ -82,6 +83,33 @@ struct LibraryRecordingRenameCommand: Equatable, Sendable {
     /// so both backends apply the same behavior.
     var normalizedName: String {
         name.replacingOccurrences(of: " [Watch]", with: "")
+    }
+}
+
+/// Changes whether a recording participates in iCloud sync.
+///
+/// The command includes the pending local-only removal intent because those
+/// two values must commit together. A caller may supply an expected source
+/// revision when it is editing a snapshot that could have become stale.
+struct LibraryRecordingCloudSyncCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let disabled: Bool
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+    let requestedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        disabled: Bool,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date(),
+        requestedAt: Date? = nil
+    ) {
+        self.reference = reference
+        self.disabled = disabled
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+        self.requestedAt = requestedAt ?? modifiedAt
     }
 }
 
@@ -174,6 +202,9 @@ protocol LibraryRepository: Sendable {
     func fetchArchiveLocationSnapshots() async throws -> [LibraryArchiveLocationSnapshot]
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot]
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
+    func setCloudSyncDisabled(
+        _ command: LibraryRecordingCloudSyncCommand
+    ) async throws -> LibraryRecordingSnapshot
 }
 
 enum LibraryRepositoryError: LocalizedError, Equatable {

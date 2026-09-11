@@ -492,7 +492,14 @@ class AppDataCoordinator: ObservableObject {
 
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        try coreDataManager.updateCloudSyncDisabled(for: recordingId, disabled: disabled)
+        _ = try await libraryRepository.setCloudSyncDisabled(
+            LibraryRecordingCloudSyncCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: recordingId.uuidString
+                ),
+                disabled: disabled
+            )
+        )
 
         if disabled {
             do {

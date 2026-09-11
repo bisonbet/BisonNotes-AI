@@ -79,6 +79,7 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             fileSize: (object.value(forKey: "fileSize") as? NSNumber)?.int64Value,
             recordingURL: object.value(forKey: "recordingURL") as? String,
             isArchived: (object.value(forKey: "isArchived") as? NSNumber)?.boolValue,
+            isCloudSyncDisabled: (object.value(forKey: "isCloudSyncDisabled") as? NSNumber)?.boolValue,
             lastModified: object.value(forKey: "lastModified") as? Date
         )
     }
@@ -321,6 +322,78 @@ extension CoreDataLibraryRepository {
             } catch {
                 throw LibraryRepositoryError.writeFailed(
                     operation: "rename recording",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.snapshot(from: recording)
+        }
+    }
+
+    func setCloudSyncDisabled(
+        _ command: LibraryRecordingCloudSyncCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        let context = context
+        return try context.performAndWait {
+            let request = Self.fetchRequest(entityName: "RecordingEntry")
+            request.fetchLimit = 2
+            request.predicate = try Self.recordingPredicate(for: command.reference)
+
+            let matches = try context.fetch(request)
+            guard !matches.isEmpty else {
+                throw LibraryRepositoryError.recordingNotFound(
+                    reference: command.reference.displayValue
+                )
+            }
+            guard matches.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: command.reference.displayValue
+                )
+            }
+
+            let recording = matches[0]
+            let current = try Self.snapshot(from: recording)
+            guard command.expectedLastModified == nil
+                    || command.expectedLastModified == current.lastModified else {
+                throw LibraryRepositoryError.staleRecording(
+                    reference: command.reference.displayValue,
+                    expected: command.expectedLastModified,
+                    actual: current.lastModified
+                )
+            }
+
+            guard let legacyID = current.legacyID,
+                  let targetID = UUID(uuidString: legacyID) else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "RecordingEntry",
+                    field: "id"
+                )
+            }
+
+            recording.setValue(command.disabled, forKey: "isCloudSyncDisabled")
+            recording.setValue(command.modifiedAt, forKey: "lastModified")
+            if command.disabled {
+                try PendingCloudMutationStore.enqueue(
+                    PendingCloudMutation(
+                        kind: .localOnlyRemoval,
+                        targetId: targetID,
+                        requestedAt: command.requestedAt
+                    ),
+                    in: context
+                )
+            } else {
+                try PendingCloudMutationStore.remove(
+                    kind: .localOnlyRemoval,
+                    targetId: targetID,
+                    from: context
+                )
+            }
+
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "set cloud sync preference",
                     reason: error.localizedDescription
                 )
             }

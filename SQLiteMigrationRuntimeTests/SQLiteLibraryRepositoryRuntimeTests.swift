@@ -32,6 +32,7 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
                 fileSize: 42,
                 recordingURL: "recording.m4a",
                 isArchived: false,
+                isCloudSyncDisabled: false,
                 lastModified: Date(timeIntervalSinceReferenceDate: 101)
             )
         )
@@ -107,6 +108,71 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 300))
         let persistedRecordings = try await repository.fetchRecordingSummaries()
         XCTAssertEqual(persistedRecordings.first?.name, "Renamed")
+    }
+
+    func testRepositoryCloudSyncToggleCommitsRecordingAndPendingMutationTogether() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        let disabled = try await repository.setCloudSyncDisabled(
+            LibraryRecordingCloudSyncCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                disabled: true,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 300),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 250)
+            )
+        )
+
+        XCTAssertEqual(disabled.isCloudSyncDisabled, true)
+        XCTAssertEqual(disabled.lastModified, Date(timeIntervalSinceReferenceDate: 300))
+        let pendingAfterDisable = try await repository.fetchPendingCloudMutationSnapshots()
+            .filter { $0.kind == "localOnlyRemoval" }
+        XCTAssertEqual(pendingAfterDisable.count, 1)
+        XCTAssertEqual(pendingAfterDisable[0].storageID, "local-only-removal-recording-storage")
+        XCTAssertEqual(pendingAfterDisable[0].targetID, "recording-legacy")
+        XCTAssertNil(pendingAfterDisable[0].recordingLegacyID)
+        XCTAssertEqual(
+            pendingAfterDisable[0].requestedAt,
+            Date(timeIntervalSinceReferenceDate: 250)
+        )
+
+        let changesAfterDisable = try await repository.changes(since: 0)
+        XCTAssertEqual(changesAfterDisable.map(\.revision), [1, 2])
+        XCTAssertEqual(changesAfterDisable.map(\.entity), [.recording, .pendingCloudMutation])
+        XCTAssertEqual(changesAfterDisable.map(\.operation), [.updated, .inserted])
+
+        let enabled = try await repository.setCloudSyncDisabled(
+            LibraryRecordingCloudSyncCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                disabled: false,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 300),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(enabled.isCloudSyncDisabled, false)
+        XCTAssertEqual(enabled.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+        let pendingAfterEnable = try await repository.fetchPendingCloudMutationSnapshots()
+            .filter { $0.kind == "localOnlyRemoval" }
+        XCTAssertTrue(pendingAfterEnable.isEmpty)
+
+        let changesAfterEnable = try await repository.changes(since: 2)
+        XCTAssertEqual(changesAfterEnable.map(\.revision), [3, 4])
+        XCTAssertEqual(changesAfterEnable.map(\.entity), [.recording, .pendingCloudMutation])
+        XCTAssertEqual(changesAfterEnable.map(\.operation), [.updated, .deleted])
     }
 
     func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {

@@ -30,6 +30,7 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings[0].fileSize, 42)
         XCTAssertEqual(recordings[0].recordingURL, "recording.m4a")
         XCTAssertEqual(recordings[0].isArchived, false)
+        XCTAssertEqual(recordings[0].isCloudSyncDisabled, false)
         XCTAssertEqual(recordings[0].lastModified, Date(timeIntervalSinceReferenceDate: 101))
     }
 
@@ -106,6 +107,60 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(updated.lastModified, Date(timeIntervalSinceReferenceDate: 300))
         let persistedRecordings = try await repository.fetchRecordingSummaries()
         XCTAssertEqual(persistedRecordings.first?.name, "Renamed")
+    }
+
+    func testCoreDataRepositoryCloudSyncToggleCommitsRecordingAndPendingMutationTogether() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-cloud-sync.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = "10000000-0000-0000-0000-000000000001"
+        let disabled = try await repository.setCloudSyncDisabled(
+            LibraryRecordingCloudSyncCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID),
+                disabled: true,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 300),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 250)
+            )
+        )
+
+        XCTAssertEqual(disabled.isCloudSyncDisabled, true)
+        XCTAssertEqual(disabled.lastModified, Date(timeIntervalSinceReferenceDate: 300))
+        let pendingAfterDisable = try await repository.fetchPendingCloudMutationSnapshots()
+            .filter { $0.kind == PendingCloudMutationKind.localOnlyRemoval.rawValue }
+        XCTAssertEqual(pendingAfterDisable.count, 1)
+        XCTAssertEqual(pendingAfterDisable[0].targetID, recordingID)
+        XCTAssertEqual(
+            pendingAfterDisable[0].requestedAt,
+            Date(timeIntervalSinceReferenceDate: 250)
+        )
+
+        let enabled = try await repository.setCloudSyncDisabled(
+            LibraryRecordingCloudSyncCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID),
+                disabled: false,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 300),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(enabled.isCloudSyncDisabled, false)
+        XCTAssertEqual(enabled.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+        let pendingAfterEnable = try await repository.fetchPendingCloudMutationSnapshots()
+            .filter { $0.kind == PendingCloudMutationKind.localOnlyRemoval.rawValue }
+        XCTAssertTrue(pendingAfterEnable.isEmpty)
     }
 
     private func assertTranscript(
