@@ -624,6 +624,31 @@ class AppDataCoordinator: ObservableObject {
         objectWillChange.send()
     }
 
+    @discardableResult
+    func setRecordingArchiveState(
+        recordingId: UUID,
+        archived: Bool,
+        archivedAt: Date? = nil,
+        archiveNote: String? = nil,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: recordingId.uuidString
+                ),
+                archived: archived,
+                archivedAt: archivedAt,
+                archiveNote: archiveNote,
+                expectedLastModified: expectedLastModified,
+                modifiedAt: modifiedAt
+            )
+        )
+        objectWillChange.send()
+        return snapshot
+    }
+
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         _ = try await libraryRepository.setCloudSyncDisabled(

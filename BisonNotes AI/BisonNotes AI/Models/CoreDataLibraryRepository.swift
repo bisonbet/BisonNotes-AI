@@ -79,6 +79,8 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             fileSize: (object.value(forKey: "fileSize") as? NSNumber)?.int64Value,
             recordingURL: object.value(forKey: "recordingURL") as? String,
             isArchived: (object.value(forKey: "isArchived") as? NSNumber)?.boolValue,
+            archivedAt: object.value(forKey: "archivedAt") as? Date,
+            archiveNote: object.value(forKey: "archiveNote") as? String,
             isCloudSyncDisabled: (object.value(forKey: "isCloudSyncDisabled") as? NSNumber)?.boolValue,
             lastModified: object.value(forKey: "lastModified") as? Date
         )
@@ -394,6 +396,57 @@ extension CoreDataLibraryRepository {
             } catch {
                 throw LibraryRepositoryError.writeFailed(
                     operation: "set cloud sync preference",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.snapshot(from: recording)
+        }
+    }
+
+    func setArchiveState(
+        _ command: LibraryRecordingArchiveCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let context = context
+        return try context.performAndWait {
+            let request = Self.fetchRequest(entityName: "RecordingEntry")
+            request.fetchLimit = 2
+            request.predicate = try Self.recordingPredicate(for: command.reference)
+
+            let matches = try context.fetch(request)
+            guard !matches.isEmpty else {
+                throw LibraryRepositoryError.recordingNotFound(
+                    reference: command.reference.displayValue
+                )
+            }
+            guard matches.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: command.reference.displayValue
+                )
+            }
+
+            let recording = matches[0]
+            let current = try Self.snapshot(from: recording)
+            guard command.expectedLastModified == nil
+                    || command.expectedLastModified == current.lastModified else {
+                throw LibraryRepositoryError.staleRecording(
+                    reference: command.reference.displayValue,
+                    expected: command.expectedLastModified,
+                    actual: current.lastModified
+                )
+            }
+
+            recording.setValue(command.archived, forKey: "isArchived")
+            recording.setValue(command.persistedArchivedAt, forKey: "archivedAt")
+            recording.setValue(command.persistedArchiveNote, forKey: "archiveNote")
+            recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "set archive state",
                     reason: error.localizedDescription
                 )
             }

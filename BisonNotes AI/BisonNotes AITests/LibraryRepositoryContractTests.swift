@@ -216,6 +216,57 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
     }
 
+    func testCoreDataRepositoryUpdatesArchiveStateWithExpectedRevision() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-archive-state.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let archived = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 301),
+                archiveNote: "Exported to iCloud Drive",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(archived.isArchived, true)
+        XCTAssertEqual(archived.archivedAt, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(archived.archiveNote, "Exported to iCloud Drive")
+        XCTAssertEqual(archived.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let restored = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                archived: false,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+
+        XCTAssertEqual(restored.isArchived, false)
+        XCTAssertNil(restored.archivedAt)
+        XCTAssertNil(restored.archiveNote)
+        XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
+    }
+
     func testCoreDataRepositoryReplacesSummaryByRecordingAndPreservesIdentity() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

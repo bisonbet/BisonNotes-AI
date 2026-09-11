@@ -14,6 +14,8 @@ struct LibraryRecordingSnapshot: Equatable, Sendable {
     let fileSize: Int64?
     let recordingURL: String?
     let isArchived: Bool?
+    let archivedAt: Date?
+    let archiveNote: String?
     let isCloudSyncDisabled: Bool?
     let lastModified: Date?
 
@@ -110,6 +112,60 @@ struct LibraryRecordingCloudSyncCommand: Equatable, Sendable {
         self.expectedLastModified = expectedLastModified
         self.modifiedAt = modifiedAt
         self.requestedAt = requestedAt ?? modifiedAt
+    }
+}
+
+/// Changes archive metadata after an external archive destination has been
+/// verified. File-provider copies, bookmarks and local source removal remain
+/// outside this command; this boundary only commits the recording state.
+struct LibraryRecordingArchiveCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let archived: Bool
+    let archivedAt: Date?
+    let archiveNote: String?
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        archived: Bool,
+        archivedAt: Date? = nil,
+        archiveNote: String? = nil,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.archived = archived
+        self.archivedAt = archivedAt
+        self.archiveNote = archiveNote
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+
+    var persistedArchivedAt: Date? {
+        archived ? (archivedAt ?? modifiedAt) : nil
+    }
+
+    var persistedArchiveNote: String? {
+        archived ? archiveNote : nil
+    }
+}
+
+extension LibraryRecordingArchiveCommand {
+    func validate() throws {
+        let dates = [modifiedAt, archivedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "archive dates must be finite"
+            )
+        }
+        if !archived {
+            guard archivedAt == nil, archiveNote == nil else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "unarchiving must clear archive metadata"
+                )
+            }
+        }
     }
 }
 
@@ -679,6 +735,9 @@ protocol LibraryRepository: Sendable {
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
+    ) async throws -> LibraryRecordingSnapshot
+    func setArchiveState(
+        _ command: LibraryRecordingArchiveCommand
     ) async throws -> LibraryRecordingSnapshot
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand

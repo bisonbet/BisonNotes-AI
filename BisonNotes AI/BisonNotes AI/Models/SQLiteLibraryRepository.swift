@@ -53,6 +53,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         try await store.setCloudSyncDisabled(command)
     }
 
+    func setArchiveState(
+        _ command: LibraryRecordingArchiveCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await store.setArchiveState(command)
+    }
+
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot {
@@ -189,6 +195,53 @@ extension SQLiteLibraryStore {
                     committedAt: command.modifiedAt
                 )
             }
+
+            return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    func setArchiveState(
+        _ command: LibraryRecordingArchiveCommand
+    ) throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let reference = try Self.normalizedReference(command.reference)
+        let modifiedAt = command.modifiedAt.timeIntervalSinceReferenceDate
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+
+            try database.execute(
+                sql: """
+                UPDATE recordings
+                SET isArchived = ?, archivedAt = ?, archiveNote = ?, lastModified = ?
+                WHERE storageID = ?
+                """,
+                arguments: [
+                    command.archived ? 1 : 0,
+                    command.persistedArchivedAt?.timeIntervalSinceReferenceDate,
+                    command.persistedArchiveNote,
+                    modifiedAt,
+                    current.storageID
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "set archive state",
+                    reason: "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.modifiedAt
+            )
 
             return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
         }
@@ -987,7 +1040,8 @@ extension SQLiteLibraryStore {
     ) throws -> [Row] {
         let columns = """
             storageID, id, recordingName, recordingDate, duration,
-            fileSize, recordingURL, isArchived, isCloudSyncDisabled, lastModified
+            fileSize, recordingURL, isArchived, archivedAt, archiveNote,
+            isCloudSyncDisabled, lastModified
             """
         if let storageID = reference.storageID {
             return try Row.fetchAll(
@@ -1278,7 +1332,8 @@ extension SQLiteLibraryStore {
     ) throws -> LibraryRecordingSnapshot {
         let columns = """
             storageID, id, recordingName, recordingDate, duration,
-            fileSize, recordingURL, isArchived, isCloudSyncDisabled, lastModified
+            fileSize, recordingURL, isArchived, archivedAt, archiveNote,
+            isCloudSyncDisabled, lastModified
             """
         guard let updatedRow = try Row.fetchOne(
             database,
@@ -1366,7 +1421,8 @@ extension SQLiteLibraryStore {
                 database,
                 sql: """
                 SELECT storageID, id, recordingName, recordingDate, duration,
-                       fileSize, recordingURL, isArchived, isCloudSyncDisabled, lastModified
+                       fileSize, recordingURL, isArchived, archivedAt, archiveNote,
+                       isCloudSyncDisabled, lastModified
                 FROM recordings
                 """
             )

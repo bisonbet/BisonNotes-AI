@@ -20,6 +20,8 @@ enum SQLiteLibraryRepositoryMapper {
             fileSize: row["fileSize"],
             recordingURL: row["recordingURL"],
             isArchived: archivedValue.map { $0 != 0 },
+            archivedAt: date(from: row["archivedAt"]),
+            archiveNote: row["archiveNote"],
             isCloudSyncDisabled: (row["isCloudSyncDisabled"] as Int64?).map { $0 != 0 },
             lastModified: date(from: row["lastModified"])
         )

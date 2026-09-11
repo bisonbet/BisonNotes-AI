@@ -32,6 +32,8 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
                 fileSize: 42,
                 recordingURL: "recording.m4a",
                 isArchived: false,
+                archivedAt: nil,
+                archiveNote: nil,
                 isCloudSyncDisabled: false,
                 lastModified: Date(timeIntervalSinceReferenceDate: 101)
             )
@@ -131,6 +133,55 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         let changes = try await repository.changes(since: 0)
         XCTAssertEqual(changes.map(\.entity), [.transcript, .recording])
         XCTAssertEqual(changes.map(\.operation), [.updated, .updated])
+        XCTAssertEqual(changes.map(\.revision), [1, 2])
+    }
+
+    func testRepositoryUpdatesArchiveStateWithRevisionAndClearsItOnRestore() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        let archived = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 301),
+                archiveNote: "Exported to iCloud Drive",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+        XCTAssertEqual(archived.isArchived, true)
+        XCTAssertEqual(archived.archivedAt, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(archived.archiveNote, "Exported to iCloud Drive")
+        XCTAssertEqual(archived.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let restored = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                archived: false,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+        XCTAssertEqual(restored.isArchived, false)
+        XCTAssertNil(restored.archivedAt)
+        XCTAssertNil(restored.archiveNote)
+        XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.recording, .recording])
         XCTAssertEqual(changes.map(\.revision), [1, 2])
     }
 
