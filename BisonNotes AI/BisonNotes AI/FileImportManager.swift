@@ -26,18 +26,25 @@ class FileImportManager: NSObject, ObservableObject {
 
     nonisolated static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
     nonisolated static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
-    private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+    private let libraryRepository: any LibraryRepository
 
     override init() {
-        self.persistenceController = PersistenceController.shared
+        let persistenceController = PersistenceController.shared
         self.context = persistenceController.container.viewContext
+        self.libraryRepository = CoreDataLibraryRepository(
+            context: persistenceController.container.viewContext,
+            maintenanceGate: persistenceController.maintenanceGate
+        )
         super.init()
     }
 
     init(persistenceController: PersistenceController) {
-        self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
+        self.libraryRepository = CoreDataLibraryRepository(
+            context: persistenceController.container.viewContext,
+            maintenanceGate: persistenceController.maintenanceGate
+        )
         super.init()
     }
 
@@ -411,53 +418,53 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.copyFailed("Failed to check existing recordings: \(error.localizedDescription)")
         }
 
-        // Create new recording entry
-        let recordingEntry = RecordingEntry(context: context)
-        recordingEntry.id = UUID()
-        recordingEntry.recordingName = recordingName
-        // Store relative path instead of absolute URL for resilience across app launches
-        recordingEntry.recordingURL = urlToRelativePath(fileURL)
-
         // Get file metadata. Prefer the file's modification date as the recording
         // date: archives exported by this app stamp mtime with the original
         // recording date, and iCloud preserves mtime across round-trips (while
         // it resets creation date to upload time).
+        let metadataDate: Date
+        let fileSize: Int64
+        let duration: TimeInterval
         do {
             let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey])
             let originalDate = resourceValues.contentModificationDate
                 ?? resourceValues.creationDate
                 ?? Date()
-            recordingEntry.recordingDate = originalDate
-            recordingEntry.createdAt = originalDate
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
+            metadataDate = originalDate
+            fileSize = Int64(resourceValues.fileSize ?? 0)
 
             // Get duration
-            let duration = await getAudioDuration(url: fileURL)
-            recordingEntry.duration = duration
+            duration = await getAudioDuration(url: fileURL)
 
         } catch {
             AppLog.shared.fileManagement("Error getting file metadata: \(error)", level: .error)
-            recordingEntry.recordingDate = Date()
-            recordingEntry.createdAt = Date()
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = 0
-            recordingEntry.duration = 0
+            metadataDate = Date()
+            fileSize = 0
+            duration = 0
         }
 
-        // Set default values
-        recordingEntry.audioQuality = "high"
-        recordingEntry.transcriptionStatus = "Not Started"
-        recordingEntry.summaryStatus = "Not Started"
+        guard let recordingURL = urlToRelativePath(fileURL) else {
+            throw ImportError.copyFailed("Could not represent imported audio path")
+        }
 
-        // Save the context
         do {
-            try context.save()
+            _ = try await libraryRepository.createRecording(
+                LibraryRecordingCreateCommand(
+                    recordingURL: recordingURL,
+                    name: recordingName,
+                    recordingDate: metadataDate,
+                    createdAt: metadataDate,
+                    duration: duration,
+                    fileSize: fileSize,
+                    audioQuality: "high",
+                    transcriptionStatus: "Not Started",
+                    summaryStatus: "Not Started"
+                )
+            )
             AppLog.shared.fileManagement("Created Core Data entry for imported file")
         } catch {
-            AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
-            context.delete(recordingEntry)
-            throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
+            AppLog.shared.fileManagement("Failed to save recording metadata: \(error)", level: .error)
+            throw ImportError.copyFailed("Failed to save recording metadata: \(error.localizedDescription)")
         }
     }
 
