@@ -24,13 +24,15 @@ final class CoreDataMigrationInputReaderRuntimeTests: XCTestCase {
         }
 
         defaults.set("MLX Swift", forKey: "SelectedAIEngine")
+        defaults.set(" https://example.com/v1/// ", forKey: "openAICompatibleBaseURL")
         defaults.set("do-not-copy", forKey: "openAIAPIKey")
-        let input = try await CoreDataMigrationInputReader(
+        let reader = CoreDataMigrationInputReader(
             container: container,
             defaults: defaults,
             sourceModel: "runtime-input-fixture"
-        ).snapshot(
-            sourceKeys: ["SelectedAIEngine", "openAIAPIKey"]
+        )
+        let input = try await reader.snapshot(
+            sourceKeys: ["SelectedAIEngine", "openAICompatibleBaseURL", "openAIAPIKey"]
         )
 
         XCTAssertTrue(input.metadata.rows.isEmpty)
@@ -38,8 +40,38 @@ final class CoreDataMigrationInputReaderRuntimeTests: XCTestCase {
         XCTAssertEqual(
             input.settings,
             LibrarySettingsSnapshot(values: [
-                "SelectedAIEngine": .string("MLX Swift")
+                "SelectedAIEngine": .string("MLX Swift"),
+                "openAICompatibleBaseURL": .string(" https://example.com/v1/// ")
             ])
+        )
+
+        defaults.set("OpenAI", forKey: "SelectedAIEngine")
+        defaults.set("On Device (WhisperKit)", forKey: "selectedTranscriptionEngine")
+        let normalizedInput = try await reader.snapshot(
+            sourceKeys: [
+                "SelectedAIEngine",
+                "selectedTranscriptionEngine",
+                "openAICompatibleBaseURL",
+                "openAIAPIKey"
+            ],
+            normalizationContext: LibrarySettingsNormalizationContext(
+                targetPlatform: .iOS,
+                supportsMLX: true,
+                supportedMLXModelIDs: ["small-model"],
+                preferredMLXModelID: "small-model"
+            )
+        )
+        XCTAssertEqual(
+            normalizedInput.settings.values["SelectedAIEngine"],
+            .string("OpenAI API Compatible")
+        )
+        XCTAssertEqual(
+            normalizedInput.settings.values["selectedTranscriptionEngine"],
+            .string("On Device")
+        )
+        XCTAssertEqual(
+            normalizedInput.settings.values["openAICompatibleBaseURL"],
+            .string("https://example.com/v1")
         )
     }
 

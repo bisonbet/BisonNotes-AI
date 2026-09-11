@@ -72,6 +72,25 @@ final class CoreDataMigrationInputReader: @unchecked Sendable {
         )
     }
 
+    /// Captures the source after applying the target device's explicit
+    /// platform-normalization policy. The caller still owns source quiescence;
+    /// normalization is pure and does not write either source store.
+    func snapshot(
+        sourceKeys: [String],
+        normalizationContext: LibrarySettingsNormalizationContext
+    ) async throws -> CoreDataMigrationInputSnapshot {
+        let settings = try await LibrarySettingsCatalog.readMigratableSettings(
+            from: defaults,
+            sourceKeys: sourceKeys,
+            normalizationContext: normalizationContext
+        )
+        let metadata = try await metadataReader.snapshot()
+        return CoreDataMigrationInputSnapshot(
+            metadata: metadata,
+            settings: settings
+        )
+    }
+
     /// Captures the reviewed main application defaults domain.
     ///
     /// The explicit overload remains available for fixture isolation and

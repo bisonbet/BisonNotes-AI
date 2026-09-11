@@ -10,6 +10,26 @@ final class SQLiteMigrationSettingsCatalogTests: XCTestCase {
         try LibrarySettingsCatalog.validateSourceKeys(sourceKeys)
     }
 
+    func testCloudKitSettingsSourceMatchesReviewedBlockingInventory() {
+        let cloudKitKeys = Set(iCloudStorageManager.backedUpSettingsKeys)
+        let reviewedOmissions: Set<String> = [
+            "enableFluidAudio",
+            "fluidAudioSelectedModelVersion",
+            "enableLiveTranscription",
+            "transcriptCleanupEnabled",
+            "comedyModeEnabled",
+            "comedyModeStyle",
+            "allowInsecurePublicAIEndpoints"
+        ]
+        let blockingKeys = Set(LibrarySettingsCatalog.blockingMetadataKeys)
+        let sourceKeys = Set(LibrarySettingsSourceInventory.standardDefaultsKeys)
+
+        XCTAssertTrue(cloudKitKeys.isSubset(of: sourceKeys))
+        XCTAssertTrue(cloudKitKeys.isDisjoint(with: reviewedOmissions))
+        XCTAssertEqual(cloudKitKeys.union(reviewedOmissions), blockingKeys)
+        XCTAssertTrue(LegacyLlamaMigration.legacySettingsKeys.isSubset(of: sourceKeys))
+    }
+
     func testLegacySettingsSourceKeysAreClassified() throws {
         try LibrarySettingsCatalog.validateSourceKeys(
             Array(LegacyLlamaMigration.legacySettingsKeys)

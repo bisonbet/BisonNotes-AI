@@ -119,13 +119,32 @@ enum LibrarySettingsCatalog {
         sourceKeys: [String]
     ) async throws -> LibrarySettingsSnapshot {
         try validateSourceKeys(sourceKeys)
+        let snapshot = try await readSourceSettings(from: defaults)
+        try validateMigratableSnapshot(snapshot)
+        return snapshot
+    }
+
+    static func readMigratableSettings(
+        from defaults: UserDefaults = .standard,
+        sourceKeys: [String],
+        normalizationContext: LibrarySettingsNormalizationContext
+    ) async throws -> LibrarySettingsSnapshot {
+        try validateSourceKeys(sourceKeys)
+        let snapshot = try await readSourceSettings(from: defaults)
+        return try LibrarySettingsNormalizer.normalize(
+            snapshot,
+            for: normalizationContext
+        ).snapshot
+    }
+
+    private static func readSourceSettings(
+        from defaults: UserDefaults
+    ) async throws -> LibrarySettingsSnapshot {
         let store = try UserDefaultsLibrarySettingsStore(
             defaults: defaults,
             allowedKeys: blockingMetadataKeys
         )
-        let snapshot = try await store.read()
-        try validateMigratableSnapshot(snapshot)
-        return snapshot
+        return try await store.read()
     }
 }
 
