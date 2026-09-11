@@ -12,6 +12,7 @@ Current cloud-sync preference checkpoint: `047c4a9a`.
 Current processing-job checkpoint: `0b1de446`.
 Current transcript-persistence checkpoint: `caf582ec`.
 Current summary-persistence checkpoint: `0af7809c`.
+Current archive-state checkpoint: `37d55b77`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -427,7 +428,18 @@ the async summary repository command. The summary upsert preserves the existing
 summary identity on replacement, creates a stable identity for a new row and
 commits the summary/recording link and status together; supplemental notes and
 attachments remain outside that transaction and are not deleted or migrated by
-this command. The app-hosted macOS/iOS builds and the 87-test host suite pass.
+this command. The app-hosted macOS/iOS builds and the 87-test host suite pass at
+that summary checkpoint.
+The archive-state checkpoint `37d55b77` adds
+`LibraryRecordingArchiveCommand` and a coordinator helper for committing
+`isArchived`, `archivedAt`, `archiveNote` and `lastModified` through Core Data
+or SQLite with an optional expected-revision guard. SQLite records the
+recording change in the same transaction. This command commits metadata only:
+`RecordingArchiveService`'s iCloud Drive copy, security-scoped bookmarks,
+destination verification and local-source removal remain outside the
+transaction until their receipt/order boundary is implemented. The app-hosted
+macOS/iOS builds and the full 88-test host suite pass; neither adapter is wired
+to startup or a user-data migration.
 The durable media-operation checkpoint `44515c52` adds transactional asset and
 file-operation enqueueing, root-relative path validation, streaming checksum/
 length verification, atomic partial-file publication, non-overwriting conflict
@@ -470,9 +482,9 @@ to production callers. Four additional host tests cover source identity across
 reopen, queued background copying with progress, receipt completion after
 reopen and changed-destination refusal.
 The SQLite-only `LibraryObservation` implementation persists a global
-`library_changes` cursor and emits recording-rename/cloud-sync/settings events
-atomically, including the pending-marker changes associated with a cloud-sync
-toggle.
+`library_changes` cursor and emits recording-rename/archive-state/cloud-sync/
+settings events atomically, including the pending-marker changes associated
+with a cloud-sync toggle.
 `CoreDataLibraryObservation` reads retained persistent-history transactions using
 the same cursor contract; durable Core Data stores now enable history tracking.
 The `LibraryObservationSubscription` cursor owner anchors before the initial
@@ -482,8 +494,8 @@ activation and persistent-store remote-change notifications. The history-
 retention/purge policy remains intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 78 disposable macOS tests; the app-hosted
-adapter fixture and new cloud-sync contract are compile-checked by iOS
+standalone runtime harness has passed 88 disposable macOS tests; the app-hosted
+adapter fixture and repository contracts are compile-checked by iOS
 build-for-testing but have not executed because the current simulator runner
 exits before XCTest bootstrapping. No test inspects or modifies a live user
 store.
@@ -545,9 +557,10 @@ resolved.
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration callers use the Core Data adapter. The file-owning AI rename stays outside this command pending a journaled file-operation boundary. |
 | Transcript upsert command | `LibraryTranscriptUpsertCommand` carries encoded transcript payloads, resolves one recording and preserves the existing transcript identity on replacement. Core Data and SQLite create or update the transcript and recording link/status atomically; SQLite records both changes in its durable observation log. | Two focused SQLite tests cover replacement identity/payload updates and stable new-row retry; the app-hosted contract covers Core Data replacement identity and persisted payloads. Production transcription persistence uses the async repository path; the synchronous helper remains for UI-test seeding and legacy compatibility. No backend is selected for startup. |
 | Summary upsert command | `LibrarySummaryUpsertCommand` carries encoded structured payloads and summary metadata, resolves one recording and preserves the existing summary identity on replacement. Core Data and SQLite create or update the summary and recording link/status atomically; SQLite records both changes in its durable observation log. Missing or ambiguous recording/summary/transcript identities fail closed, and retrying a new-row command does not duplicate it. Supplemental notes and attachments remain outside this metadata transaction. | Two focused SQLite tests cover replacement identity/payload updates and stable new-row retry; the app-hosted contract covers Core Data replacement identity and persisted payloads. Background summarization and both summary-regeneration paths use the async repository path; the synchronous helper remains for UI-test seeding and legacy compatibility. No backend is selected for startup. |
+| Recording archive-state command | `LibraryRecordingArchiveCommand` commits `isArchived`, `archivedAt`, `archiveNote` and `lastModified` through Core Data or SQLite, with an optional expected-revision guard. SQLite records the durable recording change in the same GRDB transaction; unarchive explicitly clears archive metadata. | One focused SQLite test and one app-hosted Core Data contract test cover archive/restore state and revision behavior. `RecordingArchiveService` iCloud Drive copy/bookmarks/destination verification/local-source removal remains outside this metadata command; no production archive-service caller is wired. |
 | Cloud-sync preference command | `LibraryRecordingCloudSyncCommand` addresses a recording through the same reference/revision boundary and commits `isCloudSyncDisabled` with the durable `localOnlyRemoval` marker. Core Data uses one context save; SQLite uses one GRDB transaction, preserves the earliest marker request time, coalesces duplicate rows and removes all matching markers when sync is re-enabled. CloudKit flushing remains post-commit. | Host coverage verifies both recording and pending-marker changes, exact observation revisions and re-enable cleanup; the app-hosted contract covers the Core Data path in the compiled active-model fixture. No live account or user store is touched. |
 | Processing-job create/update/delete/recovery commands | `LibraryProcessingJobCreateCommand`, `LibraryProcessingJobUpdateCommand`, `LibraryProcessingJobDeleteCommand`, `LibraryProcessingJobTerminalCleanupCommand` and `LibraryProcessingJobCrashRecoveryCommand` address jobs by stable storage or legacy ID, validate command values and apply an optimistic `lastModified` guard where a row is being changed or removed. Creation preserves the initial status, progress, model, error, completion and start-time values, optionally resolves a stable recording reference and rejects duplicate UUIDs. Updates distinguish preserving an optional error/completion value from intentionally clearing it. Terminal cleanup matches legacy casing/whitespace and records one durable delete change per deleted row. Crash recovery marks only the known nonterminal set as Failed, preserves progress, records the generic message and completion timestamp in one adapter transaction, and safely skips missing/already-terminal rows on retry. Core Data commits each command in one context save; SQLite commits each in one GRDB transaction and emits one `processingJob` change. `BackgroundProcessingManager` routes synchronous creation, asynchronous status transitions/reconciliation, terminal cleanup and startup crash recovery through the Core Data adapter. SQLite canonicalizes UUID legacy references for migrated rows. | Five focused host tests cover create/link/duplicate rejection, terminal cleanup, crash recovery, update set/preserve/clear behavior, delete durability, stale/not-found rejection, exact revisions and no revision on rejection; the app-hosted contract covers the Core Data create/terminal-cleanup/recovery paths and both adapters' update/delete paths against the active compiled model. |
-| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/setting/cloud-sync, transcript, summary and pending-marker events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename and cloud-sync events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining recording, archive and file-owning write commands are still open. |
+| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/setting/archive-state/cloud-sync, transcript, summary and pending-marker events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename and cloud-sync events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining recording, archive-location and file-owning write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
 next inventory update must expand command/error coverage, audit adoption of the
