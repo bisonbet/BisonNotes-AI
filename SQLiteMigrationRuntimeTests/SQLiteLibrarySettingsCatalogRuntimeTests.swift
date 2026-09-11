@@ -54,6 +54,41 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
         }
     }
 
+    func testCloudKitSourceProjectionMatchesReviewedOmissions() throws {
+        let cloudKitKeys = Set(LibrarySettingsCatalog.blockingMetadataKeys)
+            .subtracting(LibrarySettingsSourceInventory.reviewedCloudKitOmissions)
+
+        XCTAssertNoThrow(
+            try LibrarySettingsSourceInventory.validateCloudKitSourceKeys(
+                cloudKitKeys.sorted()
+            )
+        )
+    }
+
+    func testCloudKitSourceProjectionRejectsDrift() {
+        let expected = Set(LibrarySettingsCatalog.blockingMetadataKeys)
+            .subtracting(LibrarySettingsSourceInventory.reviewedCloudKitOmissions)
+        let missingKey = expected.sorted().first!
+        let unexpectedKey = "SelectedAIModel"
+        let drifted = expected
+            .subtracting([missingKey])
+            .union([unexpectedKey])
+
+        XCTAssertThrowsError(
+            try LibrarySettingsSourceInventory.validateCloudKitSourceKeys(
+                drifted.sorted()
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? LibrarySettingsCatalogError,
+                .sourceInventoryDrift(
+                    missing: [missingKey],
+                    unexpected: [unexpectedKey]
+                )
+            )
+        }
+    }
+
     func testCatalogRejectsAnUnclassifiedSourceKey() {
         XCTAssertThrowsError(
             try LibrarySettingsCatalog.validateSourceKeys([

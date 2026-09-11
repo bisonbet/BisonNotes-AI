@@ -840,6 +840,7 @@ struct BisonNotesAIApp: App {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
+                    appCoordinator.pollLibraryObservationIfNeeded()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
                     // applicationDidBecomeActive) ensures this fires reliably in

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import CoreData
 
 // MARK: - App Data Coordinator
 // Manages the unified registry system for recordings, transcripts, and summaries
@@ -13,11 +14,15 @@ class AppDataCoordinator: ObservableObject {
 
     @Published var isInitialized = false
     @Published private(set) var storageStatus: PersistenceStoreStatus
+    @Published private(set) var migrationBoundaryStatus: SQLiteMigrationStartupBoundaryStatus = .notPrepared
+    @Published private(set) var migrationSettingsNormalization: LibrarySettingsNormalizationResult?
+    @Published private(set) var lastObservedLibraryRevision: Int64?
 
     /// Storage-neutral access used by callers that have already moved off
     /// managed-object mutation. Core Data remains authoritative until the
     /// migration coordinator selects a SQLite generation.
     private let libraryRepository: any LibraryRepository
+    private let libraryObservation: any LibraryObservation
 
     /// The recording shown in the single native-macOS player window. The app
     /// deliberately supports only one player window at a time, so this drives a
@@ -25,6 +30,9 @@ class AppDataCoordinator: ObservableObject {
     @Published var macPlayerRecordingID: UUID?
 
     private var networkRestoredObserver: (any NSObjectProtocol)?
+    private var hasInstalledPersistentStoreRemoteChangeObserver = false
+    private var observationSubscription: LibraryObservationSubscription?
+    private var observationTask: Task<Void, Never>?
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
@@ -34,6 +42,7 @@ class AppDataCoordinator: ObservableObject {
         self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
         self.libraryRepository = CoreDataLibraryRepository(context: viewContext)
+        self.libraryObservation = CoreDataLibraryObservation(container: resolvedPersistenceController.container)
 
         // SummaryManager initializes its engine registry during first access.
         // Migrate the Mac-only Ollama selection before that access so an older
@@ -59,11 +68,18 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
+    deinit {
+        observationTask?.cancel()
+        observationSubscription?.cancel()
+    }
+
     private func initializeSystem() async {
         guard storageStatus.isOperational else { return }
 
         // Core Data system initialization
         isInitialized = true
+
+        await prepareSQLiteMigrationBoundary()
 
         let migrationReport = SummaryManager.shared.migrateLegacySummariesIfNeeded(using: self)
         if migrationReport.decodedCount > 0 || migrationReport.failedCount > 0 || migrationReport.unresolvedCount > 0 {
@@ -81,6 +97,94 @@ class AppDataCoordinator: ObservableObject {
     /// leave the UI treating a partially readable library as writable.
     func markStorageUnavailable() {
         storageStatus = .unavailable
+    }
+
+    /// Prepares the future migration inputs without changing the current
+    /// authoritative Core Data generation. In-memory previews/tests do not
+    /// need persistent-history observation and are explicitly marked out of
+    /// scope rather than producing a misleading startup failure.
+    private func prepareSQLiteMigrationBoundary() async {
+        guard storageStatus.isDurable else {
+            migrationBoundaryStatus = .notApplicable
+            return
+        }
+
+        do {
+            // The cursor is anchored before any future source snapshot can be
+            // taken. This pre-cutover preparation does not take that snapshot;
+            // the eventual migration run will create its own anchored input.
+            let subscription = try await LibraryObservationSubscription.anchored(
+                to: libraryObservation
+            )
+            let normalization = try await SQLiteMigrationStartupBoundary.captureNormalizedSettings()
+            observationSubscription = subscription
+            migrationSettingsNormalization = normalization
+            lastObservedLibraryRevision = subscription.cursor
+            migrationBoundaryStatus = .ready
+            installPersistentStoreRemoteChangeObserver()
+
+            AppLog.shared.coreData(
+                "SQLite migration startup boundary ready: normalized "
+                    + "\(normalization.changedKeys.count) setting(s), omitted "
+                    + "\(normalization.omittedKeys.count) platform-specific setting(s)",
+                level: .debug
+            )
+        } catch {
+            migrationBoundaryStatus = .needsReview
+            AppLog.shared.coreData(
+                "SQLite migration startup boundary requires review; Core Data remains "
+                    + "authoritative: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func installPersistentStoreRemoteChangeObserver() {
+        guard !hasInstalledPersistentStoreRemoteChangeObserver else { return }
+        hasInstalledPersistentStoreRemoteChangeObserver = true
+        _ = NotificationCenter.default.addObserver(
+            forName: .NSPersistentStoreRemoteChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollLibraryObservationIfNeeded()
+            }
+        }
+    }
+
+    /// Polls the durable source cursor after a store notification or app
+    /// activation. The cursor advances only after a complete validated batch.
+    func pollLibraryObservationIfNeeded() {
+        guard migrationBoundaryStatus == .ready,
+              observationSubscription != nil,
+              observationTask == nil else {
+            return
+        }
+
+        observationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.pollLibraryObservation()
+            self.observationTask = nil
+        }
+    }
+
+    private func pollLibraryObservation() async {
+        guard var subscription = observationSubscription else { return }
+
+        do {
+            let changes = try await subscription.poll()
+            observationSubscription = subscription
+            guard let lastChange = changes.last else { return }
+            lastObservedLibraryRevision = lastChange.revision
+        } catch {
+            migrationBoundaryStatus = .needsReview
+            AppLog.shared.coreData(
+                "SQLite migration observation cursor requires review; Core Data remains "
+                    + "authoritative: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     // MARK: - Public Interface

@@ -52,7 +52,8 @@ let package = Package(
                 "TranscriptData.swift",
                 "TranscriptManager.swift",
                 "TranscriptionStarter.swift",
-                "UserPreferences.swift"
+                "UserPreferences.swift",
+                "SQLiteMigrationStartupBoundary.swift"
             ],
             sources: [
                 "LibraryRepository.swift",

@@ -187,7 +187,41 @@ enum LibrarySettingsSourceInventory {
         "migrated_unavailable_"
     ]
 
+    /// Blocking settings intentionally absent from the current CloudKit
+    /// restore list. They remain part of the SQLite migration catalog and are
+    /// read from the local defaults domain during the blocking metadata phase.
+    static let reviewedCloudKitOmissions: Set<String> = [
+        "enableFluidAudio",
+        "fluidAudioSelectedModelVersion",
+        "enableLiveTranscription",
+        "transcriptCleanupEnabled",
+        "comedyModeEnabled",
+        "comedyModeStyle",
+        "allowInsecurePublicAIEndpoints"
+    ]
+
     static var allExactKeys: [String] {
         (standardDefaultsKeys + appGroupDefaultsKeys).sorted()
+    }
+
+    /// Fails closed if the production CloudKit settings list no longer matches
+    /// the reviewed blocking-metadata projection. This is intentionally a
+    /// runtime contract as well as a test assertion: a future source change
+    /// must be reviewed before startup can prepare a migration input.
+    static func validateCloudKitSourceKeys(_ keys: [String]) throws {
+        try LibrarySettingsCatalog.validateSourceKeys(keys)
+
+        let blockingKeys = Set(LibrarySettingsCatalog.blockingMetadataKeys)
+        let expectedCloudKitKeys = blockingKeys.subtracting(reviewedCloudKitOmissions)
+        let actualCloudKitKeys = Set(keys)
+        let missing = expectedCloudKitKeys.subtracting(actualCloudKitKeys).sorted()
+        let unexpected = actualCloudKitKeys.subtracting(expectedCloudKitKeys).sorted()
+
+        guard missing.isEmpty, unexpected.isEmpty else {
+            throw LibrarySettingsCatalogError.sourceInventoryDrift(
+                missing: missing,
+                unexpected: unexpected
+            )
+        }
     }
 }

@@ -34,6 +34,7 @@ enum LibrarySettingsCatalogError: LocalizedError, Equatable {
         expected: LibrarySettingValueKind,
         actual: LibrarySettingValueKind
     )
+    case sourceInventoryDrift(missing: [String], unexpected: [String])
 
     var errorDescription: String? {
         switch self {
@@ -47,6 +48,11 @@ enum LibrarySettingsCatalogError: LocalizedError, Equatable {
             return "The settings key \(key) has an invalid value: \(reason)"
         case let .valueKindMismatch(key, expected, actual):
             return "The settings key \(key) has value kind \(actual.rawValue); expected \(expected.rawValue)."
+        case let .sourceInventoryDrift(missing, unexpected):
+            let missingDescription = missing.isEmpty ? "none" : missing.joined(separator: ", ")
+            let unexpectedDescription = unexpected.isEmpty ? "none" : unexpected.joined(separator: ", ")
+            return "The reviewed settings source drifted. Missing: \(missingDescription). "
+                + "Unexpected: \(unexpectedDescription)."
         }
     }
 }
