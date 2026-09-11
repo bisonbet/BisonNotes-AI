@@ -216,6 +216,75 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
     }
 
+    func testCoreDataRepositoryReplacesSummaryByRecordingAndPreservesIdentity() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-summary-upsert.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let updated = try await repository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: try XCTUnwrap(
+                    UUID(uuidString: "10000000-0000-0000-0000-000000000019")
+                ),
+                recordingReference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                transcriptID: try XCTUnwrap(
+                    UUID(uuidString: "10000000-0000-0000-0000-000000000002")
+                ),
+                summary: "This replacement summary is long enough to be persisted safely.",
+                tasks: "[{\"text\":\"replacement task\"}]",
+                reminders: "[{\"text\":\"replacement reminder\"}]",
+                titles: "[{\"text\":\"Replacement title\"}]",
+                contentType: "meeting",
+                aiMethod: "{\"engine\":\"replacement-engine\",\"model\":\"replacement-model\"}",
+                generatedAt: Date(timeIntervalSinceReferenceDate: 301),
+                version: 2,
+                wordCount: 9,
+                originalLength: 48,
+                compressionRatio: 0.19,
+                confidence: 0.88,
+                processingTime: 3.5
+            )
+        )
+
+        XCTAssertEqual(
+            updated.storageID,
+            "core-data-summary-10000000-0000-0000-0000-000000000003"
+        )
+        XCTAssertEqual(updated.legacyID, "10000000-0000-0000-0000-000000000003")
+        XCTAssertEqual(updated.generatedAt, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(updated.aiMethod, "{\"engine\":\"replacement-engine\",\"model\":\"replacement-model\"}")
+        XCTAssertEqual(updated.contentType, "meeting")
+        XCTAssertEqual(updated.summary, "This replacement summary is long enough to be persisted safely.")
+        XCTAssertEqual(updated.tasks, "[{\"text\":\"replacement task\"}]")
+        XCTAssertEqual(updated.reminders, "[{\"text\":\"replacement reminder\"}]")
+        XCTAssertEqual(updated.titles, "[{\"text\":\"Replacement title\"}]")
+        XCTAssertEqual(
+            updated.transcriptStorageID,
+            "core-data-transcript-10000000-0000-0000-0000-000000000002"
+        )
+        XCTAssertEqual(updated.transcriptLegacyID, "10000000-0000-0000-0000-000000000002")
+        XCTAssertEqual(updated.version, 2)
+        XCTAssertEqual(updated.wordCount, 9)
+
+        let persisted = try await repository.fetchSummarySnapshots()
+        XCTAssertEqual(persisted, [updated])
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+    }
+
     func testCoreDataRepositoryUpdatesProcessingJobWithoutExposingManagedObject() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

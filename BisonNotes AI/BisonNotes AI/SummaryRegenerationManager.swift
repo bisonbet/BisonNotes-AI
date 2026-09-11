@@ -78,8 +78,6 @@ class SummaryRegenerationManager: ObservableObject {
                     recordingDate: summary.recordingDate
                 )
 
-                // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
-
                 // Debug: Show what names we're comparing (bulk regeneration)
                 AppLog.shared.summarization("Bulk regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
 
@@ -95,28 +93,16 @@ class SummaryRegenerationManager: ObservableObject {
                     AppLog.shared.summarization("Bulk regeneration: Recording name did not change", level: .debug)
                 }
 
-                // Create new summary entry in Core Data with the updated name
-                let newSummaryId = appCoordinator.workflowManager.createSummary(
+                // Preserve the summary identity so notes and attachments remain
+                // associated with the regenerated content.
+                _ = try await appCoordinator.upsertSummaryUsingRepository(
+                    newEnhancedSummary,
                     for: recordingId,
-                    transcriptId: summary.transcriptId ?? UUID(),
-                    summary: newEnhancedSummary.summary,
-                    tasks: newEnhancedSummary.tasks,
-                    reminders: newEnhancedSummary.reminders,
-                    titles: newEnhancedSummary.titles,
-                    contentType: newEnhancedSummary.contentType,
-                    aiEngine: newEnhancedSummary.aiEngine,
-                    aiModel: newEnhancedSummary.aiModel,
-                    originalLength: newEnhancedSummary.originalLength,
-                    processingTime: newEnhancedSummary.processingTime
+                    transcriptId: summary.transcriptId ?? transcript.id
                 )
 
-                if newSummaryId != nil {
-                    successful += 1
-                    AppLog.shared.summarization("Regenerated summary for recording \(recordingId)")
-                } else {
-                    failed += 1
-                    errors.append("Recording \(recordingId): Failed to save new summary")
-                }
+                successful += 1
+                AppLog.shared.summarization("Regenerated summary for recording \(recordingId)")
 
             } catch {
                 failed += 1
@@ -162,8 +148,6 @@ class SummaryRegenerationManager: ObservableObject {
                 recordingDate: summary.recordingDate
             )
 
-            // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
-
             AppLog.shared.summarization("Regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
 
             // Update the recording name if it changed during regeneration
@@ -178,28 +162,16 @@ class SummaryRegenerationManager: ObservableObject {
                 AppLog.shared.summarization("Recording name did not change during regeneration", level: .debug)
             }
 
-            // Create new summary entry in Core Data with the updated name
-            let newSummaryId = appCoordinator.workflowManager.createSummary(
+            // Preserve the summary identity so notes and attachments remain
+            // associated with the regenerated content.
+            _ = try await appCoordinator.upsertSummaryUsingRepository(
+                newEnhancedSummary,
                 for: recordingId,
-                transcriptId: summary.transcriptId ?? UUID(),
-                summary: newEnhancedSummary.summary,
-                tasks: newEnhancedSummary.tasks,
-                reminders: newEnhancedSummary.reminders,
-                titles: newEnhancedSummary.titles,
-                contentType: newEnhancedSummary.contentType,
-                aiEngine: newEnhancedSummary.aiEngine,
-                aiModel: newEnhancedSummary.aiModel,
-                originalLength: newEnhancedSummary.originalLength,
-                processingTime: newEnhancedSummary.processingTime
+                transcriptId: summary.transcriptId ?? transcript.id
             )
 
-            if newSummaryId != nil {
-                AppLog.shared.summarization("Successfully regenerated summary for recording \(recordingId)")
-                return true
-            } else {
-                AppLog.shared.summarization("Failed to save new summary for recording \(recordingId)", level: .error)
-                return false
-            }
+            AppLog.shared.summarization("Successfully regenerated summary for recording \(recordingId)")
+            return true
 
         } catch {
             AppLog.shared.summarization("Failed to regenerate summary for recording \(recordingId): \(error.localizedDescription)", level: .error)

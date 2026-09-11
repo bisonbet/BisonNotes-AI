@@ -325,6 +325,67 @@ class AppDataCoordinator: ObservableObject {
         return result
     }
 
+    /// Persists a generated summary through the storage-neutral repository.
+    /// Supplemental notes and attachments remain outside this command; keeping
+    /// the existing summary identity lets those files stay associated with the
+    /// same logical summary during regeneration.
+    func upsertSummaryUsingRepository(
+        _ summary: EnhancedSummaryData,
+        for recordingId: UUID,
+        transcriptId: UUID? = nil
+    ) async throws -> UUID {
+        let encoder = JSONEncoder()
+        guard let tasksData = try? encoder.encode(summary.tasks),
+              let tasks = String(data: tasksData, encoding: .utf8),
+              let remindersData = try? encoder.encode(summary.reminders),
+              let reminders = String(data: remindersData, encoding: .utf8),
+              let titlesData = try? encoder.encode(summary.titles),
+              let titles = String(data: titlesData, encoding: .utf8) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary structured payloads could not be encoded"
+            )
+        }
+
+        let snapshot = try await libraryRepository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: summary.id,
+                recordingReference: LibraryRecordingReference(
+                    legacyID: recordingId.uuidString
+                ),
+                transcriptID: transcriptId ?? summary.transcriptId,
+                summary: summary.summary,
+                tasks: tasks,
+                reminders: reminders,
+                titles: titles,
+                contentType: summary.contentType.rawValue,
+                aiMethod: SummaryMetadataCodec.encode(
+                    aiEngine: summary.aiEngine,
+                    aiModel: summary.aiModel
+                ),
+                generatedAt: summary.generatedAt,
+                version: Int64(summary.version),
+                wordCount: Int64(summary.wordCount),
+                originalLength: Int64(summary.originalLength),
+                compressionRatio: summary.compressionRatio,
+                confidence: summary.confidence,
+                processingTime: summary.processingTime
+            )
+        )
+
+        guard let legacyID = snapshot.legacyID,
+              let persistedID = UUID(uuidString: legacyID) else {
+            throw LibraryRepositoryError.invalidRecord(
+                entity: "summaries",
+                field: "id"
+            )
+        }
+        if shouldBackUpToiCloud(recordingId: recordingId) {
+            scheduleAutoBackupIfEnabled()
+        }
+        objectWillChange.send()
+        return persistedID
+    }
+
     func getRecording(id: UUID) -> RecordingEntry? {
         return coreDataManager.getRecording(id: id)
     }

@@ -186,6 +186,125 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         ])
     }
 
+    func testRepositoryReplacesSummaryByRecordingAndUpdatesRecordingAtomically() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let replacementID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000017")
+        )
+
+        let updated = try await repository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: replacementID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: "recording-storage"
+                ),
+                transcriptID: nil,
+                summary: "This replacement summary is long enough to be persisted safely.",
+                tasks: "[{\"text\":\"replacement task\"}]",
+                reminders: "[{\"text\":\"replacement reminder\"}]",
+                titles: "[{\"text\":\"Replacement title\"}]",
+                contentType: "meeting",
+                aiMethod: "{\"engine\":\"replacement-engine\",\"model\":\"replacement-model\"}",
+                generatedAt: Date(timeIntervalSinceReferenceDate: 301),
+                version: 2,
+                wordCount: 9,
+                originalLength: 48,
+                compressionRatio: 0.19,
+                confidence: 0.88,
+                processingTime: 3.5
+            )
+        )
+
+        XCTAssertEqual(updated.storageID, "summary-storage")
+        XCTAssertEqual(updated.legacyID, "summary-legacy")
+        XCTAssertEqual(updated.generatedAt, Date(timeIntervalSinceReferenceDate: 301))
+        XCTAssertEqual(updated.aiMethod, "{\"engine\":\"replacement-engine\",\"model\":\"replacement-model\"}")
+        XCTAssertEqual(updated.contentType, "meeting")
+        XCTAssertEqual(updated.summary, "This replacement summary is long enough to be persisted safely.")
+        XCTAssertEqual(updated.tasks, "[{\"text\":\"replacement task\"}]")
+        XCTAssertEqual(updated.reminders, "[{\"text\":\"replacement reminder\"}]")
+        XCTAssertEqual(updated.titles, "[{\"text\":\"Replacement title\"}]")
+        XCTAssertEqual(updated.transcriptStorageID, "transcript-storage")
+        XCTAssertEqual(updated.transcriptLegacyID, "transcript-legacy")
+        XCTAssertEqual(updated.version, 2)
+        XCTAssertEqual(updated.wordCount, 9)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.summary, .recording])
+        XCTAssertEqual(changes.map(\.operation), [.updated, .updated])
+        XCTAssertEqual(changes.map(\.revision), [1, 2])
+    }
+
+    func testRepositoryCreatesSummaryWithStableStorageIdentityAndRetryDoesNotDuplicate() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let recordingOnlySnapshot = SQLiteMigrationSourceSnapshot(
+            sourceModel: sourceSnapshot.sourceModel,
+            sourceFingerprint: "recording-only-fixture",
+            migrationRunID: nil,
+            rows: sourceSnapshot.rows.filter { $0.entity == .recordings }
+        )
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            recordingOnlySnapshot,
+            into: store,
+            batchSize: 1,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000018")
+        )
+        let command = LibrarySummaryUpsertCommand(
+            id: summaryID,
+            recordingReference: LibraryRecordingReference(
+                legacyID: "recording-legacy"
+            ),
+            summary: "This newly created summary is long enough to survive a retry.",
+            aiMethod: "fixture-model",
+            generatedAt: Date(timeIntervalSinceReferenceDate: 401),
+            wordCount: 10,
+            originalLength: 50
+        )
+
+        let created = try await repository.upsertSummary(command)
+        let retried = try await repository.upsertSummary(command)
+        let summaries = try await repository.fetchSummarySnapshots()
+
+        XCTAssertEqual(created.storageID, "sqlite-summary-\(summaryID.uuidString.lowercased())")
+        XCTAssertEqual(created.legacyID, summaryID.uuidString.lowercased())
+        XCTAssertEqual(created.recordingStorageID, "recording-storage")
+        XCTAssertNil(created.transcriptStorageID)
+        XCTAssertEqual(retried.storageID, created.storageID)
+        XCTAssertEqual(retried.legacyID, created.legacyID)
+        XCTAssertEqual(summaries.count, 1)
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [
+            .summary, .recording, .summary, .recording
+        ])
+    }
+
     func testRepositoryRenamesRecordingWithExpectedRevision() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

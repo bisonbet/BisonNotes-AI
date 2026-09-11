@@ -181,6 +181,114 @@ extension LibraryTranscriptUpsertCommand {
     }
 }
 
+/// Creates or replaces the summary attached to one recording.
+///
+/// Structured task/reminder/title values are carried in their encoded form so
+/// the repository boundary stays independent of the app's richer summary
+/// models. The existing summary identity is preserved when the recording has
+/// one; `id` is the requested identity only for a new row.
+struct LibrarySummaryUpsertCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingReference: LibraryRecordingReference
+    let transcriptID: UUID?
+    let summary: String
+    let tasks: String
+    let reminders: String
+    let titles: String
+    let contentType: String
+    let aiMethod: String
+    let generatedAt: Date
+    let version: Int64
+    let wordCount: Int64
+    let originalLength: Int64
+    let compressionRatio: Double
+    let confidence: Double
+    let processingTime: Double
+
+    init(
+        id: UUID,
+        recordingReference: LibraryRecordingReference,
+        transcriptID: UUID? = nil,
+        summary: String,
+        tasks: String = "[]",
+        reminders: String = "[]",
+        titles: String = "[]",
+        contentType: String = "general",
+        aiMethod: String,
+        generatedAt: Date = Date(),
+        version: Int64 = 1,
+        wordCount: Int64,
+        originalLength: Int64,
+        compressionRatio: Double = 0,
+        confidence: Double = 0.5,
+        processingTime: Double = 0
+    ) {
+        self.id = id
+        self.recordingReference = recordingReference
+        self.transcriptID = transcriptID
+        self.summary = summary
+        self.tasks = tasks
+        self.reminders = reminders
+        self.titles = titles
+        self.contentType = contentType
+        self.aiMethod = aiMethod
+        self.generatedAt = generatedAt
+        self.version = version
+        self.wordCount = wordCount
+        self.originalLength = originalLength
+        self.compressionRatio = compressionRatio
+        self.confidence = confidence
+        self.processingTime = processingTime
+    }
+}
+
+extension LibrarySummaryUpsertCommand {
+    func validate() throws {
+        guard summary.trimmingCharacters(in: .whitespacesAndNewlines).count >= 30 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary must contain at least 30 non-whitespace characters"
+            )
+        }
+        guard !tasks.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !reminders.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !titles.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary structured payloads must not be empty"
+            )
+        }
+        guard !contentType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary content type must not be empty"
+            )
+        }
+        guard version >= 0, wordCount >= 0, originalLength >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary integer metadata must be non-negative"
+            )
+        }
+        guard compressionRatio.isFinite, compressionRatio >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary compression ratio must be finite and non-negative"
+            )
+        }
+        guard confidence.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary confidence must be finite"
+            )
+        }
+        guard processingTime.isFinite, processingTime >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary processing time must be finite and non-negative"
+            )
+        }
+        guard generatedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary generated date must be finite"
+            )
+        }
+    }
+}
+
 /// Stable identifiers used by processing-job commands.
 struct LibraryProcessingJobReference: Equatable, Sendable {
     let storageID: String?
@@ -575,6 +683,9 @@ protocol LibraryRepository: Sendable {
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot
+    func upsertSummary(
+        _ command: LibrarySummaryUpsertCommand
+    ) async throws -> LibrarySummarySnapshot
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot
@@ -600,6 +711,9 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case staleRecording(reference: String, expected: Date?, actual: Date?)
     case transcriptAlreadyExists(reference: String)
     case ambiguousTranscript(reference: String)
+    case summaryAlreadyExists(reference: String)
+    case ambiguousSummary(reference: String)
+    case transcriptNotFound(reference: String)
     case processingJobAlreadyExists(reference: String)
     case processingJobNotFound(reference: String)
     case ambiguousProcessingJob(reference: String)
@@ -624,6 +738,12 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The transcript already exists: \(reference)"
         case .ambiguousTranscript(let reference):
             return "The transcript identity is ambiguous: \(reference)"
+        case .summaryAlreadyExists(let reference):
+            return "The summary already exists: \(reference)"
+        case .ambiguousSummary(let reference):
+            return "The summary identity is ambiguous: \(reference)"
+        case .transcriptNotFound(let reference):
+            return "The transcript could not be found: \(reference)"
         case .processingJobAlreadyExists(let reference):
             return "The processing job already exists: \(reference)"
         case .processingJobNotFound(let reference):

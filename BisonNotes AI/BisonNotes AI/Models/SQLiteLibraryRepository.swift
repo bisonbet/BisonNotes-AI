@@ -59,6 +59,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         try await store.upsertTranscript(command)
     }
 
+    func upsertSummary(
+        _ command: LibrarySummaryUpsertCommand
+    ) async throws -> LibrarySummarySnapshot {
+        try await store.upsertSummary(command)
+    }
+
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
@@ -361,6 +367,248 @@ extension SQLiteLibraryStore {
 
             return try Self.fetchUpdatedTranscript(
                 storageID: transcriptStorageID,
+                in: database
+            )
+        }
+    }
+
+    func upsertSummary(
+        _ command: LibrarySummaryUpsertCommand
+    ) throws -> LibrarySummarySnapshot {
+        try command.validate()
+        let recordingReference = try Self.normalizedReference(
+            command.recordingReference
+        )
+        let generatedAt = command.generatedAt.timeIntervalSinceReferenceDate
+        let requestedLegacyID = command.id.uuidString.lowercased()
+
+        return try databaseQueue.write { database in
+            let recordingRows = try Self.fetchRecordingRows(
+                for: recordingReference,
+                in: database
+            )
+            let recording = try Self.validateRecordingTarget(
+                rows: recordingRows,
+                reference: recordingReference,
+                expectedLastModified: nil
+            )
+
+            let summaryColumns = """
+                storageID, aiMethod, compressionRatio, confidence, contentType,
+                generatedAt, id, originalLength, processingTime,
+                recordingStorageID, recordingId, reminders, summary, tasks,
+                titles, transcriptStorageID, transcriptId, version, wordCount
+                """
+            let summaries = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(summaryColumns)
+                FROM summaries
+                WHERE recordingStorageID = ? OR recordingId = ?
+                ORDER BY generatedAt DESC, storageID
+                LIMIT 2
+                """,
+                arguments: [recording.storageID, recording.legacyID]
+            )
+            guard summaries.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousSummary(
+                    reference: recordingReference.displayValue
+                )
+            }
+
+            let summaryStorageID: String
+            let summaryID: String
+            let operation: LibraryChangeOperation
+            if let existingRow = summaries.first {
+                let existing = try SQLiteLibraryRepositoryMapper.summary(
+                    from: existingRow
+                )
+                guard let existingID = existing.legacyID,
+                      !existingID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "summaries",
+                        field: "id"
+                    )
+                }
+                summaryStorageID = existing.storageID
+                summaryID = existingID
+                operation = .updated
+            } else {
+                let duplicateCount = try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM summaries WHERE id = ?",
+                    arguments: [requestedLegacyID]
+                ) ?? 0
+                guard duplicateCount == 0 else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: requestedLegacyID
+                    )
+                }
+                summaryStorageID = Self.summaryStorageID(for: command.id)
+                summaryID = requestedLegacyID
+                operation = .inserted
+            }
+
+            var transcriptStorageID: String?
+            var transcriptID: String?
+            if let transcriptIDValue = command.transcriptID {
+                let requestedTranscriptID = transcriptIDValue.uuidString.lowercased()
+                let transcriptRows = try Row.fetchAll(
+                    database,
+                    sql: """
+                    SELECT storageID, id
+                    FROM transcripts
+                    WHERE storageID = ? OR LOWER(id) = ?
+                    LIMIT 2
+                    """,
+                    arguments: [
+                        Self.transcriptStorageID(for: transcriptIDValue),
+                        requestedTranscriptID
+                    ]
+                )
+                guard !transcriptRows.isEmpty else {
+                    throw LibraryRepositoryError.transcriptNotFound(
+                        reference: requestedTranscriptID
+                    )
+                }
+                guard transcriptRows.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousTranscript(
+                        reference: requestedTranscriptID
+                    )
+                }
+                guard let resolvedStorageID: String = transcriptRows[0]["storageID"],
+                      !resolvedStorageID.isEmpty,
+                      let resolvedID: String = transcriptRows[0]["id"],
+                      !resolvedID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "transcripts",
+                        field: "id"
+                    )
+                }
+                transcriptStorageID = resolvedStorageID
+                transcriptID = resolvedID
+            } else if let existingRow = summaries.first {
+                transcriptStorageID = existingRow["transcriptStorageID"]
+                transcriptID = existingRow["transcriptId"]
+            }
+
+            if operation == .inserted {
+                try database.execute(
+                    sql: """
+                    INSERT INTO summaries (
+                        storageID, aiMethod, compressionRatio, confidence, contentType,
+                        generatedAt, id, originalLength, processingTime,
+                        recordingStorageID, recordingId, reminders, summary, tasks,
+                        titles, transcriptStorageID, transcriptId, version, wordCount
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        summaryStorageID,
+                        command.aiMethod,
+                        command.compressionRatio,
+                        command.confidence,
+                        command.contentType,
+                        generatedAt,
+                        summaryID,
+                        command.originalLength,
+                        command.processingTime,
+                        recording.storageID,
+                        recording.legacyID,
+                        command.reminders,
+                        command.summary,
+                        command.tasks,
+                        command.titles,
+                        transcriptStorageID,
+                        transcriptID,
+                        command.version,
+                        command.wordCount
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert summary",
+                        reason: "the summary row was not inserted"
+                    )
+                }
+            } else {
+                try database.execute(
+                    sql: """
+                    UPDATE summaries
+                    SET aiMethod = ?, compressionRatio = ?, confidence = ?,
+                        contentType = ?, generatedAt = ?, originalLength = ?,
+                        processingTime = ?, recordingStorageID = ?, recordingId = ?,
+                        reminders = ?, summary = ?, tasks = ?, titles = ?,
+                        transcriptStorageID = ?, transcriptId = ?, version = ?,
+                        wordCount = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.aiMethod,
+                        command.compressionRatio,
+                        command.confidence,
+                        command.contentType,
+                        generatedAt,
+                        command.originalLength,
+                        command.processingTime,
+                        recording.storageID,
+                        recording.legacyID,
+                        command.reminders,
+                        command.summary,
+                        command.tasks,
+                        command.titles,
+                        transcriptStorageID,
+                        transcriptID,
+                        command.version,
+                        command.wordCount,
+                        summaryStorageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert summary",
+                        reason: "the summary row was not updated"
+                    )
+                }
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .summary,
+                storageID: summaryStorageID,
+                operation: operation,
+                at: command.generatedAt
+            )
+
+            try database.execute(
+                sql: """
+                UPDATE recordings
+                SET summaryId = ?, summaryStatus = ?, lastModified = ?
+                WHERE storageID = ?
+                """,
+                arguments: [
+                    summaryID,
+                    "Completed",
+                    generatedAt,
+                    recording.storageID
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "upsert summary",
+                    reason: "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: recording.storageID,
+                operation: .updated,
+                at: command.generatedAt
+            )
+
+            return try Self.fetchUpdatedSummary(
+                storageID: summaryStorageID,
                 in: database
             )
         }
@@ -1020,6 +1268,10 @@ extension SQLiteLibraryStore {
         "sqlite-transcript-\(id.uuidString.lowercased())"
     }
 
+    private static func summaryStorageID(for id: UUID) -> String {
+        "sqlite-summary-\(id.uuidString.lowercased())"
+    }
+
     private static func fetchUpdatedRecording(
         storageID: String,
         in database: Database
@@ -1083,6 +1335,29 @@ extension SQLiteLibraryStore {
             )
         }
         return try SQLiteLibraryRepositoryMapper.transcript(from: updatedRow)
+    }
+
+    private static func fetchUpdatedSummary(
+        storageID: String,
+        in database: Database
+    ) throws -> LibrarySummarySnapshot {
+        let columns = """
+            storageID, aiMethod, compressionRatio, confidence, contentType,
+            generatedAt, id, originalLength, processingTime,
+            recordingStorageID, recordingId, reminders, summary, tasks, titles,
+            transcriptStorageID, transcriptId, version, wordCount
+            """
+        guard let updatedRow = try Row.fetchOne(
+            database,
+            sql: "SELECT \(columns) FROM summaries WHERE storageID = ?",
+            arguments: [storageID]
+        ) else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "upsert summary",
+                reason: "the updated summary row could not be read"
+            )
+        }
+        return try SQLiteLibraryRepositoryMapper.summary(from: updatedRow)
     }
 
     func fetchRecordingSummaries() throws -> [LibraryRecordingSnapshot] {

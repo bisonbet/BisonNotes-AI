@@ -1909,35 +1909,30 @@ class BackgroundProcessingManager: ObservableObject {
         let summaryProgressJob = job.withProgress(0.8)
         await updateJob(summaryProgressJob)
 
-        // Clear regeneration tracking (cleanup now happens in RecordingWorkflowManager.createSummary)
+        // Clear regeneration tracking. Repository upsert preserves the existing
+        // summary identity so supplemental notes and attachments remain linked.
         regenerationSummaryIds.removeValue(forKey: job.id)
 
-        // Save summary to Core Data using RecordingWorkflowManager
-        let workflowManager = RecordingWorkflowManager()
-        let summaryId = workflowManager.createSummary(
+        guard let coordinator = enhancedFileManager.getCoordinator() else {
+            throw BackgroundProcessingError.processingFailed(
+                "App data coordinator is unavailable for summary persistence"
+            )
+        }
+        let summaryId = try await coordinator.upsertSummaryUsingRepository(
+            enhancedSummary,
             for: recordingId,
-            transcriptId: transcriptId,
-            summary: enhancedSummary.summary,
-            tasks: enhancedSummary.tasks,
-            reminders: enhancedSummary.reminders,
-            titles: enhancedSummary.titles,
-            contentType: enhancedSummary.contentType,
-            aiEngine: enhancedSummary.aiEngine,
-            aiModel: enhancedSummary.aiModel,
-            originalLength: enhancedSummary.originalLength,
-            processingTime: enhancedSummary.processingTime
+            transcriptId: transcriptId
         )
 
-        guard summaryId != nil else {
-            throw BackgroundProcessingError.processingFailed("Failed to save summary for \(job.recordingName)")
-        }
-
-        AppLog.shared.backgroundProcessing("Summary saved with ID: \(summaryId?.uuidString ?? "nil")", level: .debug)
+        AppLog.shared.backgroundProcessing("Summary saved with ID: \(summaryId.uuidString)", level: .debug)
 
         // Update recording name if the AI generated a better one
         if enhancedSummary.recordingName != job.recordingName {
             AppLog.shared.backgroundProcessing("Updating recording name from AI-generated title", level: .debug)
-            try? coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
+            try? await coordinator.updateRecordingName(
+                recordingId: recordingId,
+                newName: enhancedSummary.recordingName
+            )
         }
 
         // Update progress to near-complete (processNextJob sets final .completed status)
