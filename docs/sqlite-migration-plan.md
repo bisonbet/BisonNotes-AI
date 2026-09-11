@@ -10,8 +10,9 @@ executor, a checksum-bound transfer planner, a restartable background
 media-reconciliation service, an explicit app-owned settings source inventory,
 and a target-platform settings normalization/source-drift contract, a
 pre-cutover startup boundary with durable source observation, a cancellation-
-safe maintenance gate, a disposable source-backed coordinator harness, and
-four additional metadata-only title callers routed through the repository are
+safe maintenance gate, a disposable source-backed coordinator harness, four
+additional metadata-only title callers and an atomic cloud-sync preference
+command with its local-only outbox marker routed through the repository are
 implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -106,6 +107,17 @@ The background processing manager's remaining direct metadata write and the
 AI/workflow file-owning rename path remain explicit follow-ups; no audio file
 operation was moved into the metadata command.
 
+The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
+sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
+now sends one storage-neutral command to the repository. The Core Data adapter
+commits the recording flag, `lastModified` and `PendingCloudMutationStore`
+local-only marker in one save; the SQLite adapter does the same in one GRDB
+transaction, coalescing duplicate markers and preserving the earliest request
+time. Re-enabling sync removes the matching marker in that transaction. The
+local change stream records the recording and outbox changes, while CloudKit
+flushing remains the existing post-commit operation and is not part of the local
+database transaction. Neither adapter is selected for production startup.
+
 The current isolated coordinator checkpoint is `5c88828b` (`feat: persist
 resumable migration pause state`), following `230e511c` (`feat: add resumable
 SQLite migration coordinator`). It finds unfinished runs by exact source
@@ -169,7 +181,7 @@ finishes missing committed receipts after a process restart while leaving source
 retention as an explicit separately gated action. It does not create roots,
 scan user data, activate SQLite, or wire Watch/share/background callers. The
 media-focused tests now pass 22/22 and the full disposable host suite passes
-72/72 at that checkpoint; the current full suite passes 77/77.
+72/72 at that checkpoint; the current full suite passes 78/78.
 
 The current settings-classification checkpoint is `f8b4d6c7` (`test: cover
 legacy settings classifications`), following `e2ff6c0` (`test: compare
@@ -212,9 +224,9 @@ Completed in this slice:
   cover bootstrap, identity/reopen, relationship constraints, migration
   rollback and durable migration-run checkpoints. Typed begin/read/checkpoint
   operations validate progress and update the run atomically on the actor-owned
-  queue. These tests are compiled into the existing app-hosted XCTest target but
-  have not yet executed because the current simulator test runner exits before
-  XCTest bootstrapping.
+  queue. These tests are compiled into the existing app-hosted XCTest target;
+  direct simulator XCTest execution remains outstanding because the current
+  simulator runner exits before XCTest bootstrapping.
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
@@ -236,8 +248,8 @@ Completed in this slice:
   supported entity in each model, projects all destination columns and
   relationships into the snapshot contract, and fingerprints the complete
   projection. The fixture XCTest methods are compiled into the app test bundle;
-  they have not executed because the current simulator runner exits before
-  XCTest bootstrapping.
+  direct simulator XCTest execution remains outstanding because the current
+  simulator runner exits before XCTest bootstrapping.
 - `CoreDataMigrationSnapshotReader` now turns one quiescent Core Data context
   into the importer’s six-entity `SQLiteMigrationSourceSnapshot` using public
   Core Data APIs only. It rejects temporary IDs, missing model fields, broken
@@ -246,8 +258,9 @@ Completed in this slice:
   when the source model has that entity, and fingerprints the canonical rows.
   A disposable Core Data model test exercises all six entities and linked
   storage IDs; the app-hosted reader tests cover the compiled original and
-  active models but remain compile-only until Xcode package resolution is
-  available.
+  active models and are compile-checked by `build-for-testing`. Direct simulator
+  execution remains outstanding because the current simulator runner exits
+  before XCTest bootstrapping.
 - `CoreDataMigrationInputReader` now composes that closed metadata snapshot
   with the typed blocking-settings snapshot. Its required app-owned source-key
   inventory makes unknown keys fail closed before the snapshot is handed to the
@@ -282,11 +295,12 @@ Completed in this slice:
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
-  77 tests with zero failures, including a disposable v2-to-v4 upgrade
+  78 tests with zero failures, including a disposable v2-to-v4 upgrade
   fixture that verifies existing stores receive the observation and media
   receipt schema.
-  The app-hosted Core Data fixture test is compile-checked with
-  `build-for-testing`; the simulator runner still has not executed XCTest.
+  The app-hosted Core Data fixture and cloud-sync contract tests are
+  compile-checked with `build-for-testing`; the simulator runner still has not
+  executed XCTest.
 - The first settings boundary is now explicit and typed. An allowlisted
   `UserDefaultsLibrarySettingsStore` accepts only reviewed primitive values;
   it never copies an entire defaults domain, credentials or device-specific
@@ -313,24 +327,27 @@ Completed in this slice:
   unknown enum strings and endpoint credentials. An app-hosted contract test now
   compares the
   production CloudKit settings source list, legacy on-device LLM settings and
-  the seven reviewed UI omissions against the independent catalog; it has not
-  executed because the current Xcode build cannot resolve external packages in
-  this environment.
-- The first write command is now explicit: recording rename references support
+  the seven reviewed UI omissions against the independent catalog. It is
+  compile-checked in the app-hosted XCTest target; direct simulator execution
+  remains outstanding because the current simulator runner exits before XCTest
+  bootstrapping.
+- The first write commands are now explicit: recording rename references support
   Core Data legacy IDs and SQLite storage IDs, normalize the existing `[Watch]`
-  suffix rule, and optionally enforce an expected `lastModified` revision.
-  Core Data and SQLite adapters return the committed snapshot and distinguish
-  invalid, missing, ambiguous, stale and failed writes. The display-name-only
-  `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary
-  regeneration paths use the Core Data adapter; the AI workflow remains on its
-  existing file-renaming path until file operations have a journaled repository
-  command. Host and app-hosted contract coverage exercises both
-  adapters.
+  suffix rule, and optionally enforce an expected `lastModified` revision;
+  cloud-sync preference changes commit the recording flag and local-only outbox
+  marker together. Core Data and SQLite adapters return committed snapshots and
+  distinguish invalid, missing, ambiguous, stale and failed writes. The
+  display-name-only `AudioPlayerView`, `SummaryDetailView`,
+  `EditableTranscriptView` and summary regeneration paths use the Core Data
+  adapter; the AI workflow remains on its existing file-renaming path until
+  file operations have a journaled repository command. Host and app-hosted
+  contract coverage exercises both adapters.
 - The durable observation boundary is now defined by `LibraryObservation`, with
   a global revision cursor and ordered `LibraryChange` values. SQLite schema v3
   adds `library_changes`; the SQLite adapter emits one change in the same
-  transaction as recording rename and allowlisted settings writes, and tests
-  verify invalid cursors, reopen behavior and exact committed timestamps.
+  transaction as recording rename, cloud-sync preference and allowlisted
+  settings writes, and tests verify invalid cursors, reopen behavior and exact
+  committed timestamps.
 - `CoreDataLibraryObservation` now reads retained `NSPersistentHistory`
   transactions and exposes the relevant changes through the same cursor
   contract. Durable Core Data stores enable history tracking and remote-change
@@ -341,7 +358,7 @@ Completed in this slice:
   advances only across validated contiguous batches. The pre-cutover startup
   boundary now anchors a durable Core Data subscription and polls it on remote
   store changes and activation; history-retention/purge policy and the remaining
-  SQLite write commands are intentionally not implemented yet.
+  repository write commands are intentionally not implemented yet.
 - The isolated migration coordinator now composes source validation, durable
   batch import, exact-source restart lookup, a blocking settings phase, durable
   cancellation pause, redacted failure checkpointing and closed-destination
@@ -1162,7 +1179,7 @@ inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
 adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
 but does not change a user store or write CloudKit records. The
-current host-independent suite passes 77 tests with 0 failures; iOS `build-for-testing`
+current host-independent suite passes 78 tests with 0 failures; iOS `build-for-testing`
 and native macOS builds also passed. No production upgrade, Apple device-backup
 restore or physical two-device validation was performed for this plan or safety
 slices.

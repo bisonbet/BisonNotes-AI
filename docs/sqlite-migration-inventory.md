@@ -8,6 +8,7 @@ Current startup-boundary checkpoint: `1669066e`.
 Current maintenance-gate checkpoint: `69074da5`.
 Current source-coordinator checkpoint: `1787855e`.
 Current metadata-caller checkpoint: `e115ccbc`.
+Current cloud-sync preference checkpoint: `047c4a9a`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -356,9 +357,10 @@ against those six tables by schema, migration-run fingerprint, row identity and
 declared value. An app-hosted fixture factory now loads the compiled original
 and active v2 Core Data models into disposable SQLite-backed stores, populates
 representative rows, projects every destination column and relationship, and
-fingerprints the projection. Its XCTest coverage is compiled but has not
-executed because the current simulator runner exits before XCTest bootstrapping;
-it covers only the checked-in models, not every shipped historical hash. The
+fingerprints the projection. Its XCTest coverage is compile-checked by the
+app-hosted build-for-testing gate but has not executed because the current
+simulator runner exits before XCTest bootstrapping; it covers only the checked-in
+models, not every shipped historical hash. The
 isolated metadata importer now writes those rows and row-map entries in
 dependency order with transactional batch checkpoints and idempotent reopen/
 resume behavior; it is not wired to app startup, the production repository,
@@ -388,10 +390,13 @@ The first repository slice now
 defines storage-neutral snapshots for all six migrated metadata entities and the
 `LibraryRepository` contract, with Core Data and SQLite adapters over copied
 values. It also defines typed allowlisted settings values, a UserDefaults
-source adapter, the SQLite schema-v2 settings table/adapter, and a recording-
-rename command with explicit revision and error behavior. Contract coverage
-imports the synthetic snapshot into SQLite, reads the active Core Data fixture,
-round-trips typed settings and checks stale rename rejection. The
+source adapter, the SQLite schema-v2 settings table/adapter, a recording-rename
+command with explicit revision and error behavior, and an atomic cloud-sync
+preference command that carries the local-only outbox marker. Contract
+coverage imports the synthetic snapshot into SQLite, reads the active Core Data
+fixture, round-trips typed settings, checks stale rename rejection and verifies
+that disabling/re-enabling cloud sync commits/removes the marker with the
+recording update. The
 display-name-only `AudioPlayerView`, `SummaryDetailView`,
 `EditableTranscriptView` and summary-regeneration callers use the Core Data
 adapter. The remaining background-manager metadata write and AI file-renaming
@@ -440,7 +445,9 @@ to production callers. Four additional host tests cover source identity across
 reopen, queued background copying with progress, receipt completion after
 reopen and changed-destination refusal.
 The SQLite-only `LibraryObservation` implementation persists a global
-`library_changes` cursor and emits recording-rename/settings events atomically.
+`library_changes` cursor and emits recording-rename/cloud-sync/settings events
+atomically, including the pending-marker changes associated with a cloud-sync
+toggle.
 `CoreDataLibraryObservation` reads retained persistent-history transactions using
 the same cursor contract; durable Core Data stores now enable history tracking.
 The `LibraryObservationSubscription` cursor owner anchors before the initial
@@ -450,10 +457,11 @@ activation and persistent-store remote-change notifications. The history-
 retention/purge policy remains intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 77 disposable macOS tests; the
-app-hosted adapter fixture is compile-checked but has not executed because the
-current simulator runner exits before XCTest bootstrapping. No test inspects or
-modifies a live user store.
+standalone runtime harness has passed 78 disposable macOS tests; the app-hosted
+adapter fixture and new cloud-sync contract are compile-checked by iOS
+build-for-testing but have not executed because the current simulator runner
+exits before XCTest bootstrapping. No test inspects or modifies a live user
+store.
 
 ## Settings classification checkpoint
 
@@ -496,10 +504,10 @@ resolved.
 
 | Boundary | Implementation | Fixture/assertion disposition |
 | --- | --- | --- |
-| Immutable recording values | `LibraryRecordingSnapshot` preserves nullable legacy IDs, names, dates, durations, sizes, URLs, archive state and modification dates without exposing managed objects or SQL rows. | Root SwiftPM contract test asserts the imported recording projection exactly; app-hosted test asserts the Core Data projection against the active compiled model. |
+| Immutable recording values | `LibraryRecordingSnapshot` preserves nullable legacy IDs, names, dates, durations, sizes, URLs, archive state, cloud-sync preference and modification dates without exposing managed objects or SQL rows. | Root SwiftPM contract test asserts the imported recording projection exactly; app-hosted test asserts the Core Data projection against the active compiled model. |
 | Remaining metadata values | `LibraryTranscriptSnapshot`, `LibrarySummarySnapshot`, `LibraryProcessingJobSnapshot`, `LibraryArchiveLocationSnapshot` and `LibraryPendingCloudMutationSnapshot` preserve nullable scalar, payload and resolved-link values. | Root SwiftPM contract test asserts all five imported projections; app-hosted test asserts the active-model fixture, including relationship-derived storage IDs. |
 | Core Data read adapter | `CoreDataLibraryRepository` fetches all six entities through a supplied context, copies values inside the context operation, and applies deterministic ordering. | Uses only a disposable `BisonNotes_AI_v2` fixture; no production `PersistenceController` or `CoreDataManager` is constructed. |
-| Core Data migration source/input reader | `CoreDataMigrationSnapshotReader` captures all supported metadata entities from one quiescent context, preserves public attribute/relationship values, rejects temporary/incomplete graphs, and fingerprints the canonical snapshot without copying audio bytes. `CoreDataMigrationInputReader` composes that result with an explicitly inventoried typed blocking-settings snapshot and rejects unclassified source keys. | Runtime fixtures cover all six entities, relationship storage IDs, settings filtering and the combined input boundary; app-hosted tests cover original and active compiled models but remain compile-only until the app target can resolve external packages. |
+| Core Data migration source/input reader | `CoreDataMigrationSnapshotReader` captures all supported metadata entities from one quiescent context, preserves public attribute/relationship values, rejects temporary/incomplete graphs, and fingerprints the canonical snapshot without copying audio bytes. `CoreDataMigrationInputReader` composes that result with an explicitly inventoried typed blocking-settings snapshot and rejects unclassified source keys. | Runtime fixtures cover all six entities, relationship storage IDs, settings filtering and the combined input boundary; app-hosted tests cover original and active compiled models and are compile-checked by `build-for-testing`. Direct simulator execution remains outstanding because the current simulator runner exits before XCTest bootstrapping. |
 | Maintenance gate and source-backed coordinator | `LibraryMaintenanceGate` grants fair normal access and exclusive maintenance leases, removes canceled waiters and makes release cleanup idempotent. `SQLiteMigrationSourceCoordinator` anchors the source observation after acquiring the gate, captures real Core Data/defaults input, rejects source revision drift before import and holds the gate through the isolated metadata/settings coordinator. | Three gate tests cover fairness, waiter cancellation and cleanup; two source-coordinator fixtures cover successful full-run composition under the gate and source-change blocking. This remains a disposable harness with no production destination selection, startup caller, activation or app-wide gate adoption. |
 | Resumable metadata/settings coordinator | `SQLiteMigrationCoordinator` validates a closed snapshot and blocking settings snapshot, finds the newest matching pending/running/paused run after reopen, emits progress after committed batches and settings commit, persists cancellation as paused, records definitive conflicts as failed with a generic durable message, applies/read-backs the allowlisted settings, and verifies the destination before completion. | Six host tests cover progress, metadata/settings reopen-resume, durable cancellation pause, allowlisted settings application and conflict failure. It is not wired to production source acquisition, settings acquisition, media, startup or an active user generation. |
 | Durable media operation journal/worker | `SQLiteMediaCopyPlan`, `SQLiteLibraryStore` media-operation transactions and `SQLiteMediaFileOperationWorker` persist root-relative audio copy intent, claim/recovery state, streaming SHA-256/length verification and atomic partial-file publication. Exact destinations are idempotently accepted; conflicting destinations fail without overwrite and durable errors are generic. | Five host tests cover successful copy, idempotent enqueue, destination-before-checkpoint recovery, conflict protection and traversal rejection. Final production root selection, scheduling, progress UI and startup wiring remain open. |
@@ -510,7 +518,8 @@ resolved.
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, dynamic legacy-key prefixes and CloudKit omissions. `LibrarySettingsNormalizer` provides pure target-platform normalization before final catalog validation, while `SQLiteMigrationStartupBoundary` captures that result without source writes. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key and source-list drift, require the exact source inventory/catalog match, exercise normalization and prove unrelated defaults are untouched. The app-hosted source-drift/no-write boundary tests are compile-checked. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration callers use the Core Data adapter. The remaining background-manager write and file-owning AI rename stay outside this command pending lifecycle/file-operation boundaries. |
-| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining write commands are still open. |
+| Cloud-sync preference command | `LibraryRecordingCloudSyncCommand` addresses a recording through the same reference/revision boundary and commits `isCloudSyncDisabled` with the durable `localOnlyRemoval` marker. Core Data uses one context save; SQLite uses one GRDB transaction, preserves the earliest marker request time, coalesces duplicate rows and removes all matching markers when sync is re-enabled. CloudKit flushing remains post-commit. | Host coverage verifies both recording and pending-marker changes, exact observation revisions and re-enable cleanup; the app-hosted contract covers the Core Data path in the compiled active-model fixture. No live account or user store is touched. |
+| Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/setting/cloud-sync and pending-marker events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename and cloud-sync events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
 next inventory update must expand command/error coverage, audit adoption of the
