@@ -529,6 +529,7 @@ class BackgroundProcessingManager: ObservableObject {
     /// Jobs that were in flight when the previous session died. No automatic path
     /// may resume them for the rest of this session; the user can still retry one.
     private var crashProtectedJobIDs = Set<UUID>()
+    private var crashRecoveryJobIDs: [UUID] = []
 
     // MARK: - Singleton
 
@@ -558,7 +559,10 @@ class BackgroundProcessingManager: ObservableObject {
             // Captured before the sweep below rewrites their statuses, so the
             // resume paths can still tell a pre-crash job from a fresh one.
             crashProtectedJobIDs = Set(activeJobs.map(\.id))
-            failUnfinishedJobsAfterCrash()
+            crashRecoveryJobIDs = activeJobs
+                .filter { !$0.status.isTerminal }
+                .map(\.id)
+            markUnfinishedJobsAfterCrash()
         }
         setupAppLifecycleObservers()
         setupPerformanceOptimization()
@@ -567,6 +571,7 @@ class BackgroundProcessingManager: ObservableObject {
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
             if previousSessionCrashed {
+                await persistUnfinishedJobsAfterCrash()
                 AppLog.shared.backgroundProcessing(
                     "Crash reconciliation completed; pre-crash jobs will not resume automatically",
                     level: .info
@@ -1015,31 +1020,19 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    private func failUnfinishedJobsAfterCrash() {
-        let message = BackgroundProcessingCrashRecoveryPolicy.failureMessage
+    private func markUnfinishedJobsAfterCrash() {
         var failedCount = 0
 
         activeJobs = activeJobs.map { job in
             guard !job.status.isTerminal else { return job }
 
             failedCount += 1
-            let failedJob = job.withStatus(
+            return job.withStatus(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: job.status,
                     previousSessionCrashed: previousSessionCrashed
                 )
             )
-
-            if let jobEntry = coreDataManager.getProcessingJob(id: failedJob.id) {
-                jobEntry.status = failedJob.status.displayName
-                jobEntry.progress = failedJob.progress
-                jobEntry.error = message
-                jobEntry.completionTime = failedJob.completionTime
-                jobEntry.lastModified = Date()
-                coreDataManager.updateProcessingJob(jobEntry)
-            }
-
-            return failedJob
         }
 
         if failedCount > 0 {
@@ -1047,6 +1040,35 @@ class BackgroundProcessingManager: ObservableObject {
             currentJob = nil
             AppLog.shared.backgroundProcessing("Marked \(failedCount) unfinished job(s) failed after crash to prevent automatic restart", level: .error)
         }
+    }
+
+    private func persistUnfinishedJobsAfterCrash() async {
+        guard !crashRecoveryJobIDs.isEmpty else {
+            return
+        }
+
+        let jobReferences = crashRecoveryJobIDs.map {
+            LibraryProcessingJobReference(legacyID: $0.uuidString)
+        }
+        do {
+            let recoveredJobs = try await libraryRepository.recoverProcessingJobsAfterCrash(
+                LibraryProcessingJobCrashRecoveryCommand(
+                    references: jobReferences,
+                    failureMessage: BackgroundProcessingCrashRecoveryPolicy.failureMessage
+                )
+            )
+            AppLog.shared.backgroundProcessing(
+                "Persisted crash recovery for \(recoveredJobs.count) processing job(s)",
+                level: .error
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to persist crash recovery for processing jobs: "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
+        }
+        crashRecoveryJobIDs.removeAll()
     }
 
     func processNextJob() async {

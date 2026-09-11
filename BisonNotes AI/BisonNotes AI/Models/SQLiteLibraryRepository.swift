@@ -76,6 +76,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws -> [LibraryProcessingJobSnapshot] {
         try await store.deleteTerminalProcessingJobs(command)
     }
+
+    func recoverProcessingJobsAfterCrash(
+        _ command: LibraryProcessingJobCrashRecoveryCommand
+    ) async throws -> [LibraryProcessingJobSnapshot] {
+        try await store.recoverProcessingJobsAfterCrash(command)
+    }
 }
 
 extension SQLiteLibraryStore {
@@ -418,6 +424,81 @@ extension SQLiteLibraryStore {
                 )
             }
             return snapshots
+        }
+    }
+
+    func recoverProcessingJobsAfterCrash(
+        _ command: LibraryProcessingJobCrashRecoveryCommand
+    ) throws -> [LibraryProcessingJobSnapshot] {
+        try command.validate()
+        let terminalStatuses = Set(["completed", "failed", "cancelled"])
+
+        return try databaseQueue.write { database in
+            var jobsToRecover: [LibraryProcessingJobSnapshot] = []
+            var seenStorageIDs = Set<String>()
+
+            for reference in command.references {
+                let normalizedReference = try Self.normalizedProcessingJobReference(reference)
+                let rows = try Self.fetchProcessingJobRows(
+                    for: normalizedReference,
+                    in: database
+                )
+                guard !rows.isEmpty else {
+                    continue
+                }
+                let current = try Self.validateProcessingJobTarget(
+                    rows: rows,
+                    reference: normalizedReference,
+                    expectedLastModified: nil
+                )
+                guard seenStorageIDs.insert(current.storageID).inserted else {
+                    continue
+                }
+                let normalizedStatus = current.status?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .lowercased()
+                guard !terminalStatuses.contains(normalizedStatus ?? "") else {
+                    continue
+                }
+                jobsToRecover.append(current)
+            }
+
+            for job in jobsToRecover {
+                try database.execute(
+                    sql: """
+                    UPDATE processing_jobs
+                    SET status = ?, error = ?, completionTime = ?, lastModified = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.status,
+                        command.failureMessage,
+                        command.modifiedAt.timeIntervalSinceReferenceDate,
+                        command.modifiedAt.timeIntervalSinceReferenceDate,
+                        job.storageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "recover processing jobs after crash",
+                        reason: "a processing-job row was not updated"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .processingJob,
+                    storageID: job.storageID,
+                    operation: .updated,
+                    at: command.modifiedAt
+                )
+            }
+
+            return try jobsToRecover.map { job in
+                try Self.fetchUpdatedProcessingJob(
+                    storageID: job.storageID,
+                    in: database
+                )
+            }
         }
     }
 

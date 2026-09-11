@@ -623,6 +623,67 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func recoverProcessingJobsAfterCrash(
+        _ command: LibraryProcessingJobCrashRecoveryCommand
+    ) async throws -> [LibraryProcessingJobSnapshot] {
+        try command.validate()
+        let terminalStatuses = Set(["completed", "failed", "cancelled"])
+        let context = context
+        return try context.performAndWait {
+            var jobs: [NSManagedObject] = []
+            var seenObjectIDs = Set<String>()
+
+            for reference in command.references {
+                let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.processingJobPredicate(for: reference)
+                let matches = try context.fetch(request)
+                guard matches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousProcessingJob(
+                        reference: reference.displayValue
+                    )
+                }
+                guard let job = matches.first else {
+                    continue
+                }
+                let objectID = job.objectID.uriRepresentation().absoluteString
+                guard seenObjectIDs.insert(objectID).inserted else {
+                    continue
+                }
+                jobs.append(job)
+            }
+
+            let jobsToRecover = jobs.filter { job in
+                guard let status = job.value(forKey: "status") as? String else {
+                    return true
+                }
+                return !terminalStatuses.contains(
+                    status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                )
+            }
+            guard !jobsToRecover.isEmpty else {
+                return []
+            }
+
+            for job in jobsToRecover {
+                job.setValue(command.status, forKey: "status")
+                job.setValue(command.failureMessage, forKey: "error")
+                job.setValue(command.modifiedAt, forKey: "completionTime")
+                job.setValue(command.modifiedAt, forKey: "lastModified")
+            }
+
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "recover processing jobs after crash",
+                    reason: error.localizedDescription
+                )
+            }
+            return try jobsToRecover.map(Self.processingJobSnapshot(from:))
+        }
+    }
+
     private static func recordingPredicate(
         for reference: LibraryRecordingReference
     ) throws -> NSPredicate {

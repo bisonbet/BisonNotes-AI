@@ -416,6 +416,99 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(remaining[0].status, "Processing")
     }
 
+    func testCoreDataRepositoryRecoversKnownUnfinishedJobsAfterCrash() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-processing-job-crash-recovery.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let existingJobID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000004")
+        )
+        _ = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: LibraryProcessingJobReference(
+                    legacyID: existingJobID.uuidString
+                ),
+                status: "Processing",
+                progress: 0.4,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        let completedJobID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000021")
+        )
+        let queuedJobID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000022")
+        )
+        for (id, status, progress) in [
+            (completedJobID, "Completed", 1.0),
+            (queuedJobID, "queued", 0.0)
+        ] {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: id,
+                    jobType: "Test job",
+                    engine: "fixture-engine",
+                    recordingURL: "recording.m4a",
+                    recordingName: "Fixture recording",
+                    status: status,
+                    progress: progress,
+                    startTime: Date(timeIntervalSinceReferenceDate: 302),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+                )
+            )
+        }
+
+        let failureMessage = "Not restarted because the previous app session crashed."
+        let recovered = try await repository.recoverProcessingJobsAfterCrash(
+            LibraryProcessingJobCrashRecoveryCommand(
+                references: [
+                    existingJobID,
+                    completedJobID,
+                    queuedJobID
+                ].map {
+                    LibraryProcessingJobReference(legacyID: $0.uuidString)
+                },
+                failureMessage: failureMessage,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 304)
+            )
+        )
+
+        XCTAssertEqual(recovered.count, 2)
+        XCTAssertEqual(
+            Set(recovered.compactMap(\.legacyID)),
+            Set([
+                existingJobID.uuidString.lowercased(),
+                queuedJobID.uuidString.lowercased()
+            ])
+        )
+        for snapshot in recovered {
+            XCTAssertEqual(snapshot.status, "Failed")
+            XCTAssertEqual(snapshot.error, failureMessage)
+            XCTAssertEqual(snapshot.completionTime, Date(timeIntervalSinceReferenceDate: 304))
+            XCTAssertEqual(snapshot.lastModified, Date(timeIntervalSinceReferenceDate: 304))
+        }
+        let persisted = try await repository.fetchProcessingJobSnapshots()
+        let completed = try XCTUnwrap(
+            persisted.first { $0.legacyID == completedJobID.uuidString.lowercased() }
+        )
+        XCTAssertEqual(completed.status, "Completed")
+        XCTAssertNil(completed.error)
+    }
+
     private func assertTranscript(
         _ transcript: LibraryTranscriptSnapshot,
         recordingStorageID: String

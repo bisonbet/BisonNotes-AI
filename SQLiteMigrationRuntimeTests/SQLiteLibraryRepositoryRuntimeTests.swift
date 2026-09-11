@@ -496,6 +496,107 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(revisionAfterSecondPass, 7)
     }
 
+    func testRepositoryRecoversKnownUnfinishedJobsAfterCrashInOneTransaction() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let processingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000021")
+        )
+        let completedID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000022")
+        )
+        let queuedID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000023")
+        )
+        let jobs = [
+            (processingID, "Processing", 0.4),
+            (completedID, "Completed", 1.0),
+            (queuedID, "queued", 0.0)
+        ]
+
+        for (index, job) in jobs.enumerated() {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: job.0,
+                    jobType: "Test job",
+                    engine: "fixture-engine",
+                    recordingURL: "recording-\(index).m4a",
+                    recordingName: "Fixture recording",
+                    status: job.1,
+                    progress: job.2,
+                    startTime: Date(timeIntervalSinceReferenceDate: 100 + Double(index)),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 110 + Double(index))
+                )
+            )
+        }
+
+        let failureMessage = "Not restarted because the previous app session crashed."
+        let recovered = try await repository.recoverProcessingJobsAfterCrash(
+            LibraryProcessingJobCrashRecoveryCommand(
+                references: [
+                    processingID,
+                    completedID,
+                    queuedID
+                ].map {
+                    LibraryProcessingJobReference(legacyID: $0.uuidString)
+                } + [
+                    LibraryProcessingJobReference(legacyID: "missing-job")
+                ],
+                failureMessage: failureMessage,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 200)
+            )
+        )
+
+        XCTAssertEqual(recovered.count, 2)
+        let recoveredByID = Dictionary(
+            uniqueKeysWithValues: recovered.compactMap { snapshot in
+                snapshot.legacyID.map { ($0, snapshot) }
+            }
+        )
+        for job in [processingID, queuedID] {
+            let snapshot = try XCTUnwrap(recoveredByID[job.uuidString.lowercased()])
+            XCTAssertEqual(snapshot.status, "Failed")
+            XCTAssertEqual(snapshot.error, failureMessage)
+            XCTAssertEqual(snapshot.completionTime, Date(timeIntervalSinceReferenceDate: 200))
+            XCTAssertEqual(snapshot.lastModified, Date(timeIntervalSinceReferenceDate: 200))
+        }
+        let persisted = try await repository.fetchProcessingJobSnapshots()
+        let completed = try XCTUnwrap(
+            persisted.first { $0.legacyID == completedID.uuidString.lowercased() }
+        )
+        XCTAssertEqual(completed.status, "Completed")
+        XCTAssertNil(completed.error)
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.count, 5)
+        XCTAssertEqual(
+            changes.suffix(2).map(\.operation),
+            Array(repeating: .updated, count: 2)
+        )
+        XCTAssertEqual(
+            Set(changes.suffix(2).map(\.committedAt)),
+            Set([Date(timeIntervalSinceReferenceDate: 200)])
+        )
+
+        let secondPass = try await repository.recoverProcessingJobsAfterCrash(
+            LibraryProcessingJobCrashRecoveryCommand(
+                references: [processingID, completedID, queuedID].map {
+                    LibraryProcessingJobReference(legacyID: $0.uuidString)
+                },
+                failureMessage: failureMessage,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 201)
+            )
+        )
+        XCTAssertTrue(secondPass.isEmpty)
+        let revisionAfterSecondPass = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterSecondPass, 5)
+    }
+
     func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

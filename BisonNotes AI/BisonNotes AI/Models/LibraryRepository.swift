@@ -295,6 +295,29 @@ struct LibraryProcessingJobTerminalCleanupCommand: Equatable, Sendable {
     }
 }
 
+/// Marks a known set of jobs as failed after an app crash. Missing rows are
+/// ignored so a retry is safe, while terminal rows are preserved if another
+/// writer already completed or cancelled them.
+struct LibraryProcessingJobCrashRecoveryCommand: Equatable, Sendable {
+    let references: [LibraryProcessingJobReference]
+    let failureMessage: String
+    let modifiedAt: Date
+
+    init(
+        references: [LibraryProcessingJobReference],
+        failureMessage: String,
+        modifiedAt: Date = Date()
+    ) {
+        self.references = references
+        self.failureMessage = failureMessage
+        self.modifiedAt = modifiedAt
+    }
+
+    var status: String {
+        "Failed"
+    }
+}
+
 extension LibraryProcessingJobUpdateCommand {
     func validate() throws {
         guard !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -359,6 +382,32 @@ extension LibraryProcessingJobTerminalCleanupCommand {
             throw LibraryRepositoryError.invalidCommand(
                 "processing-job terminal cleanup date must be finite"
             )
+        }
+    }
+}
+
+extension LibraryProcessingJobCrashRecoveryCommand {
+    func validate() throws {
+        guard !failureMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job crash recovery requires a failure message"
+            )
+        }
+        guard modifiedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job crash recovery date must be finite"
+            )
+        }
+        for reference in references {
+            let storageID = reference.storageID?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let legacyID = reference.legacyID?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard storageID?.isEmpty == false || legacyID?.isEmpty == false else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "processing-job crash recovery references must contain an ID"
+                )
+            }
         }
     }
 }
@@ -466,6 +515,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryProcessingJobSnapshot
     func deleteTerminalProcessingJobs(
         _ command: LibraryProcessingJobTerminalCleanupCommand
+    ) async throws -> [LibraryProcessingJobSnapshot]
+    func recoverProcessingJobsAfterCrash(
+        _ command: LibraryProcessingJobCrashRecoveryCommand
     ) async throws -> [LibraryProcessingJobSnapshot]
 }
 
