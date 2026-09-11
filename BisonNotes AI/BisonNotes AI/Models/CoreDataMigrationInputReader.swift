@@ -71,4 +71,13 @@ final class CoreDataMigrationInputReader: @unchecked Sendable {
             settings: settings
         )
     }
+
+    /// Captures the reviewed main application defaults domain.
+    ///
+    /// The explicit overload remains available for fixture isolation and
+    /// future platform-specific composition. Production startup should use
+    /// this overload so a caller cannot accidentally omit a catalogued key.
+    func snapshot() async throws -> CoreDataMigrationInputSnapshot {
+        try await snapshot(sourceKeys: LibrarySettingsSourceInventory.standardDefaultsKeys)
+    }
 }

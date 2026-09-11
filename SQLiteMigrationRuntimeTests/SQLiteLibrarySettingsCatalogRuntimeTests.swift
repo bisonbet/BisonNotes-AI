@@ -36,6 +36,24 @@ final class SQLiteLibrarySettingsCatalogRuntimeTests: XCTestCase {
         )
     }
 
+    func testSourceInventoryMatchesTheReviewedCatalog() throws {
+        let exactKeys = LibrarySettingsSourceInventory.allExactKeys
+
+        XCTAssertEqual(Set(exactKeys).count, exactKeys.count)
+        XCTAssertEqual(Set(exactKeys), LibrarySettingsCatalog.knownKeys)
+        XCTAssertEqual(
+            LibrarySettingsSourceInventory.standardDefaultsKeys,
+            LibrarySettingsSourceInventory.standardDefaultsKeys.sorted()
+        )
+        try LibrarySettingsCatalog.validateSourceKeys(exactKeys)
+
+        for prefix in LibrarySettingsSourceInventory.dynamicKeyPrefixes {
+            XCTAssertNotNil(
+                LibrarySettingsCatalog.definition(for: "\(prefix)fixture")
+            )
+        }
+    }
+
     func testCatalogRejectsAnUnclassifiedSourceKey() {
         XCTAssertThrowsError(
             try LibrarySettingsCatalog.validateSourceKeys([
