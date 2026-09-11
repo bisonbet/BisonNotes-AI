@@ -59,6 +59,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         try await store.setArchiveState(command)
     }
 
+    func upsertArchiveLocation(
+        _ command: LibraryArchiveLocationUpsertCommand
+    ) async throws -> LibraryArchiveLocationSnapshot {
+        try await store.upsertArchiveLocation(command)
+    }
+
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot {
@@ -244,6 +250,198 @@ extension SQLiteLibraryStore {
             )
 
             return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    func upsertArchiveLocation(
+        _ command: LibraryArchiveLocationUpsertCommand
+    ) throws -> LibraryArchiveLocationSnapshot {
+        try command.validate()
+        let recordingReference = try Self.normalizedReference(
+            command.recordingReference
+        )
+        let exportedAt = command.exportedAt?.timeIntervalSinceReferenceDate
+        let lastVerifiedAt = command.lastVerifiedAt?.timeIntervalSinceReferenceDate
+        let requestedID = command.id.uuidString.lowercased()
+        let columns = """
+            storageID, bookmarkData, destinationURLString, displayName,
+            exportedAt, exportedFilename, fileSize, id, lastVerifiedAt,
+            providerDisplayName, recordingId, status
+            """
+
+        return try databaseQueue.write { database in
+            let recordingRows = try Self.fetchRecordingRows(
+                for: recordingReference,
+                in: database
+            )
+            let recording = try Self.validateRecordingTarget(
+                rows: recordingRows,
+                reference: recordingReference,
+                expectedLastModified: nil
+            )
+            guard let recordingLegacyID = recording.legacyID,
+                  !recordingLegacyID.isEmpty else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "recordings",
+                    field: "id"
+                )
+            }
+
+            let idMatches = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(columns)
+                FROM archive_locations
+                WHERE lower(id) = lower(?)
+                LIMIT 2
+                """,
+                arguments: [requestedID]
+            )
+            guard idMatches.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousArchiveLocation(
+                    reference: requestedID
+                )
+            }
+
+            let destinationMatches: [Row]
+            if let destinationURLString = command.destinationURLString {
+                destinationMatches = try Row.fetchAll(
+                    database,
+                    sql: """
+                    SELECT \(columns)
+                    FROM archive_locations
+                    WHERE lower(recordingId) = lower(?)
+                      AND destinationURLString = ?
+                    LIMIT 2
+                    """,
+                    arguments: [recordingLegacyID, destinationURLString]
+                )
+            } else {
+                destinationMatches = []
+            }
+            guard destinationMatches.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousArchiveLocation(
+                    reference: command.destinationURLString ?? requestedID
+                )
+            }
+
+            let existing = idMatches.first ?? destinationMatches.first
+            let storageID: String
+            let persistedID: String
+            let operation: LibraryChangeOperation
+            if let existing {
+                guard let existingStorageID: String = existing["storageID"],
+                      !existingStorageID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "archive_locations",
+                        field: "storageID"
+                    )
+                }
+                let existingRecordingID: String? = existing["recordingId"]
+                if let existingRecordingID,
+                   existingRecordingID.lowercased() != recordingLegacyID.lowercased() {
+                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                        reference: requestedID
+                    )
+                }
+                if let destinationURLString = command.destinationURLString,
+                   let competing = destinationMatches.first,
+                   (competing["storageID"] as String?) != existingStorageID {
+                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                        reference: destinationURLString
+                    )
+                }
+                storageID = existingStorageID
+                persistedID = (existing["id"] as String?) ?? requestedID
+                operation = .updated
+
+                try database.execute(
+                    sql: """
+                    UPDATE archive_locations
+                    SET bookmarkData = ?, destinationURLString = ?, displayName = ?,
+                        exportedAt = ?, exportedFilename = ?, fileSize = ?, id = ?,
+                        lastVerifiedAt = ?, providerDisplayName = ?, recordingId = ?,
+                        status = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.bookmarkData,
+                        command.destinationURLString,
+                        command.displayName,
+                        exportedAt,
+                        command.exportedFilename,
+                        command.fileSize,
+                        persistedID,
+                        lastVerifiedAt,
+                        command.providerDisplayName,
+                        recordingLegacyID,
+                        command.status,
+                        storageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert archive location",
+                        reason: "the archive-location row was not updated"
+                    )
+                }
+            } else {
+                storageID = Self.archiveLocationStorageID(for: command.id)
+                persistedID = requestedID
+                operation = .inserted
+                guard try Row.fetchOne(
+                    database,
+                    sql: "SELECT 1 FROM archive_locations WHERE storageID = ?",
+                    arguments: [storageID]
+                ) == nil else {
+                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                        reference: storageID
+                    )
+                }
+
+                try database.execute(
+                    sql: """
+                    INSERT INTO archive_locations (
+                        storageID, bookmarkData, destinationURLString, displayName,
+                        exportedAt, exportedFilename, fileSize, id, lastVerifiedAt,
+                        providerDisplayName, recordingId, status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        storageID,
+                        command.bookmarkData,
+                        command.destinationURLString,
+                        command.displayName,
+                        exportedAt,
+                        command.exportedFilename,
+                        command.fileSize,
+                        persistedID,
+                        lastVerifiedAt,
+                        command.providerDisplayName,
+                        recordingLegacyID,
+                        command.status
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert archive location",
+                        reason: "the archive-location row was not inserted"
+                    )
+                }
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .archiveLocation,
+                storageID: storageID,
+                operation: operation,
+                at: command.modifiedAt
+            )
+            return try Self.fetchUpdatedArchiveLocation(
+                storageID: storageID,
+                in: database
+            )
         }
     }
 
@@ -1324,6 +1522,32 @@ extension SQLiteLibraryStore {
 
     private static func summaryStorageID(for id: UUID) -> String {
         "sqlite-summary-\(id.uuidString.lowercased())"
+    }
+
+    private static func archiveLocationStorageID(for id: UUID) -> String {
+        "sqlite-archive-location-\(id.uuidString.lowercased())"
+    }
+
+    private static func fetchUpdatedArchiveLocation(
+        storageID: String,
+        in database: Database
+    ) throws -> LibraryArchiveLocationSnapshot {
+        let columns = """
+            storageID, bookmarkData, destinationURLString, displayName,
+            exportedAt, exportedFilename, fileSize, id, lastVerifiedAt,
+            providerDisplayName, recordingId, status
+            """
+        guard let updatedRow = try Row.fetchOne(
+            database,
+            sql: "SELECT \(columns) FROM archive_locations WHERE storageID = ?",
+            arguments: [storageID]
+        ) else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "upsert archive location",
+                reason: "the updated archive-location row could not be read"
+            )
+        }
+        return try SQLiteLibraryRepositoryMapper.archiveLocation(from: updatedRow)
     }
 
     private static func fetchUpdatedRecording(

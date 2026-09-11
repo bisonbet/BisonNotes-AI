@@ -455,6 +455,148 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func upsertArchiveLocation(
+        _ command: LibraryArchiveLocationUpsertCommand
+    ) async throws -> LibraryArchiveLocationSnapshot {
+        try command.validate()
+        let context = context
+        return try context.performAndWait {
+            let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+            recordingRequest.fetchLimit = 2
+            recordingRequest.predicate = try Self.recordingPredicate(
+                for: command.recordingReference
+            )
+
+            let recordings = try context.fetch(recordingRequest)
+            guard !recordings.isEmpty else {
+                throw LibraryRepositoryError.recordingNotFound(
+                    reference: command.recordingReference.displayValue
+                )
+            }
+            guard recordings.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: command.recordingReference.displayValue
+                )
+            }
+            let recording = recordings[0]
+            guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "RecordingEntry",
+                    field: "id"
+                )
+            }
+
+            let idRequest = Self.fetchRequest(entityName: "RecordingArchiveLocationEntry")
+            idRequest.fetchLimit = 2
+            idRequest.predicate = NSPredicate(
+                format: "id == %@",
+                command.id as CVarArg
+            )
+            let idMatches = try context.fetch(idRequest)
+            guard idMatches.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousArchiveLocation(
+                    reference: command.id.uuidString.lowercased()
+                )
+            }
+
+            let location: NSManagedObject
+            let isNewLocation: Bool
+            if let existing = idMatches.first {
+                if let existingRecordingID = existing.value(forKey: "recordingId") as? UUID,
+                   existingRecordingID != recordingID {
+                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+                location = existing
+                isNewLocation = false
+            } else if let destinationURLString = command.destinationURLString {
+                let destinationRequest = Self.fetchRequest(
+                    entityName: "RecordingArchiveLocationEntry"
+                )
+                destinationRequest.fetchLimit = 2
+                destinationRequest.predicate = NSPredicate(
+                    format: "recordingId == %@ AND destinationURLString == %@",
+                    recordingID as CVarArg,
+                    destinationURLString
+                )
+                let destinationMatches = try context.fetch(destinationRequest)
+                guard destinationMatches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousArchiveLocation(
+                        reference: destinationURLString
+                    )
+                }
+                if let existing = destinationMatches.first {
+                    location = existing
+                    isNewLocation = false
+                } else {
+                    location = NSEntityDescription.insertNewObject(
+                        forEntityName: "RecordingArchiveLocationEntry",
+                        into: context
+                    )
+                    isNewLocation = true
+                }
+            } else {
+                location = NSEntityDescription.insertNewObject(
+                    forEntityName: "RecordingArchiveLocationEntry",
+                    into: context
+                )
+                isNewLocation = true
+            }
+
+            if let destinationURLString = command.destinationURLString {
+                let destinationRequest = Self.fetchRequest(
+                    entityName: "RecordingArchiveLocationEntry"
+                )
+                destinationRequest.fetchLimit = 2
+                destinationRequest.predicate = NSPredicate(
+                    format: "recordingId == %@ AND destinationURLString == %@",
+                    recordingID as CVarArg,
+                    destinationURLString
+                )
+                let destinationMatches = try context.fetch(destinationRequest)
+                guard destinationMatches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousArchiveLocation(
+                        reference: destinationURLString
+                    )
+                }
+                if let existing = destinationMatches.first,
+                   existing.objectID != location.objectID {
+                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                        reference: destinationURLString
+                    )
+                }
+            }
+
+            let locationID = (location.value(forKey: "id") as? UUID) ?? command.id
+            location.setValue(locationID, forKey: "id")
+            location.setValue(recordingID, forKey: "recordingId")
+            location.setValue(command.bookmarkData, forKey: "bookmarkData")
+            location.setValue(command.destinationURLString, forKey: "destinationURLString")
+            location.setValue(command.displayName, forKey: "displayName")
+            location.setValue(command.exportedAt, forKey: "exportedAt")
+            location.setValue(command.exportedFilename, forKey: "exportedFilename")
+            location.setValue(command.fileSize, forKey: "fileSize")
+            location.setValue(command.lastVerifiedAt, forKey: "lastVerifiedAt")
+            location.setValue(command.providerDisplayName, forKey: "providerDisplayName")
+            location.setValue(command.status, forKey: "status")
+
+            do {
+                try context.save()
+            } catch {
+                if isNewLocation {
+                    context.delete(location)
+                }
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "upsert archive location",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.archiveLocationSnapshot(from: location)
+        }
+    }
+
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot {

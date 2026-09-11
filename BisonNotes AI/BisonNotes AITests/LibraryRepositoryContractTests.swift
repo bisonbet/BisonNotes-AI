@@ -267,6 +267,58 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
     }
 
+    func testCoreDataRepositoryCreatesArchiveLocationWithStableIdentityAndRetryDoesNotDuplicate() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-archive-location.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let archiveID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000017")
+        )
+        let command = LibraryArchiveLocationUpsertCommand(
+            id: archiveID,
+            recordingReference: LibraryRecordingReference(
+                legacyID: "10000000-0000-0000-0000-000000000001"
+            ),
+            bookmarkData: Data([9, 8, 7]),
+            destinationURLString: "archive://repository-retry",
+            displayName: "Repository archive",
+            exportedAt: Date(timeIntervalSinceReferenceDate: 401),
+            exportedFilename: "repository.m4a",
+            fileSize: 42,
+            lastVerifiedAt: Date(timeIntervalSinceReferenceDate: 402),
+            providerDisplayName: "Fixture provider",
+            status: "available",
+            modifiedAt: Date(timeIntervalSinceReferenceDate: 403)
+        )
+
+        let created = try await repository.upsertArchiveLocation(command)
+        let retried = try await repository.upsertArchiveLocation(command)
+        let locations = try await repository.fetchArchiveLocationSnapshots()
+
+        XCTAssertEqual(created, retried)
+        XCTAssertEqual(created.legacyID, archiveID.uuidString)
+        XCTAssertEqual(created.bookmarkData, Data([9, 8, 7]))
+        XCTAssertEqual(created.destinationURLString, "archive://repository-retry")
+        XCTAssertEqual(
+            created.recordingLegacyID,
+            "10000000-0000-0000-0000-000000000001"
+        )
+        XCTAssertEqual(locations.count, 2)
+        XCTAssertEqual(locations.filter { $0.storageID == created.storageID }.count, 1)
+    }
+
     func testCoreDataRepositoryReplacesSummaryByRecordingAndPreservesIdentity() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

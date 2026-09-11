@@ -169,6 +169,114 @@ extension LibraryRecordingArchiveCommand {
     }
 }
 
+/// Records one already-verified external archive location without performing
+/// any file-provider work. A stable `id` makes a lost acknowledgement safe to
+/// retry; an existing row for the same recording and destination is also
+/// reused so legacy callers cannot create duplicate location records.
+struct LibraryArchiveLocationUpsertCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingReference: LibraryRecordingReference
+    let bookmarkData: Data?
+    let destinationURLString: String?
+    let displayName: String?
+    let exportedAt: Date?
+    let exportedFilename: String
+    let fileSize: Int64?
+    let lastVerifiedAt: Date?
+    let providerDisplayName: String?
+    let status: String
+    let modifiedAt: Date
+
+    init(
+        id: UUID,
+        recordingReference: LibraryRecordingReference,
+        bookmarkData: Data? = nil,
+        destinationURLString: String? = nil,
+        displayName: String? = nil,
+        exportedAt: Date? = nil,
+        exportedFilename: String,
+        fileSize: Int64? = nil,
+        lastVerifiedAt: Date? = nil,
+        providerDisplayName: String? = nil,
+        status: String = "available",
+        modifiedAt: Date = Date()
+    ) {
+        self.id = id
+        self.recordingReference = recordingReference
+        self.bookmarkData = bookmarkData
+        self.destinationURLString = destinationURLString
+        self.displayName = displayName
+        self.exportedAt = exportedAt
+        self.exportedFilename = exportedFilename
+        self.fileSize = fileSize
+        self.lastVerifiedAt = lastVerifiedAt
+        self.providerDisplayName = providerDisplayName
+        self.status = status
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryArchiveLocationUpsertCommand {
+    func validate() throws {
+        let requiredText: [(String, String)] = [
+            (exportedFilename, "archive filename"),
+            (status, "archive status")
+        ]
+        for (value, field) in requiredText {
+            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "\(field) must not be empty"
+                )
+            }
+        }
+
+        let recordingStorageID = recordingReference.storageID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let recordingLegacyID = recordingReference.legacyID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard recordingStorageID?.isEmpty == false || recordingLegacyID?.isEmpty == false else {
+            throw LibraryRepositoryError.invalidCommand(
+                "archive location requires a recording identity"
+            )
+        }
+
+        if let destinationURLString {
+            guard !destinationURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  URL(string: destinationURLString) != nil else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "archive destination URL must be valid"
+                )
+            }
+        }
+        guard bookmarkData != nil || destinationURLString != nil else {
+            throw LibraryRepositoryError.invalidCommand(
+                "archive location requires a bookmark or destination URL"
+            )
+        }
+        if let bookmarkData {
+            guard !bookmarkData.isEmpty else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "archive bookmark data must not be empty"
+                )
+            }
+        }
+        if let fileSize {
+            guard fileSize >= 0 else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "archive file size must be non-negative"
+                )
+            }
+        }
+
+        let dates = [modifiedAt, exportedAt, lastVerifiedAt].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "archive location dates must be finite"
+            )
+        }
+    }
+}
+
 /// Creates or replaces the transcript attached to one recording.
 ///
 /// The command carries the already-encoded payloads used by both Core Data and
@@ -739,6 +847,9 @@ protocol LibraryRepository: Sendable {
     func setArchiveState(
         _ command: LibraryRecordingArchiveCommand
     ) async throws -> LibraryRecordingSnapshot
+    func upsertArchiveLocation(
+        _ command: LibraryArchiveLocationUpsertCommand
+    ) async throws -> LibraryArchiveLocationSnapshot
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot
@@ -773,6 +884,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case summaryAlreadyExists(reference: String)
     case ambiguousSummary(reference: String)
     case transcriptNotFound(reference: String)
+    case archiveLocationAlreadyExists(reference: String)
+    case ambiguousArchiveLocation(reference: String)
     case processingJobAlreadyExists(reference: String)
     case processingJobNotFound(reference: String)
     case ambiguousProcessingJob(reference: String)
@@ -803,6 +916,10 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The summary identity is ambiguous: \(reference)"
         case .transcriptNotFound(let reference):
             return "The transcript could not be found: \(reference)"
+        case .archiveLocationAlreadyExists(let reference):
+            return "The archive location already exists: \(reference)"
+        case .ambiguousArchiveLocation(let reference):
+            return "The archive location identity is ambiguous: \(reference)"
         case .processingJobAlreadyExists(let reference):
             return "The processing job already exists: \(reference)"
         case .processingJobNotFound(let reference):
