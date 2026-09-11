@@ -3,6 +3,64 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteLibraryObservationRuntimeTests: XCTestCase {
+    func testSubscriptionAnchorsBeforeSnapshotAndAdvancesOnce() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("library.sqlite")
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        var subscription = try await LibraryObservationSubscription.anchored(to: repository)
+
+        _ = try await repository.renameRecording(
+            LibraryRecordingRenameCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                name: "Renamed [Watch]",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+            )
+        )
+
+        let changes = try await subscription.poll()
+        XCTAssertEqual(changes.count, 1)
+        XCTAssertEqual(changes[0].revision, 1)
+        XCTAssertEqual(subscription.cursor, 1)
+        let emptyPoll = try await subscription.poll()
+        XCTAssertTrue(emptyPoll.isEmpty)
+    }
+
+    func testSubscriptionRejectsInvalidStartingRevisionAndSupportsCancellation() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        XCTAssertThrowsError(
+            try LibraryObservationSubscription(
+                observation: repository,
+                startingRevision: -1
+            )
+        ) { error in
+            XCTAssertEqual(error as? LibraryObservationError, .invalidCursor(-1))
+        }
+
+        var subscription = try LibraryObservationSubscription(observation: repository)
+        subscription.cancel()
+        let cancelledPoll = try await subscription.poll()
+        XCTAssertTrue(cancelledPoll.isEmpty)
+        XCTAssertTrue(subscription.isCancelled)
+    }
+
     func testTracksCommittedRenameAcrossReopen() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

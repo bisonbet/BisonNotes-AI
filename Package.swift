@@ -60,6 +60,7 @@ let package = Package(
                 "CoreDataLibraryObservation.swift",
                 "CoreDataMigrationSnapshotReader.swift",
                 "CoreDataMigrationInputReader.swift",
+                "LibraryObservationSubscription.swift",
                 "LibrarySettingsStore.swift",
                 "LibrarySettingsCatalog.swift",
                 "LibrarySettingsCatalogValidation.swift",
