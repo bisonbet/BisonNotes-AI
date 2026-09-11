@@ -279,6 +279,22 @@ struct LibraryProcessingJobDeleteCommand: Equatable, Sendable {
     }
 }
 
+/// Deletes persisted processing jobs whose status is terminal. Status matching
+/// is case-insensitive and whitespace-insensitive because legacy Core Data
+/// rows use both lowercase and display-name values.
+struct LibraryProcessingJobTerminalCleanupCommand: Equatable, Sendable {
+    let statuses: [String]
+    let deletedAt: Date
+
+    init(
+        statuses: [String] = ["completed", "failed", "cancelled"],
+        deletedAt: Date = Date()
+    ) {
+        self.statuses = statuses
+        self.deletedAt = deletedAt
+    }
+}
+
 extension LibraryProcessingJobUpdateCommand {
     func validate() throws {
         guard !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -311,6 +327,39 @@ extension LibraryProcessingJobUpdateCommand {
     ) -> Date? {
         guard case .set(let date) = update else { return nil }
         return date
+    }
+}
+
+extension LibraryProcessingJobTerminalCleanupCommand {
+    var normalizedStatuses: [String] {
+        Array(
+            Set(
+                statuses.map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+            )
+        )
+        .sorted()
+    }
+
+    func validate() throws {
+        guard !statuses.isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job terminal cleanup requires at least one status"
+            )
+        }
+        guard statuses.allSatisfy({
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job terminal cleanup statuses must not be empty"
+            )
+        }
+        guard deletedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job terminal cleanup date must be finite"
+            )
+        }
     }
 }
 
@@ -415,6 +464,9 @@ protocol LibraryRepository: Sendable {
     func deleteProcessingJob(
         _ command: LibraryProcessingJobDeleteCommand
     ) async throws -> LibraryProcessingJobSnapshot
+    func deleteTerminalProcessingJobs(
+        _ command: LibraryProcessingJobTerminalCleanupCommand
+    ) async throws -> [LibraryProcessingJobSnapshot]
 }
 
 enum LibraryRepositoryError: LocalizedError, Equatable {

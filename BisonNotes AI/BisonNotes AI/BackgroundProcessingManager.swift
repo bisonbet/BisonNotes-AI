@@ -773,12 +773,31 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     func removeCompletedJobs() async {
-        // Remove from Core Data
-        coreDataManager.deleteCompletedProcessingJobs()
-
-        // Remove from active jobs array
-        activeJobs.removeAll { job in
-            job.status.isTerminal
+        do {
+            let deletedJobs = try await libraryRepository.deleteTerminalProcessingJobs(
+                LibraryProcessingJobTerminalCleanupCommand()
+            )
+            let deletedJobIDs = Set(
+                deletedJobs.compactMap { snapshot -> UUID? in
+                    guard let legacyID = snapshot.legacyID else {
+                        return nil
+                    }
+                    return UUID(uuidString: legacyID)
+                }
+            )
+            activeJobs.removeAll { deletedJobIDs.contains($0.id) }
+            for deletedJobID in deletedJobIDs {
+                externalTaskHandles.removeValue(forKey: deletedJobID)
+            }
+            AppLog.shared.backgroundProcessing(
+                "Removed \(deletedJobs.count) terminal processing job(s)",
+                level: .debug
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to remove terminal processing jobs: \(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 

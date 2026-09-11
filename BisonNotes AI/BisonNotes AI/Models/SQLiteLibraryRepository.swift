@@ -70,6 +70,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws -> LibraryProcessingJobSnapshot {
         try await store.deleteProcessingJob(command)
     }
+
+    func deleteTerminalProcessingJobs(
+        _ command: LibraryProcessingJobTerminalCleanupCommand
+    ) async throws -> [LibraryProcessingJobSnapshot] {
+        try await store.deleteTerminalProcessingJobs(command)
+    }
 }
 
 extension SQLiteLibraryStore {
@@ -363,6 +369,55 @@ extension SQLiteLibraryStore {
                 at: command.deletedAt
             )
             return current
+        }
+    }
+
+    func deleteTerminalProcessingJobs(
+        _ command: LibraryProcessingJobTerminalCleanupCommand
+    ) throws -> [LibraryProcessingJobSnapshot] {
+        try command.validate()
+        let statuses = command.normalizedStatuses
+        let placeholders = Array(repeating: "?", count: statuses.count)
+            .joined(separator: ", ")
+
+        return try databaseQueue.write { database in
+            let columns = """
+                storageID, completionTime, engine, error, id, jobType,
+                lastModified, modelName, progress, recordingName, recordingURL,
+                recordingStorageID, startTime, status
+                """
+            let rows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(columns)
+                FROM processing_jobs
+                WHERE LOWER(TRIM(status)) IN (\(placeholders))
+                ORDER BY storageID
+                """,
+                arguments: StatementArguments(statuses.map(\.databaseValue))
+            )
+            let snapshots = try rows.map(SQLiteLibraryRepositoryMapper.processingJob(from:))
+
+            for snapshot in snapshots {
+                try database.execute(
+                    sql: "DELETE FROM processing_jobs WHERE storageID = ?",
+                    arguments: [snapshot.storageID]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete terminal processing jobs",
+                        reason: "a processing-job row was not deleted"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .processingJob,
+                    storageID: snapshot.storageID,
+                    operation: .deleted,
+                    at: command.deletedAt
+                )
+            }
+            return snapshots
         }
     }
 

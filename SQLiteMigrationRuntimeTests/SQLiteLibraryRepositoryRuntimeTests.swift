@@ -419,6 +419,83 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(revisionAfterMissingDelete, 1)
     }
 
+    func testRepositoryDeletesTerminalProcessingJobsCaseInsensitively() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let jobIDs = try [
+            XCTUnwrap(UUID(uuidString: "10000000-0000-0000-0000-000000000011")),
+            XCTUnwrap(UUID(uuidString: "10000000-0000-0000-0000-000000000012")),
+            XCTUnwrap(UUID(uuidString: "10000000-0000-0000-0000-000000000013")),
+            XCTUnwrap(UUID(uuidString: "10000000-0000-0000-0000-000000000014"))
+        ]
+        let statuses = ["Completed", "failed", " CANCELLED ", "Processing"]
+
+        for (index, values) in zip(jobIDs, statuses).enumerated() {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: values.0,
+                    jobType: "Test job",
+                    engine: "fixture-engine",
+                    recordingURL: "recording-\(index).m4a",
+                    recordingName: "Fixture recording",
+                    status: values.1,
+                    progress: values.1.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased() == "processing" ? 0.5 : 1,
+                    startTime: Date(timeIntervalSinceReferenceDate: 100 + Double(index)),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 110 + Double(index))
+                )
+            )
+        }
+
+        let deleted = try await repository.deleteTerminalProcessingJobs(
+            LibraryProcessingJobTerminalCleanupCommand(
+                deletedAt: Date(timeIntervalSinceReferenceDate: 200)
+            )
+        )
+
+        XCTAssertEqual(deleted.count, 3)
+        XCTAssertEqual(
+            Set(
+                deleted.compactMap(\.status).map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+            ),
+            Set(["completed", "failed", "cancelled"])
+        )
+        let remaining = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].status, "Processing")
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.count, 7)
+        XCTAssertEqual(
+            changes.prefix(4).map(\.operation),
+            Array(repeating: .inserted, count: 4)
+        )
+        XCTAssertEqual(
+            changes.suffix(3).map(\.operation),
+            Array(repeating: .deleted, count: 3)
+        )
+        XCTAssertEqual(
+            Set(changes.suffix(3).map(\.committedAt)),
+            Set([Date(timeIntervalSinceReferenceDate: 200)])
+        )
+
+        let secondPass = try await repository.deleteTerminalProcessingJobs(
+            LibraryProcessingJobTerminalCleanupCommand(
+                deletedAt: Date(timeIntervalSinceReferenceDate: 201)
+            )
+        )
+        XCTAssertTrue(secondPass.isEmpty)
+        let revisionAfterSecondPass = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterSecondPass, 7)
+    }
+
     func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

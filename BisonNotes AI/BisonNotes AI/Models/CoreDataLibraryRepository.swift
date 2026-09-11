@@ -589,6 +589,40 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func deleteTerminalProcessingJobs(
+        _ command: LibraryProcessingJobTerminalCleanupCommand
+    ) async throws -> [LibraryProcessingJobSnapshot] {
+        try command.validate()
+        let terminalStatuses = Set(command.normalizedStatuses)
+        let context = context
+        return try context.performAndWait {
+            let jobs = try context.fetch(Self.fetchRequest(entityName: "ProcessingJobEntry"))
+                .filter { job in
+                    guard let status = job.value(forKey: "status") as? String else {
+                        return false
+                    }
+                    return terminalStatuses.contains(
+                        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    )
+                }
+            let snapshots = try jobs.map(Self.processingJobSnapshot(from:))
+            guard !jobs.isEmpty else {
+                return []
+            }
+
+            jobs.forEach(context.delete)
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete terminal processing jobs",
+                    reason: error.localizedDescription
+                )
+            }
+            return snapshots
+        }
+    }
+
     private static func recordingPredicate(
         for reference: LibraryRecordingReference
     ) throws -> NSPredicate {

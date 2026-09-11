@@ -345,6 +345,77 @@ final class LibraryRepositoryContractTests: XCTestCase {
         }
     }
 
+    func testCoreDataRepositoryDeletesTerminalProcessingJobsCaseInsensitively() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-processing-job-terminal-cleanup.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        _ = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: LibraryProcessingJobReference(
+                    legacyID: "10000000-0000-0000-0000-000000000004"
+                ),
+                status: "Completed",
+                progress: 1,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        let terminalID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000011")
+        )
+        let activeID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000012")
+        )
+        for (id, status) in [(terminalID, " CANCELLED "), (activeID, "Processing")] {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: id,
+                    jobType: "Test job",
+                    engine: "fixture-engine",
+                    recordingURL: "recording.m4a",
+                    recordingName: "Fixture recording",
+                    status: status,
+                    progress: status.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased() == "processing" ? 0.5 : 1,
+                    startTime: Date(timeIntervalSinceReferenceDate: 302),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+                )
+            )
+        }
+
+        let deleted = try await repository.deleteTerminalProcessingJobs(
+            LibraryProcessingJobTerminalCleanupCommand(
+                deletedAt: Date(timeIntervalSinceReferenceDate: 304)
+            )
+        )
+
+        XCTAssertEqual(deleted.count, 2)
+        XCTAssertEqual(
+            Set(
+                deleted.compactMap(\.status).map {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                }
+            ),
+            Set(["completed", "cancelled"])
+        )
+        let remaining = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertEqual(remaining.count, 1)
+        XCTAssertEqual(remaining[0].status, "Processing")
+    }
+
     private func assertTranscript(
         _ transcript: LibraryTranscriptSnapshot,
         recordingStorageID: String
