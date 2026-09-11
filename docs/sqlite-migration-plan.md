@@ -7,8 +7,9 @@ resumable metadata/settings coordinator, an explicit Core Data source-input
 boundary, durable import receipts, a validated media-root/transfer boundary,
 a candidate application media-root mapping, a receipt-gated source-retention
 executor, a checksum-bound transfer planner, a restartable background
-media-reconciliation service and an explicit app-owned settings source
-inventory are implemented, but no SQLite migration is enabled**.
+media-reconciliation service, an explicit app-owned settings source inventory,
+and a target-platform settings normalization/source-drift contract are
+implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -53,7 +54,17 @@ the reviewed main-defaults keys, the separate Action Button app-group key, and
 the dynamic legacy-key prefixes. The reader's no-argument snapshot path uses
 the main-defaults inventory, while the catalog test requires the exact
 inventory and catalog sets to match. This closes the explicit source-list gap;
-platform normalization, source-drift checks and startup wiring remain open.
+the normalization contract and source-drift assertions are now implemented;
+startup wiring remains open.
+
+The current settings-normalization checkpoint is `4b5f37b3` (`feat: normalize
+migration settings by target platform`). `LibrarySettingsNormalizer` is a pure,
+context-driven boundary that canonicalizes reviewed legacy identifiers and
+endpoints, omits Mac-only Ollama state on iOS, and clamps MLX model IDs against
+the target capability set before final catalog validation. The app-hosted
+settings test now requires the production CloudKit list plus reviewed omissions
+to match the blocking catalog exactly. The reader exposes this policy without
+activating it at startup or writing UserDefaults.
 
 The current isolated coordinator checkpoint is `5c88828b` (`feat: persist
 resumable migration pause state`), following `230e511c` (`feat: add resumable
@@ -118,7 +129,7 @@ finishes missing committed receipts after a process restart while leaving source
 retention as an explicit separately gated action. It does not create roots,
 scan user data, activate SQLite, or wire Watch/share/background callers. The
 media-focused tests now pass 22/22 and the full disposable host suite passes
-66/66.
+70/70.
 
 The current settings-classification checkpoint is `f8b4d6c7` (`test: cover
 legacy settings classifications`), following `e2ff6c0` (`test: compare
@@ -167,7 +178,7 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs 66
+- A root SwiftPM host-independent macOS runtime harness now runs 70
   disposable macOS runtime tests against the canonical store sources with the
   exact GRDB 7.11.1 pin. It caught and fixed two issues before any live-data
   work:
@@ -223,7 +234,7 @@ Completed in this slice:
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
-  66 tests with zero failures, including a disposable v2-to-v4 upgrade
+  70 tests with zero failures, including a disposable v2-to-v4 upgrade
   fixture that verifies existing stores receive the observation and media
   receipt schema.
   The app-hosted Core Data fixture test is compile-checked with
@@ -237,16 +248,20 @@ Completed in this slice:
   macOS vendor identifier as device-local and Mistral’s backed-up transcription
   model as blocking metadata; it validates reviewed engine/model/format/
   speaker-label enums and permits intentionally empty optional endpoints.
-  The explicit app-owned source inventory now covers the catalog exactly;
-  platform normalization, source-drift checks and startup wiring remain open.
+  The explicit app-owned source inventory now covers the catalog exactly. The
+  pure `LibrarySettingsNormalizer` canonicalizes reviewed legacy identifiers and
+  endpoints, omits Mac-only Ollama state on iOS, and clamps MLX model IDs using
+  explicit target capabilities. An app-hosted source-drift contract requires
+  the production CloudKit list plus the seven reviewed omissions to equal the
+  blocking catalog; startup integration remains open.
   An initial `LibrarySettingsCatalog` now classifies the reviewed CloudKit
   settings candidates plus source-observed omissions, lifecycle/CloudKit
   protocol state, legacy migration keys, device/cache state and credentials.
   Only the blocking-metadata subset can be read for a future SQLite import;
   unknown keys, derived/runtime values and non-migratable classifications fail
   closed. It also rejects non-finite values, out-of-range integers/reals,
-  unknown enum strings and endpoint credentials. Platform normalization and
-  startup wiring remain open. An app-hosted contract test now compares the
+  unknown enum strings and endpoint credentials. Startup wiring remains open. An
+  app-hosted contract test now compares the
   production CloudKit settings source list, legacy on-device LLM settings and
   the seven reviewed UI omissions against the independent catalog; it has not
   executed because the current Xcode build cannot resolve external packages in
@@ -320,9 +335,9 @@ Completed in this slice:
 
 Not yet implemented or closed:
 
-- Production coordinator/source/settings acquisition wiring, remaining
-  settings platform normalization/source-drift checks and startup subscription
-  wiring, plus broader read/write repository
+- Production coordinator/source/settings acquisition wiring, startup integration
+  of the settings normalization/source-drift boundary and observation
+  subscription wiring, plus broader read/write repository
   contracts and app-wired importer
   migration screen. The current read-only metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
@@ -341,8 +356,9 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to finish platform normalization and source-drift
-checks, connect the observation adapter to the startup contract and expand
+The next safe work package is to integrate the settings normalization and
+source-drift boundary into the startup contract, connect the observation adapter
+there, and expand
 commands while converting additional non-startup callers
 behind the Core Data adapter with shared behavior tests. In parallel, select the
 final production roots and connect the media worker, receipt boundary and
@@ -884,7 +900,7 @@ or task unless the owner requests it.
 
 | Phase | Concrete deliverable and files | Exit gate |
 | --- | --- | --- |
-| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** platform normalization/source-drift checks, production coordinator wiring and measurements remain open. |
+| 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** startup integration of the settings normalization/source-drift boundary, production coordinator wiring and measurements remain open. |
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** Core Data health/startup gating and throwing startup reads are implemented; Watch/extension/background caller gates remain open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
 | 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, a candidate app-owned logical media-root mapping, a checksum-bound transfer planner, a bounded restartable background reconciler and a receipt-gated source-retention executor now accompany the isolated root-relative media file-operation journal/worker; final production root selection, caller integration, recovery UI and attachment/archive/file-service adaptation remain. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
 | 3: Repository boundary | **Started:** immutable snapshots for all six metadata entities, typed allowlisted settings adapters, the first rename command/error contract, Core Data and SQLite adapters, durable SQLite/Core Data observation adapters, the read-only Core Data migration source reader, and disposable contract tests are in place. `AudioPlayerView` now uses the Core Data adapter for its display-name-only write; startup subscription, file-owning commands, and the remaining `AppDataCoordinator`, `RecordingWorkflowManager`, jobs/imports/transcript/summary/archive services, UI, cloud store access, fixtures and previews remain. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapters and the legacy importer; all callers/targets audited. |
@@ -1096,7 +1112,7 @@ inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
 adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
 but does not change a user store or write CloudKit records. The
-current host-independent suite passes 66 tests with 0 failures; iOS `build-for-testing`
+current host-independent suite passes 70 tests with 0 failures; iOS `build-for-testing`
 and native macOS builds also passed. No production upgrade, Apple device-backup
 restore or physical two-device validation was performed for this plan or safety
 slices.

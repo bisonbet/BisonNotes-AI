@@ -439,7 +439,7 @@ not wired to lifecycle notifications or app startup, and the history-retention/
 purge policy remains intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 66 disposable macOS tests; the
+standalone runtime harness has passed 70 disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
@@ -450,15 +450,19 @@ The existing `iCloudStorageManager.backedUpSettingsKeys` list is the starting
 source inventory for user-facing preferences, but it is not reused as the
 SQLite migration allowlist. CloudKit restore applies platform-specific rules
 and model normalization, and the list does not include every current
-FluidAudio/MLX preference. An initial independently typed catalog now records
-those candidates and the source-observed omissions. An app-hosted contract test
-compares the actual CloudKit and legacy on-device LLM source lists to the
-catalog, but it has not executed because the current Xcode build cannot resolve
-external packages. The catalog now explicitly keeps the macOS vendor identifier
-device-local, treats the backed-up Mistral transcription model as blocking
-metadata, validates the reviewed enum values, and accepts empty optional
-endpoints. Exhaustive app-key inventory, platform normalization and startup
-wiring remain open; the catalog is not yet the final production allowlist.
+FluidAudio/MLX preference. The independently typed catalog now records those
+candidates and the source-observed omissions, while
+`LibrarySettingsSourceInventory` enumerates the exact app-owned catalog keys.
+`LibrarySettingsNormalizer` is a pure, context-driven boundary for canonicalizing
+reviewed legacy identifiers/endpoints, omitting Mac-only Ollama state on iOS, and
+clamping MLX model IDs to the target capability set. The app-hosted source-drift
+test requires the production CloudKit list plus the seven reviewed omissions to
+equal the blocking catalog, and keeps legacy settings inside the inventory. The
+catalog now explicitly keeps the macOS vendor identifier device-local, treats the
+backed-up Mistral transcription model as blocking metadata, validates the
+reviewed enum values, and accepts empty optional endpoints. Startup integration
+of normalization and source-drift checks remains open; the catalog is not yet
+the final production allowlist.
 
 | Disposition | Current source-observed examples | Migration treatment |
 | --- | --- | --- |
@@ -489,13 +493,13 @@ resolved.
 | Application media transfer planning | `SQLiteApplicationMediaTransferPlanner` resolves an existing file to the most-specific registered application root, validates the destination root-relative path and computes a streaming SHA-256/byte-length fingerprint without creating directories, copying bytes or deleting the source. | Four host tests cover Documents/Inbox specificity, Watch staging, unmanaged sources and directory refusal. No production caller is wired. |
 | Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations before recording committed receipts and emits progress. Source retention remains an explicit follow-up. | Four host tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen and changed-destination refusal. Production scheduling and caller wiring remain open. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
-| Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, and dynamic legacy-key prefixes. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key, require the exact source inventory/catalog match and prove unrelated defaults are untouched. Startup wiring, source-drift checks and platform normalization are still open. |
+| Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, and dynamic legacy-key prefixes. `LibrarySettingsNormalizer` provides pure target-platform normalization before final catalog validation. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key, require the exact source inventory/catalog match, exercise normalization and prove unrelated defaults are untouched. The app-hosted source-drift test is added; startup integration remains open. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |
 | Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. Lifecycle/startup wiring, history retention/purge policy and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
-next inventory update must finish platform normalization and source-drift checks,
-connect the observation contract and the isolated coordinator to
+next inventory update must connect the settings normalization/source-drift
+boundary, the observation contract and the isolated coordinator to
 the startup contract, expand command/error coverage, and add production
 final production-root selection/source-retention scheduling and Watch/share
 caller integration before production services can depend on the repository.

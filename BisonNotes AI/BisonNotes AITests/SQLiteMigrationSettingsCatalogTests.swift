@@ -2,6 +2,7 @@ import XCTest
 @testable import BisonNotes_AI
 
 final class SQLiteMigrationSettingsCatalogTests: XCTestCase {
+    @MainActor
     func testCloudKitSettingsSourceKeysAreClassified() throws {
         let sourceKeys = iCloudStorageManager.backedUpSettingsKeys
 
@@ -10,6 +11,7 @@ final class SQLiteMigrationSettingsCatalogTests: XCTestCase {
         try LibrarySettingsCatalog.validateSourceKeys(sourceKeys)
     }
 
+    @MainActor
     func testCloudKitSettingsSourceMatchesReviewedBlockingInventory() {
         let cloudKitKeys = Set(iCloudStorageManager.backedUpSettingsKeys)
         let reviewedOmissions: Set<String> = [
