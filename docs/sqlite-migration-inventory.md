@@ -5,6 +5,8 @@ Current restartable media reconciliation checkpoint: `fe99e3ff`.
 Current settings source-inventory checkpoint: `9dfed6fd`.
 Current observation-subscription checkpoint: `33bdc7ed`.
 Current startup-boundary checkpoint: `1669066e`.
+Current maintenance-gate checkpoint: `69074da5`.
+Current source-coordinator checkpoint: `1787855e`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -363,15 +365,19 @@ CloudKit, or any user database. The read-only Core Data source reader is now
 implemented and tested against disposable six-entity models; the isolated
 Core Data migration input reader now composes that metadata snapshot with an
 explicitly inventoried, typed blocking-settings snapshot and rejects
-unclassified source keys before capture; it still depends on a future gate to
-quiesce both source domains. The isolated
+unclassified source keys before capture. `LibraryMaintenanceGate` now provides
+cancellation-safe normal/exclusive access, and the disposable
+`SQLiteMigrationSourceCoordinator` holds exclusive access across observation
+anchoring, source capture, revision validation and the resumable coordinator.
+The isolated
 resumable metadata coordinator now handles exact-run lookup, committed batch
 progress, a durable paused status for cancellation, definitive failure
 checkpoints and closed-snapshot verification. Its blocking settings phase applies
 the validated allowlist before final verification and is resumable after reopen.
 Production source/settings acquisition and coordinator wiring beyond the
-pre-cutover boundary, the quiesced source snapshot/maintenance gate,
-migration screen, historical release fixtures,
+disposable source-backed harness, adoption of the gate by every Core Data,
+settings, Watch, share and background caller, the migration screen, historical
+release fixtures,
 final production media-root selection and Watch/share/background caller
 integration still need implementation against disposable fixtures. The isolated
 media worker, candidate application-root mapping, checksum-bound planner,
@@ -441,7 +447,7 @@ activation and persistent-store remote-change notifications. The history-
 retention/purge policy remains intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 72 disposable macOS tests; the
+standalone runtime harness has passed 77 disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
@@ -491,6 +497,7 @@ resolved.
 | Remaining metadata values | `LibraryTranscriptSnapshot`, `LibrarySummarySnapshot`, `LibraryProcessingJobSnapshot`, `LibraryArchiveLocationSnapshot` and `LibraryPendingCloudMutationSnapshot` preserve nullable scalar, payload and resolved-link values. | Root SwiftPM contract test asserts all five imported projections; app-hosted test asserts the active-model fixture, including relationship-derived storage IDs. |
 | Core Data read adapter | `CoreDataLibraryRepository` fetches all six entities through a supplied context, copies values inside the context operation, and applies deterministic ordering. | Uses only a disposable `BisonNotes_AI_v2` fixture; no production `PersistenceController` or `CoreDataManager` is constructed. |
 | Core Data migration source/input reader | `CoreDataMigrationSnapshotReader` captures all supported metadata entities from one quiescent context, preserves public attribute/relationship values, rejects temporary/incomplete graphs, and fingerprints the canonical snapshot without copying audio bytes. `CoreDataMigrationInputReader` composes that result with an explicitly inventoried typed blocking-settings snapshot and rejects unclassified source keys. | Runtime fixtures cover all six entities, relationship storage IDs, settings filtering and the combined input boundary; app-hosted tests cover original and active compiled models but remain compile-only until the app target can resolve external packages. |
+| Maintenance gate and source-backed coordinator | `LibraryMaintenanceGate` grants fair normal access and exclusive maintenance leases, removes canceled waiters and makes release cleanup idempotent. `SQLiteMigrationSourceCoordinator` anchors the source observation after acquiring the gate, captures real Core Data/defaults input, rejects source revision drift before import and holds the gate through the isolated metadata/settings coordinator. | Three gate tests cover fairness, waiter cancellation and cleanup; two source-coordinator fixtures cover successful full-run composition under the gate and source-change blocking. This remains a disposable harness with no production destination selection, startup caller, activation or app-wide gate adoption. |
 | Resumable metadata/settings coordinator | `SQLiteMigrationCoordinator` validates a closed snapshot and blocking settings snapshot, finds the newest matching pending/running/paused run after reopen, emits progress after committed batches and settings commit, persists cancellation as paused, records definitive conflicts as failed with a generic durable message, applies/read-backs the allowlisted settings, and verifies the destination before completion. | Six host tests cover progress, metadata/settings reopen-resume, durable cancellation pause, allowlisted settings application and conflict failure. It is not wired to production source acquisition, settings acquisition, media, startup or an active user generation. |
 | Durable media operation journal/worker | `SQLiteMediaCopyPlan`, `SQLiteLibraryStore` media-operation transactions and `SQLiteMediaFileOperationWorker` persist root-relative audio copy intent, claim/recovery state, streaming SHA-256/length verification and atomic partial-file publication. Exact destinations are idempotently accepted; conflicting destinations fail without overwrite and durable errors are generic. | Five host tests cover successful copy, idempotent enqueue, destination-before-checkpoint recovery, conflict protection and traversal rejection. Final production root selection, scheduling, progress UI and startup wiring remain open. |
 | Durable import receipts | `SQLiteImportReceipt` and `SQLiteLibraryStore.recordImportReceipt` persist a unique source transfer ID, optional destination storage ID and typed committed/rejected/failed outcome. Duplicate source retries return the original result; changed retries and receipt-ID collisions fail closed. | Three host tests cover reopen/duplicate acknowledgement, conflicting duplicate outcome/destination and receipt-ID collision. Not connected to Watch/share callers or source-retention cleanup yet. |
@@ -503,8 +510,7 @@ resolved.
 | Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
-next inventory update must add the quiesced maintenance gate and connect the
-startup-prepared settings/observation inputs to a disposable source-backed
-coordinator harness, expand command/error coverage, and add production
-final production-root selection/source-retention scheduling and Watch/share
-caller integration before production services can depend on the repository.
+next inventory update must expand command/error coverage, audit adoption of the
+maintenance gate by every source mutation caller, and add production final
+root selection/source-retention scheduling and Watch/share caller integration
+before production services can depend on the repository.
