@@ -172,6 +172,25 @@ struct LibraryProcessingJobUpdateCommand: Equatable, Sendable {
     }
 }
 
+/// Deletes one persisted processing job through its stable identity. The
+/// optional revision guard prevents a cleanup pass from deleting a job that a
+/// newer writer has already changed.
+struct LibraryProcessingJobDeleteCommand: Equatable, Sendable {
+    let reference: LibraryProcessingJobReference
+    let expectedLastModified: Date?
+    let deletedAt: Date
+
+    init(
+        reference: LibraryProcessingJobReference,
+        expectedLastModified: Date? = nil,
+        deletedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.expectedLastModified = expectedLastModified
+        self.deletedAt = deletedAt
+    }
+}
+
 extension LibraryProcessingJobUpdateCommand {
     func validate() throws {
         guard !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -301,6 +320,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryRecordingSnapshot
     func updateProcessingJob(
         _ command: LibraryProcessingJobUpdateCommand
+    ) async throws -> LibraryProcessingJobSnapshot
+    func deleteProcessingJob(
+        _ command: LibraryProcessingJobDeleteCommand
     ) async throws -> LibraryProcessingJobSnapshot
 }
 

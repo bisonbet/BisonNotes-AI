@@ -280,6 +280,60 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(revisionAfterRejectedUpdate, 3)
     }
 
+    func testRepositoryDeletesProcessingJobAndLeavesDurableDeleteChange() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        let deleted = try await repository.deleteProcessingJob(
+            LibraryProcessingJobDeleteCommand(
+                reference: LibraryProcessingJobReference(legacyID: "job-legacy"),
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                deletedAt: Date(timeIntervalSinceReferenceDate: 305)
+            )
+        )
+
+        XCTAssertEqual(deleted.storageID, "job-storage")
+        let jobsAfterDelete = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertTrue(jobsAfterDelete.isEmpty)
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.revision), [1])
+        XCTAssertEqual(changes.map(\.entity), [.processingJob])
+        XCTAssertEqual(changes.map(\.operation), [.deleted])
+        XCTAssertEqual(
+            changes[0].committedAt,
+            Date(timeIntervalSinceReferenceDate: 305)
+        )
+
+        do {
+            _ = try await repository.deleteProcessingJob(
+                LibraryProcessingJobDeleteCommand(
+                    reference: LibraryProcessingJobReference(storageID: "job-storage"),
+                    deletedAt: Date(timeIntervalSinceReferenceDate: 306)
+                )
+            )
+            XCTFail("Expected deleting a missing processing job to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .processingJobNotFound(reference: "job-storage")
+            )
+        }
+        let revisionAfterMissingDelete = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterMissingDelete, 1)
+    }
+
     func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

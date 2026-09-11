@@ -58,6 +58,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws -> LibraryProcessingJobSnapshot {
         try await store.updateProcessingJob(command)
     }
+
+    func deleteProcessingJob(
+        _ command: LibraryProcessingJobDeleteCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        try await store.deleteProcessingJob(command)
+    }
 }
 
 extension SQLiteLibraryStore {
@@ -222,6 +228,47 @@ extension SQLiteLibraryStore {
                 storageID: current.storageID,
                 in: database
             )
+        }
+    }
+
+    func deleteProcessingJob(
+        _ command: LibraryProcessingJobDeleteCommand
+    ) throws -> LibraryProcessingJobSnapshot {
+        guard command.deletedAt.timeIntervalSinceReferenceDate.isFinite,
+              command.expectedLastModified?.timeIntervalSinceReferenceDate.isFinite ?? true else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job expected last modified date must be finite"
+            )
+        }
+        let reference = try Self.normalizedProcessingJobReference(command.reference)
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchProcessingJobRows(for: reference, in: database)
+            let current = try Self.validateProcessingJobTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+
+            try database.execute(
+                sql: "DELETE FROM processing_jobs WHERE storageID = ?",
+                arguments: [current.storageID]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete processing job",
+                    reason: "the processing-job row was not deleted"
+                )
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .processingJob,
+                storageID: current.storageID,
+                operation: .deleted,
+                at: command.deletedAt
+            )
+            return current
         }
     }
 

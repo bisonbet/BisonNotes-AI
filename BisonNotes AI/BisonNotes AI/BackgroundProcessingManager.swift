@@ -853,10 +853,13 @@ class BackgroundProcessingManager: ObservableObject {
                 AppLog.shared.backgroundProcessing("Removing existing transcription job to allow rerun")
                 activeJobs.remove(at: index)
 
-                // Also remove from Core Data
-                if let jobEntry = coreDataManager.getProcessingJob(id: existingJob.id) {
-                    coreDataManager.deleteProcessingJob(jobEntry)
-                }
+                // Also remove the persisted job. Missing rows are harmless because
+                // rerun cleanup is intentionally idempotent.
+                await deletePersistedProcessingJob(
+                    reference: LibraryProcessingJobReference(
+                        legacyID: existingJob.id.uuidString
+                    )
+                )
             }
         }
 
@@ -922,6 +925,37 @@ class BackgroundProcessingManager: ObservableObject {
         } catch {
             AppLog.shared.backgroundProcessing(
                 "Failed to persist processing-job update for \(updatedJob.id): "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func deletePersistedProcessingJob(
+        reference: LibraryProcessingJobReference,
+        expectedLastModified: Date? = nil
+    ) async {
+        do {
+            _ = try await libraryRepository.deleteProcessingJob(
+                LibraryProcessingJobDeleteCommand(
+                    reference: reference,
+                    expectedLastModified: expectedLastModified
+                )
+            )
+        } catch let error as LibraryRepositoryError {
+            // Cleanup can race with another recovery path. A missing row means
+            // the requested end state already holds, so keep deletion retry-safe.
+            if case .processingJobNotFound = error {
+                return
+            }
+            AppLog.shared.backgroundProcessing(
+                "Failed to delete persisted processing job \(reference.displayValue): "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to delete persisted processing job \(reference.displayValue): "
                     + "\(error.localizedDescription)",
                 level: .error
             )
@@ -2243,9 +2277,9 @@ class BackgroundProcessingManager: ObservableObject {
             if let index = activeJobs.firstIndex(where: { $0.id == job.id }) {
                 activeJobs.remove(at: index)
             }
-            if let jobEntry = coreDataManager.getProcessingJob(id: job.id) {
-                coreDataManager.deleteProcessingJob(jobEntry)
-            }
+            await deletePersistedProcessingJob(
+                reference: LibraryProcessingJobReference(legacyID: job.id.uuidString)
+            )
         }
 
         // Check engine availability and resume each job
@@ -3023,10 +3057,9 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         for job in jobsToRemove {
-            // Remove from Core Data
-            if let jobEntry = coreDataManager.getProcessingJob(id: job.id) {
-                coreDataManager.deleteProcessingJob(jobEntry)
-            }
+            await deletePersistedProcessingJob(
+                reference: LibraryProcessingJobReference(legacyID: job.id.uuidString)
+            )
         }
 
         // Remove from memory
@@ -3075,10 +3108,22 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Force cleanup all jobs (nuclear option)
     func clearAllJobs() async {
-        // Remove all jobs from Core Data
-        let allJobEntries = coreDataManager.getAllProcessingJobs()
-        for jobEntry in allJobEntries {
-            coreDataManager.deleteProcessingJob(jobEntry)
+        do {
+            let allJobs = try await libraryRepository.fetchProcessingJobSnapshots()
+            for job in allJobs {
+                await deletePersistedProcessingJob(
+                    reference: LibraryProcessingJobReference(
+                        storageID: job.storageID,
+                        legacyID: job.legacyID
+                    )
+                )
+            }
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to enumerate persisted processing jobs for cleanup: "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
         }
 
         // Clear from memory

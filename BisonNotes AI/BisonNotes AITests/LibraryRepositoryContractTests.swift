@@ -223,6 +223,51 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(persisted[0], preserved)
     }
 
+    func testCoreDataRepositoryDeletesProcessingJobWithRevisionGuard() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-processing-job-delete.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let jobID = "10000000-0000-0000-0000-000000000004"
+        let deleted = try await repository.deleteProcessingJob(
+            LibraryProcessingJobDeleteCommand(
+                reference: LibraryProcessingJobReference(legacyID: jobID),
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                deletedAt: Date(timeIntervalSinceReferenceDate: 305)
+            )
+        )
+
+        XCTAssertEqual(deleted.legacyID, jobID)
+        let jobsAfterDelete = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertTrue(jobsAfterDelete.isEmpty)
+
+        do {
+            _ = try await repository.deleteProcessingJob(
+                LibraryProcessingJobDeleteCommand(
+                    reference: LibraryProcessingJobReference(legacyID: jobID),
+                    deletedAt: Date(timeIntervalSinceReferenceDate: 306)
+                )
+            )
+            XCTFail("Expected deleting a missing processing job to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .processingJobNotFound(reference: jobID)
+            )
+        }
+    }
+
     private func assertTranscript(
         _ transcript: LibraryTranscriptSnapshot,
         recordingStorageID: String

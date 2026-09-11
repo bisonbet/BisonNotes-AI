@@ -470,6 +470,57 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func deleteProcessingJob(
+        _ command: LibraryProcessingJobDeleteCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        guard command.deletedAt.timeIntervalSinceReferenceDate.isFinite,
+              command.expectedLastModified?.timeIntervalSinceReferenceDate.isFinite ?? true else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job deletion dates must be finite"
+            )
+        }
+        let context = context
+        return try context.performAndWait {
+            let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+            request.fetchLimit = 2
+            request.predicate = try Self.processingJobPredicate(for: command.reference)
+
+            let matches = try context.fetch(request)
+            guard !matches.isEmpty else {
+                throw LibraryRepositoryError.processingJobNotFound(
+                    reference: command.reference.displayValue
+                )
+            }
+            guard matches.count == 1 else {
+                throw LibraryRepositoryError.ambiguousProcessingJob(
+                    reference: command.reference.displayValue
+                )
+            }
+
+            let job = matches[0]
+            let current = try Self.processingJobSnapshot(from: job)
+            guard command.expectedLastModified == nil
+                    || command.expectedLastModified == current.lastModified else {
+                throw LibraryRepositoryError.staleProcessingJob(
+                    reference: command.reference.displayValue,
+                    expected: command.expectedLastModified,
+                    actual: current.lastModified
+                )
+            }
+
+            context.delete(job)
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete processing job",
+                    reason: error.localizedDescription
+                )
+            }
+            return current
+        }
+    }
+
     private static func recordingPredicate(
         for reference: LibraryRecordingReference
     ) throws -> NSPredicate {
