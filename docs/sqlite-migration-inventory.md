@@ -15,6 +15,7 @@ Current summary-persistence checkpoint: `0af7809c`.
 Current archive-state checkpoint: `37d55b77`.
 Current archive-location checkpoint: `4e35a7d9`.
 Current repository-gate adoption checkpoint: `431ff801`.
+Current recording-creation checkpoint: `b57e871f`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -457,10 +458,24 @@ The production Core Data repository construction paths and the SQLite
 `LibraryRepository` adapter now wait behind an exclusive source-capture lease
 for repository-backed reads and commands. SQLite observation polling remains
 ungated so the source coordinator can validate a revision while holding that
-lease. The standalone runtime suite passes 90/90 and the app-hosted macOS/iOS
+lease. The standalone runtime suite passes 91/91 and the app-hosted macOS/iOS
 build-for-testing checks pass. Direct managed-object saves in legacy recording,
 import, archive, settings, Watch/share and sync services remain open for
 separate conversion or an explicit exclusion; no backend is wired to startup.
+
+The recording-creation checkpoint `b57e871f` adds
+`LibraryRecordingCreateCommand` with finite-value, range and identity
+validation. Core Data and SQLite commit the complete metadata row atomically,
+reject duplicate identities and preserve the legacy UUID; SQLite also assigns
+the stable `sqlite-recording-<lowercase-UUID>` storage ID and records one
+durable `recording`/`inserted` observation change. The async
+`AppDataCoordinator` bridge is used by
+`BackgroundProcessingManager.ensureRecordingExists` after that workflow has
+already taken ownership of the audio file. Audio copying, naming and source
+retention remain outside this metadata transaction. One focused SQLite runtime
+test passes; the Core Data contract test is compile-checked by the app-hosted
+build-for-testing target, while direct simulator execution remains unavailable
+in the current runner.
 The durable media-operation checkpoint `44515c52` adds transactional asset and
 file-operation enqueueing, root-relative path validation, streaming checksum/
 length verification, atomic partial-file publication, non-overwriting conflict
@@ -575,6 +590,7 @@ resolved.
 | Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations before recording committed receipts and emits progress. Source retention remains an explicit follow-up. | Four host tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen and changed-destination refusal. Production scheduling and caller wiring remain open. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, dynamic legacy-key prefixes and CloudKit omissions. `LibrarySettingsNormalizer` provides pure target-platform normalization before final catalog validation, while `SQLiteMigrationStartupBoundary` captures that result without source writes. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key and source-list drift, require the exact source inventory/catalog match, exercise normalization and prove unrelated defaults are untouched. The app-hosted source-drift/no-write boundary tests are compile-checked. |
+| Recording creation command | `LibraryRecordingCreateCommand` validates a caller-owned audio recording's metadata, rejects duplicate UUID identities and commits the initial recording row through Core Data or SQLite. SQLite assigns `sqlite-recording-<lowercase-UUID>` and records one durable inserted recording change; the async `AppDataCoordinator` bridge is used by `BackgroundProcessingManager.ensureRecordingExists`. | One focused SQLite runtime test covers the complete row, stable identity, duplicate rejection and exact observation change. The app-hosted Core Data contract covers the active-model row/defaults and duplicate rejection but is currently compile-checked by `build-for-testing`; direct simulator execution remains unavailable. Audio copying, file naming, source retention and the remaining direct creation/import paths stay outside this command. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration callers use the Core Data adapter. The file-owning AI rename stays outside this command pending a journaled file-operation boundary. |
 | Transcript upsert command | `LibraryTranscriptUpsertCommand` carries encoded transcript payloads, resolves one recording and preserves the existing transcript identity on replacement. Core Data and SQLite create or update the transcript and recording link/status atomically; SQLite records both changes in its durable observation log. | Two focused SQLite tests cover replacement identity/payload updates and stable new-row retry; the app-hosted contract covers Core Data replacement identity and persisted payloads. Production transcription persistence uses the async repository path; the synchronous helper remains for UI-test seeding and legacy compatibility. No backend is selected for startup. |
 | Summary upsert command | `LibrarySummaryUpsertCommand` carries encoded structured payloads and summary metadata, resolves one recording and preserves the existing summary identity on replacement. Core Data and SQLite create or update the summary and recording link/status atomically; SQLite records both changes in its durable observation log. Missing or ambiguous recording/summary/transcript identities fail closed, and retrying a new-row command does not duplicate it. Supplemental notes and attachments remain outside this metadata transaction. | Two focused SQLite tests cover replacement identity/payload updates and stable new-row retry; the app-hosted contract covers Core Data replacement identity and persisted payloads. Background summarization and both summary-regeneration paths use the async repository path; the synchronous helper remains for UI-test seeding and legacy compatibility. No backend is selected for startup. |

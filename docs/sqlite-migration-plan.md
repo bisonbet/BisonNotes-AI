@@ -20,8 +20,10 @@ transcript-upsert command with Core Data/SQLite adapters plus asynchronous
 production transcription callers, a summary-upsert command with Core
 Data/SQLite adapters plus asynchronous background and regeneration callers,
 and recording archive-state/archive-location commands with Core Data/SQLite
-adapters, plus shared maintenance-gate adoption by the production repository
-adapters, are implemented, but no SQLite migration is enabled**.
+adapters, a recording-create command with Core Data/SQLite adapters and an
+asynchronous background creation caller, plus shared maintenance-gate adoption
+by the production repository adapters, are implemented, but no SQLite
+migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -183,6 +185,20 @@ poll while holding the exclusive lease. The standalone runtime suite passes
 90/90, and the macOS/iOS app-hosted build-for-testing checks pass. Direct
 managed-object and file-owning legacy callers still require separate
 conversion or an explicitly documented exclusion; no repository backend is
+selected for production startup and no SQLite cutover is enabled.
+
+The current recording-creation checkpoint is `b57e871f` (`feat: add repository
+recording creation`). `LibraryRecordingCreateCommand` validates recording
+metadata, rejects duplicate identities and commits a metadata-only row through
+both adapters. SQLite assigns a stable
+`sqlite-recording-<lowercase-UUID>` storage ID and records the insertion in its
+durable observation log; the Core Data adapter preserves the same legacy UUID
+and defaults. `AppDataCoordinator.createRecordingUsingRepository` provides the
+async bridge, and `BackgroundProcessingManager.ensureRecordingExists` now uses
+it after the workflow already owns the audio file. Audio copying, naming and
+source retention remain outside this command. The standalone suite passes
+91/91, both app-hosted build-for-testing checks pass, and the Core Data contract
+test is compile-checked in the app-hosted target; no repository backend is
 selected for production startup and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
@@ -436,7 +452,9 @@ Completed in this slice:
   compile-checked in the app-hosted XCTest target; direct simulator execution
   remains outstanding because the current simulator runner exits before XCTest
   bootstrapping.
-- The first write commands are now explicit: recording rename references support
+- The first write commands are now explicit: recording creation validates
+  metadata, rejects duplicate identities and commits only the row owned by the
+  caller's existing audio workflow; recording rename references support
   Core Data legacy IDs and SQLite storage IDs, normalize the existing `[Watch]`
   suffix rule, and optionally enforce an expected `lastModified` revision;
   cloud-sync preference changes commit the recording flag and local-only outbox
@@ -531,7 +549,7 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every remaining direct
   Core Data, settings, Watch, share and background caller, and broader read/write
-  repository contracts (including recording creation/deletion, production
+  repository contracts (including recording deletion, production
   archive-location caller/order and file-owning operations) and app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
