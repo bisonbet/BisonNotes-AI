@@ -367,6 +367,70 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func discardRecording(
+        _ command: LibraryRecordingDiscardCommand
+    ) async throws {
+        try command.validate()
+        try await withNormalAccess { [self] in
+            let context = context
+            try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let recordings = try context.fetch(request)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = recordings[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "RecordingEntry",
+                        field: "id"
+                    )
+                }
+                guard try !Self.hasDependentRows(
+                    for: recording,
+                    recordingID: recordingID,
+                    in: context
+                ) else {
+                    throw LibraryRepositoryError.recordingHasDependents(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                context.delete(recording)
+                do {
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "discard recording",
+                        reason: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -1243,6 +1307,61 @@ extension CoreDataLibraryRepository {
                 return try jobsToRecover.map(Self.processingJobSnapshot(from:))
             }
         }
+    }
+
+    private static func hasDependentRows(
+        for recording: NSManagedObject,
+        recordingID: UUID,
+        in context: NSManagedObjectContext
+    ) throws -> Bool {
+        let dependentRequests: [(String, NSPredicate)] = [
+            (
+                "TranscriptEntry",
+                NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
+                )
+            ),
+            (
+                "SummaryEntry",
+                NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
+                )
+            ),
+            (
+                "ProcessingJobEntry",
+                NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
+                )
+            ),
+            (
+                "RecordingArchiveLocationEntry",
+                NSPredicate(format: "recordingId == %@", recordingID as CVarArg)
+            ),
+            (
+                "PendingCloudMutation",
+                NSPredicate(
+                    format: "recordingId == %@ OR targetId == %@",
+                    recordingID as CVarArg,
+                    recordingID as CVarArg
+                )
+            )
+        ]
+
+        for (entityName, predicate) in dependentRequests {
+            let request = Self.fetchRequest(entityName: entityName)
+            request.fetchLimit = 1
+            request.predicate = predicate
+            if try context.count(for: request) > 0 {
+                return true
+            }
+        }
+        return false
     }
 
     private static func recordingPredicate(

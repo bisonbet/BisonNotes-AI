@@ -70,6 +70,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func discardRecording(
+        _ command: LibraryRecordingDiscardCommand
+    ) async throws {
+        try await withNormalAccess { [store] in
+            try await store.discardRecording(command)
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -246,6 +254,79 @@ extension SQLiteLibraryStore {
                 storageID: storageID,
                 in: database,
                 operation: "create recording"
+            )
+        }
+    }
+
+    func discardRecording(
+        _ command: LibraryRecordingDiscardCommand
+    ) throws {
+        try command.validate()
+        let reference = try Self.normalizedReference(command.reference)
+
+        try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+            guard let legacyID = current.legacyID, !legacyID.isEmpty else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "recordings",
+                    field: "id"
+                )
+            }
+
+            let dependentCounts = [
+                try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM transcripts WHERE recordingStorageID = ? OR lower(recordingId) = lower(?)",
+                    arguments: [current.storageID, legacyID]
+                ) ?? 0,
+                try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM summaries WHERE recordingStorageID = ? OR lower(recordingId) = lower(?)",
+                    arguments: [current.storageID, legacyID]
+                ) ?? 0,
+                try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM processing_jobs WHERE recordingStorageID = ?",
+                    arguments: [current.storageID]
+                ) ?? 0,
+                try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM archive_locations WHERE lower(recordingId) = lower(?)",
+                    arguments: [legacyID]
+                ) ?? 0,
+                try Int.fetchOne(
+                    database,
+                    sql: "SELECT COUNT(*) FROM pending_cloud_mutations WHERE lower(recordingId) = lower(?) OR lower(targetId) = lower(?)",
+                    arguments: [legacyID, legacyID]
+                ) ?? 0
+            ]
+            guard dependentCounts.allSatisfy({ $0 == 0 }) else {
+                throw LibraryRepositoryError.recordingHasDependents(
+                    reference: reference.displayValue
+                )
+            }
+
+            try database.execute(
+                sql: "DELETE FROM recordings WHERE storageID = ?",
+                arguments: [current.storageID]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "discard recording",
+                    reason: "the recording row was not deleted"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .deleted,
+                at: command.discardedAt
             )
         }
     }

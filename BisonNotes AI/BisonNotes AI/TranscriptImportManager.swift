@@ -8,7 +8,6 @@
 import Foundation
 import AVFoundation
 import CoreMedia
-import CoreData
 import PDFKit
 import UniformTypeIdentifiers
 import Compression
@@ -23,8 +22,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
     @Published var importResults: TranscriptImportResults?
     @Published var showingImportAlert = false
 
-    private let persistenceController: PersistenceController
-    private let context: NSManagedObjectContext
     private let libraryRepository: any LibraryRepository
     nonisolated static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
     nonisolated static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
@@ -59,8 +56,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     override init() {
-        self.persistenceController = PersistenceController.shared
-        self.context = persistenceController.container.viewContext
+        let persistenceController = PersistenceController.shared
         self.libraryRepository = CoreDataLibraryRepository(
             context: persistenceController.container.viewContext,
             maintenanceGate: persistenceController.maintenanceGate
@@ -69,8 +65,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     init(persistenceController: PersistenceController) {
-        self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
         self.libraryRepository = CoreDataLibraryRepository(
             context: persistenceController.container.viewContext,
             maintenanceGate: persistenceController.maintenanceGate
@@ -140,11 +134,17 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Parse text into transcript segments
         let segments = parseTextIntoSegments(text)
 
-        // Create recording entry
-        let recordingId = try await createRecordingEntryForImportedTranscript(
-            audioURL: dummyAudioURL,
-            name: transcriptName
-        )
+        let recordingId = UUID()
+        do {
+            try await createRecordingEntryForImportedTranscript(
+                audioURL: dummyAudioURL,
+                name: transcriptName,
+                id: recordingId
+            )
+        } catch {
+            try? FileManager.default.removeItem(at: dummyAudioURL)
+            throw error
+        }
 
         // Create transcript entry with cleanup on failure
         do {
@@ -156,10 +156,21 @@ class TranscriptImportManager: NSObject, ObservableObject {
             // Clean up orphaned data if transcript creation fails
             AppLog.shared.transcription("Transcript creation failed, cleaning up orphaned data", level: .error)
 
-            // Delete the recording entry from Core Data
-            if let recording = getRecording(id: recordingId) {
-                context.delete(recording)
-                try? context.save()
+            // Discard the newly-created metadata row without raising a cloud
+            // tombstone. User deletion has separate outbox semantics.
+            do {
+                try await libraryRepository.discardRecording(
+                    LibraryRecordingDiscardCommand(
+                        reference: LibraryRecordingReference(
+                            legacyID: recordingId.uuidString
+                        )
+                    )
+                )
+            } catch {
+                AppLog.shared.transcription(
+                    "Failed to discard orphaned transcript recording: \(error)",
+                    level: .error
+                )
             }
 
             // Delete the dummy audio file from disk
@@ -830,9 +841,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Create a recording entry for the imported transcript
     /// Note: Duplicate check should be done before calling this function to avoid orphaned audio files
-    private func createRecordingEntryForImportedTranscript(audioURL: URL, name: String) async throws -> UUID {
-        let recordingId = UUID()
-
+    private func createRecordingEntryForImportedTranscript(
+        audioURL: URL,
+        name: String,
+        id recordingId: UUID
+    ) async throws {
         // Get file metadata
         let metadataDate: Date
         let fileSize: Int64
@@ -885,8 +898,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
                 "Failed to save to database: \(error.localizedDescription)"
             )
         }
-
-        return recordingId
     }
 
     /// Create a transcript entry for the imported text
@@ -931,18 +942,6 @@ class TranscriptImportManager: NSObject, ObservableObject {
     }
 
     // MARK: - Helper Methods
-
-    private func getRecording(id: UUID) -> RecordingEntry? {
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
-        do {
-            return try context.fetch(fetchRequest).first
-        } catch {
-            AppLog.shared.transcription("Error fetching recording: \(error)", level: .error)
-            return nil
-        }
-    }
 
     private func getAudioDuration(url: URL) async -> TimeInterval {
         do {

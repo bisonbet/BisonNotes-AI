@@ -176,6 +176,39 @@ extension LibraryRecordingCreateCommand {
     }
 }
 
+/// Removes a newly-created recording when a multi-step import cannot finish.
+///
+/// This is intentionally narrower than user deletion: it refuses to remove a
+/// recording with dependent metadata and does not enqueue a CloudKit tombstone.
+/// User deletion needs a separate command that carries the existing outbox and
+/// attachment-cleanup semantics.
+struct LibraryRecordingDiscardCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let expectedLastModified: Date?
+    let discardedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        expectedLastModified: Date? = nil,
+        discardedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.expectedLastModified = expectedLastModified
+        self.discardedAt = discardedAt
+    }
+}
+
+extension LibraryRecordingDiscardCommand {
+    func validate() throws {
+        let dates = [discardedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "discard dates must be finite"
+            )
+        }
+    }
+}
+
 /// The first write command shared by the Core Data and SQLite adapters.
 ///
 /// `expectedLastModified` is an optimistic-concurrency guard. A nil value
@@ -963,6 +996,9 @@ protocol LibraryRepository: Sendable {
     func createRecording(
         _ command: LibraryRecordingCreateCommand
     ) async throws -> LibraryRecordingSnapshot
+    func discardRecording(
+        _ command: LibraryRecordingDiscardCommand
+    ) async throws
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
@@ -1000,6 +1036,7 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case invalidRecord(entity: String, field: String)
     case invalidCommand(String)
     case recordingAlreadyExists(reference: String)
+    case recordingHasDependents(reference: String)
     case recordingNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
@@ -1024,6 +1061,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The library command is invalid: \(detail)"
         case .recordingAlreadyExists(let reference):
             return "The recording already exists: \(reference)"
+        case .recordingHasDependents(let reference):
+            return "The recording has dependent metadata and cannot be discarded: \(reference)"
         case .recordingNotFound(let reference):
             return "The recording could not be found: \(reference)"
         case .ambiguousRecording(let reference):

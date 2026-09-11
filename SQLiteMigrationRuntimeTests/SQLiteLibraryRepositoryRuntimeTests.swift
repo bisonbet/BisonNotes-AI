@@ -155,6 +155,89 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(recordings.count, 1)
     }
 
+    func testRepositoryDiscardsRecordingAndLeavesDurableDeleteChange() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000011")
+        )
+        let created = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "discard-me.m4a",
+                name: "Discard me",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                createdAt: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 0.1,
+                fileSize: 1,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+
+        try await repository.discardRecording(
+            LibraryRecordingDiscardCommand(
+                reference: LibraryRecordingReference(storageID: created.storageID),
+                expectedLastModified: created.lastModified,
+                discardedAt: Date(timeIntervalSinceReferenceDate: 102)
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertTrue(recordings.isEmpty)
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.recording, .recording])
+        XCTAssertEqual(changes.map(\.operation), [.inserted, .deleted])
+        XCTAssertEqual(changes.map(\.revision), [1, 2])
+        XCTAssertEqual(changes.last?.storageID, created.storageID)
+        XCTAssertEqual(
+            changes.last?.committedAt,
+            Date(timeIntervalSinceReferenceDate: 102)
+        )
+    }
+
+    func testRepositoryRefusesToDiscardRecordingWithDependentMetadata() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        do {
+            try await repository.discardRecording(
+                LibraryRecordingDiscardCommand(
+                    reference: LibraryRecordingReference(storageID: "recording-storage")
+                )
+            )
+            XCTFail("Expected a recording with dependent metadata to be retained")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .recordingHasDependents(reference: "recording-storage")
+            )
+        }
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let revision = try await repository.currentRevision()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(transcripts.count, 1)
+        XCTAssertEqual(revision, 0)
+    }
+
     func testRepositoryReturnsAllMetadataSnapshotsFromImportedRows() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

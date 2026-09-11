@@ -153,6 +153,82 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings.count, 2)
     }
 
+    func testCoreDataRepositoryDiscardsOnlyMetadataOrphanAndRetainsDependents() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-recording-discard.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000011")
+        )
+        let created = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "discard-me.m4a",
+                name: "Discard me",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 200),
+                createdAt: Date(timeIntervalSinceReferenceDate: 200),
+                duration: 0.1,
+                fileSize: 1,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 201)
+            )
+        )
+
+        try await repository.discardRecording(
+            LibraryRecordingDiscardCommand(
+                reference: LibraryRecordingReference(legacyID: created.legacyID ?? ""),
+                expectedLastModified: created.lastModified,
+                discardedAt: Date(timeIntervalSinceReferenceDate: 202)
+            )
+        )
+
+        let recordingsAfterDiscard = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordingsAfterDiscard.count, 1)
+        XCTAssertEqual(
+            recordingsAfterDiscard[0].legacyID,
+            "10000000-0000-0000-0000-000000000001"
+        )
+
+        do {
+            try await repository.discardRecording(
+                LibraryRecordingDiscardCommand(
+                    reference: LibraryRecordingReference(
+                        legacyID: "10000000-0000-0000-0000-000000000001"
+                    ),
+                    expectedLastModified: Date(timeIntervalSinceReferenceDate: 101)
+                )
+            )
+            XCTFail("Expected a recording with dependent metadata to be retained")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .recordingHasDependents(
+                    reference: "10000000-0000-0000-0000-000000000001"
+                )
+            )
+        }
+
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(transcripts.count, 1)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(processingJobs.count, 1)
+        XCTAssertEqual(pendingMutations.count, 1)
+    }
+
     func testCoreDataRepositoryReturnsAllMetadataSnapshots() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
