@@ -6,9 +6,9 @@ repository write/settings contracts, the SQLite observation cursor, an isolated
 resumable metadata/settings coordinator, an explicit Core Data source-input
 boundary, durable import receipts, a validated media-root/transfer boundary,
 a candidate application media-root mapping, a receipt-gated source-retention
-executor, a checksum-bound transfer planner and a restartable background
-media-reconciliation service are implemented, but no SQLite migration is
-enabled**.
+executor, a checksum-bound transfer planner, a restartable background
+media-reconciliation service and an explicit app-owned settings source
+inventory are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -39,6 +39,14 @@ closed Core Data metadata snapshot with the typed blocking-settings snapshot
 and requires an explicit app-owned source-key inventory so unclassified keys
 fail closed. It still relies on the future startup gate to quiesce Core Data
 writes and settings mutations, and does not open a live destination.
+
+The current settings-source-inventory checkpoint is `9dfed6fd` (`feat: make
+settings source inventory explicit`). `LibrarySettingsSourceInventory` records
+the reviewed main-defaults keys, the separate Action Button app-group key, and
+the dynamic legacy-key prefixes. The reader's no-argument snapshot path uses
+the main-defaults inventory, while the catalog test requires the exact
+inventory and catalog sets to match. This closes the explicit source-list gap;
+platform normalization, source-drift checks and startup wiring remain open.
 
 The current isolated coordinator checkpoint is `5c88828b` (`feat: persist
 resumable migration pause state`), following `230e511c` (`feat: add resumable
@@ -304,7 +312,7 @@ Completed in this slice:
 Not yet implemented or closed:
 
 - Production coordinator/source/settings acquisition wiring, remaining
-  settings-catalog source coverage/platform normalization and startup subscription
+  settings platform normalization/source-drift checks and startup subscription
   wiring, plus broader read/write repository
   contracts and app-wired importer
   migration screen. The current read-only metadata repository adapters, schema, snapshot
@@ -324,9 +332,9 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to finish the remaining exhaustive source-key
-catalog and platform normalization rules, connect the observation adapter to the
-startup contract and expand commands while converting additional non-startup callers
+The next safe work package is to finish platform normalization and source-drift
+checks, connect the observation adapter to the startup contract and expand
+commands while converting additional non-startup callers
 behind the Core Data adapter with shared behavior tests. In parallel, select the
 final production roots and connect the media worker, receipt boundary and
 retention executor and bounded reconciler to Watch/share/background callers without
