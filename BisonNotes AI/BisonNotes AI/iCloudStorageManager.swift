@@ -6775,18 +6775,18 @@ extension iCloudStorageManager {
             do {
                 // Applying another device's marker; raising one of our own would
                 // re-create the tombstone after a revive withdrew it.
-                try appCoordinator.coreDataManager.deleteTranscript(
+                let deleted = try await appCoordinator.applyRemoteTranscriptDeletionUsingRepository(
                     id: target.id,
-                    enqueueCloudDeletion: false
+                    requestedAt: target.deletedAt
                 )
+                if deleted {
+                    application.deletedLocalItems += 1
+                }
             } catch {
                 AppLog.shared.iCloudSync(
                     "Failed to apply iCloud transcript deletion locally for \(target.id.uuidString): \(error)",
                     level: .error
                 )
-            }
-            if appCoordinator.coreDataManager.getTranscript(id: target.id) == nil {
-                application.deletedLocalItems += 1
             }
 
         case .summary:

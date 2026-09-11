@@ -576,6 +576,37 @@ extension LibraryTranscriptUpsertCommand {
     }
 }
 
+/// Deletes one transcript while retaining its recording and summary rows.
+///
+/// The local delete and its optional CloudKit tombstone are committed together
+/// by each adapter. Applying a marker received from another device sets
+/// `enqueueCloudDeletion` to false so replay never raises a second marker.
+struct LibraryTranscriptDeleteCommand: Equatable, Sendable {
+    let id: UUID
+    let requestedAt: Date
+    let enqueueCloudDeletion: Bool
+
+    init(
+        id: UUID,
+        requestedAt: Date = Date(),
+        enqueueCloudDeletion: Bool = true
+    ) {
+        self.id = id
+        self.requestedAt = requestedAt
+        self.enqueueCloudDeletion = enqueueCloudDeletion
+    }
+}
+
+extension LibraryTranscriptDeleteCommand {
+    func validate() throws {
+        guard requestedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "transcript delete date must be finite"
+            )
+        }
+    }
+}
+
 /// Creates or replaces the summary attached to one recording.
 ///
 /// Structured task/reminder/title values are carried in their encoded form so
@@ -1083,6 +1114,10 @@ protocol LibraryRepository: Sendable {
     func deleteRecordingPreservingSummary(
         _ command: LibraryRecordingPreserveSummaryDeleteCommand
     ) async throws
+    @discardableResult
+    func deleteTranscript(
+        _ command: LibraryTranscriptDeleteCommand
+    ) async throws -> Bool
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand

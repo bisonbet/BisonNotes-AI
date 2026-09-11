@@ -320,6 +320,84 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertTrue(pendingMutations.isEmpty)
     }
 
+    func testRepositoryDeletesTranscriptOnlyAndQueuesCloudRemovalIntent() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let graph = try await createRecordingGraph(using: repository)
+        let requestedAt = Date(timeIntervalSinceReferenceDate: 202)
+
+        let deleted = try await repository.deleteTranscript(
+            LibraryTranscriptDeleteCommand(
+                id: graph.transcriptID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertTrue(deleted)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].lastModified, requestedAt)
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertNil(summaries[0].transcriptStorageID)
+        XCTAssertNil(summaries[0].transcriptLegacyID)
+
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let transcriptRemoval = try XCTUnwrap(
+            pendingMutations.first { $0.kind == "transcriptRemoval" }
+        )
+        XCTAssertEqual(
+            pendingMutations.filter { $0.kind == "transcriptRemoval" }.count,
+            1
+        )
+        XCTAssertEqual(
+            transcriptRemoval.targetID,
+            graph.transcriptID.uuidString.lowercased()
+        )
+        XCTAssertEqual(transcriptRemoval.recordingLegacyID, graph.recording.legacyID)
+        XCTAssertEqual(transcriptRemoval.requestedAt, requestedAt)
+
+        let allChanges = try await repository.changes(since: 0)
+        let deletionChanges = allChanges.filter {
+            $0.committedAt == requestedAt
+        }
+        XCTAssertEqual(
+            deletionChanges.filter { $0.entity == .transcript && $0.operation == .deleted }.count,
+            1
+        )
+        XCTAssertEqual(
+            deletionChanges.filter { $0.entity == .summary && $0.operation == .updated }.count,
+            1
+        )
+        XCTAssertEqual(
+            deletionChanges.filter { $0.entity == .recording && $0.operation == .updated }.count,
+            1
+        )
+
+        let revisionAfterDelete = try await repository.currentRevision()
+        let repeatedDelete = try await repository.deleteTranscript(
+            LibraryTranscriptDeleteCommand(
+                id: graph.transcriptID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertFalse(repeatedDelete)
+        let revisionAfterRepeatedDelete = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterRepeatedDelete, revisionAfterDelete)
+        let pendingMutationsAfterRepeatedDelete = try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(
+            pendingMutationsAfterRepeatedDelete.filter { $0.kind == "transcriptRemoval" }.count,
+            1
+        )
+    }
+
     func testRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

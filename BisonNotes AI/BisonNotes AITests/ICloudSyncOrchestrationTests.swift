@@ -1360,6 +1360,51 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// An inbound transcript marker removes only the transcript metadata. The
+    /// recording and summary remain usable, with the summary's relationship
+    /// cleared before the transcript row is deleted.
+    func testInboundTranscriptTombstoneRemovesTranscriptAndPreservesRecordingSummary() async throws {
+        let recordingId = try createCompleteRecording(named: "Transcript tombstone")
+        let transcriptId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllTranscripts()
+                .first { $0.recordingId == recordingId }?.id
+        )
+        let summaryId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllSummaries()
+                .first { $0.recordingId == recordingId }?.id
+        )
+        seedTrustedManifest()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: "backup_deletion_transcript_\(transcriptId.uuidString)",
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": clock.now.addingTimeInterval(3_600),
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+
+        _ = try await runReconcile()
+
+        XCTAssertNotNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        let summary = try XCTUnwrap(appCoordinator.coreDataManager.getSummary(id: summaryId))
+        XCTAssertEqual(summary.id, summaryId)
+        XCTAssertNil(summary.transcript)
+        XCTAssertNil(summary.transcriptId)
+        XCTAssertEqual(
+            appCoordinator.coreDataManager.getRecording(id: recordingId)?.transcriptionStatus,
+            ProcessingStatus.notStarted.rawValue
+        )
+        XCTAssertEqual(
+            manager.pendingCloudDeletionCountForTesting,
+            0,
+            "applying a remote transcript marker must not raise a new outbound deletion"
+        )
+    }
+
     /// A marker is never named by the manifest, so the filter above must not reach
     /// it. Folding withdrawals into the filtered set would silently stop retracting
     /// tombstones the user's own later edit had beaten.

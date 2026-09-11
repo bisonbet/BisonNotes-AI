@@ -731,6 +731,94 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    @discardableResult
+    func deleteTranscript(
+        _ command: LibraryTranscriptDeleteCommand
+    ) async throws -> Bool {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                transcriptRequest.fetchLimit = 2
+                transcriptRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let transcripts = try context.fetch(transcriptRequest)
+                guard !transcripts.isEmpty else {
+                    return false
+                }
+                var committed = false
+                defer {
+                    if !committed {
+                        context.rollback()
+                    }
+                }
+
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.predicate = NSPredicate(
+                    format: "transcriptId == %@ OR transcript.id == %@",
+                    command.id as CVarArg,
+                    command.id as CVarArg
+                )
+                let recordings = try context.fetch(recordingRequest)
+                for recording in recordings {
+                    recording.setValue(nil, forKey: "transcript")
+                    recording.setValue(nil, forKey: "transcriptId")
+                    recording.setValue(
+                        ProcessingStatus.notStarted.rawValue,
+                        forKey: "transcriptionStatus"
+                    )
+                    recording.setValue(command.requestedAt, forKey: "lastModified")
+                }
+
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.predicate = NSPredicate(
+                    format: "transcriptId == %@ OR transcript.id == %@",
+                    command.id as CVarArg,
+                    command.id as CVarArg
+                )
+                let summaries = try context.fetch(summaryRequest)
+                for summary in summaries {
+                    summary.setValue(nil, forKey: "transcript")
+                    summary.setValue(nil, forKey: "transcriptId")
+                }
+
+                for transcript in transcripts {
+                    let transcriptID = try Self.requiredUUID(
+                        from: transcript,
+                        entity: "TranscriptEntry"
+                    )
+                    if command.enqueueCloudDeletion {
+                        try PendingCloudMutationStore.enqueue(
+                            PendingCloudMutation(
+                                kind: .transcriptRemoval,
+                                targetId: transcriptID,
+                                recordingId: (transcript.value(forKey: "recordingId") as? UUID)
+                                    ?? Self.relatedUUID(from: transcript, relationship: "recording"),
+                                requestedAt: command.requestedAt
+                            ),
+                            in: context
+                        )
+                    }
+                    context.delete(transcript)
+                }
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete transcript",
+                        reason: error.localizedDescription
+                    )
+                }
+                committed = true
+                return true
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {

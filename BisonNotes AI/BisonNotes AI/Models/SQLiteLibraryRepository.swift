@@ -99,6 +99,15 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    @discardableResult
+    func deleteTranscript(
+        _ command: LibraryTranscriptDeleteCommand
+    ) async throws -> Bool {
+        try await withNormalAccess { [store] in
+            try await store.deleteTranscript(command)
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -774,6 +783,174 @@ extension SQLiteLibraryStore {
                     in: database
                 )
             }
+        }
+    }
+
+    @discardableResult
+    func deleteTranscript(
+        _ command: LibraryTranscriptDeleteCommand
+    ) throws -> Bool {
+        try command.validate()
+        let requestedAt = command.requestedAt.timeIntervalSinceReferenceDate
+        let requestedID = command.id.uuidString.lowercased()
+        let stableStorageID = Self.transcriptStorageID(for: command.id)
+
+        return try databaseQueue.write { database in
+            let transcriptRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id, recordingStorageID, recordingId
+                FROM transcripts
+                WHERE storageID = ? OR lower(id) = lower(?)
+                ORDER BY storageID
+                LIMIT 2
+                """,
+                arguments: [stableStorageID, requestedID]
+            )
+            guard !transcriptRows.isEmpty else {
+                return false
+            }
+            guard transcriptRows.count == 1 else {
+                throw LibraryRepositoryError.ambiguousTranscript(
+                    reference: requestedID
+                )
+            }
+
+            let transcriptRow = transcriptRows[0]
+            let transcriptStorageID = try Self.requiredStorageID(
+                from: transcriptRow,
+                entity: "transcripts"
+            )
+            let transcriptLegacyID = try Self.requiredLegacyID(
+                from: transcriptRow,
+                entity: "transcripts"
+            )
+            let normalizedTranscriptID = Self.normalizedID(transcriptLegacyID)
+            guard normalizedTranscriptID == requestedID else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "transcripts",
+                    field: "id"
+                )
+            }
+
+            let transcriptRecordingStorageID: String? = transcriptRow["recordingStorageID"]
+            let transcriptRecordingID: String? = transcriptRow["recordingId"]
+            let recordingRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id
+                FROM recordings
+                WHERE lower(transcriptId) = lower(?)
+                   OR (? IS NOT NULL AND storageID = ?)
+                   OR (? IS NOT NULL AND lower(id) = lower(?))
+                ORDER BY storageID
+                """,
+                arguments: [
+                    normalizedTranscriptID,
+                    transcriptRecordingStorageID,
+                    transcriptRecordingStorageID,
+                    transcriptRecordingID,
+                    transcriptRecordingID
+                ]
+            )
+            let resolvedRecordingID: String? = {
+                if let recordingID = transcriptRecordingID?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ), !recordingID.isEmpty {
+                    return recordingID
+                }
+                return recordingRows.compactMap { row -> String? in
+                    guard let id: String = row["id"] else { return nil }
+                    let trimmedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmedID.isEmpty ? nil : trimmedID
+                }.first
+            }()
+
+            if command.enqueueCloudDeletion {
+                try Self.enqueueTranscriptRemovalMutation(
+                    transcriptID: normalizedTranscriptID,
+                    recordingID: resolvedRecordingID,
+                    requestedAt: requestedAt,
+                    in: database,
+                    committedAt: command.requestedAt
+                )
+            }
+
+            for row in recordingRows {
+                let recordingStorageID = try Self.requiredStorageID(
+                    from: row,
+                    entity: "recordings"
+                )
+                try database.execute(
+                    sql: """
+                    UPDATE recordings
+                    SET transcriptId = ?, transcriptionStatus = ?, lastModified = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [nil, "Not Started", requestedAt, recordingStorageID]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete transcript",
+                        reason: "a recording transcript link was not cleared"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .recording,
+                    storageID: recordingStorageID,
+                    operation: .updated,
+                    at: command.requestedAt
+                )
+            }
+
+            let summaryRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID
+                FROM summaries
+                WHERE transcriptStorageID = ? OR lower(transcriptId) = lower(?)
+                ORDER BY storageID
+                """,
+                arguments: [transcriptStorageID, normalizedTranscriptID]
+            )
+            for row in summaryRows {
+                let summaryStorageID = try Self.requiredStorageID(
+                    from: row,
+                    entity: "summaries"
+                )
+                try database.execute(
+                    sql: """
+                    UPDATE summaries
+                    SET transcriptStorageID = ?, transcriptId = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [nil, nil, summaryStorageID]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete transcript",
+                        reason: "a summary transcript link was not cleared"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .summary,
+                    storageID: summaryStorageID,
+                    operation: .updated,
+                    at: command.requestedAt
+                )
+            }
+
+            try Self.deleteRow(
+                table: "transcripts",
+                storageID: transcriptStorageID,
+                entity: .transcript,
+                operation: "delete transcript",
+                at: command.requestedAt,
+                in: database
+            )
+            return true
         }
     }
 
@@ -2300,7 +2477,7 @@ extension SQLiteLibraryStore {
 
     private static func enqueueTranscriptRemovalMutation(
         transcriptID: String,
-        recordingID: String,
+        recordingID: String?,
         requestedAt: Double,
         in database: Database,
         committedAt: Date

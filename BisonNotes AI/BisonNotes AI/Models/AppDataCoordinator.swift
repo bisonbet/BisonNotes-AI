@@ -629,7 +629,9 @@ class AppDataCoordinator: ObservableObject {
     /// the transcript's cloud tombstone is retained until iCloud accepts it.
     func deleteTranscript(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        try coreDataManager.deleteTranscript(id: id)
+        _ = try await libraryRepository.deleteTranscript(
+            LibraryTranscriptDeleteCommand(id: id)
+        )
 
         do {
             try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
@@ -637,6 +639,28 @@ class AppDataCoordinator: ObservableObject {
             AppLog.shared.coreData("Deleted local transcript and queued iCloud deletion marker for retry: \(error)", level: .error)
         }
         objectWillChange.send()
+    }
+
+    /// Applies an inbound transcript tombstone through the storage-neutral
+    /// repository. The source device already owns the cloud deletion intent, so
+    /// this local application must not enqueue a second marker. A missing row is
+    /// an idempotent no-op because markers can be replayed after a prior success.
+    @discardableResult
+    func applyRemoteTranscriptDeletionUsingRepository(
+        id: UUID,
+        requestedAt: Date
+    ) async throws -> Bool {
+        let deleted = try await libraryRepository.deleteTranscript(
+            LibraryTranscriptDeleteCommand(
+                id: id,
+                requestedAt: requestedAt,
+                enqueueCloudDeletion: false
+            )
+        )
+        if deleted {
+            objectWillChange.send()
+        }
+        return deleted
     }
 
     /// Removes an imported transcript placeholder while retaining its recording
