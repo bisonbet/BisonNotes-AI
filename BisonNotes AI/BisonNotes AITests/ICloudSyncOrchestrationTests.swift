@@ -1331,6 +1331,35 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertNil(appCoordinator.getRecording(id: recordingId))
     }
 
+    /// The inbound whole-recording marker uses the same repository transaction as
+    /// a user delete, but must not enqueue a second outbound marker. This keeps the
+    /// recording, transcript and summary graph from depending on Core Data cascade
+    /// behavior once SQLite becomes the active store.
+    func testInboundRecordingTombstoneRemovesTheRepositoryOwnedMetadataGraph() async throws {
+        let recordingId = try createCompleteRecording(named: "Repository tombstone")
+        seedTrustedManifest()
+        seedRetiredRecordingMarker(
+            for: recordingId,
+            deletedAt: Date().addingTimeInterval(3_600)
+        )
+
+        _ = try await runReconcile()
+
+        XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertTrue(
+            appCoordinator.coreDataManager.getAllTranscripts().isEmpty,
+            "the inbound repository delete must remove the recording's transcript"
+        )
+        XCTAssertTrue(
+            appCoordinator.coreDataManager.getAllSummaries().isEmpty,
+            "the inbound repository delete must remove the recording's summary"
+        )
+        XCTAssertTrue(
+            manager.pendingCloudDeletionCountForTesting == 0,
+            "applying a remote marker must not raise a new outbound deletion"
+        )
+    }
+
     /// A marker is never named by the manifest, so the filter above must not reach
     /// it. Folding withdrawals into the filtered set would silently stop retracting
     /// tombstones the user's own later edit had beaten.

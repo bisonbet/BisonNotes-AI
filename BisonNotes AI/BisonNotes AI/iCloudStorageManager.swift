@@ -6604,7 +6604,7 @@ extension iCloudStorageManager {
 
         if let workspace {
             for marker in applicableMarkers {
-                applyDeletionMarker(
+                await applyDeletionMarker(
                     marker.target,
                     appCoordinator: appCoordinator,
                     workspace: workspace,
@@ -6733,7 +6733,7 @@ extension iCloudStorageManager {
         workspace: CloudDeletionWorkspace,
         plan: inout CloudDeletionPlan,
         application: inout DeletionMarkerApplication
-    ) {
+    ) async {
         switch target.kind {
         case .recording:
             planRecordingContentDeletion(
@@ -6751,13 +6751,13 @@ extension iCloudStorageManager {
             do {
                 // Applying someone else's tombstone, so do not raise one of our own
                 // on the way back out.
-                try appCoordinator.coreDataManager.deleteRecording(
+                let deleted = try await appCoordinator.applyRemoteRecordingDeletionUsingRepository(
                     id: target.id,
-                    enqueueCloudDeletion: false
+                    requestedAt: target.deletedAt
                 )
-                application.deletedLocalItems += 1
-            } catch CoreDataDeletionError.recordingNotFound {
-                // Already gone locally — the marker has nothing left to apply.
+                if deleted {
+                    application.deletedLocalItems += 1
+                }
             } catch {
                 AppLog.shared.iCloudSync(
                     "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",

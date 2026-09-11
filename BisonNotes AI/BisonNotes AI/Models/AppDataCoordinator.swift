@@ -569,6 +569,31 @@ class AppDataCoordinator: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Applies an inbound whole-recording tombstone through the storage-neutral
+    /// repository. The source device already owns the cloud deletion intent, so
+    /// this local application must not enqueue a second marker. A missing row is
+    /// an idempotent no-op because the marker may be replayed after a prior
+    /// successful application.
+    @discardableResult
+    func applyRemoteRecordingDeletionUsingRepository(
+        id: UUID,
+        requestedAt: Date
+    ) async throws -> Bool {
+        do {
+            try await libraryRepository.deleteRecording(
+                LibraryRecordingDeleteCommand(
+                    reference: LibraryRecordingReference(legacyID: id.uuidString),
+                    requestedAt: requestedAt,
+                    enqueueCloudDeletion: false
+                )
+            )
+        } catch LibraryRepositoryError.recordingNotFound {
+            return false
+        }
+        objectWillChange.send()
+        return true
+    }
+
     /// Removes a recording's audio and transcript while retaining its summary
     /// through the storage-neutral repository boundary.
     func deleteRecordingPreservingSummaryUsingRepository(
