@@ -569,6 +569,37 @@ class AppDataCoordinator: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Removes a recording's audio and transcript while retaining its summary
+    /// through the storage-neutral repository boundary.
+    func deleteRecordingPreservingSummaryUsingRepository(
+        id: UUID,
+        transcriptIds: [UUID] = [],
+        enqueueCloudDeletion: Bool = true,
+        requestedAt: Date = Date()
+    ) async throws {
+        try await libraryRepository.deleteRecordingPreservingSummary(
+            LibraryRecordingPreserveSummaryDeleteCommand(
+                reference: LibraryRecordingReference(legacyID: id.uuidString),
+                transcriptIds: transcriptIds,
+                requestedAt: requestedAt,
+                enqueueCloudDeletion: enqueueCloudDeletion
+            )
+        )
+
+        if enqueueCloudDeletion {
+            let iCloudManager = SummaryManager.shared.getiCloudManager()
+            do {
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
+            } catch {
+                AppLog.shared.coreData(
+                    "Preserved summary locally and queued transcript/audio removal for retry: \(error)",
+                    level: .error
+                )
+            }
+        }
+        objectWillChange.send()
+    }
+
     /// Deletes only a transcript. The recording, audio, and any summary remain, while
     /// the transcript's cloud tombstone is retained until iCloud accepts it.
     func deleteTranscript(id: UUID) async throws {
@@ -599,7 +630,6 @@ class AppDataCoordinator: ObservableObject {
             )
         }
 
-        let iCloudManager = SummaryManager.shared.getiCloudManager()
         let initialSummary = coreDataManager.getSummary(for: recordingId) ?? initialRecording.summary
         let transcriptIds = Set([
             transcriptId,
@@ -610,75 +640,11 @@ class AppDataCoordinator: ObservableObject {
         ].compactMap { $0 })
 
         let deletionDate = Date()
-        var effects = DeferredDeletionEffects()
-        do {
-            for transcriptId in transcriptIds {
-                // Remove every identity collected above, including stale ids from
-                // the recording and summary relationships. Otherwise backup can
-                // select an older remaining row and recreate the deleted transcript.
-                let removedLocalRow = try coreDataManager.stageTranscriptDeletion(
-                    id: transcriptId,
-                    effects: &effects,
-                    requestedAt: deletionDate
-                )
-                if !removedLocalRow {
-                    // An id with no local row is the case this method exists for:
-                    // an imported placeholder whose transcript is already gone
-                    // here but still live in iCloud. Staging the deletion alone
-                    // would tombstone nothing, and the next reconcile would pull
-                    // the transcript back down — the resurrection this method is
-                    // meant to prevent.
-                    effects.stageTranscript(
-                        id: transcriptId,
-                        recordingId: recordingId,
-                        requestedAt: deletionDate
-                    )
-                }
-            }
-
-            guard let recording = coreDataManager.getRecording(id: recordingId) else {
-                throw NSError(
-                    domain: "AppDataCoordinator",
-                    code: 404,
-                    userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
-                )
-            }
-
-            let currentTranscriptId = recording.transcriptId ?? recording.transcript?.id
-            if currentTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
-                recording.transcript = nil
-                recording.transcriptId = nil
-                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
-            }
-
-            if let summary = coreDataManager.getSummary(for: recordingId) ?? recording.summary {
-                let currentSummaryTranscriptId = summary.transcriptId ?? summary.transcript?.id
-                if currentSummaryTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
-                    summary.transcript = nil
-                    summary.transcriptId = nil
-                }
-            }
-
-            recording.recordingURL = nil
-            recording.lastModified = deletionDate
-            effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
-            try coreDataManager.save(committing: effects)
-        } catch {
-            // `save(committing:)` rolls back both local edits and outbox rows on
-            // failure. Nothing has been published or withdrawn outside the store.
-            coreDataManager.rollbackContext()
-            throw error
-        }
-
-        do {
-            try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
-        } catch {
-            AppLog.shared.coreData(
-                "Imported transcript cleanup saved locally; queued iCloud removal for retry: \(error)",
-                level: .error
-            )
-        }
-        objectWillChange.send()
+        try await deleteRecordingPreservingSummaryUsingRepository(
+            id: recordingId,
+            transcriptIds: Array(transcriptIds),
+            requestedAt: deletionDate
+        )
     }
 
     func deleteSummary(id: UUID) async throws {

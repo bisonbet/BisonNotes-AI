@@ -320,6 +320,115 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertTrue(pendingMutations.isEmpty)
     }
 
+    func testRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let graph = try await createRecordingGraph(using: repository)
+        let staleTranscriptID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000006")
+        )
+        let requestedAt = Date(timeIntervalSinceReferenceDate: 200)
+
+        try await repository.deleteRecordingPreservingSummary(
+            LibraryRecordingPreserveSummaryDeleteCommand(
+                reference: LibraryRecordingReference(storageID: graph.recording.storageID),
+                transcriptIds: [staleTranscriptID],
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 104),
+                requestedAt: requestedAt
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertNil(recordings[0].recordingURL)
+        XCTAssertEqual(
+            recordings[0].lastModified,
+            requestedAt
+        )
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertEqual(processingJobs.count, 1)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries[0].legacyID, graph.summaryID.uuidString.lowercased())
+        XCTAssertNil(summaries[0].transcriptStorageID)
+        XCTAssertNil(summaries[0].transcriptLegacyID)
+
+        // Archive metadata remains available to the separate archive lifecycle.
+        let archiveLocations = try await repository.fetchArchiveLocationSnapshots()
+        XCTAssertEqual(archiveLocations.count, 1)
+
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let transcriptRemovals = pendingMutations.filter { $0.kind == "transcriptRemoval" }
+        XCTAssertEqual(transcriptRemovals.count, 2)
+        XCTAssertEqual(
+            Set(transcriptRemovals.compactMap(\.targetID)),
+            Set([
+                graph.transcriptID.uuidString.lowercased(),
+                staleTranscriptID.uuidString.lowercased()
+            ])
+        )
+        let audioRemoval = try XCTUnwrap(
+            pendingMutations.first { $0.kind == "importedAudioRemoval" }
+        )
+        XCTAssertEqual(audioRemoval.targetID, graph.recording.legacyID)
+        XCTAssertEqual(
+            audioRemoval.requestedAt,
+            requestedAt
+        )
+
+        let changes = try await repository.changes(since: 0)
+        let committedChanges = changes.filter { $0.committedAt == requestedAt }
+        XCTAssertEqual(
+            committedChanges.filter { $0.entity == .transcript && $0.operation == .deleted }.count,
+            1
+        )
+        XCTAssertEqual(
+            committedChanges.filter { $0.entity == .summary && $0.operation == .updated }.count,
+            1
+        )
+        XCTAssertEqual(
+            committedChanges.filter { $0.entity == .recording && $0.operation == .updated }.count,
+            1
+        )
+    }
+
+    func testRepositoryPreservesSummaryLocallyWithoutCloudIntents() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let graph = try await createRecordingGraph(using: repository)
+
+        try await repository.deleteRecordingPreservingSummary(
+            LibraryRecordingPreserveSummaryDeleteCommand(
+                reference: LibraryRecordingReference(legacyID: graph.recording.legacyID),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 201),
+                enqueueCloudDeletion: false
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(processingJobs.count, 1)
+        XCTAssertTrue(pendingMutations.isEmpty)
+    }
+
     func testRepositoryRefusesToDiscardRecordingWithDependentMetadata() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

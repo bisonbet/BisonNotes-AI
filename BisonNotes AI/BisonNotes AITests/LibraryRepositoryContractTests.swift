@@ -310,6 +310,86 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(payload.summaryIds, [summaryID])
     }
 
+    func testCoreDataRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-preserve-summary.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000002")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000003")
+        )
+        let staleTranscriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000004")
+        )
+
+        try await repository.deleteRecordingPreservingSummary(
+            LibraryRecordingPreserveSummaryDeleteCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID.uuidString),
+                transcriptIds: [staleTranscriptID],
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 200)
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        let archiveLocations = try await repository.fetchArchiveLocationSnapshots()
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].legacyID, recordingID.uuidString.lowercased())
+        XCTAssertNil(recordings[0].recordingURL)
+        XCTAssertEqual(
+            recordings[0].lastModified,
+            Date(timeIntervalSinceReferenceDate: 200)
+        )
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertEqual(summaries.count, 1)
+        XCTAssertEqual(summaries[0].legacyID, summaryID.uuidString.lowercased())
+        XCTAssertNil(summaries[0].transcriptStorageID)
+        XCTAssertNil(summaries[0].transcriptLegacyID)
+        XCTAssertEqual(processingJobs.count, 1)
+        XCTAssertEqual(archiveLocations.count, 1)
+        XCTAssertEqual(pendingMutations.count, 4) // fixture update + 2 transcript + audio intents
+        XCTAssertEqual(
+            pendingMutations.filter { $0.kind == PendingCloudMutationKind.transcriptRemoval.rawValue }.count,
+            2
+        )
+        XCTAssertEqual(
+            pendingMutations.filter { $0.kind == PendingCloudMutationKind.importedAudioRemoval.rawValue }.count,
+            1
+        )
+        XCTAssertEqual(
+            Set(
+                pendingMutations
+                    .filter { $0.kind == PendingCloudMutationKind.transcriptRemoval.rawValue }
+                    .compactMap(\.targetID)
+            ),
+            Set([
+                transcriptID.uuidString.lowercased(),
+                staleTranscriptID.uuidString.lowercased()
+            ])
+        )
+    }
+
     func testCoreDataRepositoryReturnsAllMetadataSnapshots() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

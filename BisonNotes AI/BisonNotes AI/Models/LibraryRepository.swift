@@ -246,6 +246,47 @@ extension LibraryRecordingDeleteCommand {
     }
 }
 
+/// Removes a recording's audio and transcript while retaining its summary
+/// anchor and summary content.
+///
+/// `transcriptIds` carries stale imported identities that may no longer have a
+/// local row. Adapters also discover every locally linked transcript so a
+/// retry cannot leave an older duplicate available for restore.
+struct LibraryRecordingPreserveSummaryDeleteCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let transcriptIds: [UUID]
+    let expectedLastModified: Date?
+    let requestedAt: Date
+    let enqueueCloudDeletion: Bool
+
+    init(
+        reference: LibraryRecordingReference,
+        transcriptIds: [UUID] = [],
+        expectedLastModified: Date? = nil,
+        requestedAt: Date = Date(),
+        enqueueCloudDeletion: Bool = true
+    ) {
+        self.reference = reference
+        self.transcriptIds = Array(Set(transcriptIds)).sorted {
+            $0.uuidString < $1.uuidString
+        }
+        self.expectedLastModified = expectedLastModified
+        self.requestedAt = requestedAt
+        self.enqueueCloudDeletion = enqueueCloudDeletion
+    }
+}
+
+extension LibraryRecordingPreserveSummaryDeleteCommand {
+    func validate() throws {
+        let dates = [requestedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "preserve-summary delete dates must be finite"
+            )
+        }
+    }
+}
+
 /// The first write command shared by the Core Data and SQLite adapters.
 ///
 /// `expectedLastModified` is an optimistic-concurrency guard. A nil value
@@ -1039,6 +1080,9 @@ protocol LibraryRepository: Sendable {
     func deleteRecording(
         _ command: LibraryRecordingDeleteCommand
     ) async throws
+    func deleteRecordingPreservingSummary(
+        _ command: LibraryRecordingPreserveSummaryDeleteCommand
+    ) async throws
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
@@ -1078,6 +1122,7 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case recordingAlreadyExists(reference: String)
     case recordingHasDependents(reference: String)
     case recordingNotFound(reference: String)
+    case recordingSummaryNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
     case transcriptAlreadyExists(reference: String)
@@ -1105,6 +1150,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The recording has dependent metadata and cannot be discarded: \(reference)"
         case .recordingNotFound(let reference):
             return "The recording could not be found: \(reference)"
+        case .recordingSummaryNotFound(let reference):
+            return "The recording has no summary to preserve: \(reference)"
         case .ambiguousRecording(let reference):
             return "The recording identity is ambiguous: \(reference)"
         case .staleRecording(let reference, let expected, let actual):

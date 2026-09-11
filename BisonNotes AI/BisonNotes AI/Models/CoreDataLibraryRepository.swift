@@ -569,6 +569,168 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func deleteRecordingPreservingSummary(
+        _ command: LibraryRecordingPreserveSummaryDeleteCommand
+    ) async throws {
+        try command.validate()
+        try await withNormalAccess { [self] in
+            let context = context
+            try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let recordings = try context.fetch(request)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = recordings[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "RecordingEntry",
+                        field: "id"
+                    )
+                }
+
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.predicate = NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
+                )
+                let summaries = try context.fetch(summaryRequest)
+                guard !summaries.isEmpty else {
+                    throw LibraryRepositoryError.recordingSummaryNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                for summary in summaries {
+                    _ = try Self.requiredUUID(from: summary, entity: "SummaryEntry")
+                }
+
+                var transcriptIDs = Set(command.transcriptIds)
+                if let transcriptID = recording.value(forKey: "transcriptId") as? UUID {
+                    transcriptIDs.insert(transcriptID)
+                }
+                if let transcriptID = Self.relatedUUID(from: recording, relationship: "transcript") {
+                    transcriptIDs.insert(transcriptID)
+                }
+                for summary in summaries {
+                    if let transcriptID = summary.value(forKey: "transcriptId") as? UUID {
+                        transcriptIDs.insert(transcriptID)
+                    }
+                    if let transcriptID = Self.relatedUUID(from: summary, relationship: "transcript") {
+                        transcriptIDs.insert(transcriptID)
+                    }
+                }
+
+                let linkedTranscriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                linkedTranscriptRequest.predicate = NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
+                )
+                var transcripts = try context.fetch(linkedTranscriptRequest)
+
+                if !transcriptIDs.isEmpty {
+                    let explicitRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                    explicitRequest.predicate = NSPredicate(
+                        format: "id IN %@",
+                        Array(transcriptIDs)
+                    )
+                    let existingExplicitTranscripts = try context.fetch(explicitRequest)
+                    let knownObjectIDs = Set(transcripts.map(\.objectID))
+                    for transcript in existingExplicitTranscripts {
+                        let transcriptID = try Self.requiredUUID(
+                            from: transcript,
+                            entity: "TranscriptEntry"
+                        )
+                        let transcriptRecordingID = (transcript.value(forKey: "recordingId") as? UUID)
+                            ?? Self.relatedUUID(from: transcript, relationship: "recording")
+                        guard transcriptRecordingID == nil || transcriptRecordingID == recordingID else {
+                            throw LibraryRepositoryError.invalidCommand(
+                                "transcript \(transcriptID.uuidString.lowercased()) belongs to another recording"
+                            )
+                        }
+                        transcriptIDs.insert(transcriptID)
+                        if !knownObjectIDs.contains(transcript.objectID) {
+                            transcripts.append(transcript)
+                        }
+                    }
+                }
+
+                if command.enqueueCloudDeletion {
+                    for transcriptID in transcriptIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
+                        try PendingCloudMutationStore.enqueue(
+                            PendingCloudMutation(
+                                kind: .transcriptRemoval,
+                                targetId: transcriptID,
+                                recordingId: recordingID,
+                                requestedAt: command.requestedAt
+                            ),
+                            in: context
+                        )
+                    }
+                    try PendingCloudMutationStore.enqueue(
+                        PendingCloudMutation(
+                            kind: .importedAudioRemoval,
+                            targetId: recordingID,
+                            requestedAt: command.requestedAt
+                        ),
+                        in: context
+                    )
+                }
+
+                for summary in summaries {
+                    let summaryTranscriptID = (summary.value(forKey: "transcriptId") as? UUID)
+                        ?? Self.relatedUUID(from: summary, relationship: "transcript")
+                    guard let summaryTranscriptID,
+                          transcriptIDs.contains(summaryTranscriptID) else {
+                        continue
+                    }
+                    summary.setValue(nil, forKey: "transcript")
+                    summary.setValue(nil, forKey: "transcriptId")
+                }
+
+                recording.setValue(nil, forKey: "recordingURL")
+                recording.setValue(nil, forKey: "transcript")
+                recording.setValue(nil, forKey: "transcriptId")
+                recording.setValue(ProcessingStatus.notStarted.rawValue, forKey: "transcriptionStatus")
+                recording.setValue(command.requestedAt, forKey: "lastModified")
+                for transcript in transcripts {
+                    context.delete(transcript)
+                }
+
+                do {
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete recording preserving summary",
+                        reason: error.localizedDescription
+                    )
+                }
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
