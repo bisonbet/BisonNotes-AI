@@ -24,7 +24,10 @@ adapters, a recording-create command with Core Data/SQLite adapters and
 asynchronous background, file-import and transcript-import creation callers,
 and an import-only transient-recording discard command with dependent-row
 checks and durable SQLite delete observation, plus shared maintenance-gate
-adoption by the production repository adapters,
+adoption by the production repository adapters, and a full recording-delete
+command with Core Data/SQLite adapters, durable child-removal outbox intents,
+post-commit attachment cleanup and whole-recording app callers routed through
+the repository,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -225,10 +228,25 @@ maintenance gate. Failed transcript creation now invokes the import-only
 processing-job, archive-location and pending-cloud-mutation rows before
 deleting, and SQLite records the delete in its durable observation log. Dummy-
 audio ownership and file cleanup remain in the importer. This command does not
-enqueue a CloudKit tombstone; full user deletion, attachment cleanup and
-outbox semantics remain a separate lifecycle command. The macOS/iOS
+enqueue a CloudKit tombstone; preserve-summary deletion, inbound CloudKit
+application and attachment/file ownership remain separate lifecycle work. The macOS/iOS
 app-hosted build-for-testing checks and the 93-test standalone suite pass; no
 repository backend is selected for startup and no SQLite cutover is enabled.
+
+The current whole-recording-deletion checkpoint is `38ab4fbd` (`feat: route
+whole recording deletes through repository`). `LibraryRecordingDeleteCommand`
+deletes the recording-owned metadata graph in one adapter transaction, removes
+an obsolete imported-audio marker, coalesces a recording deletion payload with
+child identities and queues summary-removal intents. SQLite deletes restrictive
+foreign-key children in dependency order and records each committed mutation;
+Core Data preserves the existing cascade/nullify behavior and removes summary
+attachments after commit. `AppDataCoordinator` now exposes the async bridge,
+and the whole-recording paths in `EnhancedFileManager`, `RecordingsListView`,
+`SummaryDetailView`, `TranscriptViews` and `CombineRecordingsView` use it.
+Preserve-summary audio/transcript deletion, inbound CloudKit tombstone
+application, archive-location/file-owning operations and startup cutover are
+still separate. The standalone suite passes 95/95, and macOS/iOS app-hosted
+build-for-testing checks pass; no repository backend is selected for startup.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
@@ -441,7 +459,13 @@ Completed in this slice:
   out of the authoritative Core Data context, while
   `SQLiteLibraryRepository` reads the isolated GRDB-backed generation. Both
   use deterministic ordering and return immutable values; no managed objects,
-  Core Data contexts or GRDB rows escape the adapters.
+  Core Data contexts or GRDB rows escape the adapters. Recording creation,
+  transient discard, full recording deletion, rename, archive-state,
+  archive-location, cloud-sync preference, transcript upsert, summary upsert
+  and processing-job commands now have shared adapter contracts; production
+  callers have been routed only where their ownership and lifecycle boundaries
+  are explicit. Preserve-summary deletion, inbound CloudKit tombstone
+  application and archive/file-owning operations remain separate.
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
@@ -507,9 +531,14 @@ Completed in this slice:
   now uses the recording-create command after it owns and validates the copied
   audio file. `TranscriptImportManager` uses repository snapshot reads,
   recording creation and transcript upsert for its normal path; failed
-  transcript persistence now uses the import-only discard command. Full user
-  deletion remains a separate lifecycle command. Host and app-hosted contract
-  coverage exercises both adapters.
+  transcript persistence now uses the import-only discard command. Full
+  recording deletion validates and removes its metadata graph atomically in
+  both adapters, coalesces CloudKit child-removal intents and performs
+  post-commit summary-attachment cleanup; whole-recording app callers now use
+  the async coordinator bridge. Preserve-summary deletion, inbound CloudKit
+  tombstone application and archive/file-owning operations remain separate
+  lifecycle work. Host and app-hosted contract coverage exercises both
+  adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
   maintenance gate in production construction paths. Repository-backed reads
   and commands wait behind an exclusive source-capture/migration lease; the
@@ -532,9 +561,10 @@ Completed in this slice:
   `LibraryObservationSubscription` anchors before an initial snapshot and
   advances only across validated contiguous batches. The pre-cutover startup
   boundary now anchors a durable Core Data subscription and polls it on remote
-  store changes and activation; history-retention/purge policy, full user
-  recording deletion and the remaining archive-location/file-owning repository
-  write commands are intentionally not implemented yet. Repository observation polling remains
+  store changes and activation; history-retention/purge policy, preserve-summary
+  deletion, inbound CloudKit tombstone application and the remaining
+  archive-location/file-owning repository write commands are intentionally not
+  implemented yet. Repository observation polling remains
   outside the normal-access gate so an exclusive source lease cannot deadlock
   while it validates the source revision.
 - The isolated migration coordinator now composes source validation, durable
@@ -585,8 +615,9 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every remaining direct
   Core Data, settings, Watch, share and background caller, and broader read/write
-  repository contracts (including full user deletion, production
-  archive-location caller/order and file-owning operations) and app-wired importer
+  repository contracts (including preserve-summary deletion, inbound CloudKit
+  tombstone application, production archive-location caller/order and
+  file-owning operations) and app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
   and are not a user-data destination.
