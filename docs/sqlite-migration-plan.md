@@ -22,7 +22,9 @@ Data/SQLite adapters plus asynchronous background and regeneration callers,
 and recording archive-state/archive-location commands with Core Data/SQLite
 adapters, a recording-create command with Core Data/SQLite adapters and
 asynchronous background, file-import and transcript-import creation callers,
-plus shared maintenance-gate adoption by the production repository adapters,
+and an import-only transient-recording discard command with dependent-row
+checks and durable SQLite delete observation, plus shared maintenance-gate
+adoption by the production repository adapters,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -211,18 +213,22 @@ existing file-cleanup defer to run. The macOS/iOS app-hosted build-for-testing
 checks and the 91-test standalone suite pass; other direct recording creation
 and import paths remain open.
 
-The current transcript-import checkpoint is `8bbbe283` (`refactor: route
-transcript imports through repository`). `TranscriptImportManager` now uses the
-shared repository for duplicate-name reads, dummy-audio recording metadata and
-the encoded transcript upsert, preserving the imported status, confidence and
+The current transcript-import checkpoint is `3fe7d86d` (`feat: add transient
+recording discard command`), following `8bbbe283` (`refactor: route transcript
+imports through repository`). `TranscriptImportManager` uses the shared
+repository for duplicate-name reads, dummy-audio recording metadata and the
+encoded transcript upsert, preserving the imported status, confidence and
 recording link behavior. It has an injectable persistence initializer for
 disposable tests while production construction still uses the controller-owned
-maintenance gate. Dummy-audio ownership and failure cleanup remain in the
-importer; the rollback delete still uses the Core Data context until a
-recording-delete command can model the existing cloud-outbox semantics. The
-macOS/iOS app-hosted build-for-testing checks and the 91-test standalone suite
-pass; no repository backend is selected for startup and no SQLite cutover is
-enabled.
+maintenance gate. Failed transcript creation now invokes the import-only
+`LibraryRecordingDiscardCommand`; both adapters check transcript, summary,
+processing-job, archive-location and pending-cloud-mutation rows before
+deleting, and SQLite records the delete in its durable observation log. Dummy-
+audio ownership and file cleanup remain in the importer. This command does not
+enqueue a CloudKit tombstone; full user deletion, attachment cleanup and
+outbox semantics remain a separate lifecycle command. The macOS/iOS
+app-hosted build-for-testing checks and the 93-test standalone suite pass; no
+repository backend is selected for startup and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
