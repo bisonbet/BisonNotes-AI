@@ -607,6 +607,38 @@ extension LibraryTranscriptDeleteCommand {
     }
 }
 
+/// Deletes one summary while retaining its recording and transcript rows.
+///
+/// Supplemental notes and attachments are owned by the application file store,
+/// so the coordinator removes them only after the adapter commits the metadata
+/// transaction. Applying a marker received from another device sets
+/// `enqueueCloudDeletion` to false so replay never raises a second marker.
+struct LibrarySummaryDeleteCommand: Equatable, Sendable {
+    let id: UUID
+    let requestedAt: Date
+    let enqueueCloudDeletion: Bool
+
+    init(
+        id: UUID,
+        requestedAt: Date = Date(),
+        enqueueCloudDeletion: Bool = true
+    ) {
+        self.id = id
+        self.requestedAt = requestedAt
+        self.enqueueCloudDeletion = enqueueCloudDeletion
+    }
+}
+
+extension LibrarySummaryDeleteCommand {
+    func validate() throws {
+        guard requestedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary delete date must be finite"
+            )
+        }
+    }
+}
+
 /// Creates or replaces the summary attached to one recording.
 ///
 /// Structured task/reminder/title values are carried in their encoded form so
@@ -1117,6 +1149,10 @@ protocol LibraryRepository: Sendable {
     @discardableResult
     func deleteTranscript(
         _ command: LibraryTranscriptDeleteCommand
+    ) async throws -> Bool
+    @discardableResult
+    func deleteSummary(
+        _ command: LibrarySummaryDeleteCommand
     ) async throws -> Bool
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(

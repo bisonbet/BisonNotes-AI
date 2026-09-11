@@ -1405,6 +1405,55 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
+    /// An inbound summary marker removes only the summary metadata and its local
+    /// supplemental files. The recording and transcript remain usable, and the
+    /// remote marker must not become a new outbound marker.
+    func testInboundSummaryTombstoneRemovesSummaryAndPreservesRecordingTranscript() async throws {
+        let recordingId = try createCompleteRecording(named: "Summary tombstone")
+        let transcriptId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllTranscripts()
+                .first { $0.recordingId == recordingId }?.id
+        )
+        let summaryId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllSummaries()
+                .first { $0.recordingId == recordingId }?.id
+        )
+        seedTrustedManifest()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: "backup_deletion_summary_\(summaryId.uuidString)",
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": clock.now.addingTimeInterval(3_600),
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+
+        _ = try await runReconcile()
+
+        XCTAssertNotNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: summaryId))
+        let transcript = try XCTUnwrap(
+            appCoordinator.coreDataManager.getTranscript(id: transcriptId)
+        )
+        XCTAssertEqual(transcript.id, transcriptId)
+        XCTAssertEqual(
+            appCoordinator.coreDataManager.getRecording(id: recordingId)?.transcriptId,
+            transcriptId
+        )
+        XCTAssertEqual(
+            appCoordinator.coreDataManager.getRecording(id: recordingId)?.summaryStatus,
+            ProcessingStatus.notStarted.rawValue
+        )
+        XCTAssertEqual(
+            manager.pendingCloudDeletionCountForTesting,
+            0,
+            "applying a remote summary marker must not raise a new outbound deletion"
+        )
+    }
+
     /// A marker is never named by the manifest, so the filter above must not reach
     /// it. Folding withdrawals into the filtered set would silently stop retracting
     /// tombstones the user's own later edit had beaten.

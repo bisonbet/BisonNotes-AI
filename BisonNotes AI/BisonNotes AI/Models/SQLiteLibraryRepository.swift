@@ -108,6 +108,15 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    @discardableResult
+    func deleteSummary(
+        _ command: LibrarySummaryDeleteCommand
+    ) async throws -> Bool {
+        try await withNormalAccess { [store] in
+            try await store.deleteSummary(command)
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -947,6 +956,137 @@ extension SQLiteLibraryStore {
                 storageID: transcriptStorageID,
                 entity: .transcript,
                 operation: "delete transcript",
+                at: command.requestedAt,
+                in: database
+            )
+            return true
+        }
+    }
+
+    @discardableResult
+    func deleteSummary(
+        _ command: LibrarySummaryDeleteCommand
+    ) throws -> Bool {
+        try command.validate()
+        let requestedAt = command.requestedAt.timeIntervalSinceReferenceDate
+        let requestedID = command.id.uuidString.lowercased()
+        let stableStorageID = Self.summaryStorageID(for: command.id)
+
+        return try databaseQueue.write { database in
+            let summaryRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id, recordingStorageID, recordingId
+                FROM summaries
+                WHERE storageID = ? OR lower(id) = lower(?)
+                ORDER BY storageID
+                LIMIT 2
+                """,
+                arguments: [stableStorageID, requestedID]
+            )
+            guard !summaryRows.isEmpty else {
+                return false
+            }
+            guard summaryRows.count == 1 else {
+                throw LibraryRepositoryError.ambiguousSummary(
+                    reference: requestedID
+                )
+            }
+
+            let summaryRow = summaryRows[0]
+            let summaryStorageID = try Self.requiredStorageID(
+                from: summaryRow,
+                entity: "summaries"
+            )
+            let summaryLegacyID = try Self.requiredLegacyID(
+                from: summaryRow,
+                entity: "summaries"
+            )
+            let normalizedSummaryID = Self.normalizedID(summaryLegacyID)
+            guard normalizedSummaryID == requestedID else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "summaries",
+                    field: "id"
+                )
+            }
+
+            let summaryRecordingStorageID: String? = summaryRow["recordingStorageID"]
+            let summaryRecordingID: String? = summaryRow["recordingId"]
+            let recordingRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id
+                FROM recordings
+                WHERE lower(summaryId) = lower(?)
+                   OR (? IS NOT NULL AND storageID = ?)
+                   OR (? IS NOT NULL AND lower(id) = lower(?))
+                ORDER BY storageID
+                """,
+                arguments: [
+                    normalizedSummaryID,
+                    summaryRecordingStorageID,
+                    summaryRecordingStorageID,
+                    summaryRecordingID,
+                    summaryRecordingID
+                ]
+            )
+            let resolvedRecordingID: String? = {
+                if let recordingID = summaryRecordingID?.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ), !recordingID.isEmpty {
+                    return Self.normalizedID(recordingID)
+                }
+                return recordingRows.compactMap { row -> String? in
+                    guard let id: String = row["id"] else { return nil }
+                    let trimmedID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return trimmedID.isEmpty ? nil : Self.normalizedID(trimmedID)
+                }.first
+            }()
+
+            if command.enqueueCloudDeletion {
+                try Self.enqueueSummaryRemovalMutation(
+                    summaryStorageID: summaryStorageID,
+                    summaryID: normalizedSummaryID,
+                    recordingID: resolvedRecordingID,
+                    requestedAt: requestedAt,
+                    in: database,
+                    committedAt: command.requestedAt
+                )
+            }
+
+            for row in recordingRows {
+                let recordingStorageID = try Self.requiredStorageID(
+                    from: row,
+                    entity: "recordings"
+                )
+                try database.execute(
+                    sql: """
+                    UPDATE recordings
+                    SET summaryId = ?, summaryStatus = ?, lastModified = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [nil, "Not Started", requestedAt, recordingStorageID]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete summary",
+                        reason: "a recording summary link was not cleared"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .recording,
+                    storageID: recordingStorageID,
+                    operation: .updated,
+                    at: command.requestedAt
+                )
+            }
+
+            try Self.deleteRow(
+                table: "summaries",
+                storageID: summaryStorageID,
+                entity: .summary,
+                operation: "delete summary",
                 at: command.requestedAt,
                 in: database
             )
@@ -2379,7 +2519,7 @@ extension SQLiteLibraryStore {
     private static func enqueueSummaryRemovalMutation(
         summaryStorageID: String,
         summaryID: String,
-        recordingID: String,
+        recordingID: String?,
         requestedAt: Double,
         in database: Database,
         committedAt: Date

@@ -819,6 +819,87 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    @discardableResult
+    func deleteSummary(
+        _ command: LibrarySummaryDeleteCommand
+    ) async throws -> Bool {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.fetchLimit = 2
+                summaryRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let summaries = try context.fetch(summaryRequest)
+                guard !summaries.isEmpty else {
+                    return false
+                }
+                guard summaries.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousSummary(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                var committed = false
+                defer {
+                    if !committed {
+                        context.rollback()
+                    }
+                }
+
+                let summary = summaries[0]
+                let summaryID = try Self.requiredUUID(
+                    from: summary,
+                    entity: "SummaryEntry"
+                )
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.predicate = NSPredicate(
+                    format: "summaryId == %@ OR summary.id == %@",
+                    summaryID as CVarArg,
+                    summaryID as CVarArg
+                )
+                let recordings = try context.fetch(recordingRequest)
+                for recording in recordings {
+                    recording.setValue(nil, forKey: "summary")
+                    recording.setValue(nil, forKey: "summaryId")
+                    recording.setValue(
+                        ProcessingStatus.notStarted.rawValue,
+                        forKey: "summaryStatus"
+                    )
+                    recording.setValue(command.requestedAt, forKey: "lastModified")
+                }
+
+                if command.enqueueCloudDeletion {
+                    try PendingCloudMutationStore.enqueue(
+                        PendingCloudMutation(
+                            kind: .summaryRemoval,
+                            targetId: summaryID,
+                            recordingId: (summary.value(forKey: "recordingId") as? UUID)
+                                ?? Self.relatedUUID(from: summary, relationship: "recording"),
+                            requestedAt: command.requestedAt
+                        ),
+                        in: context
+                    )
+                }
+                context.delete(summary)
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete summary",
+                        reason: error.localizedDescription
+                    )
+                }
+                committed = true
+                return true
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {

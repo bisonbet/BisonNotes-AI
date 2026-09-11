@@ -381,6 +381,75 @@ final class LibraryRepositoryContractTests: XCTestCase {
         )
     }
 
+    func testCoreDataRepositoryDeletesSummaryOnlyAndQueuesCloudRemovalIntent() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-summary-delete.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000002")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000003")
+        )
+        let requestedAt = Date(timeIntervalSinceReferenceDate: 203)
+
+        let deleted = try await repository.deleteSummary(
+            LibrarySummaryDeleteCommand(
+                id: summaryID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertTrue(deleted)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].legacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(recordings[0].lastModified, requestedAt)
+        XCTAssertEqual(transcripts.count, 1)
+        XCTAssertEqual(transcripts[0].legacyID, transcriptID.uuidString.lowercased())
+        XCTAssertTrue(summaries.isEmpty)
+
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let summaryRemovals = pendingMutations.filter {
+            $0.kind == PendingCloudMutationKind.summaryRemoval.rawValue
+        }
+        XCTAssertEqual(summaryRemovals.count, 1)
+        XCTAssertEqual(summaryRemovals[0].targetID, summaryID.uuidString.lowercased())
+        XCTAssertEqual(summaryRemovals[0].recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(summaryRemovals[0].requestedAt, requestedAt)
+
+        let pendingMutationCountAfterDelete = try await repository.fetchPendingCloudMutationSnapshots().count
+        let repeatedDelete = try await repository.deleteSummary(
+            LibrarySummaryDeleteCommand(
+                id: summaryID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertFalse(repeatedDelete)
+        let pendingMutationCountAfterRepeatedDelete = try await repository.fetchPendingCloudMutationSnapshots().count
+        XCTAssertEqual(
+            pendingMutationCountAfterRepeatedDelete,
+            pendingMutationCountAfterDelete
+        )
+    }
+
     func testCoreDataRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

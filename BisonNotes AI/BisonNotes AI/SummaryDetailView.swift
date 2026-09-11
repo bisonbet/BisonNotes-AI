@@ -1357,20 +1357,14 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                // Clean up attachment files before removing the Core Data entry.
-                try? SummaryAttachmentStore.shared.deleteAll(for: summaryData.id)
-
-                // Delete the summary locally and from iCloud
+                // The repository commits the metadata/outbox boundary first and
+                // removes supplemental files only after that commit succeeds.
                 try await appCoordinator.deleteSummary(id: summaryData.id)
-                AppLog.shared.summarization("Summary deleted from Core Data")
+                AppLog.shared.summarization("Summary deleted through repository")
 
                 // If this was a preserved summary, also remove the now-empty recording anchor
                 if let recordingId = summaryData.recordingId,
                    let recording = appCoordinator.getRecording(id: recordingId) {
-                    recording.summaryId = nil
-                    recording.summaryStatus = ProcessingStatus.notStarted.rawValue
-                    recording.lastModified = Date()
-
                     let hadNoURL = (recording.recordingURL == nil)
                     let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
                     if hadNoURL && hadNoTranscript {
@@ -1386,14 +1380,6 @@ struct SummaryDetailView: View {
                                 "Failed to delete anchor recording after summary removal: \(error)",
                                 level: .error
                             )
-                        }
-                    } else {
-                        // Save the updated recording if we keep it
-                        do {
-                            try appCoordinator.coreDataManager.saveContext()
-                            AppLog.shared.summarization("Recording updated to remove summary reference")
-                        } catch {
-                            AppLog.shared.summarization("Failed to update recording: \(error)", level: .error)
                         }
                     }
                 } else {

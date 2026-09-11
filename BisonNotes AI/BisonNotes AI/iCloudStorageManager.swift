@@ -6797,21 +6797,21 @@ extension iCloudStorageManager {
                 return
             }
             do {
-                // deleteSummary removes the attachment files itself, but only once
-                // the row deletion has committed. Doing it here first destroyed the
-                // user's notes even when that save rolled back.
-                try appCoordinator.coreDataManager.deleteSummary(
+                // Applying another device's marker must not enqueue a second
+                // tombstone. The coordinator removes local summary attachments
+                // only after the metadata delete commits.
+                let deleted = try await appCoordinator.applyRemoteSummaryDeletionUsingRepository(
                     id: target.id,
-                    enqueueCloudDeletion: false
+                    requestedAt: target.deletedAt
                 )
+                if deleted {
+                    application.deletedLocalItems += 1
+                }
             } catch {
                 AppLog.shared.iCloudSync(
                     "Failed to apply iCloud summary deletion locally for \(target.id.uuidString): \(error)",
                     level: .error
                 )
-            }
-            if appCoordinator.coreDataManager.getSummary(id: target.id) == nil {
-                application.deletedLocalItems += 1
             }
 
         case .importedAudio:

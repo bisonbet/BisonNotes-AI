@@ -699,16 +699,48 @@ class AppDataCoordinator: ObservableObject {
     func deleteSummary(id: UUID) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
 
-        // Attachment files are removed by deleteSummary once its save commits.
-        // Doing it here destroyed the user's notes even when the delete below
-        // threw and the marker was withdrawn.
-        try coreDataManager.deleteSummary(id: id)
+        let deleted = try await libraryRepository.deleteSummary(
+            LibrarySummaryDeleteCommand(id: id)
+        )
+        if deleted {
+            // Attachment files are outside the metadata transaction. Remove them
+            // only after the repository has committed the summary deletion.
+            try? SummaryAttachmentStore.shared.deleteAll(for: id)
+        }
 
         do {
             try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
         } catch {
             AppLog.shared.coreData("Deleted local summary but failed to remove iCloud summary records: \(error)", level: .error)
         }
+        if deleted {
+            objectWillChange.send()
+        }
+    }
+
+    /// Applies an inbound summary tombstone through the storage-neutral
+    /// repository. The source device already owns the cloud deletion intent, so
+    /// this local application must not enqueue a second marker. A missing row is
+    /// an idempotent no-op because markers can be replayed after a prior success.
+    @discardableResult
+    func applyRemoteSummaryDeletionUsingRepository(
+        id: UUID,
+        requestedAt: Date
+    ) async throws -> Bool {
+        let deleted = try await libraryRepository.deleteSummary(
+            LibrarySummaryDeleteCommand(
+                id: id,
+                requestedAt: requestedAt,
+                enqueueCloudDeletion: false
+            )
+        )
+        if deleted {
+            // The repository commit succeeded, so local supplemental data can
+            // now be removed without risking loss on a rolled-back delete.
+            try? SummaryAttachmentStore.shared.deleteAll(for: id)
+            objectWillChange.send()
+        }
+        return deleted
     }
 
     func updateRecordingName(recordingId: UUID, newName: String) async throws {
