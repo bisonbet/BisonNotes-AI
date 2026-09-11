@@ -21,9 +21,9 @@ production transcription callers, a summary-upsert command with Core
 Data/SQLite adapters plus asynchronous background and regeneration callers,
 and recording archive-state/archive-location commands with Core Data/SQLite
 adapters, a recording-create command with Core Data/SQLite adapters and
-asynchronous background and file-import creation callers, plus shared
-maintenance-gate adoption by the production repository adapters, are
-implemented, but no SQLite migration is enabled**.
+asynchronous background, file-import and transcript-import creation callers,
+plus shared maintenance-gate adoption by the production repository adapters,
+are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -210,6 +210,19 @@ date and created-at value, and a failed metadata commit still causes its
 existing file-cleanup defer to run. The macOS/iOS app-hosted build-for-testing
 checks and the 91-test standalone suite pass; other direct recording creation
 and import paths remain open.
+
+The current transcript-import checkpoint is `8bbbe283` (`refactor: route
+transcript imports through repository`). `TranscriptImportManager` now uses the
+shared repository for duplicate-name reads, dummy-audio recording metadata and
+the encoded transcript upsert, preserving the imported status, confidence and
+recording link behavior. It has an injectable persistence initializer for
+disposable tests while production construction still uses the controller-owned
+maintenance gate. Dummy-audio ownership and failure cleanup remain in the
+importer; the rollback delete still uses the Core Data context until a
+recording-delete command can model the existing cloud-outbox semantics. The
+macOS/iOS app-hosted build-for-testing checks and the 91-test standalone suite
+pass; no repository backend is selected for startup and no SQLite cutover is
+enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
@@ -484,7 +497,10 @@ Completed in this slice:
   persistence uses the async transcript command, while background summarization
   and summary regeneration use the async summary command. `FileImportManager`
   now uses the recording-create command after it owns and validates the copied
-  audio file; host and app-hosted contract coverage exercises both adapters.
+  audio file. `TranscriptImportManager` uses repository snapshot reads,
+  recording creation and transcript upsert for its normal path; its rollback
+  delete remains a separate recording-lifecycle command. Host and app-hosted
+  contract coverage exercises both adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
   maintenance gate in production construction paths. Repository-backed reads
   and commands wait behind an exclusive source-capture/migration lease; the
