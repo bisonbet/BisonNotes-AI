@@ -1,6 +1,7 @@
 # SQLite migration inventory
 
 Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`; Core Data migration source reader/catalog: `630a513e`; resumable metadata coordinator: `230e511c`; durable pause/settings phase: `5c88828b`; explicit Core Data/settings input boundary: `54e6c141`; durable media operation worker: `44515c52`; durable import receipt idempotency: `b8b80783`; media transfer/retention boundary: `c8b70087`; application media roots/source retention: `88c393e9`.
+Current restartable media reconciliation checkpoint: `fe99e3ff`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -335,11 +336,11 @@ references migrate in the blocking first-boot phase, while audio and other large
 media are reconciled by a bounded background worker with durable receipts and no
 full-library duplicate.
 
-## Handoff status — 2026-09-10
+## Handoff status — 2026-09-11
 
 This inventory describes the source boundary and the intended first SQLite
 schema; it is not evidence that user data has migrated. Core Data remains
-authoritative. The isolated `SQLiteLibraryStore` foundation now runs schema v3;
+authoritative. The isolated `SQLiteLibraryStore` foundation now runs schema v4;
 its initial v1 schema mirrored all six
 model entities and adds the operational tables, seeded library/generation
 metadata, independent storage IDs, restrictive resolved-link foreign keys,
@@ -370,9 +371,9 @@ remaining settings catalog source coverage/platform normalization, Core Data
 startup subscription wiring, migration screen, historical release fixtures,
 final production media-root selection and Watch/share/background caller
 integration still need implementation against disposable fixtures. The isolated
-media worker, candidate application-root mapping and guarded retention executor
-now exist as background-safe foundations, but they are not app callers or a
-migration gate.
+media worker, candidate application-root mapping, checksum-bound planner,
+restartable background reconciler and guarded retention executor now exist as
+background-safe foundations, but they are not app callers or a migration gate.
 The first repository slice now
 defines storage-neutral snapshots for all six migrated metadata entities and the
 `LibraryRepository` contract, with Core Data and SQLite adapters over copied
@@ -417,6 +418,15 @@ invalid or changed destinations, and treats an absent source as idempotent.
 Five disposable host tests cover that mapping and retention behavior. Final
 production root selection, Watch/share/background caller integration and
 retention scheduling remain open.
+The restartable-media checkpoint `fe99e3ff` adds the schema-v4 source transfer
+identity to the asset journal, a most-specific-root transfer planner and a
+serialized bounded background reconciler. It can recover queued operations and
+finish a committed receipt after verified publication interrupted before the
+acknowledgement; it verifies an already-completed destination before recording
+that receipt. It never removes source files automatically, and it is not wired
+to production callers. Four additional host tests cover source identity across
+reopen, queued background copying with progress, receipt completion after
+reopen and changed-destination refusal.
 The SQLite-only `LibraryObservation` implementation persists a global
 `library_changes` cursor and emits recording-rename/settings events atomically.
 `CoreDataLibraryObservation` reads retained persistent-history transactions using
@@ -425,7 +435,7 @@ The startup subscription and history-retention/purge policy remain intentionally
 open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 55 disposable macOS tests; the
+standalone runtime harness has passed 63 disposable macOS tests; the
 app-hosted adapter fixture is compile-checked but has not executed because the
 current simulator runner exits before XCTest bootstrapping. No test inspects or
 modifies a live user store.
@@ -472,6 +482,8 @@ resolved.
 | Durable media operation journal/worker | `SQLiteMediaCopyPlan`, `SQLiteLibraryStore` media-operation transactions and `SQLiteMediaFileOperationWorker` persist root-relative audio copy intent, claim/recovery state, streaming SHA-256/length verification and atomic partial-file publication. Exact destinations are idempotently accepted; conflicting destinations fail without overwrite and durable errors are generic. | Five host tests cover successful copy, idempotent enqueue, destination-before-checkpoint recovery, conflict protection and traversal rejection. Final production root selection, scheduling, progress UI and startup wiring remain open. |
 | Durable import receipts | `SQLiteImportReceipt` and `SQLiteLibraryStore.recordImportReceipt` persist a unique source transfer ID, optional destination storage ID and typed committed/rejected/failed outcome. Duplicate source retries return the original result; changed retries and receipt-ID collisions fail closed. | Three host tests cover reopen/duplicate acknowledgement, conflicting duplicate outcome/destination and receipt-ID collision. Not connected to Watch/share callers or source-retention cleanup yet. |
 | Media transfer and retention boundary | `SQLiteMediaRootRegistry`, `SQLiteMediaTransferCoordinator` and `SQLiteMediaSourceRetentionPolicy` validate logical source/destination roots, run the existing verified worker, record a committed receipt only after completion, and report source-removal eligibility only for a matching committed receipt. `SQLiteApplicationMediaRootMapping` classifies observed app roots without creating directories; `SQLiteMediaSourceRetentionExecutor` re-verifies the destination before idempotent source removal and refuses aliases or drift. | Nine host tests cover successful retry and receipt persistence, checksum failure, receipt conflict, broad/unregistered root rejection, application-root classification, committed cleanup, pending-operation refusal, alias refusal and destination drift. Final production root selection, Watch/share caller integration and retention scheduling remain open. |
+| Application media transfer planning | `SQLiteApplicationMediaTransferPlanner` resolves an existing file to the most-specific registered application root, validates the destination root-relative path and computes a streaming SHA-256/byte-length fingerprint without creating directories, copying bytes or deleting the source. | Four host tests cover Documents/Inbox specificity, Watch staging, unmanaged sources and directory refusal. No production caller is wired. |
+| Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations before recording committed receipts and emits progress. Source retention remains an explicit follow-up. | Four host tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen and changed-destination refusal. Production scheduling and caller wiring remain open. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. The catalog classifies the source keys, exposes only the blocking-metadata subset to a future reader, and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key and prove unrelated defaults are untouched. Startup wiring, remaining source coverage and platform normalization are still open. |
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |

@@ -6,8 +6,9 @@ repository write/settings contracts, the SQLite observation cursor, an isolated
 resumable metadata/settings coordinator, an explicit Core Data source-input
 boundary, durable import receipts, a validated media-root/transfer boundary,
 a candidate application media-root mapping, a receipt-gated source-retention
-executor and a durable background media-operation worker are implemented, but
-no SQLite migration is enabled**.
+executor, a checksum-bound transfer planner and a restartable background
+media-reconciliation service are implemented, but no SQLite migration is
+enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -18,7 +19,7 @@ The current backend-independent safety slice makes durable-store failure explici
 and blocks normal startup when storage is unavailable; it does not change the
 authoritative Core Data backend or authorize a user-store migration.
 
-## Current handoff — 2026-09-10
+## Current handoff — 2026-09-11
 
 The current observation checkpoint is `c692c8c7` (`feat: add Core Data
 persistent history observation`). It adds a durable Core Data history adapter
@@ -92,6 +93,18 @@ absent source as an idempotent success. Five disposable host tests cover the
 mapping, committed cleanup, pending-operation refusal, alias refusal and
 destination drift. No production caller is wired yet.
 
+The current restartable-media checkpoint is `fe99e3ff` (`feat: make media
+reconciliation restartable`). It adds a schema-v4 `sourceTransferID` to the
+asset journal, a planner that resolves an existing file to the most-specific
+registered application root and records its streaming SHA-256/length, and a
+serialized `SQLiteMediaBackgroundReconciler`. The reconciler bounds each pass,
+recovers interrupted operations, verifies already-published destinations, and
+finishes missing committed receipts after a process restart while leaving source
+retention as an explicit separately gated action. It does not create roots,
+scan user data, activate SQLite, or wire Watch/share/background callers. The
+media-focused tests now pass 22/22 and the full disposable host suite passes
+63/63.
+
 The current settings-classification checkpoint is `f8b4d6c7` (`test: cover
 legacy settings classifications`), following `e2ff6c0` (`test: compare
 settings catalog with CloudKit source`) and `52101ae0` (`test: validate
@@ -139,7 +152,7 @@ Completed in this slice:
 - The product decisions are recorded: no app export/restore or app-managed
   encryption; Apple device backups and iCloud/CloudKit remain in scope; metadata
   migration blocks first boot; audio reconciliation runs in the background.
-- A root SwiftPM host-independent macOS runtime harness now runs 55
+- A root SwiftPM host-independent macOS runtime harness now runs 63
   disposable macOS runtime tests against the canonical store sources with the
   exact GRDB 7.11.1 pin. It caught and fixed two issues before any live-data
   work:
@@ -195,8 +208,9 @@ Completed in this slice:
 - Disposable contract coverage now exercises the SQLite adapter against the
   imported fixture across all six metadata tables and the Core Data adapter
   against a disposable active-model fixture. The root macOS harness passes
-  55 tests with zero failures, including a disposable v2-to-v3 upgrade
-  fixture that verifies existing settings stores receive the observation schema.
+  63 tests with zero failures, including a disposable v2-to-v4 upgrade
+  fixture that verifies existing stores receive the observation and media
+  receipt schema.
   The app-hosted Core Data fixture test is compile-checked with
   `build-for-testing`; the simulator runner still has not executed XCTest.
 - The first settings boundary is now explicit and typed. An allowlisted
@@ -260,6 +274,14 @@ Completed in this slice:
   protection and traversal rejection. Final production root selection,
   background caller scheduling and user-facing progress remain intentionally
   open.
+- The application media transfer planner now resolves existing files through
+  the most-specific registered app root and fingerprints them without mutation.
+  Schema v4 persists the source transfer identity with each transfer asset, and
+  `SQLiteMediaBackgroundReconciler` can retry queued work or complete a receipt
+  after a verified publication that was interrupted before acknowledgement. It
+  emits bounded progress and never removes source files; production root
+  selection, caller scheduling and app progress wiring remain intentionally
+  open.
 - The durable import-receipt boundary now persists one outcome per source
   transfer, returns the original receipt on an idempotent retry and rejects
   conflicting retries without overwriting it. Production caller integration,
@@ -296,8 +318,9 @@ Not yet implemented or closed:
   checked-in original and active v2 compiled models with synthetic rows.
 - Watch/share/background caller gates and the remaining file-operation/media
   integration: final production root selection, caller receipt integration,
-  scheduling, progress UI and app wiring. The candidate mapping and retention
-  executor are not connected to production callers.
+  scheduling, progress UI and app wiring. The candidate mapping, planner,
+  background reconciler and retention executor are not connected to production
+  callers.
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
@@ -306,7 +329,7 @@ catalog and platform normalization rules, connect the observation adapter to the
 startup contract and expand commands while converting additional non-startup callers
 behind the Core Data adapter with shared behavior tests. In parallel, select the
 final production roots and connect the media worker, receipt boundary and
-retention executor to Watch/share/background callers without
+retention executor and bounded reconciler to Watch/share/background callers without
 allowing it into first-boot activation yet, and close the remaining Phase 0/1
 evidence and caller-gate gaps.
 Only after those contracts are stable should the isolated coordinator be wired
@@ -846,9 +869,9 @@ or task unless the owner requests it.
 | --- | --- | --- |
 | 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** complete source-key/catalog coverage, production coordinator wiring and measurements remain open. |
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** Core Data health/startup gating and throwing startup reads are implemented; Watch/extension/background caller gates remain open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
-| 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, a candidate app-owned logical media-root mapping and a receipt-gated source-retention executor now accompany the isolated root-relative media file-operation journal/worker; final production root selection, caller integration, recovery UI and attachment/archive/file-service adaptation remain. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
+| 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, a candidate app-owned logical media-root mapping, a checksum-bound transfer planner, a bounded restartable background reconciler and a receipt-gated source-retention executor now accompany the isolated root-relative media file-operation journal/worker; final production root selection, caller integration, recovery UI and attachment/archive/file-service adaptation remain. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
 | 3: Repository boundary | **Started:** immutable snapshots for all six metadata entities, typed allowlisted settings adapters, the first rename command/error contract, Core Data and SQLite adapters, durable SQLite/Core Data observation adapters, the read-only Core Data migration source reader, and disposable contract tests are in place. `AudioPlayerView` now uses the Core Data adapter for its display-name-only write; startup subscription, file-owning commands, and the remaining `AppDataCoordinator`, `RecordingWorkflowManager`, jobs/imports/transcript/summary/archive services, UI, cloud store access, fixtures and previews remain. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapters and the legacy importer; all callers/targets audited. |
-| 4: SQLite backend | **Started:** the isolated SQLite adapter now has a durable v3 change log for the first rename/settings writes, cursor/reopen tests, a root-relative media operation journal/worker with checksum validation, an idempotent import-receipt/retention boundary, a candidate application root mapping and a guarded source-retention executor. Extend it into the complete repository implementation, final production root selection, caller receipt/retention integration and metrics using the pinned GRDB product. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; all transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
+| 4: SQLite backend | **Started:** the isolated SQLite adapter now has a durable v3 change log for the first rename/settings writes, cursor/reopen tests, a schema-v4 source-transfer identity, a root-relative media operation journal/worker with checksum validation, an idempotent import-receipt/retention boundary, a candidate application root mapping, a checksum-bound planner, a serialized background reconciler and a guarded source-retention executor. Extend it into the complete repository implementation, final production root selection, caller receipt/retention integration and metrics using the pinned GRDB product. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; all transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
 | 5: Import / verifier | The model-aware read-only Core Data source reader, explicit Core Data-plus-settings input boundary, lossless row map, importer, validation, recovery reports and resumable metadata/settings coordinator are now isolated foundations; production source/settings acquisition and the production state machine remain open. | Both source models plus skipped-version legacy fixtures migrate; every transition survives process kill; anomalies block safely; no cloud side effects. |
 | 6: Shadow qualification | Read-only SQLite comparisons from a frozen source snapshot; retain Core Data as sole authority. Store per-field mismatch reports without content leakage. | Zero unexplained mismatches across representative fixtures/libraries. If legacy writes resume, candidate invalidated/rebuilt; do not pretend it remains current. |
 | 7: Guarded activation | Bootstrap generation selection, first-boot migration screen/error/progress recovery, stale-worker rejection, fresh-install SQLite path, mixed-version cloud testing and background media reconciliation. | Full automated matrix plus signed hardware/device-backup/upgrade/CloudKit gates pass; forward-fix and platform restore drill performed. Opt-in internal cohort first. |
@@ -1056,7 +1079,7 @@ inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
 adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
 but does not change a user store or write CloudKit records. The
-current host-independent suite passes 55 tests with 0 failures; iOS `build-for-testing`
+current host-independent suite passes 63 tests with 0 failures; iOS `build-for-testing`
 and native macOS builds also passed. No production upgrade, Apple device-backup
 restore or physical two-device validation was performed for this plan or safety
 slices.
