@@ -206,6 +206,53 @@ class AppDataCoordinator: ObservableObject {
         return id
     }
 
+    /// Creates recording metadata through the storage-neutral repository.
+    /// Audio ownership and file movement remain with the caller; this method
+    /// is the async path used while production callers are being migrated.
+    @discardableResult
+    func createRecordingUsingRepository(
+        url: URL,
+        name: String,
+        date: Date,
+        fileSize: Int64,
+        duration: TimeInterval,
+        quality: AudioQuality,
+        locationData: LocationData? = nil
+    ) async throws -> UUID {
+        guard let recordingURL = coreDataManager.urlToRelativePath(url) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording URL could not be represented as a relative path"
+            )
+        }
+
+        let snapshot = try await libraryRepository.createRecording(
+            LibraryRecordingCreateCommand(
+                recordingURL: recordingURL,
+                name: name,
+                recordingDate: date,
+                duration: duration,
+                fileSize: fileSize,
+                audioQuality: quality.rawValue,
+                locationAccuracy: locationData.map { $0.accuracy ?? 0.0 },
+                locationAddress: locationData?.address,
+                locationLatitude: locationData?.latitude,
+                locationLongitude: locationData?.longitude,
+                locationTimestamp: locationData?.timestamp
+            )
+        )
+        guard let legacyID = snapshot.legacyID,
+              let recordingID = UUID(uuidString: legacyID) else {
+            throw LibraryRepositoryError.invalidRecord(
+                entity: "recordings",
+                field: "id"
+            )
+        }
+
+        scheduleAutoBackupIfEnabled()
+        objectWillChange.send()
+        return recordingID
+    }
+
     func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
         let id = workflowManager.createRecording(
             url: url,

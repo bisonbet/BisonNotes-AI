@@ -62,6 +62,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func createRecording(
+        _ command: LibraryRecordingCreateCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await withNormalAccess { [store] in
+            try await store.createRecording(command)
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -159,6 +167,88 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
 
 extension SQLiteLibraryStore {
     private static let localOnlyRemovalKind = "localOnlyRemoval"
+
+    func createRecording(
+        _ command: LibraryRecordingCreateCommand
+    ) throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let storageID = Self.recordingStorageID(for: command.id)
+
+        return try databaseQueue.write { database in
+            let duplicateCount = try Int.fetchOne(
+                database,
+                sql: """
+                SELECT COUNT(*)
+                FROM recordings
+                WHERE storageID = ? OR lower(id) = lower(?)
+                """,
+                arguments: [storageID, command.id.uuidString.lowercased()]
+            ) ?? 0
+            guard duplicateCount == 0 else {
+                throw LibraryRepositoryError.recordingAlreadyExists(
+                    reference: command.id.uuidString.lowercased()
+                )
+            }
+
+            try database.execute(
+                sql: """
+                INSERT INTO recordings (
+                    storageID, audioQuality, createdAt, duration, fileSize, id,
+                    isCloudSyncDisabled, lastModified, locationAccuracy,
+                    locationAddress, locationLatitude, locationLongitude,
+                    locationTimestamp, recordingDate, recordingName, recordingURL,
+                    summaryId, summaryStatus, transcriptId, transcriptionStatus,
+                    isArchived, archivedAt, archiveNote
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    storageID,
+                    command.audioQuality,
+                    command.createdAt.timeIntervalSinceReferenceDate,
+                    command.duration,
+                    command.fileSize,
+                    command.id.uuidString.lowercased(),
+                    command.isCloudSyncDisabled ? 1 : 0,
+                    command.modifiedAt.timeIntervalSinceReferenceDate,
+                    command.locationAccuracy,
+                    command.locationAddress,
+                    command.locationLatitude,
+                    command.locationLongitude,
+                    command.locationTimestamp?.timeIntervalSinceReferenceDate,
+                    command.recordingDate.timeIntervalSinceReferenceDate,
+                    command.name,
+                    command.recordingURL,
+                    nil,
+                    command.summaryStatus,
+                    nil,
+                    command.transcriptionStatus,
+                    0,
+                    nil,
+                    nil
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "create recording",
+                    reason: "the recording row was not inserted"
+                )
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: storageID,
+                operation: .inserted,
+                at: command.modifiedAt
+            )
+            return try Self.fetchUpdatedRecording(
+                storageID: storageID,
+                in: database,
+                operation: "create recording"
+            )
+        }
+    }
 
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
@@ -1270,6 +1360,10 @@ extension SQLiteLibraryStore {
         "sqlite-processingjob-\(id.uuidString.lowercased())"
     }
 
+    private static func recordingStorageID(for id: UUID) -> String {
+        "sqlite-recording-\(id.uuidString.lowercased())"
+    }
+
     private static func canonicalLegacyID(_ value: String?) -> String? {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty else {
@@ -1601,7 +1695,8 @@ extension SQLiteLibraryStore {
 
     private static func fetchUpdatedRecording(
         storageID: String,
-        in database: Database
+        in database: Database,
+        operation: String = "write recording"
     ) throws -> LibraryRecordingSnapshot {
         let columns = """
             storageID, id, recordingName, recordingDate, duration,
@@ -1614,7 +1709,7 @@ extension SQLiteLibraryStore {
             arguments: [storageID]
         ) else {
             throw LibraryRepositoryError.writeFailed(
-                operation: "rename recording",
+                operation: operation,
                 reason: "the updated recording row could not be read"
             )
         }

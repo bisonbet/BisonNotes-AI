@@ -309,6 +309,64 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
 }
 
 extension CoreDataLibraryRepository {
+    func createRecording(
+        _ command: LibraryRecordingCreateCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let duplicateRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                duplicateRequest.fetchLimit = 2
+                duplicateRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                guard try context.fetch(duplicateRequest).isEmpty else {
+                    throw LibraryRepositoryError.recordingAlreadyExists(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                let recording = RecordingEntry(context: context)
+                recording.setValue(command.id, forKey: "id")
+                recording.setValue(command.recordingURL, forKey: "recordingURL")
+                recording.setValue(command.name, forKey: "recordingName")
+                recording.setValue(command.recordingDate, forKey: "recordingDate")
+                recording.setValue(command.createdAt, forKey: "createdAt")
+                recording.setValue(command.duration, forKey: "duration")
+                recording.setValue(command.fileSize, forKey: "fileSize")
+                recording.setValue(command.audioQuality, forKey: "audioQuality")
+                recording.setValue(command.locationAccuracy, forKey: "locationAccuracy")
+                recording.setValue(command.locationAddress, forKey: "locationAddress")
+                recording.setValue(command.locationLatitude, forKey: "locationLatitude")
+                recording.setValue(command.locationLongitude, forKey: "locationLongitude")
+                recording.setValue(command.locationTimestamp, forKey: "locationTimestamp")
+                recording.setValue(command.transcriptionStatus, forKey: "transcriptionStatus")
+                recording.setValue(command.summaryStatus, forKey: "summaryStatus")
+                recording.setValue(command.isCloudSyncDisabled, forKey: "isCloudSyncDisabled")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+                recording.setValue(false, forKey: "isArchived")
+                recording.setValue(nil, forKey: "archivedAt")
+                recording.setValue(nil, forKey: "archiveNote")
+                recording.setValue(nil, forKey: "summaryId")
+                recording.setValue(nil, forKey: "transcriptId")
+
+                do {
+                    try context.save()
+                } catch {
+                    context.delete(recording)
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "create recording",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {

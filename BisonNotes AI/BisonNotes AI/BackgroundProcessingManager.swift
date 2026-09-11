@@ -1689,15 +1689,16 @@ class BackgroundProcessingManager: ObservableObject {
                 return recordingId
             }
 
-            // Create recording entry if it doesn't exist
-            AppLog.shared.backgroundProcessing("Creating recording entry in Core Data")
+            // Create recording metadata through the repository-backed Core Data
+            // adapter. The audio file is already owned by this workflow.
+            AppLog.shared.backgroundProcessing("Creating recording entry through repository")
 
             // Get file metadata
             let fileSize = getFileSize(url: recordingURL)
             let duration = await getAudioDuration(url: recordingURL)
 
-            return await MainActor.run {
-                let recordingId = appCoordinator.addRecording(
+            do {
+                let recordingID = try await appCoordinator.createRecordingUsingRepository(
                     url: recordingURL,
                     name: recordingName,
                     date: Date(),
@@ -1707,8 +1708,14 @@ class BackgroundProcessingManager: ObservableObject {
                     locationData: nil
                 )
 
-                AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
-                return recordingId
+                AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingID)")
+                return recordingID
+            } catch {
+                AppLog.shared.backgroundProcessing(
+                    "Failed to create recording metadata through repository: \(error)",
+                    level: .error
+                )
+                return nil
             }
         } else {
             AppLog.shared.backgroundProcessing("AppCoordinator not available for recording creation", level: .error)

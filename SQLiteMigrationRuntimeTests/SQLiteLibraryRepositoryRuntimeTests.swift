@@ -93,6 +93,68 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertTrue(recordings.isEmpty)
     }
 
+    func testRepositoryCreatesRecordingWithStableIdentityAndObservationChange() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000010")
+        )
+        let command = LibraryRecordingCreateCommand(
+            id: recordingID,
+            recordingURL: "new-recording.m4a",
+            name: "New recording",
+            recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+            createdAt: Date(timeIntervalSinceReferenceDate: 101),
+            duration: 12.25,
+            fileSize: 512,
+            audioQuality: "Whisper Optimized",
+            locationAccuracy: 7.0,
+            locationAddress: "New address",
+            locationLatitude: 39.25,
+            locationLongitude: -76.71,
+            locationTimestamp: Date(timeIntervalSinceReferenceDate: 99),
+            modifiedAt: Date(timeIntervalSinceReferenceDate: 102)
+        )
+
+        let created = try await repository.createRecording(command)
+
+        XCTAssertEqual(
+            created.storageID,
+            "sqlite-recording-\(recordingID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(created.legacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(created.name, "New recording")
+        XCTAssertEqual(created.recordingDate, Date(timeIntervalSinceReferenceDate: 100))
+        XCTAssertEqual(created.duration, 12.25)
+        XCTAssertEqual(created.fileSize, 512)
+        XCTAssertEqual(created.recordingURL, "new-recording.m4a")
+        XCTAssertEqual(created.isArchived, false)
+        XCTAssertEqual(created.isCloudSyncDisabled, false)
+        XCTAssertEqual(created.lastModified, Date(timeIntervalSinceReferenceDate: 102))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.recording])
+        XCTAssertEqual(changes.map(\.operation), [.inserted])
+        XCTAssertEqual(changes.map(\.revision), [1])
+
+        do {
+            _ = try await repository.createRecording(command)
+            XCTFail("Expected duplicate recording creation to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .recordingAlreadyExists(reference: recordingID.uuidString.lowercased())
+            )
+        }
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 1)
+    }
+
     func testRepositoryReturnsAllMetadataSnapshotsFromImportedRows() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

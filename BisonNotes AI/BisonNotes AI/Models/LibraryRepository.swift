@@ -56,6 +56,126 @@ struct LibraryRecordingReference: Equatable, Sendable {
     }
 }
 
+/// Creates the metadata row for an audio recording whose file is already owned
+/// by the caller. Audio copying, file naming and source retention are separate
+/// journaled operations; this command only commits recording metadata.
+struct LibraryRecordingCreateCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingURL: String
+    let name: String?
+    let recordingDate: Date
+    let createdAt: Date
+    let duration: Double
+    let fileSize: Int64
+    let audioQuality: String?
+    let locationAccuracy: Double?
+    let locationAddress: String?
+    let locationLatitude: Double?
+    let locationLongitude: Double?
+    let locationTimestamp: Date?
+    let transcriptionStatus: String
+    let summaryStatus: String
+    let isCloudSyncDisabled: Bool
+    let modifiedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        recordingURL: String,
+        name: String?,
+        recordingDate: Date,
+        createdAt: Date = Date(),
+        duration: Double,
+        fileSize: Int64,
+        audioQuality: String? = nil,
+        locationAccuracy: Double? = nil,
+        locationAddress: String? = nil,
+        locationLatitude: Double? = nil,
+        locationLongitude: Double? = nil,
+        locationTimestamp: Date? = nil,
+        transcriptionStatus: String = "Not Started",
+        summaryStatus: String = "Not Started",
+        isCloudSyncDisabled: Bool = false,
+        modifiedAt: Date? = nil
+    ) {
+        self.id = id
+        self.recordingURL = recordingURL
+        self.name = name
+        self.recordingDate = recordingDate
+        self.createdAt = createdAt
+        self.duration = duration
+        self.fileSize = fileSize
+        self.audioQuality = audioQuality
+        self.locationAccuracy = locationAccuracy
+        self.locationAddress = locationAddress
+        self.locationLatitude = locationLatitude
+        self.locationLongitude = locationLongitude
+        self.locationTimestamp = locationTimestamp
+        self.transcriptionStatus = transcriptionStatus
+        self.summaryStatus = summaryStatus
+        self.isCloudSyncDisabled = isCloudSyncDisabled
+        self.modifiedAt = modifiedAt ?? createdAt
+    }
+}
+
+extension LibraryRecordingCreateCommand {
+    func validate() throws {
+        guard !recordingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording URL must not be empty"
+            )
+        }
+        guard duration.isFinite, duration >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording duration must be finite and nonnegative"
+            )
+        }
+        guard fileSize >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording file size must be nonnegative"
+            )
+        }
+
+        let dates = [recordingDate, createdAt, modifiedAt, locationTimestamp]
+            .compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording dates must be finite"
+            )
+        }
+
+        for (value, field) in [
+            (transcriptionStatus, "transcription status"),
+            (summaryStatus, "summary status")
+        ] where value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording \(field) must not be empty"
+            )
+        }
+
+        if let locationAccuracy {
+            guard locationAccuracy.isFinite, locationAccuracy >= 0 else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "recording location accuracy must be finite and nonnegative"
+                )
+            }
+        }
+        if let locationLatitude {
+            guard locationLatitude.isFinite, (-90.0...90.0).contains(locationLatitude) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "recording latitude must be finite and between -90 and 90"
+                )
+            }
+        }
+        if let locationLongitude {
+            guard locationLongitude.isFinite, (-180.0...180.0).contains(locationLongitude) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "recording longitude must be finite and between -180 and 180"
+                )
+            }
+        }
+    }
+}
+
 /// The first write command shared by the Core Data and SQLite adapters.
 ///
 /// `expectedLastModified` is an optimistic-concurrency guard. A nil value
@@ -830,9 +950,9 @@ struct LibraryPendingCloudMutationSnapshot: Equatable, Sendable {
     let version: Int64?
 }
 
-/// The deliberately small read-only contract used while the migration is
-/// being introduced. Existing Core Data callers remain authoritative until a
-/// later checkpoint wires this capability into application startup.
+/// The storage-neutral contract used while the migration is being introduced.
+/// Existing Core Data callers remain authoritative until a later checkpoint
+/// wires the complete capability set into application startup.
 protocol LibraryRepository: Sendable {
     func fetchRecordingSummaries() async throws -> [LibraryRecordingSnapshot]
     func fetchTranscriptSnapshots() async throws -> [LibraryTranscriptSnapshot]
@@ -840,6 +960,9 @@ protocol LibraryRepository: Sendable {
     func fetchProcessingJobSnapshots() async throws -> [LibraryProcessingJobSnapshot]
     func fetchArchiveLocationSnapshots() async throws -> [LibraryArchiveLocationSnapshot]
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot]
+    func createRecording(
+        _ command: LibraryRecordingCreateCommand
+    ) async throws -> LibraryRecordingSnapshot
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
@@ -876,6 +999,7 @@ protocol LibraryRepository: Sendable {
 enum LibraryRepositoryError: LocalizedError, Equatable {
     case invalidRecord(entity: String, field: String)
     case invalidCommand(String)
+    case recordingAlreadyExists(reference: String)
     case recordingNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
@@ -898,6 +1022,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The \(entity) record has an invalid \(field) value."
         case .invalidCommand(let detail):
             return "The library command is invalid: \(detail)"
+        case .recordingAlreadyExists(let reference):
+            return "The recording already exists: \(reference)"
         case .recordingNotFound(let reference):
             return "The recording could not be found: \(reference)"
         case .ambiguousRecording(let reference):

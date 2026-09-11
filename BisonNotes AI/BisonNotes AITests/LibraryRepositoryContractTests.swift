@@ -78,6 +78,81 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings[0].lastModified, Date(timeIntervalSinceReferenceDate: 101))
     }
 
+    func testCoreDataRepositoryCreatesRecordingWithStableIdentityAndDefaults() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-recording-create.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000010")
+        )
+        let created = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "new-recording.m4a",
+                name: "New recording",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 200),
+                createdAt: Date(timeIntervalSinceReferenceDate: 201),
+                duration: 12.25,
+                fileSize: 512,
+                audioQuality: "Whisper Optimized",
+                locationAccuracy: 7.0,
+                locationAddress: "New address",
+                locationLatitude: 39.25,
+                locationLongitude: -76.71,
+                locationTimestamp: Date(timeIntervalSinceReferenceDate: 199),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 202)
+            )
+        )
+
+        XCTAssertEqual(
+            created.storageID,
+            "core-data-recording-\(recordingID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(created.legacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(created.name, "New recording")
+        XCTAssertEqual(created.recordingDate, Date(timeIntervalSinceReferenceDate: 200))
+        XCTAssertEqual(created.duration, 12.25)
+        XCTAssertEqual(created.fileSize, 512)
+        XCTAssertEqual(created.recordingURL, "new-recording.m4a")
+        XCTAssertEqual(created.isArchived, false)
+        XCTAssertEqual(created.isCloudSyncDisabled, false)
+        XCTAssertEqual(created.lastModified, Date(timeIntervalSinceReferenceDate: 202))
+
+        do {
+            _ = try await repository.createRecording(
+                LibraryRecordingCreateCommand(
+                    id: recordingID,
+                    recordingURL: "other-recording.m4a",
+                    name: "Other recording",
+                    recordingDate: Date(timeIntervalSinceReferenceDate: 203),
+                    duration: 1,
+                    fileSize: 1
+                )
+            )
+            XCTFail("Expected duplicate recording creation to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .recordingAlreadyExists(reference: recordingID.uuidString.lowercased())
+            )
+        }
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 2)
+    }
+
     func testCoreDataRepositoryReturnsAllMetadataSnapshots() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
