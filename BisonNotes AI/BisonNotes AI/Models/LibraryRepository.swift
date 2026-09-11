@@ -128,6 +128,94 @@ struct LibraryProcessingJobReference: Equatable, Sendable {
     }
 }
 
+/// Creates one processing job without exposing a managed object or SQLite
+/// row to the caller. The optional recording reference is explicit: a job may
+/// be created without a relationship for legacy/external callers, but a
+/// supplied reference must resolve to exactly one recording.
+struct LibraryProcessingJobCreateCommand: Equatable, Sendable {
+    let id: UUID
+    let jobType: String
+    let engine: String
+    let recordingURL: String
+    let recordingName: String
+    let modelName: String?
+    let status: String
+    let progress: Double
+    let startTime: Date
+    let completionTime: Date?
+    let error: String?
+    let recordingReference: LibraryRecordingReference?
+    let modifiedAt: Date
+
+    init(
+        id: UUID,
+        jobType: String,
+        engine: String,
+        recordingURL: String,
+        recordingName: String,
+        modelName: String? = nil,
+        status: String,
+        progress: Double,
+        startTime: Date,
+        completionTime: Date? = nil,
+        error: String? = nil,
+        recordingReference: LibraryRecordingReference? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.id = id
+        self.jobType = jobType
+        self.engine = engine
+        self.recordingURL = recordingURL
+        self.recordingName = recordingName
+        self.modelName = modelName
+        self.status = status
+        self.progress = progress
+        self.startTime = startTime
+        self.completionTime = completionTime
+        self.error = error
+        self.recordingReference = recordingReference
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryProcessingJobCreateCommand {
+    func validate() throws {
+        let requiredText: [(String, String)] = [
+            (jobType, "job type"),
+            (engine, "engine"),
+            (recordingURL, "recording URL"),
+            (recordingName, "recording name"),
+            (status, "status")
+        ]
+        for (value, field) in requiredText {
+            guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "processing-job \(field) must not be empty"
+                )
+            }
+        }
+
+        guard progress.isFinite, (0...1).contains(progress) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job progress must be finite and between 0 and 1"
+            )
+        }
+
+        let dates = [
+            startTime,
+            completionTime,
+            modifiedAt
+        ]
+        guard dates.compactMap({ $0 }).allSatisfy({
+            $0.timeIntervalSinceReferenceDate.isFinite
+        }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job dates must be finite"
+            )
+        }
+    }
+}
+
 /// Describes how a processing-job error is changed by an update command.
 enum LibraryProcessingJobErrorUpdate: Equatable, Sendable {
     case preserve
@@ -318,6 +406,9 @@ protocol LibraryRepository: Sendable {
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot
+    func createProcessingJob(
+        _ command: LibraryProcessingJobCreateCommand
+    ) async throws -> LibraryProcessingJobSnapshot
     func updateProcessingJob(
         _ command: LibraryProcessingJobUpdateCommand
     ) async throws -> LibraryProcessingJobSnapshot
@@ -332,6 +423,7 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case recordingNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
+    case processingJobAlreadyExists(reference: String)
     case processingJobNotFound(reference: String)
     case ambiguousProcessingJob(reference: String)
     case staleProcessingJob(reference: String, expected: Date?, actual: Date?)
@@ -351,6 +443,8 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The recording changed before it could be updated (\(reference)); "
                 + "expected last modified \(String(describing: expected)), "
                 + "found \(String(describing: actual))."
+        case .processingJobAlreadyExists(let reference):
+            return "The processing job already exists: \(reference)"
         case .processingJobNotFound(let reference):
             return "The processing job could not be found: \(reference)"
         case .ambiguousProcessingJob(let reference):

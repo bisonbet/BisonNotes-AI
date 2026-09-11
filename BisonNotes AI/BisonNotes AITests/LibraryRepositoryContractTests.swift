@@ -223,6 +223,83 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(persisted[0], preserved)
     }
 
+    func testCoreDataRepositoryCreatesProcessingJobWithRecordingLink() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-processing-job-create.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let jobID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000006")
+        )
+        let created = try await repository.createProcessingJob(
+            LibraryProcessingJobCreateCommand(
+                id: jobID,
+                jobType: "Summarization (mlxSwift)",
+                engine: "mlxSwift",
+                recordingURL: "recording.m4a",
+                recordingName: "Fixture recording",
+                modelName: "fixture-model",
+                status: "Queued",
+                progress: 0,
+                startTime: Date(timeIntervalSinceReferenceDate: 300),
+                recordingReference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(created.legacyID, jobID.uuidString.lowercased())
+        XCTAssertEqual(
+            created.storageID,
+            "core-data-processingjob-\(jobID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(
+            created.recordingStorageID,
+            "core-data-recording-10000000-0000-0000-0000-000000000001"
+        )
+        XCTAssertEqual(created.status, "Queued")
+        XCTAssertEqual(created.progress, 0)
+        XCTAssertEqual(created.startTime, Date(timeIntervalSinceReferenceDate: 300))
+        XCTAssertEqual(created.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        do {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: jobID,
+                    jobType: "Summarization (mlxSwift)",
+                    engine: "mlxSwift",
+                    recordingURL: "recording.m4a",
+                    recordingName: "Fixture recording",
+                    status: "Queued",
+                    progress: 0,
+                    startTime: Date(timeIntervalSinceReferenceDate: 302),
+                    recordingReference: LibraryRecordingReference(
+                        legacyID: "10000000-0000-0000-0000-000000000001"
+                    ),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+                )
+            )
+            XCTFail("Expected duplicate processing-job creation to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .processingJobAlreadyExists(reference: jobID.uuidString.lowercased())
+            )
+        }
+    }
+
     func testCoreDataRepositoryDeletesProcessingJobWithRevisionGuard() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

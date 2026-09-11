@@ -280,6 +280,91 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(revisionAfterRejectedUpdate, 3)
     }
 
+    func testRepositoryCreatesProcessingJobWithRecordingLinkAndDurableInsertChange() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let jobID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000006")
+        )
+
+        let created = try await repository.createProcessingJob(
+            LibraryProcessingJobCreateCommand(
+                id: jobID,
+                jobType: "Summarization (mlxSwift)",
+                engine: "mlxSwift",
+                recordingURL: "recording.m4a",
+                recordingName: "Fixture recording",
+                modelName: "fixture-model",
+                status: "queued",
+                progress: 0,
+                startTime: Date(timeIntervalSinceReferenceDate: 300),
+                recordingReference: LibraryRecordingReference(
+                    storageID: "recording-storage"
+                ),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(
+            created.storageID,
+            "sqlite-processingjob-10000000-0000-0000-0000-000000000006"
+        )
+        XCTAssertEqual(created.legacyID, jobID.uuidString.lowercased())
+        XCTAssertEqual(created.recordingStorageID, "recording-storage")
+        XCTAssertEqual(created.status, "queued")
+        XCTAssertEqual(created.progress, 0)
+        XCTAssertEqual(created.startTime, Date(timeIntervalSinceReferenceDate: 300))
+        XCTAssertEqual(created.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.revision), [1])
+        XCTAssertEqual(changes.map(\.entity), [.processingJob])
+        XCTAssertEqual(changes.map(\.operation), [.inserted])
+        XCTAssertEqual(
+            changes[0].committedAt,
+            Date(timeIntervalSinceReferenceDate: 301)
+        )
+
+        do {
+            _ = try await repository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: jobID,
+                    jobType: "Summarization (mlxSwift)",
+                    engine: "mlxSwift",
+                    recordingURL: "recording.m4a",
+                    recordingName: "Fixture recording",
+                    status: "queued",
+                    progress: 0,
+                    startTime: Date(timeIntervalSinceReferenceDate: 302),
+                    recordingReference: LibraryRecordingReference(
+                        storageID: "recording-storage"
+                    ),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+                )
+            )
+            XCTFail("Expected duplicate processing-job creation to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .processingJobAlreadyExists(reference: jobID.uuidString.lowercased())
+            )
+        }
+        let revisionAfterDuplicate = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterDuplicate, 1)
+    }
+
     func testRepositoryDeletesProcessingJobAndLeavesDurableDeleteChange() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

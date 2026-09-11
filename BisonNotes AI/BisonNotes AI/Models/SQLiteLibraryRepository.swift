@@ -53,6 +53,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         try await store.setCloudSyncDisabled(command)
     }
 
+    func createProcessingJob(
+        _ command: LibraryProcessingJobCreateCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        try await store.createProcessingJob(command)
+    }
+
     func updateProcessingJob(
         _ command: LibraryProcessingJobUpdateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
@@ -161,6 +167,94 @@ extension SQLiteLibraryStore {
             }
 
             return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    func createProcessingJob(
+        _ command: LibraryProcessingJobCreateCommand
+    ) throws -> LibraryProcessingJobSnapshot {
+        try command.validate()
+        let storageID = Self.processingJobStorageID(for: command.id)
+        let startTime = command.startTime.timeIntervalSinceReferenceDate
+        let modifiedAt = command.modifiedAt.timeIntervalSinceReferenceDate
+        let completionTime = command.completionTime?.timeIntervalSinceReferenceDate
+
+        return try databaseQueue.write { database in
+            let duplicateCount = try Int.fetchOne(
+                database,
+                sql: """
+                SELECT COUNT(*)
+                FROM processing_jobs
+                WHERE storageID = ? OR id = ?
+                """,
+                arguments: [storageID, command.id.uuidString.lowercased()]
+            ) ?? 0
+            guard duplicateCount == 0 else {
+                throw LibraryRepositoryError.processingJobAlreadyExists(
+                    reference: command.id.uuidString.lowercased()
+                )
+            }
+
+            let recordingStorageID: String?
+            if let reference = command.recordingReference {
+                let normalizedReference = try Self.normalizedReference(reference)
+                let rows = try Self.fetchRecordingRows(
+                    for: normalizedReference,
+                    in: database
+                )
+                recordingStorageID = try Self.validateRecordingTarget(
+                    rows: rows,
+                    reference: normalizedReference,
+                    expectedLastModified: nil
+                ).storageID
+            } else {
+                recordingStorageID = nil
+            }
+
+            try database.execute(
+                sql: """
+                INSERT INTO processing_jobs (
+                    storageID, completionTime, engine, error, id, jobType,
+                    lastModified, modelName, progress, recordingName, recordingURL,
+                    recordingStorageID, startTime, status
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    storageID,
+                    completionTime,
+                    command.engine,
+                    command.error,
+                    command.id.uuidString.lowercased(),
+                    command.jobType,
+                    modifiedAt,
+                    command.modelName,
+                    command.progress,
+                    command.recordingName,
+                    command.recordingURL,
+                    recordingStorageID,
+                    startTime,
+                    command.status
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "create processing job",
+                    reason: "the processing-job row was not inserted"
+                )
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .processingJob,
+                storageID: storageID,
+                operation: .inserted,
+                at: command.modifiedAt
+            )
+            return try Self.fetchUpdatedProcessingJob(
+                storageID: storageID,
+                in: database
+            )
         }
     }
 
@@ -276,7 +370,7 @@ extension SQLiteLibraryStore {
         _ reference: LibraryRecordingReference
     ) throws -> LibraryRecordingReference {
         let storageID = reference.storageID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let legacyID = reference.legacyID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyID = canonicalLegacyID(reference.legacyID)
         guard storageID?.isEmpty == false || legacyID?.isEmpty == false else {
             throw LibraryRepositoryError.invalidCommand(
                 "recording reference must contain a storage ID or legacy ID"
@@ -292,7 +386,7 @@ extension SQLiteLibraryStore {
         _ reference: LibraryProcessingJobReference
     ) throws -> LibraryProcessingJobReference {
         let storageID = reference.storageID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let legacyID = reference.legacyID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyID = canonicalLegacyID(reference.legacyID)
         guard storageID?.isEmpty == false || legacyID?.isEmpty == false else {
             throw LibraryRepositoryError.invalidCommand(
                 "processing-job reference must contain a storage ID or legacy ID"
@@ -302,6 +396,21 @@ extension SQLiteLibraryStore {
             storageID: storageID?.isEmpty == false ? storageID : nil,
             legacyID: legacyID?.isEmpty == false ? legacyID : nil
         )
+    }
+
+    private static func processingJobStorageID(for id: UUID) -> String {
+        "sqlite-processingjob-\(id.uuidString.lowercased())"
+    }
+
+    private static func canonicalLegacyID(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        guard let uuid = UUID(uuidString: value) else {
+            return value
+        }
+        return uuid.uuidString.lowercased()
     }
 
     private static func fetchRecordingRows(

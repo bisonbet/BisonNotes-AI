@@ -402,6 +402,74 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func createProcessingJob(
+        _ command: LibraryProcessingJobCreateCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        try command.validate()
+        let context = context
+        return try context.performAndWait {
+            let duplicateRequest = Self.fetchRequest(entityName: "ProcessingJobEntry")
+            duplicateRequest.fetchLimit = 2
+            duplicateRequest.predicate = NSPredicate(
+                format: "id == %@",
+                command.id as CVarArg
+            )
+            guard try context.fetch(duplicateRequest).isEmpty else {
+                throw LibraryRepositoryError.processingJobAlreadyExists(
+                    reference: command.id.uuidString.lowercased()
+                )
+            }
+
+            let recording: NSManagedObject?
+            if let reference = command.recordingReference {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: reference)
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: reference.displayValue
+                    )
+                }
+                recording = matches[0]
+            } else {
+                recording = nil
+            }
+
+            let job = ProcessingJobEntry(context: context)
+            job.id = command.id
+            job.jobType = command.jobType
+            job.engine = command.engine
+            job.recordingURL = command.recordingURL
+            job.recordingName = command.recordingName
+            job.modelName = command.modelName
+            job.status = command.status
+            job.progress = command.progress
+            job.startTime = command.startTime
+            job.completionTime = command.completionTime
+            job.error = command.error
+            job.lastModified = command.modifiedAt
+            job.setValue(recording, forKey: "recording")
+
+            do {
+                try context.save()
+            } catch {
+                context.delete(job)
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "create processing job",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.processingJobSnapshot(from: job)
+        }
+    }
+
     func updateProcessingJob(
         _ command: LibraryProcessingJobUpdateCommand
     ) async throws -> LibraryProcessingJobSnapshot {

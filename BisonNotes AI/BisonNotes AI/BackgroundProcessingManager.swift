@@ -654,7 +654,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Ensure recording exists in Core Data (always use the original recording URL)
         let recordingId = await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
-        _ = try requiredRecordingID(recordingId, for: recordingURL)
+        let requiredRecordingId = try requiredRecordingID(recordingId, for: recordingURL)
 
         let job = ProcessingJob(
             type: .transcription(engine: engine),
@@ -668,7 +668,12 @@ class BackgroundProcessingManager: ObservableObject {
         )
 
         // For transcription jobs, check if we need to replace an existing job
-        await addTranscriptionJob(job)
+        try await addTranscriptionJob(
+            job,
+            recordingReference: LibraryRecordingReference(
+                legacyID: requiredRecordingId.uuidString
+            )
+        )
         await processNextJob()
     }
 
@@ -679,6 +684,8 @@ class BackgroundProcessingManager: ObservableObject {
         guard queuedCount < 20 else {
             throw BackgroundProcessingError.queueFull
         }
+
+        let recordingId = try resolveRecordingID(for: recordingURL)
 
         let job = ProcessingJob(
             type: .summarization(engine: engine),
@@ -702,7 +709,10 @@ class BackgroundProcessingManager: ObservableObject {
             return false
         }
 
-        await addJob(job)
+        try await addJob(
+            job,
+            recordingReference: LibraryRecordingReference(legacyID: recordingId.uuidString)
+        )
         await processNextJob()
         return job.id
     }
@@ -776,7 +786,14 @@ class BackgroundProcessingManager: ObservableObject {
 
     func trackExternalJob(_ job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("trackExternalJob: \(job.type.displayName) - activeJobs count before: \(activeJobs.count)", level: .debug)
-        await addJob(job)
+        do {
+            try await addJob(job)
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to persist external processing job \(job.id): \(error.localizedDescription)",
+                level: .error
+            )
+        }
         AppLog.shared.backgroundProcessing("trackExternalJob done: activeJobs count after: \(activeJobs.count)", level: .debug)
         objectWillChange.send()
     }
@@ -808,7 +825,10 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Private Job Management
 
-    private func addJob(_ job: ProcessingJob) async {
+    private func addJob(
+        _ job: ProcessingJob,
+        recordingReference: LibraryRecordingReference? = nil
+    ) async throws {
         // Check for existing jobs for the same recording to prevent duplicates
         let existingJobs = activeJobs.filter { existingJob in
             existingJob.recordingPath == job.recordingPath &&
@@ -822,25 +842,18 @@ class BackgroundProcessingManager: ObservableObject {
         }
         AppLog.shared.backgroundProcessing("addJob: adding \(job.type.displayName) id=\(job.id)", level: .debug)
 
-        // Create Core Data entry
-        let jobEntry = coreDataManager.createProcessingJob(
-            id: job.id,
-            jobType: job.type.displayName,
-            engine: getEngineString(from: job.type),
-            recordingURL: job.recordingURL,
-            recordingName: job.recordingName,
-            modelName: job.persistedModelNameValue
+        try await persistProcessingJobCreation(
+            job,
+            recordingReference: recordingReference
         )
-
-        // Update the job entry with initial status
-        jobEntry.status = job.status.displayName
-        jobEntry.progress = job.progress
-        coreDataManager.updateProcessingJob(jobEntry)
 
         activeJobs.append(job)
     }
 
-    private func addTranscriptionJob(_ job: ProcessingJob) async {
+    private func addTranscriptionJob(
+        _ job: ProcessingJob,
+        recordingReference: LibraryRecordingReference? = nil
+    ) async throws {
         // For transcription jobs, we want to allow reruns by replacing existing completed/failed jobs
         let existingJobs = activeJobs.filter { existingJob in
             existingJob.recordingPath == job.recordingPath &&
@@ -863,23 +876,44 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        // Create Core Data entry
-        let jobEntry = coreDataManager.createProcessingJob(
-            id: job.id,
-            jobType: job.type.displayName,
-            engine: getEngineString(from: job.type),
-            recordingURL: job.recordingURL,
-            recordingName: job.recordingName,
-            modelName: job.persistedModelNameValue
+        try await persistProcessingJobCreation(
+            job,
+            recordingReference: recordingReference
         )
-
-        // Update the job entry with initial status
-        jobEntry.status = job.status.displayName
-        jobEntry.progress = job.progress
-        coreDataManager.updateProcessingJob(jobEntry)
 
         activeJobs.append(job)
         AppLog.shared.backgroundProcessing("Added new transcription job (replacing existing job)")
+    }
+
+    private func persistProcessingJobCreation(
+        _ job: ProcessingJob,
+        recordingReference: LibraryRecordingReference?
+    ) async throws {
+        do {
+            _ = try await libraryRepository.createProcessingJob(
+                LibraryProcessingJobCreateCommand(
+                    id: job.id,
+                    jobType: job.type.displayName,
+                    engine: getEngineString(from: job.type),
+                    recordingURL: job.recordingPath,
+                    recordingName: job.recordingName,
+                    modelName: job.persistedModelNameValue,
+                    status: job.status.displayName,
+                    progress: job.progress,
+                    startTime: job.startTime,
+                    completionTime: job.completionTime,
+                    error: job.error,
+                    recordingReference: recordingReference
+                )
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to persist processing-job creation for \(job.id): "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
+            throw error
+        }
     }
 
     private func updateJob(_ updatedJob: ProcessingJob) async {
