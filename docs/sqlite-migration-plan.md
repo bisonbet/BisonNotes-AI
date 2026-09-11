@@ -20,7 +20,8 @@ transcript-upsert command with Core Data/SQLite adapters plus asynchronous
 production transcription callers, a summary-upsert command with Core
 Data/SQLite adapters plus asynchronous background and regeneration callers,
 and recording archive-state/archive-location commands with Core Data/SQLite
-adapters are implemented, but no SQLite migration is enabled**.
+adapters, plus shared maintenance-gate adoption by the production repository
+adapters, are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -170,6 +171,18 @@ copy files, acquire security-scoped bookmarks, restore audio or remove sources;
 `RecordingArchiveService` remains unwired until those operations have a
 durable receipt/order boundary. The macOS and iOS app-hosted build-for-testing
 checks pass, and the full host suite passes 89 tests. No repository backend is
+selected for production startup and no SQLite cutover is enabled.
+
+The current repository-gate adoption checkpoint is `431ff801` (`feat: gate
+repository access during maintenance`). `PersistenceController` now owns one
+shared `LibraryMaintenanceGate`; `AppDataCoordinator` and
+`BackgroundProcessingManager` pass it to their Core Data repository adapters,
+and the SQLite repository gates all `LibraryRepository` reads and commands.
+Its observation polling methods remain ungated so the source coordinator can
+poll while holding the exclusive lease. The standalone runtime suite passes
+90/90, and the macOS/iOS app-hosted build-for-testing checks pass. Direct
+managed-object and file-owning legacy callers still require separate
+conversion or an explicitly documented exclusion; no repository backend is
 selected for production startup and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
@@ -443,6 +456,13 @@ Completed in this slice:
   persistence uses the async transcript command, while background summarization
   and summary regeneration use the async summary command; host and app-hosted
   contract coverage exercises both adapters.
+- The repository adapters now share a controller-owned, cancellation-safe
+  maintenance gate in production construction paths. Repository-backed reads
+  and commands wait behind an exclusive source-capture/migration lease; the
+  SQLite observation cursor remains directly pollable inside that lease. This
+  closes the repository access race, but direct managed-object saves in legacy
+  recording, import, archive, settings, Watch/share and sync services remain
+  caller-by-caller work before a live migration can be enabled.
 - The durable observation boundary is now defined by `LibraryObservation`, with
   a global revision cursor and ordered `LibraryChange` values. SQLite schema v3
   adds `library_changes`; the SQLite adapter emits one change in the same
@@ -460,7 +480,9 @@ Completed in this slice:
   boundary now anchors a durable Core Data subscription and polls it on remote
   store changes and activation; history-retention/purge policy and the remaining
   recording, archive-location and file-owning repository write commands are
-  intentionally not implemented yet.
+  intentionally not implemented yet. Repository observation polling remains
+  outside the normal-access gate so an exclusive source lease cannot deadlock
+  while it validates the source revision.
 - The isolated migration coordinator now composes source validation, durable
   batch import, exact-source restart lookup, a blocking settings phase, durable
   cancellation pause, redacted failure checkpointing and closed-destination
@@ -507,8 +529,8 @@ Completed in this slice:
 Not yet implemented or closed:
 
 - Production coordinator/source/settings acquisition wiring beyond the
-  pre-cutover boundary, installation of the gate around every Core Data,
-  settings, Watch, share and background caller, and broader read/write
+  pre-cutover boundary, installation of the gate around every remaining direct
+  Core Data, settings, Watch, share and background caller, and broader read/write
   repository contracts (including recording creation/deletion, production
   archive-location caller/order and file-owning operations) and app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
@@ -519,8 +541,8 @@ Not yet implemented or closed:
   marks the known nonterminal set in memory before startup work, persists it in
   one adapter transaction, skips missing/already-terminal rows and is safe to
   retry. Broader maintenance-gate adoption and production startup wiring remain
-  open before the maintenance gate can claim complete background-caller
-  coverage.
+  open before the maintenance gate can claim complete direct-background-caller
+  coverage; repository-backed background paths now wait behind the shared gate.
 - Coordinator policy for when to persist recovery reports and how to present
   them to a user; the current report API is explicit and intentionally not
   wired to app startup or a live migration.
@@ -537,8 +559,10 @@ Not yet implemented or closed:
 
 The next safe work package is to expand the remaining metadata commands while
 converting additional non-startup callers behind the Core Data adapter with
-shared behavior tests,
-then audit and install the maintenance gate around every source mutation. In
+shared behavior tests, then audit and install the maintenance gate around every
+remaining direct source mutation. The repository-backed production paths now
+share the gate; direct managed-object, settings, Watch/share and sync callers
+still need conversion or an explicit safe exclusion. In
 parallel, select the final production roots and connect the media worker,
 receipt boundary, retention executor and bounded reconciler to
 Watch/share/background callers without allowing them into first-boot activation
