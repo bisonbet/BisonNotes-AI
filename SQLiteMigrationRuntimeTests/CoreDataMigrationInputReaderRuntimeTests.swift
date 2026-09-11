@@ -26,6 +26,7 @@ final class CoreDataMigrationInputReaderRuntimeTests: XCTestCase {
         defaults.set("MLX Swift", forKey: "SelectedAIEngine")
         defaults.set(" https://example.com/v1/// ", forKey: "openAICompatibleBaseURL")
         defaults.set("do-not-copy", forKey: "openAIAPIKey")
+        let maintenanceGate = LibraryMaintenanceGate()
         let reader = CoreDataMigrationInputReader(
             container: container,
             defaults: defaults,
@@ -59,7 +60,8 @@ final class CoreDataMigrationInputReaderRuntimeTests: XCTestCase {
                 supportsMLX: true,
                 supportedMLXModelIDs: ["small-model"],
                 preferredMLXModelID: "small-model"
-            )
+            ),
+            maintenanceGate: maintenanceGate
         )
         XCTAssertEqual(
             normalizedInput.settings.values["SelectedAIEngine"],
@@ -73,6 +75,8 @@ final class CoreDataMigrationInputReaderRuntimeTests: XCTestCase {
             normalizedInput.settings.values["openAICompatibleBaseURL"],
             .string("https://example.com/v1")
         )
+        let maintenanceStatus = await maintenanceGate.status()
+        XCTAssertEqual(maintenanceStatus.maintenanceActive, false)
     }
 
     private func makeContainer(at storeURL: URL) throws -> NSPersistentContainer {

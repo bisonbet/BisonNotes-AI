@@ -91,6 +91,22 @@ final class CoreDataMigrationInputReader: @unchecked Sendable {
         )
     }
 
+    /// Captures the normalized source while holding the exclusive maintenance
+    /// lease. This is the source-backed coordination boundary; the reader
+    /// still does not write Core Data, UserDefaults, or the destination store.
+    func snapshot(
+        sourceKeys: [String],
+        normalizationContext: LibrarySettingsNormalizationContext,
+        maintenanceGate: LibraryMaintenanceGate
+    ) async throws -> CoreDataMigrationInputSnapshot {
+        try await maintenanceGate.withExclusiveMaintenance { [self] in
+            try await snapshot(
+                sourceKeys: sourceKeys,
+                normalizationContext: normalizationContext
+            )
+        }
+    }
+
     /// Captures the reviewed main application defaults domain.
     ///
     /// The explicit overload remains available for fixture isolation and
