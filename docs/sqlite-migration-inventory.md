@@ -7,6 +7,7 @@ Current observation-subscription checkpoint: `33bdc7ed`.
 Current startup-boundary checkpoint: `1669066e`.
 Current maintenance-gate checkpoint: `69074da5`.
 Current source-coordinator checkpoint: `1787855e`.
+Current metadata-caller checkpoint: `e115ccbc`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -391,10 +392,12 @@ source adapter, the SQLite schema-v2 settings table/adapter, and a recording-
 rename command with explicit revision and error behavior. Contract coverage
 imports the synthetic snapshot into SQLite, reads the active Core Data fixture,
 round-trips typed settings and checks stale rename rejection. The
-display-name-only `AudioPlayerView` caller uses the Core Data adapter; the AI
-file-renaming workflow remains on its existing path until file operations have
-a journaled command. Neither backend is wired to startup or user-data
-migration.
+display-name-only `AudioPlayerView`, `SummaryDetailView`,
+`EditableTranscriptView` and summary-regeneration callers use the Core Data
+adapter. The remaining background-manager metadata write and AI file-renaming
+workflow remain on their existing paths until their surrounding lifecycle and
+file operations have repository commands. Neither backend is wired to startup
+or user-data migration.
 The durable media-operation checkpoint `44515c52` adds transactional asset and
 file-operation enqueueing, root-relative path validation, streaming checksum/
 length verification, atomic partial-file publication, non-overwriting conflict
@@ -506,7 +509,7 @@ resolved.
 | Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations before recording committed receipts and emits progress. Source retention remains an explicit follow-up. | Four host tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen and changed-destination refusal. Production scheduling and caller wiring remain open. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, dynamic legacy-key prefixes and CloudKit omissions. `LibrarySettingsNormalizer` provides pure target-platform normalization before final catalog validation, while `SQLiteMigrationStartupBoundary` captures that result without source writes. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key and source-list drift, require the exact source inventory/catalog match, exercise normalization and prove unrelated defaults are untouched. The app-hosted source-drift/no-write boundary tests are compile-checked. |
-| Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView` caller uses the Core Data adapter; file-owning AI rename remains outside this command pending a journaled file boundary. |
+| Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration callers use the Core Data adapter. The remaining background-manager write and file-owning AI rename stay outside this command pending lifecycle/file-operation boundaries. |
 | Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/settings events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. | Host tests reject negative/ahead cursors, verify exact rename events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, and exercise subscription across a commit and cancellation. The app-hosted startup boundary is compile-checked; history retention/purge policy and the remaining write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
