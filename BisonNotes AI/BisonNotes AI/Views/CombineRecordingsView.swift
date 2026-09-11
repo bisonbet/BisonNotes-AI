@@ -600,17 +600,25 @@ struct CombineRecordingsView: View {
 
     private func deleteOriginalRecordings() {
         // Delete the original recordings if they exist in Core Data
-        if let firstId = firstRecordingId {
-            appCoordinator.deleteRecording(id: firstId)
-        }
-        if let secondId = secondRecordingId {
-            appCoordinator.deleteRecording(id: secondId)
-        }
+        let recordingIDs = [firstRecordingId, secondRecordingId].compactMap { $0 }
+        Task { @MainActor in
+            for recordingID in recordingIDs {
+                do {
+                    try await appCoordinator.deleteRecordingUsingRepository(id: recordingID)
+                } catch {
+                    AppLog.shared.recording(
+                        "Failed to delete source recording after combine: \(error)",
+                        level: .error
+                    )
+                }
+            }
 
-        // Post notification to refresh views
-        NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+            // Post notification to refresh views after both metadata deletes
+            // have completed.
+            NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
 
-        dismiss()
+            dismiss()
+        }
     }
 
 }

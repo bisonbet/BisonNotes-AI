@@ -1393,8 +1393,17 @@ struct RecordingsListView: View {
             return
         }
 
-        appCoordinator.deleteRecording(id: recordingId)
-        loadRecordings()
+        Task { @MainActor in
+            do {
+                try await appCoordinator.deleteRecordingUsingRepository(id: recordingId)
+                loadRecordings()
+            } catch {
+                AppLog.shared.recording(
+                    "Failed to delete recording metadata: \(error)",
+                    level: .error
+                )
+            }
+        }
     }
 
     private func deleteRecordingWithRelationships(_ recording: AudioRecordingFile, preserveSummary: Bool) async {

@@ -489,7 +489,7 @@ final class EnhancedFileManager: ObservableObject {
             await updateFileRelationships(for: normalizedURL, relationships: updatedRelationships)
         } else {
             // Delete everything (recording, transcript, and summary)
-            appCoordinator.deleteRecording(id: recordingId)
+            try await appCoordinator.deleteRecordingUsingRepository(id: recordingId)
             guard appCoordinator.getRecording(id: recordingId) == nil else {
                 throw FileManagementError.deletionFailed("Recording persistence still contains the deleted entry")
             }

@@ -284,6 +284,23 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
         return identifier(from: related.value(forKey: "id"))
     }
 
+    private static func relatedUUID(
+        from object: NSManagedObject,
+        relationship: String
+    ) -> UUID? {
+        (object.value(forKey: relationship) as? NSManagedObject)?.value(forKey: "id") as? UUID
+    }
+
+    private static func requiredUUID(
+        from object: NSManagedObject,
+        entity: String
+    ) throws -> UUID {
+        guard let id = object.value(forKey: "id") as? UUID else {
+            throw LibraryRepositoryError.invalidRecord(entity: entity, field: "id")
+        }
+        return id
+    }
+
     private static func identifier(from value: Any?) -> String? {
         if let uuid = value as? UUID {
             return uuid.uuidString.lowercased()
@@ -427,6 +444,127 @@ extension CoreDataLibraryRepository {
                         reason: error.localizedDescription
                     )
                 }
+            }
+        }
+    }
+
+    func deleteRecording(
+        _ command: LibraryRecordingDeleteCommand
+    ) async throws {
+        try command.validate()
+        let summaryIDs = try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let recordings = try context.fetch(request)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = recordings[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "RecordingEntry",
+                        field: "id"
+                    )
+                }
+
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.predicate = NSPredicate(
+                    format: "recordingId == %@ OR recording.id == %@",
+                    recordingID as CVarArg,
+                    recordingID as CVarArg
+                )
+                let summaries = try context.fetch(summaryRequest)
+                let summaryIDs = try summaries.map { summary -> UUID in
+                    guard let summaryID = summary.value(forKey: "id") as? UUID else {
+                        throw LibraryRepositoryError.invalidRecord(
+                            entity: "SummaryEntry",
+                            field: "id"
+                        )
+                    }
+                    return summaryID
+                }
+
+                if command.enqueueCloudDeletion {
+                    try PendingCloudMutationStore.remove(
+                        kind: .importedAudioRemoval,
+                        targetId: recordingID,
+                        from: context
+                    )
+                    try PendingCloudMutationStore.enqueue(
+                        PendingCloudMutation(
+                            kind: .recordingDeletion,
+                            targetId: recordingID,
+                            transcriptIds: [
+                                recording.value(forKey: "transcriptId") as? UUID
+                                    ?? Self.relatedUUID(from: recording, relationship: "transcript")
+                            ].compactMap { $0 },
+                            summaryIds: [
+                                recording.value(forKey: "summaryId") as? UUID
+                                    ?? Self.relatedUUID(from: recording, relationship: "summary")
+                            ].compactMap { $0 },
+                            requestedAt: command.requestedAt
+                        ),
+                        in: context
+                    )
+                    for summary in summaries {
+                        try PendingCloudMutationStore.enqueue(
+                            PendingCloudMutation(
+                                kind: .summaryRemoval,
+                                targetId: try Self.requiredUUID(
+                                    from: summary,
+                                    entity: "SummaryEntry"
+                                ),
+                                recordingId: (summary.value(forKey: "recordingId") as? UUID)
+                                    ?? Self.relatedUUID(from: summary, relationship: "recording"),
+                                requestedAt: command.requestedAt
+                            ),
+                            in: context
+                        )
+                    }
+                }
+
+                context.delete(recording)
+                do {
+                    try context.save()
+                } catch {
+                    context.rollback()
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete recording",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return summaryIDs
+            }
+        }
+
+        // Attachment directories are not part of the Core Data transaction. Keep
+        // their existing post-commit cleanup, but never let a cleanup failure
+        // turn a successfully committed metadata delete into a retryable write.
+        await MainActor.run {
+            for summaryID in summaryIDs {
+                try? SummaryAttachmentStore.shared.deleteAll(for: summaryID)
             }
         }
     }

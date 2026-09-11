@@ -535,6 +535,40 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
+    /// Deletes a whole recording through the storage-neutral repository.
+    ///
+    /// The caller remains responsible for any audio file operation. The
+    /// repository transaction owns metadata, attachment cleanup and the
+    /// durable CloudKit deletion intent; an unavailable CloudKit account or a
+    /// transient network failure leaves that intent queued for retry, matching
+    /// the legacy coordinator behavior.
+    func deleteRecordingUsingRepository(
+        id: UUID,
+        enqueueCloudDeletion: Bool = true,
+        requestedAt: Date = Date()
+    ) async throws {
+        try await libraryRepository.deleteRecording(
+            LibraryRecordingDeleteCommand(
+                reference: LibraryRecordingReference(legacyID: id.uuidString),
+                requestedAt: requestedAt,
+                enqueueCloudDeletion: enqueueCloudDeletion
+            )
+        )
+
+        if enqueueCloudDeletion {
+            let iCloudManager = SummaryManager.shared.getiCloudManager()
+            do {
+                try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
+            } catch {
+                AppLog.shared.coreData(
+                    "Deleted local recording and queued iCloud deletion marker for retry: \(error)",
+                    level: .error
+                )
+            }
+        }
+        objectWillChange.send()
+    }
+
     /// Deletes only a transcript. The recording, audio, and any summary remain, while
     /// the transcript's cloud tombstone is retained until iCloud accepts it.
     func deleteTranscript(id: UUID) async throws {

@@ -200,6 +200,126 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         )
     }
 
+    func testRepositoryDeletesRecordingGraphAndQueuesCloudRemovalIntents() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let graph = try await createRecordingGraph(using: repository)
+
+        try await repository.deleteRecording(
+            LibraryRecordingDeleteCommand(
+                reference: LibraryRecordingReference(storageID: graph.recording.storageID),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 200)
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertTrue(recordings.isEmpty)
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertTrue(summaries.isEmpty)
+        XCTAssertTrue(processingJobs.isEmpty)
+
+        // Archive locations remain owned by the separate archive lifecycle until
+        // that command has a repository boundary of its own.
+        let archiveLocations = try await repository.fetchArchiveLocationSnapshots()
+        XCTAssertEqual(archiveLocations.count, 1)
+        XCTAssertEqual(
+            archiveLocations[0].recordingLegacyID,
+            graph.recording.legacyID
+        )
+
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let recordingDeletion = try XCTUnwrap(
+            pendingMutations.first { $0.kind == "recordingDeletion" }
+        )
+        let summaryRemoval = try XCTUnwrap(
+            pendingMutations.first { $0.kind == "summaryRemoval" }
+        )
+        XCTAssertNil(pendingMutations.first { $0.kind == "importedAudioRemoval" })
+        XCTAssertEqual(recordingDeletion.targetID, graph.recording.legacyID)
+        XCTAssertEqual(
+            recordingDeletion.requestedAt,
+            Date(timeIntervalSinceReferenceDate: 200)
+        )
+        XCTAssertEqual(summaryRemoval.targetID, graph.summaryID.uuidString.lowercased())
+        XCTAssertEqual(
+            summaryRemoval.recordingLegacyID,
+            graph.recording.legacyID
+        )
+
+        struct DeletionPayload: Decodable {
+            let transcriptIds: [String]
+            let summaryIds: [String]
+        }
+        let payload = try JSONDecoder().decode(
+            DeletionPayload.self,
+            from: try XCTUnwrap(recordingDeletion.payload)
+        )
+        XCTAssertEqual(
+            Set(payload.transcriptIds),
+            [graph.transcriptID.uuidString.lowercased()]
+        )
+        XCTAssertEqual(
+            Set(payload.summaryIds),
+            [graph.summaryID.uuidString.lowercased()]
+        )
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(
+            changes.filter { $0.entity == .transcript && $0.operation == .deleted }.count,
+            1
+        )
+        XCTAssertEqual(
+            changes.filter { $0.entity == .summary && $0.operation == .deleted }.count,
+            1
+        )
+        XCTAssertEqual(
+            changes.filter { $0.entity == .processingJob && $0.operation == .deleted }.count,
+            1
+        )
+        XCTAssertEqual(
+            changes.filter { $0.entity == .recording && $0.operation == .deleted }.count,
+            1
+        )
+    }
+
+    func testRepositoryAppliesRecordingDeleteLocallyWithoutRaisingCloudIntent() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let graph = try await createRecordingGraph(using: repository)
+
+        try await repository.deleteRecording(
+            LibraryRecordingDeleteCommand(
+                reference: LibraryRecordingReference(legacyID: graph.recording.legacyID),
+                requestedAt: Date(timeIntervalSinceReferenceDate: 201),
+                enqueueCloudDeletion: false
+            )
+        )
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        let processingJobs = try await repository.fetchProcessingJobSnapshots()
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertTrue(recordings.isEmpty)
+        XCTAssertTrue(transcripts.isEmpty)
+        XCTAssertTrue(summaries.isEmpty)
+        XCTAssertTrue(processingJobs.isEmpty)
+        XCTAssertTrue(pendingMutations.isEmpty)
+    }
+
     func testRepositoryRefusesToDiscardRecordingWithDependentMetadata() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -1152,6 +1272,108 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(persistedRecordings.first?.name, "Fixture recording")
         let revisionAfterRejectedRename = try await repository.currentRevision()
         XCTAssertEqual(revisionAfterRejectedRename, 0)
+    }
+
+    private func createRecordingGraph(
+        using repository: SQLiteLibraryRepository
+    ) async throws -> (
+        recording: LibraryRecordingSnapshot,
+        transcriptID: UUID,
+        summaryID: UUID,
+        jobID: UUID,
+        archiveLocationID: UUID
+    ) {
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000001")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000002")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000003")
+        )
+        let jobID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000004")
+        )
+        let archiveLocationID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000005")
+        )
+
+        let recording = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "recording.m4a",
+                name: "Delete graph",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                createdAt: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 12,
+                fileSize: 512,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+        _ = try await repository.upsertTranscript(
+            LibraryTranscriptUpsertCommand(
+                id: transcriptID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: recording.storageID
+                ),
+                createdAt: Date(timeIntervalSinceReferenceDate: 102),
+                segments: "[{\"text\":\"delete me\"}]",
+                engine: "fixture-engine",
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 103)
+            )
+        )
+        _ = try await repository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: summaryID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: recording.storageID
+                ),
+                transcriptID: transcriptID,
+                summary: "This is a sufficiently long summary for deletion testing.",
+                aiMethod: "fixture-model",
+                generatedAt: Date(timeIntervalSinceReferenceDate: 104),
+                wordCount: 8,
+                originalLength: 20
+            )
+        )
+        _ = try await repository.createProcessingJob(
+            LibraryProcessingJobCreateCommand(
+                id: jobID,
+                jobType: "transcription",
+                engine: "fixture-engine",
+                recordingURL: "recording.m4a",
+                recordingName: "Delete graph",
+                modelName: "fixture-model",
+                status: "complete",
+                progress: 1,
+                startTime: Date(timeIntervalSinceReferenceDate: 106),
+                recordingReference: LibraryRecordingReference(
+                    storageID: recording.storageID
+                ),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 107)
+            )
+        )
+        _ = try await repository.upsertArchiveLocation(
+            LibraryArchiveLocationUpsertCommand(
+                id: archiveLocationID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: recording.storageID
+                ),
+                bookmarkData: Data([1]),
+                destinationURLString: "file:///tmp/delete-graph.m4a",
+                displayName: "Delete graph archive",
+                exportedAt: Date(timeIntervalSinceReferenceDate: 108),
+                exportedFilename: "delete-graph.m4a",
+                fileSize: 512,
+                lastVerifiedAt: Date(timeIntervalSinceReferenceDate: 109),
+                providerDisplayName: "fixture-provider",
+                status: "verified",
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 110)
+            )
+        )
+
+        return (recording, transcriptID, summaryID, jobID, archiveLocationID)
     }
 
     private func expectedTranscript() -> LibraryTranscriptSnapshot {

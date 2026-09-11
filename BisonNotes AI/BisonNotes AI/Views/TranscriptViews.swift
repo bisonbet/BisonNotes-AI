@@ -1470,7 +1470,7 @@ struct TranscriptsView: View {
 
         do {
             if shouldDeleteImportedRecording {
-                appCoordinator.deleteRecording(id: request.recordingId)
+                try await appCoordinator.deleteRecordingUsingRepository(id: request.recordingId)
                 AppLog.shared.transcription("Deleted imported transcript and its recording entry")
             } else if request.imported {
                 try await appCoordinator.deleteImportedTranscriptPreservingSummary(

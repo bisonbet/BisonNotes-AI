@@ -209,6 +209,43 @@ extension LibraryRecordingDiscardCommand {
     }
 }
 
+/// Deletes a recording and its locally owned metadata.
+///
+/// A user delete is deliberately broader than `LibraryRecordingDiscardCommand`:
+/// it preserves the existing CloudKit outbox contract, including the child
+/// identities needed to remove the cloud content. Applying a tombstone received
+/// from another device sets `enqueueCloudDeletion` to false so the local delete
+/// does not publish the same intent again.
+struct LibraryRecordingDeleteCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let expectedLastModified: Date?
+    let requestedAt: Date
+    let enqueueCloudDeletion: Bool
+
+    init(
+        reference: LibraryRecordingReference,
+        expectedLastModified: Date? = nil,
+        requestedAt: Date = Date(),
+        enqueueCloudDeletion: Bool = true
+    ) {
+        self.reference = reference
+        self.expectedLastModified = expectedLastModified
+        self.requestedAt = requestedAt
+        self.enqueueCloudDeletion = enqueueCloudDeletion
+    }
+}
+
+extension LibraryRecordingDeleteCommand {
+    func validate() throws {
+        let dates = [requestedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "delete dates must be finite"
+            )
+        }
+    }
+}
+
 /// The first write command shared by the Core Data and SQLite adapters.
 ///
 /// `expectedLastModified` is an optimistic-concurrency guard. A nil value
@@ -998,6 +1035,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryRecordingSnapshot
     func discardRecording(
         _ command: LibraryRecordingDiscardCommand
+    ) async throws
+    func deleteRecording(
+        _ command: LibraryRecordingDeleteCommand
     ) async throws
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(

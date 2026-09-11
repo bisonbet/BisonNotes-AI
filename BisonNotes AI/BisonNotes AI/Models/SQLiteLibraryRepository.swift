@@ -1,6 +1,11 @@
 import Foundation
 import GRDB
 
+private struct SQLiteRecordingDeletionPayload: Codable {
+    let transcriptIds: [String]
+    let summaryIds: [String]
+}
+
 /// Read-only repository adapter for the app-owned SQLite generation.
 ///
 /// This adapter is intentionally not connected to production app startup yet.
@@ -75,6 +80,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws {
         try await withNormalAccess { [store] in
             try await store.discardRecording(command)
+        }
+    }
+
+    func deleteRecording(
+        _ command: LibraryRecordingDeleteCommand
+    ) async throws {
+        try await withNormalAccess { [store] in
+            try await store.deleteRecording(command)
         }
     }
 
@@ -175,6 +188,10 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
 
 extension SQLiteLibraryStore {
     private static let localOnlyRemovalKind = "localOnlyRemoval"
+    private static let recordingDeletionKind = "recordingDeletion"
+    private static let summaryRemovalKind = "summaryRemoval"
+    private static let importedAudioRemovalKind = "importedAudioRemoval"
+    private static let pendingMutationPayloadVersion: Int64 = 1
 
     func createRecording(
         _ command: LibraryRecordingCreateCommand
@@ -328,6 +345,171 @@ extension SQLiteLibraryStore {
                 operation: .deleted,
                 at: command.discardedAt
             )
+        }
+    }
+
+    func deleteRecording(
+        _ command: LibraryRecordingDeleteCommand
+    ) throws {
+        try command.validate()
+        let reference = try Self.normalizedReference(command.reference)
+        let requestedAt = command.requestedAt.timeIntervalSinceReferenceDate
+
+        try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+            guard let legacyID = current.legacyID,
+                  !legacyID.isEmpty else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "recordings",
+                    field: "id"
+                )
+            }
+
+            let transcriptRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id
+                FROM transcripts
+                WHERE recordingStorageID = ? OR lower(recordingId) = lower(?)
+                ORDER BY storageID
+                """,
+                arguments: [current.storageID, legacyID]
+            )
+            let summaryRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id
+                FROM summaries
+                WHERE recordingStorageID = ? OR lower(recordingId) = lower(?)
+                ORDER BY storageID
+                """,
+                arguments: [current.storageID, legacyID]
+            )
+            let processingJobRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID
+                FROM processing_jobs
+                WHERE recordingStorageID = ?
+                ORDER BY storageID
+                """,
+                arguments: [current.storageID]
+            )
+
+            let transcriptIDs = try transcriptRows.map {
+                try Self.requiredLegacyID(from: $0, entity: "transcripts")
+            }
+            let summaryIDs = try summaryRows.map {
+                try Self.requiredLegacyID(from: $0, entity: "summaries")
+            }
+            let transcriptStorageIDs = try transcriptRows.map {
+                try Self.requiredStorageID(from: $0, entity: "transcripts")
+            }
+            let summaryStorageIDs = try summaryRows.map {
+                try Self.requiredStorageID(from: $0, entity: "summaries")
+            }
+
+            if command.enqueueCloudDeletion {
+                try Self.removePendingMutations(
+                    kind: Self.importedAudioRemovalKind,
+                    targetID: legacyID,
+                    in: database,
+                    committedAt: command.requestedAt
+                )
+                try Self.enqueueRecordingDeletionMutation(
+                    recordingStorageID: current.storageID,
+                    recordingID: legacyID,
+                    transcriptIDs: transcriptIDs,
+                    summaryIDs: summaryIDs,
+                    requestedAt: requestedAt,
+                    in: database,
+                    committedAt: command.requestedAt
+                )
+                for (summaryRow, summaryID) in zip(summaryRows, summaryIDs) {
+                    try Self.enqueueSummaryRemovalMutation(
+                        summaryStorageID: try Self.requiredStorageID(
+                            from: summaryRow,
+                            entity: "summaries"
+                        ),
+                        summaryID: summaryID,
+                        recordingID: legacyID,
+                        requestedAt: requestedAt,
+                        in: database,
+                        committedAt: command.requestedAt
+                    )
+                }
+            }
+
+            // Core Data's transcript relationship is nullifying. Apply that
+            // behavior explicitly before SQLite's restrictive foreign key can
+            // reject the parent delete if a retained summary references one of
+            // these transcript rows.
+            try Self.clearRetainedTranscriptReferences(
+                transcriptStorageIDs: Set(transcriptStorageIDs),
+                transcriptIDs: Set(transcriptIDs.map(Self.normalizedID)),
+                deletedSummaryStorageIDs: Set(summaryStorageIDs),
+                in: database,
+                committedAt: command.requestedAt
+            )
+
+            for storageID in summaryStorageIDs {
+                try Self.deleteRow(
+                    table: "summaries",
+                    storageID: storageID,
+                    entity: .summary,
+                    operation: "delete recording",
+                    at: command.requestedAt,
+                    in: database
+                )
+            }
+            for storageID in transcriptStorageIDs {
+                try Self.deleteRow(
+                    table: "transcripts",
+                    storageID: storageID,
+                    entity: .transcript,
+                    operation: "delete recording",
+                    at: command.requestedAt,
+                    in: database
+                )
+            }
+            for row in processingJobRows {
+                let storageID = try Self.requiredStorageID(
+                    from: row,
+                    entity: "processing_jobs"
+                )
+                try Self.deleteRow(
+                    table: "processing_jobs",
+                    storageID: storageID,
+                    entity: .processingJob,
+                    operation: "delete recording",
+                    at: command.requestedAt,
+                    in: database
+                )
+            }
+
+            try database.execute(
+                sql: "DELETE FROM recordings WHERE storageID = ?",
+                arguments: [current.storageID]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete recording",
+                    reason: "the recording row was not deleted"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .deleted,
+                at: command.requestedAt
+            )
+
         }
     }
 
@@ -1463,7 +1645,7 @@ extension SQLiteLibraryStore {
         let columns = """
             storageID, id, recordingName, recordingDate, duration,
             fileSize, recordingURL, isArchived, archivedAt, archiveNote,
-            isCloudSyncDisabled, lastModified
+            isCloudSyncDisabled, lastModified, summaryId, transcriptId
             """
         if let storageID = reference.storageID {
             return try Row.fetchAll(
@@ -1562,6 +1744,412 @@ extension SQLiteLibraryStore {
             )
         }
         return current
+    }
+
+    private static func requiredStorageID(
+        from row: Row,
+        entity: String
+    ) throws -> String {
+        guard let storageID: String = row["storageID"], !storageID.isEmpty else {
+            throw LibraryRepositoryError.invalidRecord(entity: entity, field: "storageID")
+        }
+        return storageID
+    }
+
+    private static func requiredLegacyID(
+        from row: Row,
+        entity: String
+    ) throws -> String {
+        guard let legacyID: String = row["id"], !legacyID.isEmpty else {
+            throw LibraryRepositoryError.invalidRecord(entity: entity, field: "id")
+        }
+        return legacyID
+    }
+
+    private static func normalizedID(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func pendingMutationRows(
+        kind: String,
+        targetID: String,
+        in database: Database
+    ) throws -> [Row] {
+        try Row.fetchAll(
+            database,
+            sql: """
+            SELECT storageID, payload, recordingId, requestedAt, targetId, version
+            FROM pending_cloud_mutations
+            WHERE kind = ? AND lower(targetId) = lower(?)
+            ORDER BY requestedAt IS NULL, requestedAt, storageID
+            """,
+            arguments: [kind, targetID]
+        )
+    }
+
+    private static func encodeRecordingDeletionPayload(
+        transcriptIDs: [String],
+        summaryIDs: [String]
+    ) throws -> Data {
+        do {
+            return try JSONEncoder().encode(
+                SQLiteRecordingDeletionPayload(
+                    transcriptIds: Array(Set(transcriptIDs.map(Self.normalizedID))).sorted(),
+                    summaryIds: Array(Set(summaryIDs.map(Self.normalizedID))).sorted()
+                )
+            )
+        } catch {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "delete recording",
+                reason: "the recording deletion payload could not be encoded"
+            )
+        }
+    }
+
+    private static func decodeRecordingDeletionPayload(
+        from data: Data?
+    ) throws -> SQLiteRecordingDeletionPayload {
+        guard let data else {
+            return SQLiteRecordingDeletionPayload(transcriptIds: [], summaryIds: [])
+        }
+        do {
+            return try JSONDecoder().decode(SQLiteRecordingDeletionPayload.self, from: data)
+        } catch {
+            throw LibraryRepositoryError.invalidRecord(
+                entity: "pending_cloud_mutations",
+                field: "payload"
+            )
+        }
+    }
+
+    private static func enqueueRecordingDeletionMutation(
+        recordingStorageID: String,
+        recordingID: String,
+        transcriptIDs: [String],
+        summaryIDs: [String],
+        requestedAt: Double,
+        in database: Database,
+        committedAt: Date
+    ) throws {
+        let rows = try pendingMutationRows(
+            kind: recordingDeletionKind,
+            targetID: recordingID,
+            in: database
+        )
+        let payloadData: Data
+        if let canonicalRow = rows.first {
+            let canonicalStorageID = try requiredStorageID(
+                from: canonicalRow,
+                entity: "pending_cloud_mutations"
+            )
+            guard let version: Int64 = canonicalRow["version"],
+                  version == pendingMutationPayloadVersion else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "pending_cloud_mutations",
+                    field: "version"
+                )
+            }
+            let existingPayload = try decodeRecordingDeletionPayload(
+                from: canonicalRow["payload"]
+            )
+            payloadData = try encodeRecordingDeletionPayload(
+                transcriptIDs: existingPayload.transcriptIds + transcriptIDs,
+                summaryIDs: existingPayload.summaryIds + summaryIDs
+            )
+            let existingRequestedAt: Double? = canonicalRow["requestedAt"]
+            let mergedRequestedAt = min(existingRequestedAt ?? requestedAt, requestedAt)
+
+            try database.execute(
+                sql: """
+                UPDATE pending_cloud_mutations
+                SET payload = ?, recordingId = ?, requestedAt = ?, version = ?
+                WHERE storageID = ?
+                """,
+                arguments: [
+                    payloadData,
+                    nil,
+                    mergedRequestedAt,
+                    pendingMutationPayloadVersion,
+                    canonicalStorageID
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete recording",
+                    reason: "the recording deletion marker was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .pendingCloudMutation,
+                storageID: canonicalStorageID,
+                operation: .updated,
+                at: committedAt
+            )
+
+            for duplicateRow in rows.dropFirst() {
+                try deletePendingMutationRow(
+                    duplicateRow,
+                    operation: "delete recording",
+                    at: committedAt,
+                    in: database
+                )
+            }
+            return
+        }
+
+        payloadData = try encodeRecordingDeletionPayload(
+            transcriptIDs: transcriptIDs,
+            summaryIDs: summaryIDs
+        )
+        let storageID = "recording-deletion-\(recordingStorageID)"
+        try database.execute(
+            sql: """
+            INSERT INTO pending_cloud_mutations (
+                storageID, kind, payload, recordingId, requestedAt, targetId, version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            arguments: [
+                storageID,
+                recordingDeletionKind,
+                payloadData,
+                nil,
+                requestedAt,
+                recordingID,
+                pendingMutationPayloadVersion
+            ]
+        )
+        guard database.changesCount == 1 else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "delete recording",
+                reason: "the recording deletion marker was not inserted"
+            )
+        }
+        _ = try SQLiteLibraryStore.recordChange(
+            in: database,
+            entity: .pendingCloudMutation,
+            storageID: storageID,
+            operation: .inserted,
+            at: committedAt
+        )
+    }
+
+    private static func enqueueSummaryRemovalMutation(
+        summaryStorageID: String,
+        summaryID: String,
+        recordingID: String,
+        requestedAt: Double,
+        in database: Database,
+        committedAt: Date
+    ) throws {
+        let rows = try pendingMutationRows(
+            kind: summaryRemovalKind,
+            targetID: summaryID,
+            in: database
+        )
+        if let canonicalRow = rows.first {
+            let canonicalStorageID = try requiredStorageID(
+                from: canonicalRow,
+                entity: "pending_cloud_mutations"
+            )
+            guard let version: Int64 = canonicalRow["version"],
+                  version == pendingMutationPayloadVersion else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "pending_cloud_mutations",
+                    field: "version"
+                )
+            }
+            let existingRequestedAt: Double? = canonicalRow["requestedAt"]
+            let mergedRequestedAt = min(existingRequestedAt ?? requestedAt, requestedAt)
+            let existingRecordingID: String? = canonicalRow["recordingId"]
+            try database.execute(
+                sql: """
+                UPDATE pending_cloud_mutations
+                SET payload = ?, recordingId = ?, requestedAt = ?, version = ?
+                WHERE storageID = ?
+                """,
+                arguments: [
+                    nil,
+                    existingRecordingID ?? recordingID,
+                    mergedRequestedAt,
+                    pendingMutationPayloadVersion,
+                    canonicalStorageID
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete recording",
+                    reason: "the summary deletion marker was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .pendingCloudMutation,
+                storageID: canonicalStorageID,
+                operation: .updated,
+                at: committedAt
+            )
+            for duplicateRow in rows.dropFirst() {
+                try deletePendingMutationRow(
+                    duplicateRow,
+                    operation: "delete recording",
+                    at: committedAt,
+                    in: database
+                )
+            }
+            return
+        }
+
+        let storageID = "summary-removal-\(summaryStorageID)"
+        try database.execute(
+            sql: """
+            INSERT INTO pending_cloud_mutations (
+                storageID, kind, payload, recordingId, requestedAt, targetId, version
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            arguments: [
+                storageID,
+                summaryRemovalKind,
+                nil,
+                recordingID,
+                requestedAt,
+                summaryID,
+                pendingMutationPayloadVersion
+            ]
+        )
+        guard database.changesCount == 1 else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "delete recording",
+                reason: "the summary deletion marker was not inserted"
+            )
+        }
+        _ = try SQLiteLibraryStore.recordChange(
+            in: database,
+            entity: .pendingCloudMutation,
+            storageID: storageID,
+            operation: .inserted,
+            at: committedAt
+        )
+    }
+
+    private static func removePendingMutations(
+        kind: String,
+        targetID: String,
+        in database: Database,
+        committedAt: Date
+    ) throws {
+        for row in try pendingMutationRows(kind: kind, targetID: targetID, in: database) {
+            try deletePendingMutationRow(
+                row,
+                operation: "delete recording",
+                at: committedAt,
+                in: database
+            )
+        }
+    }
+
+    private static func deletePendingMutationRow(
+        _ row: Row,
+        operation: String,
+        at date: Date,
+        in database: Database
+    ) throws {
+        let storageID = try requiredStorageID(
+            from: row,
+            entity: "pending_cloud_mutations"
+        )
+        try database.execute(
+            sql: "DELETE FROM pending_cloud_mutations WHERE storageID = ?",
+            arguments: [storageID]
+        )
+        guard database.changesCount == 1 else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: operation,
+                reason: "a pending deletion marker was not removed"
+            )
+        }
+        _ = try SQLiteLibraryStore.recordChange(
+            in: database,
+            entity: .pendingCloudMutation,
+            storageID: storageID,
+            operation: .deleted,
+            at: date
+        )
+    }
+
+    private static func clearRetainedTranscriptReferences(
+        transcriptStorageIDs: Set<String>,
+        transcriptIDs: Set<String>,
+        deletedSummaryStorageIDs: Set<String>,
+        in database: Database,
+        committedAt: Date
+    ) throws {
+        guard !transcriptStorageIDs.isEmpty || !transcriptIDs.isEmpty else { return }
+        let rows = try Row.fetchAll(
+            database,
+            sql: "SELECT storageID, transcriptStorageID, transcriptId FROM summaries"
+        )
+        for row in rows {
+            let summaryStorageID = try requiredStorageID(from: row, entity: "summaries")
+            guard !deletedSummaryStorageIDs.contains(summaryStorageID) else { continue }
+            let transcriptStorageID: String? = row["transcriptStorageID"]
+            let transcriptID: String? = row["transcriptId"]
+            guard transcriptStorageID.map({ transcriptStorageIDs.contains($0) }) == true
+                    || transcriptID.map({ transcriptIDs.contains(Self.normalizedID($0)) }) == true else {
+                continue
+            }
+
+            try database.execute(
+                sql: """
+                UPDATE summaries
+                SET transcriptStorageID = ?, transcriptId = ?
+                WHERE storageID = ?
+                """,
+                arguments: [nil, nil, summaryStorageID]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "delete recording",
+                    reason: "a retained summary transcript link was not cleared"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .summary,
+                storageID: summaryStorageID,
+                operation: .updated,
+                at: committedAt
+            )
+        }
+    }
+
+    private static func deleteRow(
+        table: String,
+        storageID: String,
+        entity: LibraryChangeEntity,
+        operation: String,
+        at date: Date,
+        in database: Database
+    ) throws {
+        try database.execute(
+            sql: "DELETE FROM \(table) WHERE storageID = ?",
+            arguments: [storageID]
+        )
+        guard database.changesCount == 1 else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: operation,
+                reason: "the \(table) row was not deleted"
+            )
+        }
+        _ = try SQLiteLibraryStore.recordChange(
+            in: database,
+            entity: entity,
+            storageID: storageID,
+            operation: .deleted,
+            at: date
+        )
     }
 
     private static func upsertLocalOnlyMutation(
