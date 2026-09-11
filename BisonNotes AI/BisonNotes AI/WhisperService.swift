@@ -279,6 +279,7 @@ class WhisperService: ObservableObject {
         let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
         let chunks = chunkingResult.chunks
         var transcriptChunks: [TranscriptChunk] = []
+        var detectedLanguageCode: String?
         var chunkIndex = 0
         for audioChunk in chunks {
             await MainActor.run {
@@ -286,6 +287,7 @@ class WhisperService: ObservableObject {
                 self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
             }
             let result = try await performSingleTranscription(url: audioChunk.chunkURL, recordingId: recordingId)
+            detectedLanguageCode = detectedLanguageCode ?? result.languageCode
             // Wrap result in TranscriptChunk
             let transcriptChunk = TranscriptChunk(
                 chunkId: audioChunk.id,
@@ -323,7 +325,8 @@ class WhisperService: ObservableObject {
             processingTime: reassembly.reassemblyTime,
             chunkCount: chunks.count,
             success: true,
-            error: nil
+            error: nil,
+            languageCode: detectedLanguageCode
         )
     }
 
@@ -646,7 +649,10 @@ class WhisperService: ObservableObject {
             processingTime: 0.0, // We don't track this in the current implementation
             chunkCount: 1, // Single request for now
             success: true,
-            error: nil
+            error: nil,
+            // The server auto-detects the spoken language; carrying it forward
+            // lets optional transcript cleanup trust it instead of re-guessing.
+            languageCode: whisperResponse.language
         )
 
         await MainActor.run {
@@ -687,6 +693,7 @@ class WhisperService: ObservableObject {
             let chunkingResult = try await chunkingService.chunkAudioFile(url, for: .whisper)
             let chunks = chunkingResult.chunks
             var transcriptChunks: [TranscriptChunk] = []
+            var detectedLanguageCode: String?
             var chunkIndex = 0
             for audioChunk in chunks {
                 await MainActor.run {
@@ -694,6 +701,7 @@ class WhisperService: ObservableObject {
                     self.progress = 0.05 + 0.85 * (Double(chunkIndex) / Double(chunks.count))
                 }
                 let result = try await performSingleTranscription(url: audioChunk.chunkURL, recordingId: recordingId)
+                detectedLanguageCode = detectedLanguageCode ?? result.languageCode
                 // Wrap result in TranscriptChunk
                 let transcriptChunk = TranscriptChunk(
                     chunkId: audioChunk.id,
@@ -731,7 +739,8 @@ class WhisperService: ObservableObject {
                 processingTime: reassembly.reassemblyTime,
                 chunkCount: chunks.count,
                 success: true,
-                error: nil
+                error: nil,
+                languageCode: detectedLanguageCode
             )
         } else {
             // No chunking needed, use single file transcription directly

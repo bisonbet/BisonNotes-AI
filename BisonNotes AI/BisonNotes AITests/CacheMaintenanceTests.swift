@@ -494,6 +494,31 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertEqual(whenIdle.cloudKitAssetCount, 1)
     }
 
+    func testSweepYieldsBeforeDeletingWhenNewWorkArrives() async throws {
+        let root = try makeCachesRoot(hubRepos: [], installedModels: [])
+        let assets = root
+            .appendingPathComponent("CloudKit", isDirectory: true)
+            .appendingPathComponent("container", isDirectory: true)
+            .appendingPathComponent("Assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        let asset = assets.appendingPathComponent("asset0")
+        try Data(repeating: 0x65, count: 4_096).write(to: asset)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -60 * 60 * 48)],
+            ofItemAtPath: asset.path
+        )
+
+        let report = await CacheMaintenanceSweep(cachesRoot: root).run(
+            isDownloadInFlight: { false },
+            isCloudSyncActive: { false },
+            shouldYield: { true }
+        )
+
+        XCTAssertTrue(report.didYieldToActiveWork)
+        XCTAssertEqual(report.cloudKitAssetCount, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: asset.path))
+    }
+
     /// The sync gate skips what the sweep is looking at; it must not abandon the
     /// pass. This sweep is scheduled from launch and activation — the same moments
     /// that start a sync — so returning on the first busy check meant a device that

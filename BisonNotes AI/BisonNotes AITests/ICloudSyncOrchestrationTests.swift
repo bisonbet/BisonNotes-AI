@@ -31,6 +31,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         "iCloudLastSuccessfulRoutineSyncV1",
         "iCloudQuarantinedBackupRecordNamesV2",
         "iCloudQuarantinedLegacySummaryRecordNamesV2",
+        "iCloudLegacySummaryRecordsAbsentAtV2",
         "lastSyncDate"
     ]
 
@@ -62,10 +63,19 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             metricsSink: metrics
         )
         manager.networkStatus = .available
+        // The outbox is a Core Data table now, not a UserDefaults blob, so clearing
+        // it only reaches the store this manager is bound to. Bind it to the test
+        // store first: deletions made through `appCoordinator` queue their intent
+        // there via the shared manager, and clearing the default on-disk store
+        // instead left those rows behind for `bindPendingMutationContext` to copy
+        // into the next test's store, where the flush leg then wrote them out.
+        manager.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
         manager.clearPendingCloudMutationsForTesting()
     }
 
     override func tearDown() async throws {
+        // Bound to the test store in `setUp`, so this really does empty it rather
+        // than the process-wide default store.
         manager?.clearPendingCloudMutationsForTesting()
         // A retry armed by a deferred run holds the coordinator until it fires.
         manager?.cancelDeferredSyncRetry()
@@ -826,6 +836,524 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         return (recordingId, summaryId)
     }
 
+    /// The receiving device in an imported-audio deletion: it still holds the
+    /// placeholder file and a `recordingURL` pointing at it, because the delete
+    /// happened somewhere else.
+    private func createImportedRecordingHoldingAudio(
+        named name: String,
+        lastModified: Date? = nil
+    ) throws -> (recordingId: UUID, summaryId: UUID, audioURL: URL) {
+        let (recordingId, summaryId) = try createImportedRecordingWithSummary(named: name)
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let audioURL = tempDirectory.appendingPathComponent("\(recordingId.uuidString).m4a")
+        try Data("local imported placeholder".utf8).write(to: audioURL)
+        // An absolute path so `storedURLCandidates` resolves to the file this test
+        // wrote, rather than a same-named file in the real Documents directory.
+        recording.recordingURL = audioURL.path
+        if let lastModified {
+            recording.lastModified = lastModified
+        }
+        try appCoordinator.coreDataManager.saveContext()
+        return (recordingId, summaryId, audioURL)
+    }
+
+    private func withAudioBackupEnabled(_ body: () async throws -> Void) async rethrows {
+        let previous = UserDefaults.standard.object(forKey: "iCloudBackupIncludeAudioFiles")
+        UserDefaults.standard.set(true, forKey: "iCloudBackupIncludeAudioFiles")
+        defer {
+            if let previous {
+                UserDefaults.standard.set(previous, forKey: "iCloudBackupIncludeAudioFiles")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "iCloudBackupIncludeAudioFiles")
+            }
+        }
+        try await body()
+    }
+
+    /// The resurrection loop, end to end, from the receiving side.
+    ///
+    /// Device A deletes an imported item's temporary audio. That used to reach
+    /// CloudKit as a field clear and nothing else, so device B kept its
+    /// `recordingURL` and its placeholder — and because an absent `audioSignature`
+    /// is exactly what puts a recording into `recordingsNeedingAudioOnly`, B
+    /// re-uploaded the asset on its next pass and A restored the file it had just
+    /// deleted. B must now apply the tombstone and upload nothing.
+    func testImportedAudioTombstoneDropsThePlaceholderInsteadOfReUploadingIt() async throws {
+        let deletedAt = Date().addingTimeInterval(-600)
+        // A device that has not touched this recording since the delete: the restore
+        // leg stamped the cloud's own `lastModified` onto the row on the pass that
+        // first saw the clear.
+        let (recordingId, summaryId, audioURL) = try createImportedRecordingHoldingAudio(
+            named: "Imported audio deleted elsewhere",
+            lastModified: deletedAt
+        )
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let recordingName = try XCTUnwrap(recording.recordingName)
+        let recordingDate = try XCTUnwrap(recording.recordingDate)
+        let createdAt = try XCTUnwrap(recording.createdAt)
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        let summaryRecordName = "backup_summary_\(summaryId.uuidString)"
+
+        // Cloud state exactly as device A leaves it: audio fields and recordingURL
+        // cleared, `lastModified` stamped with the deletion, plus the marker.
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": recordingName,
+                    "recordingDate": recordingDate,
+                    "createdAt": createdAt,
+                    "lastModified": deletedAt,
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.notStarted.rawValue,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "summaryId": summaryId.uuidString,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupSummary",
+                name: summaryRecordName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "summary": "Retained summary",
+                    "aiMethod": "fixture",
+                    "generatedAt": deletedAt,
+                    "lastModified": deletedAt,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: "backup_deletion_importedaudio_\(recordingId.uuidString)",
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": deletedAt,
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        try await withAudioBackupEnabled {
+            _ = try await runReconcile()
+
+            XCTAssertFalse(
+                transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+                "An imported-audio marker must not trigger a legacy summary scan"
+            )
+            let afterFirst = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+            XCTAssertNil(afterFirst.recordingURL, "the tombstone must unlink the placeholder here too")
+            XCTAssertFalse(
+                FileManager.default.fileExists(atPath: audioURL.path),
+                "the local placeholder file must go with it"
+            )
+            XCTAssertNotNil(
+                appCoordinator.getSummary(for: recordingId),
+                "an audio removal keeps the recording and its summary"
+            )
+
+            let cloudAfterFirst = try XCTUnwrap(transport.record(named: recordingRecordName))
+            XCTAssertNil(cloudAfterFirst["recordingURL"])
+            XCTAssertNil(cloudAfterFirst["audioAsset"])
+            XCTAssertNil(cloudAfterFirst["audioSignature"])
+
+            // The loop only closes if it stays closed: a second pass must not put
+            // the URL or the asset back.
+            _ = try await runReconcile()
+
+            XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+            let cloudAfterSecond = try XCTUnwrap(transport.record(named: recordingRecordName))
+            XCTAssertNil(cloudAfterSecond["recordingURL"])
+            XCTAssertNil(cloudAfterSecond["audioAsset"])
+            XCTAssertNil(cloudAfterSecond["audioSignature"])
+        }
+    }
+
+    /// The imported-audio marker is the one kind that is never withdrawn by a later
+    /// local edit. The recording row carries the only timestamp available, so a
+    /// rename would otherwise read as "the audio came back" and put the placeholder
+    /// straight back — which is the loop, restarted by an unrelated edit.
+    func testALaterLocalEditDoesNotWithdrawAnImportedAudioTombstone() async throws {
+        let deletedAt = Date().addingTimeInterval(-600)
+        let (recordingId, summaryId, audioURL) = try createImportedRecordingHoldingAudio(
+            named: "Renamed after the delete",
+            // Comfortably past `deletionReviveGraceInterval`: for any other kind this
+            // would withdraw the tombstone.
+            lastModified: Date()
+        )
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Renamed after the delete",
+                    "recordingDate": deletedAt,
+                    "createdAt": deletedAt,
+                    "lastModified": deletedAt,
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.notStarted.rawValue,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "summaryId": summaryId.uuidString,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: "backup_deletion_importedaudio_\(recordingId.uuidString)",
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": deletedAt,
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        try await withAudioBackupEnabled {
+            _ = try await runReconcile()
+        }
+
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+        // The marker itself must survive: withdrawing it would let the placeholder
+        // upload again from any device that still holds one.
+        XCTAssertNotNil(
+            transport.record(named: "backup_deletion_importedaudio_\(recordingId.uuidString)")
+        )
+    }
+
+    /// A metadata-only cloud record is not enough destructive intent to unlink a
+    /// healthy local file. Only an explicit imported-audio tombstone may do that.
+    func testRestorePreservesRecordingURLWhenNoAudioLacksAnImportedAudioTombstone() async throws {
+        let (recordingId, summaryId, audioURL) = try createImportedRecordingHoldingAudio(
+            named: "Cloud says no audio"
+        )
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let cloudEditDate = Date().addingTimeInterval(3_600)
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+
+        recording.lastModified = Date().addingTimeInterval(-3_600)
+        try appCoordinator.coreDataManager.saveContext()
+
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Renamed on another device",
+                    "recordingDate": cloudEditDate,
+                    "createdAt": cloudEditDate,
+                    "lastModified": cloudEditDate,
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.notStarted.rawValue,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "summaryId": summaryId.uuidString,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        _ = try await runReconcile()
+
+        let restored = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        XCTAssertEqual(restored.recordingName, "Renamed on another device")
+        XCTAssertEqual(restored.recordingURL, audioURL.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+    }
+
+    /// The other half of that rule: a cloud record that still names audio must never
+    /// unlink a healthy local file just because this run did not download the asset.
+    func testRestoreKeepsRecordingURLWhenTheCloudCopyStillNamesAudio() async throws {
+        let (recordingId, summaryId, audioURL) = try createImportedRecordingHoldingAudio(
+            named: "Cloud still has audio"
+        )
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let cloudEditDate = Date().addingTimeInterval(3_600)
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+
+        recording.lastModified = Date().addingTimeInterval(-3_600)
+        try appCoordinator.coreDataManager.saveContext()
+
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Renamed on another device",
+                    "recordingDate": cloudEditDate,
+                    "createdAt": cloudEditDate,
+                    "lastModified": cloudEditDate,
+                    "recordingURL": "\(recordingId.uuidString).m4a",
+                    "audioQuality": "imported",
+                    "transcriptionStatus": ProcessingStatus.notStarted.rawValue,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "summaryId": summaryId.uuidString,
+                    "audioFileName": "\(recordingId.uuidString).m4a",
+                    "audioSignature": "cloud-signature",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        _ = try await runReconcile()
+
+        let restored = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        XCTAssertEqual(restored.recordingURL, audioURL.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+    }
+
+    // MARK: - Tombstone replay cost
+
+    /// A tombstone replays on every sync until its retention window closes. Seeds
+    /// one, plus a live library for it to plan against.
+    private func seedRetiredRecordingMarker(
+        for recordingId: UUID,
+        deletedAt: Date = Date().addingTimeInterval(-3_600)
+    ) {
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: "backup_deletion_\(recordingId.uuidString)",
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": deletedAt,
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+    }
+
+    private func deletedRecordNames() -> [String] {
+        transport.ledger.flatMap { operation -> [String] in
+            guard case .modify(_, let deleting) = operation else { return [] }
+            return deleting
+        }
+    }
+
+    /// The deletion planners read three scalars. Fetching whole records for that
+    /// pulled every transcript body, every summary body, and every recording's audio
+    /// asset down on every routine sync, which is what made `applyInboundTombstones`
+    /// the most expensive phase of a run.
+    func testTombstoneWorkspaceFetchesOnlyTheFieldsThePlannersRead() async throws {
+        try createCompleteRecording(named: "Workspace field budget")
+        seedTrustedManifest()
+
+        // The workspace reads the manifest's records, so there has to be a manifest
+        // naming something: an empty one short-circuits before any fetch.
+        _ = try await runReconcile()
+        seedRetiredRecordingMarker(for: UUID())
+        transport.clearLedger()
+
+        _ = try await runReconcile()
+
+        let usedPlannerKeys = transport.ledger.contains { operation in
+            guard case .fetch(_, let desiredKeys) = operation else { return false }
+            return desiredKeys == iCloudStorageManager.deletionWorkspaceKeys
+        }
+        XCTAssertTrue(
+            usedPlannerKeys,
+            "The tombstone workspace must ask for the planner fields, not whole records"
+        )
+    }
+
+    func testRelationshipCleanupRefetchesFullSummaryRecordsBeforeSaving() async throws {
+        let recordingId = try createCompleteRecording(named: "Full summary refetch")
+        let transcriptId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllTranscripts().first { $0.recordingId == recordingId }?.id
+        )
+        let summaryId = try XCTUnwrap(
+            appCoordinator.coreDataManager.getAllSummaries().first { $0.recordingId == recordingId }?.id
+        )
+        seedTrustedManifest()
+        _ = try await runReconcile()
+
+        let markerName = "backup_deletion_transcript_\(transcriptId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupDeletion",
+                name: markerName,
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "deletedAt": clock.now.addingTimeInterval(-60),
+                    "deviceIdentifier": "device-a"
+                ]
+            )
+        ])
+        transport.clearLedger()
+
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            transport.ledger.contains { operation in
+                guard case .fetch(let names, let desiredKeys) = operation else { return false }
+                return desiredKeys == nil && names.contains("backup_summary_\(summaryId.uuidString)")
+            },
+            "A summary with a deleted transcript reference must be full-refetched before saving"
+        )
+        XCTAssertEqual(
+            transport.record(named: "backup_summary_\(summaryId.uuidString)")?["summary"] as? String,
+            "Summary for Full summary refetch with enough content to satisfy validation rules and exercise backup selection.",
+            "Relationship cleanup must preserve the summary payload"
+        )
+    }
+
+    /// `legacySummarySyncRecords` is a full type scan whose own documentation says
+    /// nothing on the routine path calls it — but recording/transcript markers need
+    /// it because legacy summary records are not listed in the active manifest.
+    func testLegacySummaryScanRunsOnceThenIsRememberedAsAbsent() async throws {
+        try createCompleteRecording(named: "Legacy scan memo")
+        seedRetiredRecordingMarker(for: UUID())
+        seedTrustedManifest()
+
+        _ = try await runReconcile()
+        XCTAssertTrue(
+            transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+            "The first run has no way to know whether legacy records exist"
+        )
+
+        transport.clearLedger()
+        _ = try await runReconcile()
+
+        XCTAssertFalse(
+            transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+            "An account known to hold no legacy records must not be scanned again"
+        )
+
+        // The absence claim is local and must expire so a record created on another
+        // device can be discovered later.
+        UserDefaults.standard.set(
+            Date().addingTimeInterval(-3_600),
+            forKey: "iCloudLegacySummaryRecordsAbsentAtV2"
+        )
+        transport.clearLedger()
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            transport.ledger.contains(.query(recordType: CloudKitSummaryRecord.recordType)),
+            "An expired absence memo must trigger a fresh legacy scan"
+        )
+    }
+
+    func testIncompleteLegacySummaryScanDoesNotPretendTheAccountIsEmpty() async throws {
+        let recordingId = UUID()
+        let legacyRecordName = UUID().uuidString
+        seedRetiredRecordingMarker(for: recordingId)
+        seedTrustedManifest()
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: CloudKitSummaryRecord.recordType,
+                name: legacyRecordName,
+                fields: [CloudKitSummaryRecord.recordingIdField: recordingId.uuidString]
+            )
+        ])
+        transport.queryRecordFailures[legacyRecordName] = CloudKitTestError.ckError(.serviceUnavailable)
+
+        do {
+            _ = try await runReconcile()
+            XCTFail("An incomplete legacy scan must fail the deletion preflight")
+        } catch {
+            // Expected: the marker must remain so the next run retries the scan.
+        }
+
+        XCTAssertFalse(iCloudStorageManager.legacySummaryRecordsKnownAbsent)
+        XCTAssertNotNil(
+            transport.record(named: "backup_deletion_\(recordingId.uuidString)"),
+            "A marker must not be retired after an incomplete legacy scan"
+        )
+    }
+
+    /// An explicit deletion id must remain actionable even when the trusted manifest
+    /// is stale because the content save and manifest write were separate operations.
+    func testAReplayedTombstoneKeepsExplicitDeleteIntentWhenManifestNoLongerNamesRecord() async throws {
+        try createCompleteRecording(named: "Replay cost")
+        let deletedRecordingId = UUID()
+        seedRetiredRecordingMarker(for: deletedRecordingId)
+        seedTrustedManifest()
+
+        _ = try await runReconcile()
+
+        transport.clearLedger()
+        _ = try await runReconcile()
+
+        XCTAssertTrue(
+            deletedRecordNames().contains("backup_recording_\(deletedRecordingId.uuidString)"),
+            "An explicit tombstone id must not be suppressed by a stale manifest"
+        )
+    }
+
+    /// The other side of that filter: the first pass, while the manifest still names
+    /// the record, must still delete it.
+    func testATombstoneStillDeletesARecordTheManifestNamesToday() async throws {
+        let recordingId = try createRecordingOnlyForConflict(named: "Still indexed")
+        let recordingRecordName = "backup_recording_\(recordingId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordingRecordName,
+                fields: [
+                    "recordingName": "Still indexed",
+                    "recordingDate": Date(),
+                    "createdAt": Date(),
+                    "lastModified": Date(),
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [recordingRecordName] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            )
+        ])
+        // Deleted after the local row was written, so the marker is not withdrawn.
+        seedRetiredRecordingMarker(for: recordingId, deletedAt: Date().addingTimeInterval(3_600))
+
+        _ = try await runReconcile()
+
+        XCTAssertTrue(deletedRecordNames().contains(recordingRecordName))
+        XCTAssertNil(transport.record(named: recordingRecordName))
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId))
+    }
+
+    /// A marker is never named by the manifest, so the filter above must not reach
+    /// it. Folding withdrawals into the filtered set would silently stop retracting
+    /// tombstones the user's own later edit had beaten.
+    func testAWithdrawnMarkerIsStillDeletedEvenThoughTheManifestNeverNamedIt() async throws {
+        let recordingId = try createRecordingOnlyForConflict(named: "Edited after the delete")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let markerName = "backup_deletion_\(recordingId.uuidString)"
+
+        recording.lastModified = Date()
+        try appCoordinator.coreDataManager.saveContext()
+        // Comfortably older than the local edit, so the revive rule withdraws it.
+        seedRetiredRecordingMarker(for: recordingId, deletedAt: Date().addingTimeInterval(-3_600))
+        seedTrustedManifest()
+
+        _ = try await runReconcile()
+
+        XCTAssertNil(transport.record(named: markerName), "the withdrawn marker must be removed")
+        XCTAssertNotNil(
+            appCoordinator.getRecording(id: recordingId),
+            "the later local edit beats the delete"
+        )
+    }
+
     /// The refetch that pulls a recording's full record also pulls a fresh change
     /// tag. An edit that landed in between would therefore save cleanly over the
     /// top — no conflict to catch it — so the winner has to be decided again.
@@ -960,6 +1488,61 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
                 XCTFail("A waiter on a failed run must not report \(value)")
             }
         }
+    }
+
+    func testCloudSyncWaitsForCacheMaintenanceAndRequestsAYield() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        XCTAssertTrue(coordinator.beginCacheMaintenance())
+        var ran = false
+
+        let sync = Task { @MainActor in
+            try await coordinator.submit(intent: .routineSnapshot) {
+                ran = true
+            }
+        }
+        await Task.yield()
+
+        XCTAssertFalse(ran)
+        XCTAssertTrue(coordinator.shouldYieldCacheMaintenance)
+
+        coordinator.endCacheMaintenance()
+        _ = try await sync.value
+        XCTAssertTrue(ran)
+    }
+
+    func testCancelledCloudSyncWaiterIsRemovedFromTheFollowUpQueue() async throws {
+        let coordinator = CloudSyncOperationCoordinator()
+        let gate = AsyncGate()
+        let first = Task { @MainActor in
+            try await coordinator.submit(intent: .routineSnapshot) {
+                await gate.wait()
+            }
+        }
+        await waitUntil("the first sync to start") { coordinator.isRunning }
+
+        var secondWorkRan = false
+        let second = Task { @MainActor in
+            try await coordinator.submit(
+                intent: .seedFromThisDevice,
+                allowJoiningRunningOperation: false
+            ) {
+                secondWorkRan = true
+            }
+        }
+        await waitUntil("the second sync to queue") { coordinator.pendingFollowUpCount == 1 }
+
+        second.cancel()
+        do {
+            _ = try await second.value
+            XCTFail("A cancelled queued waiter must throw")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertEqual(coordinator.pendingFollowUpCount, 0)
+        XCTAssertFalse(secondWorkRan)
+
+        gate.open()
+        _ = try await first.value
     }
 
     func testAThrottledQueryDoesNotEscalateIntoAZoneScan() async throws {
@@ -1883,6 +2466,86 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         XCTAssertEqual(fullReadCount, 2, "The refetch this covers has to have happened")
     }
 
+    /// A failed restore copy is a transient local-cache/filesystem condition, not
+    /// evidence that the cloud asset is gone. The next routine pass must fetch the
+    /// asset again and install it without requiring a manual restore.
+    func testARecordingAudioRestoreIsRetriedByALaterRoutineReconcile() async throws {
+        let recordingId = UUID()
+        let now = Date()
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = RecordingEntry(context: context)
+        recording.id = recordingId
+        recording.recordingName = "Restore retry"
+        recording.recordingDate = now
+        recording.createdAt = now
+        recording.lastModified = now
+        recording.recordingURL = nil
+        recording.duration = 12
+        recording.fileSize = 11
+        recording.audioQuality = AudioQuality.whisperOptimized.rawValue
+        recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+        recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+        try context.save()
+
+        let cloudAudioURL = tempDirectory.appendingPathComponent("restore-retry.m4a")
+        try Data("cloud audio that becomes available to the next pass".utf8).write(to: cloudAudioURL)
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName,
+                fields: [
+                    "recordingName": "Restore retry",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "restore-retry.m4a",
+                    "duration": 12.0,
+                    "fileSize": 11,
+                    "audioQuality": AudioQuality.whisperOptimized.rawValue,
+                    "audioAsset": CKAsset(fileURL: cloudAudioURL),
+                    "audioFileName": "restore-retry.m4a",
+                    "audioByteCount": Int64("cloud audio that becomes available to the next pass".utf8.count),
+                    "audioSignature": "restore-retry-signature",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        let previousAudioSetting = UserDefaults.standard.object(forKey: "iCloudBackupIncludeAudioFiles")
+        UserDefaults.standard.set(true, forKey: "iCloudBackupIncludeAudioFiles")
+        defer {
+            manager.setRestoredAudioFileManagerForTesting(nil)
+            if let previousAudioSetting {
+                UserDefaults.standard.set(previousAudioSetting, forKey: "iCloudBackupIncludeAudioFiles")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "iCloudBackupIncludeAudioFiles")
+            }
+        }
+
+        manager.setRestoredAudioFileManagerForTesting(FailingReconcileRestoreCopyFileManager())
+        let failed = try await runReconcile()
+
+        XCTAssertEqual(failed.restoreResult.audioFilesFailedToRestore, 1)
+        XCTAssertEqual(failed.restoreResult.audioFilesRestored, 0)
+        XCTAssertNil(
+            appCoordinator.getRecording(id: recordingId)?.recordingURL,
+            "A failed copy must leave the existing local URL untouched"
+        )
+
+        manager.setRestoredAudioFileManagerForTesting(nil)
+        let retried = try await runReconcile(reason: .appBecameActive)
+
+        XCTAssertEqual(retried.restoreResult.audioFilesFailedToRestore, 0)
+        XCTAssertEqual(retried.restoreResult.audioFilesRestored, 1)
+        let restoredRecording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let restoredURL = try XCTUnwrap(appCoordinator.coreDataManager.getAbsoluteURL(for: restoredRecording))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
+        XCTAssertEqual(try Data(contentsOf: restoredURL), Data("cloud audio that becomes available to the next pass".utf8))
+    }
+
     /// A marker is the only record other devices have of a delete they did not
     /// see. Retiring it in the same non-atomic batch as the records it authorises
     /// means CloudKit can take the marker, permanently refuse one content record,
@@ -2023,5 +2686,12 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == recordingId },
             "The bootstrap scan must actually restore what it finds"
         )
+    }
+}
+
+private final class FailingReconcileRestoreCopyFileManager: FileManager, @unchecked Sendable {
+    override func copyItem(at source: URL, to destination: URL) throws {
+        try Data("partial restore".utf8).write(to: destination)
+        throw POSIXError(.ENOSPC)
     }
 }

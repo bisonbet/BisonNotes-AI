@@ -63,27 +63,6 @@ private actor SpeechAuthorizationContinuation {
     }
 }
 
-/// Lets the audio tap — which runs on the render thread, outside the service's
-/// actor — check whether it should still be writing. Reads and writes are both
-/// single-word and guarded by the lock, so the unchecked conformance covers only
-/// that one field.
-private final class TapActivationFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var active = true
-
-    var isActive: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return active
-    }
-
-    func deactivate() {
-        lock.lock()
-        active = false
-        lock.unlock()
-    }
-}
-
 @MainActor
 class LiveTranscriptionService: ObservableObject {
 
@@ -97,7 +76,7 @@ class LiveTranscriptionService: ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var outputURL: URL?
     private var tempCafURL: URL?
-    private var tapActivation: TapActivationFlag?
+    private var tapActivation: LiveTranscriptionTapGate?
 
     // MARK: - Start
 
@@ -128,7 +107,8 @@ class LiveTranscriptionService: ObservableObject {
         audioFile = try AVAudioFile(forWriting: cafURL, settings: inputFormat.settings)
 
         // Configure speech recognition
-        let recognizer = SFSpeechRecognizer(locale: Locale.current) ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+        let recognizer = SFSpeechRecognizer(locale: Locale.current)
+            ?? SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         speechRecognizer = recognizer
 
         guard let recognizer, recognizer.isAvailable else {
@@ -141,13 +121,10 @@ class LiveTranscriptionService: ObservableObject {
         request.taskHint = .dictation
         recognitionRequest = request
 
-        recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, _ in
-            guard let result else { return }
-            let transcript = result.bestTranscription.formattedString
-            Task { @MainActor [weak self] in
-                self?.liveTranscript = transcript
-            }
+        let recognitionHandler = LiveTranscriptionCallbacks.makeRecognitionHandler { [weak self] transcript in
+            self?.liveTranscript = transcript
         }
+        recognitionTask = recognizer.recognitionTask(with: request, resultHandler: recognitionHandler)
 
         // Install a single tap that writes to file AND feeds the recognizer.
         // `file` is a strong capture so the AVAudioFile stays alive for the
@@ -156,22 +133,10 @@ class LiveTranscriptionService: ObservableObject {
             throw LiveTranscriptionError.audioEngineSetupFailed
         }
 
-        // `removeTap` does not guarantee that a callback already dispatched on
-        // the render thread has returned, so `stop()` clears this flag first.
-        // Without it an in-flight buffer can reach `request.append` after
-        // `endAudio()`, which raises. The flag is a class so the nonisolated
-        // tap closure can read it without capturing actor-isolated state.
-        let tapFlag = TapActivationFlag()
-        tapActivation = tapFlag
-
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
-            // The callback owns immutable references to the file and request.
-            // Stop clears the flag and removes this tap before releasing the
-            // service's references.
-            guard tapFlag.isActive else { return }
-            try? file.write(from: buffer)
-            request.append(buffer)
-        }
+        let tapGate = LiveTranscriptionTapGate()
+        tapActivation = tapGate
+        let tap = LiveTranscriptionCallbacks.makeAudioTap(file: file, request: request, gate: tapGate)
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat, block: tap)
 
         try engine.start()
         isActive = true
@@ -187,15 +152,33 @@ class LiveTranscriptionService: ObservableObject {
         guard isActive else { return (nil, "") }
 
         isActive = false
-        // Signal the tap to stop writing before removing it, so a callback
-        // already in flight cannot append to the request after endAudio().
-        // The tap's immutable captures keep its file and request alive until
-        // any in-flight callback has returned.
-        tapActivation?.deactivate()
-        tapActivation = nil
+        // Release the microphone before this method can suspend.
+        // `finalizeLiveTranscriptionRecording` has already set the view model idle,
+        // so `beginRecordingStartup` admits a new recording the moment the main
+        // actor is free; yielding while this engine still owned the input node
+        // would leave two engines contending for it and fail the new startup.
+        // Neither call waits for a callback already in flight — that is what the
+        // gate below is for — and the tap's immutable captures keep its file and
+        // request alive until any such callback has returned.
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+
+        // Finish any in-flight write/append and reject later callbacks before
+        // ending the Speech request or beginning export.
+        //
+        // Awaited off the main actor rather than called directly: `deactivate()`
+        // blocks on the lock the tap holds across `AVAudioFile.write` and
+        // `SFSpeechAudioBufferRecognitionRequest.append`, so calling it here would
+        // park the main thread on the tap thread's disk I/O. That write can stall
+        // — a locked device's data protection, or a concurrent export or restore —
+        // and a long enough stall on the main thread is a watchdog termination
+        // rather than a hitch. Awaiting preserves the ordering the gate exists for:
+        // nothing below runs until the in-flight buffer has finished.
+        if let gate = tapActivation {
+            await Task.detached { gate.deactivate() }.value
+        }
+        tapActivation = nil
         audioFile = nil  // Flush and close the file
 
         recognitionRequest?.endAudio()

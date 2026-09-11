@@ -107,11 +107,43 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// Bumped by every start and every cancel, so a task that is still unwinding
     /// can tell whether the published state below is still its own to clear.
     private var downloadGeneration = 0
-    /// Cancelled downloads that have not finished unwinding. They no longer own
-    /// the published state — the user may start another immediately — but their
-    /// blobs may still be landing, so no cache sweep may start while any remain.
-    private var unwindingCancelledDownloads = 0
+    /// Cancelled downloads that have not finished unwinding, counted per model.
+    /// They no longer own the published state — the user may start another
+    /// immediately — but their blobs may still be landing.
+    ///
+    /// Keyed by model rather than counted globally because `removeHubBlobCache`
+    /// deletes one model's Hub repository: a writer still unwinding for model A
+    /// cannot be holding model B's blobs, so it must not defer B's cleanup. The
+    /// whole-cache sweep is the exception and still waits for all of them.
+    private var unwindingCancelledDownloads: [String: Int] = [:]
+    /// The model the running download task is fetching. Not `modelId`, which
+    /// follows the user's selection and may have moved on since the task began.
+    private var activeDownloadModelID: String?
+    /// Blob caches a finished download could not remove because a cancelled task
+    /// for the same model was still writing. Drained as soon as that model has no
+    /// writer left; the maintenance sweep is a backstop, not the owner, because it
+    /// waits on every unwinding task and cannot run while one of them is stuck.
+    private var deferredBlobCleanups: Set<String> = []
     private var isCacheMaintenanceInProgress = false
+    private var cacheMaintenanceYieldRequested = false
+    /// Only one model downloads at a time, so a second request while one is queued
+    /// deliberately replaces it — the user changed their mind about which model to
+    /// fetch, and the earlier request never started writing anything.
+    private var queuedDownloadModelID: String?
+    /// Deletions are not interchangeable: each one frees a different model's files.
+    /// A single slot silently dropped the first of two deletes requested during the
+    /// same sweep, leaving gigabytes the user asked to reclaim on disk.
+    private var queuedModelDeletionIDs: [String] = []
+    @Published private(set) var isDownloadQueued = false
+    /// What the manager is waiting on, for the settings UI to show. A queued
+    /// download reports no progress and is not `isDownloading`, and a queued
+    /// deletion sets no flag at all, so without this the user's tap looked like a
+    /// dead button for as long as the sweep ran. Always recomputed from the queued
+    /// state by `updateDeferredMaintenanceNotice` rather than assigned ad hoc, so
+    /// it cannot outlive or contradict what is actually pending.
+    @Published private(set) var deferredMaintenanceNotice: String?
+    private let downloadOperation: (@MainActor (String) async throws -> Void)?
+    private let blobCleanup: (@MainActor (String) -> Void)?
 
     var modelId: String {
         UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
@@ -122,7 +154,12 @@ final class MLXSwiftDownloadManager: ObservableObject {
         modelId.components(separatedBy: "/").last ?? modelId
     }
 
-    init() {
+    init(
+        downloadOperation: (@MainActor (String) async throws -> Void)? = nil,
+        blobCleanup: (@MainActor (String) -> Void)? = nil
+    ) {
+        self.downloadOperation = downloadOperation
+        self.blobCleanup = blobCleanup
         refreshModelStatus()
     }
 
@@ -140,10 +177,11 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// an unprotected filesystem operation.
     @discardableResult
     func beginCacheMaintenance() -> Bool {
-        guard !isDownloading, unwindingCancelledDownloads == 0, !isCacheMaintenanceInProgress else {
+        guard !isDownloading, unwindingCancelledDownloads.isEmpty, !isCacheMaintenanceInProgress else {
             return false
         }
         isCacheMaintenanceInProgress = true
+        cacheMaintenanceYieldRequested = false
         return true
     }
 
@@ -151,19 +189,66 @@ final class MLXSwiftDownloadManager: ObservableObject {
     /// finished.
     func endCacheMaintenance() {
         isCacheMaintenanceInProgress = false
+        cacheMaintenanceYieldRequested = false
+
+        let deletionIDs = queuedModelDeletionIDs
+        queuedModelDeletionIDs = []
+        updateDeferredMaintenanceNotice()
+        for deletionID in deletionIDs {
+            deleteModelNow(for: deletionID)
+        }
+
+        if let downloadID = queuedDownloadModelID {
+            queuedDownloadModelID = nil
+            isDownloadQueued = false
+            startDownload(for: downloadID)
+        }
+    }
+
+    var shouldYieldCacheMaintenance: Bool {
+        cacheMaintenanceYieldRequested
+    }
+
+    private func updateDeferredMaintenanceNotice() {
+        let pendingDeletions = queuedModelDeletionIDs.count
+        switch (isDownloadQueued, pendingDeletions) {
+        case (false, 0):
+            deferredMaintenanceNotice = nil
+        case (true, 0):
+            deferredMaintenanceNotice = "Waiting for cache maintenance to finish before downloading."
+        case (false, 1):
+            deferredMaintenanceNotice = "Model deletion will run after cache maintenance finishes."
+        case (false, let count):
+            deferredMaintenanceNotice = "\(count) model deletions will run after cache maintenance finishes."
+        case (true, _):
+            deferredMaintenanceNotice = "A model download and deletion will run after cache maintenance finishes."
+        }
     }
 
     func startDownload() {
+        startDownload(for: modelId)
+    }
+
+    private func startDownload(for id: String) {
         guard !isDownloading else { return }
-        // Deliberately not held behind a running sweep. What actually protects a
-        // download's blobs is the sweep re-reading `isDownloading` immediately
-        // before every removal; queuing the request instead was invisible — no
-        // progress, no message, nothing for minutes while gigabytes were swept —
-        // and became permanent whenever the sweep's release never ran.
-        let id = modelId
+        if isCacheMaintenanceInProgress {
+            queuedDownloadModelID = id
+            isDownloadQueued = true
+            cacheMaintenanceYieldRequested = true
+            SummaryManager.shared.getiCloudManager().operationCoordinator.requestCacheMaintenanceYield()
+            downloadError = nil
+            downloadProgress = 0
+            // Queuing is only acceptable while the user can see it happening.
+            // `MLXSwiftSettingsView` renders this alongside a cancel button.
+            updateDeferredMaintenanceNotice()
+            return
+        }
+        updateDeferredMaintenanceNotice()
+
         downloadGeneration += 1
         let generation = downloadGeneration
         isDownloading = true
+        activeDownloadModelID = id
         downloadError = nil
         downloadProgress = 0
         UserDefaults.standard.set(id, forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
@@ -174,6 +259,7 @@ final class MLXSwiftDownloadManager: ObservableObject {
                 if self.downloadGeneration == generation {
                     self.isDownloading = false
                     self.downloadTask = nil
+                    self.activeDownloadModelID = nil
                     if UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID) == id {
                         UserDefaults.standard.removeObject(forKey: MLXSwiftSettingsKeys.inFlightDownloadModelID)
                     }
@@ -182,40 +268,119 @@ final class MLXSwiftDownloadManager: ObservableObject {
                     // us. Only report that this task has stopped writing. The
                     // in-flight marker is left alone: it names the download that
                     // owns it now, and clearing it could expose blobs still landing.
-                    self.unwindingCancelledDownloads = max(0, self.unwindingCancelledDownloads - 1)
+                    self.releaseUnwindingWriter(for: id)
                 }
+                // Whichever branch ran, this task has stopped writing. If it was the
+                // last one, any cleanup an earlier finish had to skip can run now.
+                self.drainDeferredBlobCleanups()
             }
+            guard !Task.isCancelled, self.downloadGeneration == generation else { return }
             do {
-                #if canImport(MLXLLM) && canImport(MLXLMCommon)
-                try await self.performDownload()
-                #else
-                throw NSError(domain: "MLXSwift", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
-                #endif
-                guard !Task.isCancelled else { return }
-                self.isModelDownloaded = true
-                AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(self.modelId)")
+                if let operation = self.downloadOperation {
+                    try await operation(id)
+                } else {
+                    #if canImport(MLXLLM) && canImport(MLXLMCommon)
+                    try await self.performDownload(modelID: id, generation: generation)
+                    #else
+                    throw NSError(domain: "MLXSwift", code: -1,
+                                  userInfo: [NSLocalizedDescriptionKey: "MLX libraries not available"])
+                    #endif
+                }
+                // No suspension between the ownership check and removal: a
+                // cancelled task must never delete a replacement download's blobs.
+                guard !Task.isCancelled, self.downloadGeneration == generation else { return }
+                self.cleanUpCompletedDownload(for: id)
+                if self.modelId == id { self.isModelDownloaded = true }
+                AppLog.shared.summarization("[MLXSwift] Model pre-download complete: \(id)")
             } catch {
-                if !Task.isCancelled {
+                if !Task.isCancelled, self.downloadGeneration == generation {
                     self.downloadError = error.localizedDescription
-                    AppLog.shared.summarization("[MLXSwift] Download failed: \(error.localizedDescription)", level: .error)
+                    AppLog.shared.summarization(
+                        "[MLXSwift] Download failed: \(error.localizedDescription)", level: .error
+                    )
                 }
             }
         }
     }
 
+    private func cleanUpCompletedDownload(for id: String) {
+        // Older cancelled tasks may still be writing even when the current task
+        // finishes, and deleting the shared blob cache under them would take the
+        // bytes they are still landing. Remember the work instead of dropping it:
+        // the maintenance sweep cannot be the owner here, because `beginCacheMaintenance`
+        // is gated on the same counter and a Hub download that never observes its
+        // cancellation would leave a full duplicate of the model on disk forever.
+        guard unwindingCancelledDownloads[id] == nil else {
+            deferredBlobCleanups.insert(id)
+            return
+        }
+        // A restarted download of the same model supersedes any cleanup still
+        // pending for it; removing the entry keeps the drain from repeating it.
+        deferredBlobCleanups.remove(id)
+        removeBlobCache(for: id)
+    }
+
+    private func releaseUnwindingWriter(for id: String) {
+        guard let remaining = unwindingCancelledDownloads[id] else { return }
+        if remaining > 1 {
+            unwindingCancelledDownloads[id] = remaining - 1
+        } else {
+            unwindingCancelledDownloads.removeValue(forKey: id)
+        }
+    }
+
+    /// Runs the cleanups deferred above, for each model that no longer has a task
+    /// writing to its Hub repository. A download in flight counts as such a writer
+    /// only for the model it is fetching, whose blobs are what it resumes from.
+    private func drainDeferredBlobCleanups() {
+        guard !deferredBlobCleanups.isEmpty else { return }
+        let ready = deferredBlobCleanups.filter { id in
+            unwindingCancelledDownloads[id] == nil && activeDownloadModelID != id
+        }
+        guard !ready.isEmpty else { return }
+        deferredBlobCleanups.subtract(ready)
+        for id in ready {
+            removeBlobCache(for: id)
+        }
+    }
+
+    private func removeBlobCache(for id: String) {
+        if let cleanup = blobCleanup {
+            cleanup(id)
+        } else {
+            #if canImport(MLXLLM) && canImport(MLXLMCommon)
+            removeHubBlobCache(for: id)
+            #endif
+        }
+    }
+
     func cancelDownload() {
+        if downloadTask == nil, queuedDownloadModelID != nil {
+            // A queued request has not started writing yet. Clear it here rather
+            // than letting cache maintenance release start a download the user
+            // already cancelled.
+            queuedDownloadModelID = nil
+            isDownloadQueued = false
+            // Any queued deletion still stands; the notice re-derives itself so it
+            // describes what is actually left rather than the cancelled download.
+            updateDeferredMaintenanceNotice()
+        }
         if downloadTask != nil {
             // Cleared here rather than only in the task's `defer`: a Hub download
             // need not observe cancellation promptly, and leaving `isDownloading`
             // true until it unwound made the user's next tap on Download a silent
             // no-op. The unwinding task is counted instead, so the cache sweep
-            // still keeps off the blobs it may still be writing.
-            unwindingCancelledDownloads += 1
+            // still keeps off the blobs it may still be writing. It is counted
+            // against the model it is actually fetching, not the current
+            // selection, which the user may have changed since it started.
+            if let id = activeDownloadModelID {
+                unwindingCancelledDownloads[id, default: 0] += 1
+            }
             downloadGeneration += 1
         }
         downloadTask?.cancel()
         downloadTask = nil
+        activeDownloadModelID = nil
         isDownloading = false
         downloadProgress = 0
         downloadError = nil
@@ -223,10 +388,30 @@ final class MLXSwiftDownloadManager: ObservableObject {
 
     func deleteModel() {
         #if canImport(MLXLLM) && canImport(MLXLMCommon)
+        let id = modelId
+        if isCacheMaintenanceInProgress {
+            if !queuedModelDeletionIDs.contains(id) {
+                queuedModelDeletionIDs.append(id)
+            }
+            cacheMaintenanceYieldRequested = true
+            SummaryManager.shared.getiCloudManager().operationCoordinator.requestCacheMaintenanceYield()
+            // Not `downloadError`: this is not a failure, and a download queued
+            // afterwards used to clear it, hiding the pending deletion entirely.
+            updateDeferredMaintenanceNotice()
+            return
+        }
+        deleteModelNow(for: id)
+        #endif
+    }
+
+    private func deleteModelNow(for id: String) {
+        #if canImport(MLXLLM) && canImport(MLXLMCommon)
         do {
-            try removeModelFiles()
-            isModelDownloaded = false
-            AppLog.shared.summarization("[MLXSwift] Model deleted: \(modelId)")
+            try removeModelFiles(for: id)
+            if modelId == id {
+                isModelDownloaded = false
+            }
+            AppLog.shared.summarization("[MLXSwift] Model deleted: \(id)")
         } catch {
             downloadError = "Failed to delete: \(error.localizedDescription)"
             AppLog.shared.summarization("[MLXSwift] Delete failed: \(error.localizedDescription)", level: .error)
@@ -403,12 +588,12 @@ private func configureMLXMemoryForIOS() {
 // MARK: Download Manager Hub Integration
 
 extension MLXSwiftDownloadManager {
-    func performDownload() async throws {
-        let id = modelId
+    private func performDownload(modelID id: String, generation: Int) async throws {
         let config = ModelConfiguration(id: id)
         _ = try await downloadModel(hub: defaultHubApi, configuration: config) { [weak self] progress in
             Task { @MainActor [weak self] in
-                self?.downloadProgress = progress.fractionCompleted
+                guard let self, self.downloadGeneration == generation, self.isDownloading else { return }
+                self.downloadProgress = progress.fractionCompleted
             }
         }
 
@@ -419,7 +604,7 @@ extension MLXSwiftDownloadManager {
         // The blobs are only useful *during* a download: everything that resumes an
         // interrupted one lives in that cache, which is why disabling it outright is
         // the wrong fix. Once the materialized copy is complete they are dead weight,
-        // so they go here rather than waiting for the next maintenance sweep.
+        // so the owning task removes them after this method returns successfully.
         //
         // Gated on the model actually being usable: if the download was interrupted
         // after config.json landed, the blobs are what a retry resumes from and must
@@ -431,7 +616,6 @@ extension MLXSwiftDownloadManager {
                 userInfo: [NSLocalizedDescriptionKey: "The model download did not finish materializing its weights."]
             )
         }
-        removeHubBlobCache(for: id)
     }
 
     func checkModelExists() -> Bool {
@@ -445,7 +629,11 @@ extension MLXSwiftDownloadManager {
     }
 
     func removeModelFiles() throws {
-        let config = ModelConfiguration(id: modelId)
+        try removeModelFiles(for: modelId)
+    }
+
+    func removeModelFiles(for modelID: String) throws {
+        let config = ModelConfiguration(id: modelID)
         let dir = config.modelDirectory(hub: defaultHubApi)
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
@@ -455,7 +643,7 @@ extension MLXSwiftDownloadManager {
         // the model occupies. Removing just it left a full second copy behind — two
         // "deleted" models were still costing 3.3 GB. `CacheMaintenanceService` also
         // sweeps these, but a delete the user asked for should free the space now.
-        removeHubBlobCache(for: modelId)
+        removeHubBlobCache(for: modelID)
     }
 
     private func removeHubBlobCache(for modelId: String) {
@@ -556,6 +744,19 @@ private actor MLXSwiftService {
     }
 
     func processComplete(text: String) async throws -> SummarizationResult {
+        try await MLXModelResourceCoordinator.shared.withExclusive {
+            do {
+                let result = try await self.processCompleteUnlocked(text: text)
+                await self.unloadModel()
+                return result
+            } catch {
+                await self.unloadModel()
+                throw error
+            }
+        }
+    }
+
+    private func processCompleteUnlocked(text: String) async throws -> SummarizationResult {
         ensureMemoryObserver()
         receivedMemoryWarning = false
 
@@ -578,9 +779,6 @@ private actor MLXSwiftService {
             result = try await runCompletePrompt(transcript: text, contentHint: ContentAnalyzer.classifyContent(text))
         }
 
-        // Unload model after processing to free Metal memory for the rest of the app.
-        // Next summarization will reload it.
-        unloadModel()
         return result
     }
 

@@ -441,10 +441,13 @@ struct SimpleSettingsView: View {
                     }
                     Text(isSaving ? "Saving..." : "Save & Configure")
                         .fontWeight(.medium)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 54)
-                .background(isSaving ? Color.gray : Color.accentColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(isSaving ? Color.gray : Color.bisonPrimaryAction)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .foregroundColor(.white)
             }

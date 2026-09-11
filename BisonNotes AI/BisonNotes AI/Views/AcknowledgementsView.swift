@@ -302,6 +302,13 @@ private let directDependencies: [DependencyCard] = [
         license: "Apache 2.0",
         linkText: "huggingface/swift-transformers",
         url: URL(string: "https://github.com/huggingface/swift-transformers")!
+    ),
+    DependencyCard(
+        name: "S1-mini by Superwhisper",
+        description: "On-device English transcript normalization model used for optional cleanup.",
+        license: "See model repository license",
+        linkText: "mlx-community/S1-mini-MLX-8bit",
+        url: URL(string: "https://huggingface.co/mlx-community/S1-mini-MLX-8bit")!
     )
 ]
 

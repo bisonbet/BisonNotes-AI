@@ -11,90 +11,6 @@
 
 import Foundation
 
-// MARK: - Intents
-
-enum CloudSyncIntent: String, CaseIterable, Sendable {
-    /// The ordinary bidirectional pass: tombstones, snapshot, winners, manifest.
-    case routineSnapshot
-    /// Durable outbound deletions. Never waits behind maintenance throttling.
-    case deletionFlush
-    /// "Back Up Now" — this device is the source.
-    case seedFromThisDevice
-    /// "Restore From iCloud" — the cloud is the source.
-    case restoreToThisDevice
-    /// Database Tools repair. Allowed to query and scan zones.
-    case fullRepair
-    /// Cloud-only review discovery.
-    case reviewScan
-    /// "Erase All iCloud Data".
-    case erase
-
-    /// Higher wins when choosing which queued request becomes the follow-up.
-    var priority: Int {
-        switch self {
-        case .erase, .fullRepair, .restoreToThisDevice, .seedFromThisDevice:
-            return 3
-        case .deletionFlush:
-            return 2
-        case .routineSnapshot:
-            return 1
-        case .reviewScan:
-            return 0
-        }
-    }
-
-    /// True when running this puts content back into CloudKit.
-    ///
-    /// A restore reads the cloud, but neither of its paths only reads it: a review
-    /// restore reactivates the selected records and adds them to the manifest, and
-    /// a full restore flushes queued deletion markers before it reads. Either one,
-    /// run against the container the user has just emptied, repopulates it after
-    /// the erase has already reported itself finished.
-    var writesToCloud: Bool {
-        switch self {
-        case .routineSnapshot, .deletionFlush, .seedFromThisDevice, .fullRepair, .restoreToThisDevice:
-            return true
-        case .reviewScan, .erase:
-            return false
-        }
-    }
-
-    /// True when a run of `self` already does everything `other` would have done.
-    func subsumes(_ other: CloudSyncIntent) -> Bool {
-        if self == other { return true }
-        switch (self, other) {
-        case (.fullRepair, .routineSnapshot), (.fullRepair, .reviewScan), (.fullRepair, .deletionFlush):
-            return true
-        case (.routineSnapshot, .deletionFlush):
-            // A routine pass flushes durable tombstones as its first phase.
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-/// Thrown to work that was still queued when the user erased their iCloud data.
-/// Running it afterwards would put the content straight back — which is the one
-/// thing someone who just erased their cloud copy did not ask for.
-struct CloudSyncSupersededByEraseError: LocalizedError, Equatable {
-    var errorDescription: String? {
-        "This sync was cancelled because iCloud data was erased. " +
-            "Use Back Up Now when you want this device's data in iCloud again."
-    }
-}
-
-enum CloudSyncRunOutcome: Equatable {
-    /// This request's own work ran.
-    case completed
-    /// A running operation already covered this request; its work did not run again.
-    case joinedRunningOperation(CloudSyncIntent)
-    /// Folded into a single follow-up run, which has now finished.
-    case coalescedIntoFollowUp(CloudSyncIntent)
-    /// CloudKit asked for a backoff longer than a foreground wait. Nothing was sent.
-    case deferred(until: Date)
-}
-
 // MARK: - Coordinator
 
 @MainActor
@@ -136,10 +52,51 @@ final class CloudSyncOperationCoordinator {
     private var failuresByWaiter: [Int: any Error] = [:]
     private var nextWaiterID = 0
 
+    private var isCacheMaintenanceInProgress = false
+    private var cacheMaintenanceYieldRequested = false
+    private let cacheMaintenancePollNanoseconds: UInt64 = 25_000_000
+
+    /// Identifies each run so a joiner can wait for *its* run rather than for the
+    /// queue to fall idle. Runs are strictly sequential, so "run N has finished"
+    /// is `finishedRunID >= N`.
+    private var nextRunID = 0
+    private var currentRunID = -1
+    private var finishedRunID = -1
+
     var isRunning: Bool { currentTask != nil }
     var hasPendingFollowUp: Bool { !pending.isEmpty }
     /// Distinct jobs waiting. Equivalent requests collapse, independent ones do not.
     var pendingFollowUpCount: Int { pending.count }
+
+    /// Reserves the CloudKit side of the cache-maintenance exclusion. The sweep
+    /// runs off the main actor, so this reservation keeps a new sync from starting
+    /// while the filesystem pass is deleting assets.
+    @discardableResult
+    func beginCacheMaintenance() -> Bool {
+        guard currentTask == nil, pending.isEmpty, !isCacheMaintenanceInProgress else {
+            return false
+        }
+        isCacheMaintenanceInProgress = true
+        cacheMaintenanceYieldRequested = false
+        return true
+    }
+
+    /// A sync or deletion request that arrives during the sweep asks it to stop
+    /// at its next per-cache-item checkpoint, then waits for the reservation to
+    /// release before starting its own CloudKit work.
+    func requestCacheMaintenanceYield() {
+        guard isCacheMaintenanceInProgress else { return }
+        cacheMaintenanceYieldRequested = true
+    }
+
+    var shouldYieldCacheMaintenance: Bool {
+        cacheMaintenanceYieldRequested
+    }
+
+    func endCacheMaintenance() {
+        isCacheMaintenanceInProgress = false
+        cacheMaintenanceYieldRequested = false
+    }
 
     /// Submits work, waiting until either it or the run that covers it has finished.
     ///
@@ -159,6 +116,14 @@ final class CloudSyncOperationCoordinator {
         coalescesWithEquivalentRequests: Bool = true,
         work: @escaping Work
     ) async throws -> CloudSyncRunOutcome {
+        try Task.checkCancellation()
+        while isCacheMaintenanceInProgress {
+            requestCacheMaintenanceYield()
+            try await Task.sleep(nanoseconds: cacheMaintenancePollNanoseconds)
+            try Task.checkCancellation()
+        }
+        try Task.checkCancellation()
+
         guard let running = runningIntent, let currentTask else {
             try await run(intent: intent, work: work)
             return .completed
@@ -166,7 +131,7 @@ final class CloudSyncOperationCoordinator {
 
         if allowJoiningRunningOperation, coalescesWithEquivalentRequests, running.subsumes(intent) {
             // If the run we are riding on fails, this request failed with it.
-            try await currentTask.value
+            try await waitForRunToFinish(currentRunID, task: currentTask)
             return .joinedRunningOperation(running)
         }
 
@@ -181,19 +146,18 @@ final class CloudSyncOperationCoordinator {
         defer {
             satisfiedWaiters.remove(waiterID)
             failuresByWaiter.removeValue(forKey: waiterID)
+            cancelWaiter(waiterID)
         }
 
         var ranOwnWork = false
         while !satisfiedWaiters.contains(waiterID) {
-            if let task = self.currentTask {
-                // Another run's failure is not this request's to report; the run
-                // covering this request delivers its error through `failuresByWaiter`.
-                _ = try? await task.value
-                // Awaiting an already-finished task can return without suspending,
-                // and the run that owns it clears `currentTask` from its own
-                // continuation. Without an explicit yield this loop can spin on the
-                // main actor and never let that continuation run.
-                await Task.yield()
+            try Task.checkCancellation()
+            if self.currentTask != nil {
+                // Do not await the running task directly here. A cancelled waiter
+                // must be able to leave while the shared CloudKit operation keeps
+                // running for its other callers; polling the actor-owned handle
+                // also avoids a cancelled waiter remaining in the queue forever.
+                try await Task.sleep(nanoseconds: cacheMaintenancePollNanoseconds)
                 continue
             }
             guard let next = takeHighestPriorityPending() else { break }
@@ -213,6 +177,22 @@ final class CloudSyncOperationCoordinator {
             throw failure
         }
         return ranOwnWork ? .completed : .coalescedIntoFollowUp(coalescedInto)
+    }
+
+    /// Waits for one specific run, then reports its result.
+    ///
+    /// Deliberately keyed on `runID` rather than on `currentTask != nil`: follow-up
+    /// work can claim the slot in the same main-actor turn the joined run releases
+    /// it, so a poller watching the shared handle never observes the idle window
+    /// and ends up waiting for the whole queue to drain instead of for the run it
+    /// actually joined. Polling — rather than awaiting `task.value` directly — is
+    /// what lets a cancelled joiner leave while the run continues for its other
+    /// callers.
+    private func waitForRunToFinish(_ runID: Int, task: Task<Void, any Error>) async throws {
+        while finishedRunID < runID {
+            try await Task.sleep(nanoseconds: cacheMaintenancePollNanoseconds)
+        }
+        try await task.value
     }
 
     /// Adds this request to the queue, merging it into an existing entry only when
@@ -253,6 +233,18 @@ final class CloudSyncOperationCoordinator {
         return pending.remove(at: index)
     }
 
+    /// Removes a cancelled caller from queued work without cancelling the shared
+    /// run itself. If it was the last waiter, the work is no longer needed and can
+    /// be discarded before another submitter drains the queue.
+    private func cancelWaiter(_ waiterID: Int) {
+        for index in pending.indices.reversed() {
+            pending[index].waiters.remove(waiterID)
+            if pending[index].waiters.isEmpty {
+                pending.remove(at: index)
+            }
+        }
+    }
+
     private func run(
         intent: CloudSyncIntent,
         work: @escaping Work,
@@ -261,19 +253,28 @@ final class CloudSyncOperationCoordinator {
         let task = Task { @MainActor in
             try await work()
         }
+        let runID = nextRunID
+        nextRunID += 1
+        currentRunID = runID
         currentTask = task
         runningIntent = intent
 
         do {
             try await task.value
         } catch {
-            finishRun(intent: intent, satisfying: waiters, error: error)
+            finishRun(runID, intent: intent, satisfying: waiters, error: error)
             throw error
         }
-        finishRun(intent: intent, satisfying: waiters, error: nil)
+        finishRun(runID, intent: intent, satisfying: waiters, error: nil)
     }
 
-    private func finishRun(intent: CloudSyncIntent, satisfying waiters: Set<Int>, error: (any Error)?) {
+    private func finishRun(
+        _ runID: Int,
+        intent: CloudSyncIntent,
+        satisfying waiters: Set<Int>,
+        error: (any Error)?
+    ) {
+        finishedRunID = max(finishedRunID, runID)
         currentTask = nil
         runningIntent = nil
         completedRunCount += 1

@@ -215,6 +215,13 @@ final class TemporaryFileCleanupService {
         // kill between them — leaves a full copy of the recording under this name
         // with nothing else in the app that knows to reclaim it.
         if name.hasPrefix("merge_backup_") && ext == "m4a" { return true }
+        // `RestoredAudioFileInstaller` copies a CloudKit audio asset into a sibling of
+        // its Documents destination and renames it into place. Its `defer` covers every
+        // throwing path, but a kill or a crash between the copy and the rename orphans a
+        // full recording's worth of bytes that the reviewed audio cleanup intentionally
+        // does not inspect because it is restore staging rather than user audio.
+        // The age gate protects a restore that is still copying.
+        if name.hasPrefix(RestoredAudioFileInstaller.stagingPrefix) && ext == "tmp" { return true }
         // Diagnostic exports are written for the share sheet and are multi-megabyte.
         // `LogExporter` clears the previous ones each time it exports; this catches
         // the ones a crash or a dismissed share sheet left behind.

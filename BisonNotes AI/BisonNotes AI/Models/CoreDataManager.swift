@@ -44,73 +44,154 @@ enum CoreDataDeletionError: Error, Equatable {
     case recordingNotFound(UUID)
 }
 
-/// Side effects of a delete that must not run until Core Data has committed.
+/// Side effects of a delete that must be committed with the Core Data change.
 ///
-/// Two of them cannot be taken back. Attachment files are gone from disk once
-/// deleted, so a rollback returns rows pointing at notes the user can no longer
-/// open. A cloud deletion marker is durable and outlives the row it describes,
-/// so one queued for a row that then rolls back deletes a live copy from every
-/// other device. Callers stage the intent, save, and only then commit; if the
-/// save throws, nothing staged has happened.
+/// Cloud mutations are inserted into the same persistent store transaction as
+/// the deleted rows. Attachment folders remain post-commit filesystem effects:
+/// unlike an outbox row, they cannot be rolled back by SQLite.
 @MainActor
 struct DeferredDeletionEffects {
-    private var summaries: [(summaryId: UUID, recordingId: UUID?)] = []
-    private var transcripts: [(transcriptId: UUID, recordingId: UUID?)] = []
-    private var recordings: [(recordingId: UUID, transcriptIds: [UUID], summaryIds: [UUID])] = []
+    private var summaries: [(summaryId: UUID, recordingId: UUID?, requestedAt: Date, deleteAttachments: Bool)] = []
+    private var transcripts: [(transcriptId: UUID, recordingId: UUID?, requestedAt: Date)] = []
+    private var recordings: [(recordingId: UUID, transcriptIds: [UUID], summaryIds: [UUID], requestedAt: Date)] = []
+    private var localOnlyRemovals: [(recordingId: UUID, requestedAt: Date)] = []
+    private var importedAudioRemovals: [(recordingId: UUID, requestedAt: Date)] = []
 
     var isEmpty: Bool {
-        summaries.isEmpty && transcripts.isEmpty && recordings.isEmpty
+        summaries.isEmpty && transcripts.isEmpty && recordings.isEmpty &&
+            localOnlyRemovals.isEmpty && importedAudioRemovals.isEmpty
     }
 
-    /// Stages a summary. `deletesAttachments` is false for a row whose files are
-    /// being handed to another id rather than destroyed.
-    mutating func stage(summary: SummaryEntry) {
+    mutating func stage(
+        summary: SummaryEntry,
+        requestedAt: Date = Date(),
+        deleteAttachments: Bool = true
+    ) {
         guard let summaryId = summary.id else { return }
-        summaries.append((summaryId, summary.recordingId ?? summary.recording?.id))
+        summaries.append((
+            summaryId,
+            summary.recordingId ?? summary.recording?.id,
+            requestedAt,
+            deleteAttachments
+        ))
     }
 
-    mutating func stageSummary(id summaryId: UUID, recordingId: UUID?) {
-        summaries.append((summaryId, recordingId))
+    mutating func stageSummary(
+        id summaryId: UUID,
+        recordingId: UUID?,
+        requestedAt: Date = Date(),
+        deleteAttachments: Bool = true
+    ) {
+        summaries.append((summaryId, recordingId, requestedAt, deleteAttachments))
     }
 
-    mutating func stage(transcript: TranscriptEntry) {
+    mutating func stage(transcript: TranscriptEntry, requestedAt: Date = Date()) {
         guard let transcriptId = transcript.id else { return }
-        transcripts.append((transcriptId, transcript.recordingId ?? transcript.recording?.id))
+        transcripts.append((transcriptId, transcript.recordingId ?? transcript.recording?.id, requestedAt))
     }
 
-    mutating func stage(recording: RecordingEntry) {
+    /// Stages a transcript tombstone by identity, for an id whose local row is
+    /// already gone. A missing row is not evidence that the cloud copy should
+    /// survive — for an imported placeholder it is the normal case, and without
+    /// this the next reconcile restores the transcript the user just deleted.
+    mutating func stageTranscript(
+        id transcriptId: UUID,
+        recordingId: UUID?,
+        requestedAt: Date = Date()
+    ) {
+        transcripts.append((transcriptId, recordingId, requestedAt))
+    }
+
+    mutating func stage(recording: RecordingEntry, requestedAt: Date = Date()) {
         guard let recordingId = recording.id else { return }
         recordings.append((
             recordingId,
             [recording.transcriptId ?? recording.transcript?.id].compactMap { $0 },
-            [recording.summaryId ?? recording.summary?.id].compactMap { $0 }
+            [recording.summaryId ?? recording.summary?.id].compactMap { $0 },
+            requestedAt
         ))
     }
 
-    /// Publishes the tombstones and removes the attachment files. Call only after
-    /// the save that removed these rows has succeeded.
-    func commit() {
-        guard !isEmpty else { return }
-        let iCloudManager = SummaryManager.shared.getiCloudManager()
+    mutating func stageLocalOnlyRemoval(recordingId: UUID, requestedAt: Date = Date()) {
+        localOnlyRemovals.append((recordingId, requestedAt))
+    }
 
+    mutating func stageImportedAudioRemoval(recordingId: UUID, requestedAt: Date = Date()) {
+        importedAudioRemovals.append((recordingId, requestedAt))
+    }
+
+    /// Inserts every outbound intent into the transaction that deletes the rows.
+    /// A thrown error leaves the caller's context free to roll back the whole
+    /// deletion, including any outbox rows inserted so far.
+    func stageCloudMutations(in context: NSManagedObjectContext) throws {
         for recording in recordings {
-            iCloudManager.enqueueRecordingDeletionForiCloud(
-                recordingId: recording.recordingId,
-                transcriptIds: recording.transcriptIds,
-                summaryIds: recording.summaryIds
+            // A whole-recording deletion supersedes an earlier explicit imported
+            // audio removal for the same target. Keep the old enqueue API's
+            // coalescing behavior inside this transaction too.
+            try PendingCloudMutationStore.remove(
+                kind: .importedAudioRemoval,
+                targetId: recording.recordingId,
+                from: context
+            )
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .recordingDeletion,
+                    targetId: recording.recordingId,
+                    transcriptIds: recording.transcriptIds,
+                    summaryIds: recording.summaryIds,
+                    requestedAt: recording.requestedAt
+                ),
+                in: context
             )
         }
         for transcript in transcripts {
-            iCloudManager.enqueueTranscriptRemovalFromiCloud(
-                transcriptId: transcript.transcriptId,
-                recordingId: transcript.recordingId
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .transcriptRemoval,
+                    targetId: transcript.transcriptId,
+                    recordingId: transcript.recordingId,
+                    requestedAt: transcript.requestedAt
+                ),
+                in: context
             )
         }
         for summary in summaries {
-            iCloudManager.enqueueSummaryRemovalFromiCloud(
-                summaryId: summary.summaryId,
-                recordingId: summary.recordingId
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .summaryRemoval,
+                    targetId: summary.summaryId,
+                    recordingId: summary.recordingId,
+                    requestedAt: summary.requestedAt
+                ),
+                in: context
             )
+        }
+        for removal in localOnlyRemovals {
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .localOnlyRemoval,
+                    targetId: removal.recordingId,
+                    requestedAt: removal.requestedAt
+                ),
+                in: context
+            )
+        }
+        for removal in importedAudioRemovals {
+            try PendingCloudMutationStore.enqueue(
+                PendingCloudMutation(
+                    kind: .importedAudioRemoval,
+                    targetId: removal.recordingId,
+                    requestedAt: removal.requestedAt
+                ),
+                in: context
+            )
+        }
+    }
+
+    /// Removes attachment files after a successful database commit. No cloud
+    /// publication happens here; the outbox row is already durable.
+    func commit() {
+        for summary in summaries where summary.deleteAttachments {
             try? SummaryAttachmentStore.shared.deleteAll(for: summary.summaryId)
         }
     }
@@ -118,7 +199,7 @@ struct DeferredDeletionEffects {
     /// Removes the attachment files without publishing any tombstone, for local
     /// cleanup that every device derives independently.
     func commitLocalOnly() {
-        for summary in summaries {
+        for summary in summaries where summary.deleteAttachments {
             try? SummaryAttachmentStore.shared.deleteAll(for: summary.summaryId)
         }
     }
@@ -147,6 +228,7 @@ class CoreDataManager: ObservableObject {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
+        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
     }
 
     // MARK: - Context Management
@@ -168,6 +250,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching recordings: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Fetches recording rows for a diagnostic snapshot without converting a
+    /// read failure into an empty result. Callers must copy the values they
+    /// need while this manager's owning context is isolated to the main actor.
+    func fetchRecordingsForDiagnostics() throws -> [RecordingEntry] {
+        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     // MARK: - URL Management Helpers
@@ -239,17 +330,39 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // Decode URL-encoded characters (like %20 for spaces)
-        let decodedPath = relativePath.removingPercentEncoding ?? relativePath
+        return Self.storedURLCandidates(relativePath, documentsURL: documentsURL).first
+    }
 
-        // If it's just a filename, append directly to documents
-        if !decodedPath.contains("/") {
-            return documentsURL.appendingPathComponent(decodedPath)
+    /// The pure form of the rules `getAbsoluteURL` applies to a stored
+    /// `recordingURL`: the path the string names, plus the Documents-relative
+    /// filename fallback used when a container path changed.
+    ///
+    /// This is the single definition of those rules. Read-only callers — the
+    /// troubleshooting report and the reviewed-audio scan — use it instead of
+    /// restating them, so a change here cannot leave one of them protecting a
+    /// different set of files than `getAbsoluteURL` resolves. Unlike
+    /// `getAbsoluteURL` it touches neither the file system nor the managed
+    /// object, so a diagnostic can call it without rewriting a row.
+    nonisolated static func storedURLCandidates(_ storedURL: String, documentsURL: URL) -> [URL] {
+        let primaryURL: URL?
+        if storedURL.hasPrefix("/") {
+            primaryURL = URL(fileURLWithPath: storedURL)
+        } else if let parsed = URL(string: storedURL), parsed.isFileURL {
+            // Only an explicit `file:` URL takes this branch. Testing
+            // `scheme != nil` instead would capture ordinary filenames that
+            // happen to contain a colon — `URL(string:)` reads
+            // "meeting:notes.m4a" as scheme "meeting" — and strand a recording
+            // whose audio is sitting in Documents under exactly that name.
+            primaryURL = parsed
+        } else {
+            // Decode URL-encoded characters (like %20 for spaces)
+            let decoded = storedURL.removingPercentEncoding ?? storedURL
+            primaryURL = documentsURL.appendingPathComponent(decoded)
         }
 
-        // If it's a relative path, construct the full URL using appendingPathComponent
-        // This is more reliable than URL(string:relativeTo:) for file paths
-        return documentsURL.appendingPathComponent(decodedPath)
+        guard let primaryURL else { return [] }
+        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
+        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
     }
 
     /// Gets the current absolute URL for a recording, handling container ID changes
@@ -259,48 +372,37 @@ class CoreDataManager: ObservableObject {
             return nil
         }
 
-        // First, try to parse as absolute URL (legacy format)
-        if let url = URL(string: urlString), url.scheme != nil {
-            // This is an absolute URL, check if file exists
-            if FileManager.default.fileExists(atPath: url.path) {
-                return url
-            }
+        // Resolved through the one definition of the stored-URL rules rather than a
+        // second `URL(string:) + scheme != nil` test of its own. That test reads an
+        // ordinary filename containing a colon — "meeting:notes.m4a" — as scheme
+        // "meeting", so this resolver used to return nil for audio that is sitting
+        // in Documents and that `getStoredURL` and the reviewed-audio scan both
+        // resolve correctly. Two resolvers disagreeing about one row is exactly what
+        // `storedURLCandidates` exists to prevent.
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
+            return nil
+        }
+        let candidates = Self.storedURLCandidates(urlString, documentsURL: documentsURL)
+        guard let primaryURL = candidates.first else {
+            AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
+            return nil
+        }
 
-            // File doesn't exist at absolute path, try to find by filename
-            if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                let filename = url.lastPathComponent
-                let newURL = documentsURL.appendingPathComponent(filename)
-                if FileManager.default.fileExists(atPath: newURL.path) {
-                    // Update the stored URL to relative path for future resilience
-                    recording.recordingURL = urlToRelativePath(newURL)
-                    try? context.save()
-                    return newURL
-                }
-            }
-        } else {
-            // This is a relative path, convert to absolute URL
-            if let absoluteURL = relativePathToURL(urlString) {
-                if FileManager.default.fileExists(atPath: absoluteURL.path) {
-                    return absoluteURL
-                }
+        if FileManager.default.fileExists(atPath: primaryURL.path) {
+            return primaryURL
+        }
 
-                AppLog.shared.coreData("File not found at relative path, trying filename search", level: .debug)
-                // File doesn't exist, try to find by filename
-                if let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                    let filename = absoluteURL.lastPathComponent
-                    let newURL = documentsURL.appendingPathComponent(filename)
-                    AppLog.shared.coreData("Searching for file: \(newURL.lastPathComponent)", level: .debug)
-                    if FileManager.default.fileExists(atPath: newURL.path) {
-                        AppLog.shared.coreData("File found by filename, updating stored path")
-                        // Update the stored relative path
-                        recording.recordingURL = urlToRelativePath(newURL)
-                        try? context.save()
-                        return newURL
-                    }
-                }
-            } else {
-                AppLog.shared.coreData("Failed to convert relative path to absolute URL", level: .error)
-            }
+        // The remaining candidate is the Documents-relative filename fallback used
+        // when the app's container path changed. Rewriting the row to it keeps the
+        // next lookup on the primary path.
+        AppLog.shared.coreData("File not found at stored path, trying filename search", level: .debug)
+        for fallbackURL in candidates.dropFirst()
+        where FileManager.default.fileExists(atPath: fallbackURL.path) {
+            AppLog.shared.coreData("File found by filename, updating stored path")
+            recording.recordingURL = urlToRelativePath(fallbackURL)
+            try? context.save()
+            return fallbackURL
         }
 
         AppLog.shared.coreData("File not found anywhere for recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
@@ -311,11 +413,13 @@ class CoreDataManager: ObservableObject {
     /// Used for archived recordings where the local file may have been intentionally removed.
     func getStoredURL(for recording: RecordingEntry) -> URL? {
         guard let urlString = recording.recordingURL else { return nil }
-
-        if let url = URL(string: urlString), url.scheme != nil {
-            return url
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
         }
-        return relativePathToURL(urlString)
+
+        // Shares the one definition of the stored-URL rules, so a filename
+        // containing a colon resolves here the same way it does everywhere else.
+        return Self.storedURLCandidates(urlString, documentsURL: documentsURL).first
     }
 
     private func preservedContentURL(for recording: RecordingEntry, recordingId: UUID) -> URL {
@@ -481,59 +585,170 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchTranscriptsForDiagnostics() throws -> [TranscriptEntry] {
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     /// Deletes a transcript and, once the save has landed, tells iCloud.
     ///
     /// `enqueueCloudDeletion` is false when applying a marker that came from
     /// another device — see `deleteRecording(id:enqueueCloudDeletion:)`.
     func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
-        guard let id else { return }
-
         do {
-            let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-            fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-            let transcripts = try context.fetch(fetchRequest)
-            guard !transcripts.isEmpty else {
-                AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
-                return
-            }
-
-            // Only rows that point at *this* transcript. Matching on the parent
-            // recording instead would clear the link on a recording that has since
-            // moved to a newer transcript, which is exactly the id an iCloud
-            // deletion marker for a superseded duplicate carries.
-            let recordings = fetchRecordings(
-                matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
-            )
-            for recording in recordings {
-                recording.transcript = nil
-                recording.transcriptId = nil
-                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
-                recording.lastModified = Date()
-            }
-
-            let summaryEntries = fetchSummaries(
-                matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
-            )
-            for summary in summaryEntries {
-                summary.transcript = nil
-                summary.transcriptId = nil
-            }
-
-            // Capture before deleting, and enqueue only after the save lands:
-            // a rollback below would otherwise leave a queued cloud removal for a
-            // transcript that still exists locally, and the next sync would delete
-            // the cloud copy and then reconcile the local row away.
             var effects = DeferredDeletionEffects()
-            transcripts.forEach {
-                effects.stage(transcript: $0)
-                context.delete($0)
-            }
+            guard try stageTranscriptDeletion(id: id, effects: &effects) else { return }
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
-            AppLog.shared.coreData("Deleted transcript with ID: \(id)")
+            AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
             throw error
         }
+    }
+
+    /// Stages a transcript deletion without saving. Compound user actions use
+    /// this to put every local edit and every corresponding outbox row in one
+    /// persistent transaction.
+    @discardableResult
+    func stageTranscriptDeletion(
+        id: UUID?,
+        effects: inout DeferredDeletionEffects,
+        requestedAt: Date = Date()
+    ) throws -> Bool {
+        guard let id else { return false }
+
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        let transcripts = try context.fetch(fetchRequest)
+        guard !transcripts.isEmpty else {
+            AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
+            return false
+        }
+
+        // Only rows that point at *this* transcript. Matching on the parent
+        // recording instead would clear the link on a recording that has since
+        // moved to a newer transcript, which is exactly the id an iCloud
+        // deletion marker for a superseded duplicate carries.
+        let recordings = fetchRecordings(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
+        )
+        for recording in recordings {
+            recording.transcript = nil
+            recording.transcriptId = nil
+            recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            recording.lastModified = requestedAt
+        }
+
+        let summaryEntries = fetchSummaries(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
+        )
+        for summary in summaryEntries {
+            summary.transcript = nil
+            summary.transcriptId = nil
+        }
+
+        for transcript in transcripts {
+            effects.stage(transcript: transcript, requestedAt: requestedAt)
+            context.delete(transcript)
+        }
+        return true
+    }
+
+    /// Applies another device's imported-audio tombstone: unlinks the recording from
+    /// its audio and removes the local placeholder, keeping the recording row and its
+    /// summary. Returns false when there was nothing left to unlink.
+    ///
+    /// Deliberately scoped to the audio. The transcript half of an imported deletion
+    /// travels as its own tombstone, and clearing `transcriptId` here would strand a
+    /// real transcript row on any device whose markers arrive in the other order.
+    ///
+    /// Removes the file before saving the unlink. A failed filesystem operation or
+    /// save leaves the URL in Core Data, so the marker remains eligible for retry.
+    /// Saves local-only: this is someone else's marker being applied, and raising a
+    /// tombstone of our own would re-create one a revive had withdrawn.
+    @discardableResult
+    func applyImportedAudioRemoval(recordingId: UUID, requestedAt: Date) throws -> Bool {
+        guard let recording = getRecording(id: recordingId),
+              let storedURL = recording.recordingURL else {
+            return false
+        }
+
+        guard let documentsURL = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw NSError(
+                domain: "CoreDataManager",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "The Documents directory is unavailable"]
+            )
+        }
+
+        let fileManager = FileManager.default
+        let candidates = Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
+        for url in candidates where fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                // A concurrent cleanup can win between the existence check and
+                // removeItem. Only a file that is still present is a failed delete.
+                if fileManager.fileExists(atPath: url.path) {
+                    AppLog.shared.coreData(
+                        "Could not remove imported audio for recording \(recordingId.uuidString): \(error)",
+                        level: .error
+                    )
+                    throw error
+                }
+            }
+        }
+        guard !candidates.contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
+            throw NSError(
+                domain: "CoreDataManager",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Imported audio still exists after removal"]
+            )
+        }
+
+        // Sidecars are useful cleanup, but the main audio file is the retry gate.
+        // A stale sidecar must not keep the recording URL alive forever.
+        for url in candidates {
+            for ext in AdvancedTroubleshootingService.permittedSidecarExtensions {
+                let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
+                guard fileManager.fileExists(atPath: sidecarURL.path) else { continue }
+                do {
+                    try fileManager.removeItem(at: sidecarURL)
+                } catch {
+                    AppLog.shared.coreData(
+                        "Could not remove imported audio sidecar for recording \(recordingId.uuidString): \(error)",
+                        level: .error
+                    )
+                }
+            }
+        }
+
+        recording.recordingURL = nil
+        // Only ever forward. A rename made on this device after the delete is still
+        // the newer edit, and moving the stamp back would hand it to the cloud copy.
+        if let existing = recording.lastModified, existing > requestedAt {
+            recording.lastModified = existing
+        } else {
+            recording.lastModified = requestedAt
+        }
+
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+
+        AppLog.shared.coreData(
+            "Applied imported audio removal for recording \(recordingId.uuidString)",
+            level: .debug
+        )
+        return true
     }
 
     // MARK: - Repair Operations
@@ -1067,6 +1282,13 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Throwing counterpart used by read-only troubleshooting snapshots.
+    func fetchSummariesForDiagnostics() throws -> [SummaryEntry] {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+        return try context.fetch(fetchRequest)
+    }
+
     /// Returns the complete summary value objects represented by the Core Data store.
     /// SummaryEntry is the authoritative source; this method is the only conversion path
     /// callers should use when they need all summaries for display or cloud backup.
@@ -1291,11 +1513,14 @@ class CoreDataManager: ObservableObject {
         context.rollback()
     }
 
-    /// Saves, then runs `effects`. On failure the context rolls back and the
-    /// error propagates with nothing staged having run — which is the whole
-    /// point of staging. Every delete path goes through here.
-    private func save(committing effects: DeferredDeletionEffects, localOnly: Bool = false) throws {
+    /// Saves the local mutation and its cloud outbox rows as one transaction,
+    /// then runs only irreversible filesystem effects after that transaction
+    /// succeeds. Every user deletion path goes through here.
+    func save(committing effects: DeferredDeletionEffects, localOnly: Bool = false) throws {
         do {
+            if !localOnly {
+                try effects.stageCloudMutations(in: context)
+            }
             try context.save()
         } catch {
             context.rollback()
@@ -1427,6 +1652,15 @@ class CoreDataManager: ObservableObject {
             AppLog.shared.coreData("Error fetching processing jobs: \(error)", level: .error)
             return []
         }
+    }
+
+    /// Throwing counterpart used to decide whether a reviewed audio file is
+    /// still owned by an in-flight processing job. A failed fetch must fail
+    /// closed instead of looking like a store with no jobs.
+    func fetchProcessingJobsForDiagnostics() throws -> [ProcessingJobEntry] {
+        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
+        fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
+        return try context.fetch(fetchRequest)
     }
 
     func getProcessingJob(id: UUID) -> ProcessingJobEntry? {
@@ -1795,9 +2029,19 @@ class CoreDataManager: ObservableObject {
 
         recording.isCloudSyncDisabled = disabled
         recording.lastModified = Date()
+        var effects = DeferredDeletionEffects()
+        if disabled {
+            effects.stageLocalOnlyRemoval(recordingId: recordingId)
+        } else {
+            try PendingCloudMutationStore.remove(
+                kind: .localOnlyRemoval,
+                targetId: recordingId,
+                from: context
+            )
+        }
 
         do {
-            try context.save()
+            try save(committing: effects)
             AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
         } catch {
             AppLog.shared.coreData("Failed to save iCloud exclusion update: \(error)", level: .error)

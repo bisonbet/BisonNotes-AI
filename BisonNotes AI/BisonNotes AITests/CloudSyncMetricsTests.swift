@@ -103,6 +103,41 @@ final class CloudSyncMetricsTests: XCTestCase {
         XCTAssertEqual(report.retryWaitSeconds, 4)
     }
 
+    /// `deleted=62` on every run could mean two devices trading uploads and
+    /// deletions forever, or sixty-two no-op deletes replayed from tombstones inside
+    /// their retention window. The executor folds already-absent into `deleted`
+    /// because that is the state the caller wanted, so the log has to say which.
+    func testAlreadyAbsentDeletesAreCountedApartFromRealRemovals() {
+        let recorder = makeRecorder()
+
+        var modify = CloudKitModifyOutcome()
+        let removed = CKRecord.ID(recordName: "really_removed")
+        let missing = CKRecord.ID(recordName: "already_gone")
+        modify.deleted.insert(removed)
+        modify.deleted.insert(missing)
+        modify.alreadyAbsent.insert(missing)
+        recorder.add(modify: modify)
+
+        let report = recorder.finish(.succeeded)
+
+        XCTAssertEqual(report.recordsDeleted, 2)
+        XCTAssertEqual(report.recordsAlreadyAbsent, 1)
+        XCTAssertTrue(
+            report.logDescription.contains("alreadyGone=1"),
+            "Expected the ambiguity to be resolved in the log line, got: \(report.logDescription)"
+        )
+    }
+
+    func testACleanRunDoesNotCarryAnAlreadyGoneCount() {
+        let recorder = makeRecorder()
+
+        var modify = CloudKitModifyOutcome()
+        modify.deleted.insert(CKRecord.ID(recordName: "really_removed"))
+        recorder.add(modify: modify)
+
+        XCTAssertFalse(recorder.finish(.succeeded).logDescription.contains("alreadyGone"))
+    }
+
     func testDeferredWorkIsReportedAsDeferredNotAsSuccess() {
         let recorder = makeRecorder()
         var fetch = CloudKitFetchOutcome()
