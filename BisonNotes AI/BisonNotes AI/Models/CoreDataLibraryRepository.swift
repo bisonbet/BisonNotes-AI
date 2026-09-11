@@ -402,6 +402,74 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func updateProcessingJob(
+        _ command: LibraryProcessingJobUpdateCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        try command.validate()
+        let context = context
+        return try context.performAndWait {
+            let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+            request.fetchLimit = 2
+            request.predicate = try Self.processingJobPredicate(for: command.reference)
+
+            let matches = try context.fetch(request)
+            guard !matches.isEmpty else {
+                throw LibraryRepositoryError.processingJobNotFound(
+                    reference: command.reference.displayValue
+                )
+            }
+            guard matches.count == 1 else {
+                throw LibraryRepositoryError.ambiguousProcessingJob(
+                    reference: command.reference.displayValue
+                )
+            }
+
+            let job = matches[0]
+            let current = try Self.processingJobSnapshot(from: job)
+            guard command.expectedLastModified == nil
+                    || command.expectedLastModified == current.lastModified else {
+                throw LibraryRepositoryError.staleProcessingJob(
+                    reference: command.reference.displayValue,
+                    expected: command.expectedLastModified,
+                    actual: current.lastModified
+                )
+            }
+
+            let error: String?
+            switch command.error {
+            case .preserve:
+                error = current.error
+            case .set(let value):
+                error = value
+            }
+
+            let completionTime: Date?
+            switch command.completionTime {
+            case .preserve:
+                completionTime = current.completionTime
+            case .set(let value):
+                completionTime = value
+            }
+
+            job.setValue(command.status, forKey: "status")
+            job.setValue(command.progress, forKey: "progress")
+            job.setValue(error, forKey: "error")
+            job.setValue(completionTime, forKey: "completionTime")
+            job.setValue(command.modifiedAt, forKey: "lastModified")
+
+            do {
+                try context.save()
+            } catch {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "update processing job",
+                    reason: error.localizedDescription
+                )
+            }
+
+            return try Self.processingJobSnapshot(from: job)
+        }
+    }
+
     private static func recordingPredicate(
         for reference: LibraryRecordingReference
     ) throws -> NSPredicate {
@@ -425,6 +493,34 @@ extension CoreDataLibraryRepository {
         guard let uuid = UUID(uuidString: legacyID) else {
             throw LibraryRepositoryError.invalidCommand(
                 "Core Data storage ID does not contain a resolvable UUID"
+            )
+        }
+        return NSPredicate(format: "id == %@", uuid as CVarArg)
+    }
+
+    private static func processingJobPredicate(
+        for reference: LibraryProcessingJobReference
+    ) throws -> NSPredicate {
+        if let legacyID = reference.legacyID {
+            guard let uuid = UUID(uuidString: legacyID) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "processing-job legacy ID is not a UUID"
+                )
+            }
+            return NSPredicate(format: "id == %@", uuid as CVarArg)
+        }
+
+        guard let storageID = reference.storageID,
+              storageID.hasPrefix("core-data-processingjob-") else {
+            throw LibraryRepositoryError.invalidCommand(
+                "Core Data requires a processing-job legacy ID or a resolvable storage ID"
+            )
+        }
+
+        let legacyID = String(storageID.dropFirst("core-data-processingjob-".count))
+        guard let uuid = UUID(uuidString: legacyID) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "Core Data processing-job storage ID does not contain a resolvable UUID"
             )
         }
         return NSPredicate(format: "id == %@", uuid as CVarArg)

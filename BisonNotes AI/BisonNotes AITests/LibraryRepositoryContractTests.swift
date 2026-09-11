@@ -163,6 +163,66 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertTrue(pendingAfterEnable.isEmpty)
     }
 
+    func testCoreDataRepositoryUpdatesProcessingJobWithoutExposingManagedObject() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-processing-job.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let jobID = "10000000-0000-0000-0000-000000000004"
+        let failed = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: LibraryProcessingJobReference(legacyID: jobID),
+                status: "Failed",
+                progress: 0.75,
+                error: .set("Processing failed"),
+                completionTime: .set(Date(timeIntervalSinceReferenceDate: 300)),
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(failed.status, "Failed")
+        XCTAssertEqual(failed.progress, 0.75)
+        XCTAssertEqual(failed.error, "Processing failed")
+        XCTAssertEqual(
+            failed.completionTime,
+            Date(timeIntervalSinceReferenceDate: 300)
+        )
+        XCTAssertEqual(failed.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let preserved = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: LibraryProcessingJobReference(legacyID: jobID),
+                status: "Processing",
+                progress: 0.8,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+
+        XCTAssertEqual(preserved.error, "Processing failed")
+        XCTAssertEqual(
+            preserved.completionTime,
+            Date(timeIntervalSinceReferenceDate: 300)
+        )
+        XCTAssertEqual(preserved.lastModified, Date(timeIntervalSinceReferenceDate: 302))
+
+        let persisted = try await repository.fetchProcessingJobSnapshots()
+        XCTAssertEqual(persisted.count, 1)
+        XCTAssertEqual(persisted[0], preserved)
+    }
+
     private func assertTranscript(
         _ transcript: LibraryTranscriptSnapshot,
         recordingStorageID: String

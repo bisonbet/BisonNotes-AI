@@ -175,6 +175,111 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(changesAfterEnable.map(\.operation), [.updated, .deleted])
     }
 
+    func testRepositoryUpdatesProcessingJobWithExplicitPreserveAndClearSemantics() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let jobReference = LibraryProcessingJobReference(storageID: "job-storage")
+
+        let failed = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: jobReference,
+                status: "failed",
+                progress: 0.75,
+                error: .set("Processing failed"),
+                completionTime: .set(Date(timeIntervalSinceReferenceDate: 300)),
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        XCTAssertEqual(failed.status, "failed")
+        XCTAssertEqual(failed.progress, 0.75)
+        XCTAssertEqual(failed.error, "Processing failed")
+        XCTAssertEqual(
+            failed.completionTime,
+            Date(timeIntervalSinceReferenceDate: 300)
+        )
+        XCTAssertEqual(failed.lastModified, Date(timeIntervalSinceReferenceDate: 301))
+
+        let preserved = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: jobReference,
+                status: "processing",
+                progress: 0.8,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+
+        XCTAssertEqual(preserved.error, "Processing failed")
+        XCTAssertEqual(
+            preserved.completionTime,
+            Date(timeIntervalSinceReferenceDate: 300)
+        )
+
+        let cleared = try await repository.updateProcessingJob(
+            LibraryProcessingJobUpdateCommand(
+                reference: jobReference,
+                status: "queued",
+                progress: 0,
+                error: .set(nil),
+                completionTime: .set(nil),
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 302),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+            )
+        )
+
+        XCTAssertNil(cleared.error)
+        XCTAssertNil(cleared.completionTime)
+        let changes = try await repository.changes(since: 0)
+        let revision = try await repository.currentRevision()
+        XCTAssertEqual(revision, 3)
+        XCTAssertEqual(
+            changes.map(\.entity),
+            [.processingJob, .processingJob, .processingJob]
+        )
+        XCTAssertEqual(
+            changes.map(\.operation),
+            [.updated, .updated, .updated]
+        )
+
+        do {
+            _ = try await repository.updateProcessingJob(
+                LibraryProcessingJobUpdateCommand(
+                    reference: jobReference,
+                    status: "processing",
+                    progress: 0.1,
+                    expectedLastModified: Date(timeIntervalSinceReferenceDate: 105),
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 304)
+                )
+            )
+            XCTFail("Expected stale processing-job revision to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleProcessingJob(
+                    reference: "job-storage",
+                    expected: Date(timeIntervalSinceReferenceDate: 105),
+                    actual: Date(timeIntervalSinceReferenceDate: 303)
+                )
+            )
+        }
+        let revisionAfterRejectedUpdate = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterRejectedUpdate, 3)
+    }
+
     func testRepositoryRenameRejectsStaleRevisionWithoutChangingTheRow() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

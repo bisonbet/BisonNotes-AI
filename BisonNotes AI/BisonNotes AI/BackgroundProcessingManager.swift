@@ -520,6 +520,9 @@ class BackgroundProcessingManager: ObservableObject {
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager: EnhancedAudioSessionManager
     private let coreDataManager = CoreDataManager()
+    private lazy var libraryRepository: any LibraryRepository = {
+        CoreDataLibraryRepository(context: coreDataManager.managedObjectContext)
+    }()
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
     private let previousSessionCrashed: Bool
@@ -885,22 +888,43 @@ class BackgroundProcessingManager: ObservableObject {
                 processingStatus = updatedJob.status
             }
 
-            // Update Core Data entry
-            if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-                jobEntry.status = updatedJob.status.displayName
-                jobEntry.progress = updatedJob.progress
-                jobEntry.lastModified = Date()
+            let modifiedAt = Date()
+            await persistProcessingJobUpdate(
+                updatedJob,
+                error: updatedJob.status.errorMessage.map { .set($0) } ?? .preserve,
+                completionTime: updatedJob.status.isTerminal
+                    ? .set(modifiedAt)
+                    : .preserve,
+                modifiedAt: modifiedAt
+            )
+        }
+    }
 
-                if updatedJob.status.isTerminal {
-                    jobEntry.completionTime = Date()
-                }
-
-                if let errorMsg = updatedJob.status.errorMessage {
-                    jobEntry.error = errorMsg
-                }
-
-                coreDataManager.updateProcessingJob(jobEntry)
-            }
+    private func persistProcessingJobUpdate(
+        _ updatedJob: ProcessingJob,
+        error: LibraryProcessingJobErrorUpdate,
+        completionTime: LibraryProcessingJobCompletionTimeUpdate,
+        modifiedAt: Date
+    ) async {
+        do {
+            _ = try await libraryRepository.updateProcessingJob(
+                LibraryProcessingJobUpdateCommand(
+                    reference: LibraryProcessingJobReference(
+                        legacyID: updatedJob.id.uuidString
+                    ),
+                    status: updatedJob.status.displayName,
+                    progress: updatedJob.progress,
+                    error: error,
+                    completionTime: completionTime,
+                    modifiedAt: modifiedAt
+                )
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Failed to persist processing-job update for \(updatedJob.id): "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 
@@ -2979,20 +3003,15 @@ class BackgroundProcessingManager: ObservableObject {
             processingStatus = updatedJob.status
         }
 
-        // Update in Core Data — use displayName for status (title-case) to match
-        // convertToProcessingJob's expected format, and store error separately.
-        if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-            jobEntry.status = updatedJob.status.displayName
-            jobEntry.error = updatedJob.error
-            jobEntry.completionTime = updatedJob.completionTime
-            jobEntry.progress = updatedJob.progress
-
-            do {
-                try coreDataManager.saveContext()
-            } catch {
-                AppLog.shared.backgroundProcessing("Failed to update job in Core Data: \(error.localizedDescription)", level: .error)
-            }
-        }
+        // Use displayName for status (title-case) to match
+        // convertToProcessingJob's expected format, and replace both optional
+        // fields explicitly because reconciliation owns the complete snapshot.
+        await persistProcessingJobUpdate(
+            updatedJob,
+            error: .set(updatedJob.error),
+            completionTime: .set(updatedJob.completionTime),
+            modifiedAt: Date()
+        )
     }
 
     // MARK: - Manual Cleanup Functions

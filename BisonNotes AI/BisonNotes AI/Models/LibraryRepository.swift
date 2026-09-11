@@ -113,6 +113,100 @@ struct LibraryRecordingCloudSyncCommand: Equatable, Sendable {
     }
 }
 
+/// Stable identifiers used by processing-job commands.
+struct LibraryProcessingJobReference: Equatable, Sendable {
+    let storageID: String?
+    let legacyID: String?
+
+    init(storageID: String? = nil, legacyID: String? = nil) {
+        self.storageID = storageID
+        self.legacyID = legacyID
+    }
+
+    var displayValue: String {
+        storageID ?? legacyID ?? "<missing processing-job identity>"
+    }
+}
+
+/// Describes how a processing-job error is changed by an update command.
+enum LibraryProcessingJobErrorUpdate: Equatable, Sendable {
+    case preserve
+    case set(String?)
+}
+
+/// Describes how a processing-job completion timestamp is changed by an update
+/// command. The explicit cases distinguish preserving an existing timestamp
+/// from intentionally clearing one.
+enum LibraryProcessingJobCompletionTimeUpdate: Equatable, Sendable {
+    case preserve
+    case set(Date?)
+}
+
+/// Updates the mutable state of a persisted processing job without exposing a
+/// managed object or SQLite row to the caller.
+struct LibraryProcessingJobUpdateCommand: Equatable, Sendable {
+    let reference: LibraryProcessingJobReference
+    let status: String
+    let progress: Double
+    let error: LibraryProcessingJobErrorUpdate
+    let completionTime: LibraryProcessingJobCompletionTimeUpdate
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryProcessingJobReference,
+        status: String,
+        progress: Double,
+        error: LibraryProcessingJobErrorUpdate = .preserve,
+        completionTime: LibraryProcessingJobCompletionTimeUpdate = .preserve,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.status = status
+        self.progress = progress
+        self.error = error
+        self.completionTime = completionTime
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryProcessingJobUpdateCommand {
+    func validate() throws {
+        guard !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job status must not be empty"
+            )
+        }
+        guard progress.isFinite, (0...1).contains(progress) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job progress must be finite and between 0 and 1"
+            )
+        }
+
+        let dates = [
+            modifiedAt,
+            expectedLastModified,
+            completionDate(from: completionTime)
+        ]
+        guard dates.compactMap({ $0 }).allSatisfy({
+            $0.timeIntervalSinceReferenceDate.isFinite
+        }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job dates must be finite"
+            )
+        }
+    }
+
+    private func completionDate(
+        from update: LibraryProcessingJobCompletionTimeUpdate
+    ) -> Date? {
+        guard case .set(let date) = update else { return nil }
+        return date
+    }
+}
+
 struct LibraryTranscriptSnapshot: Equatable, Sendable {
     let storageID: String
     let legacyID: String?
@@ -205,6 +299,9 @@ protocol LibraryRepository: Sendable {
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot
+    func updateProcessingJob(
+        _ command: LibraryProcessingJobUpdateCommand
+    ) async throws -> LibraryProcessingJobSnapshot
 }
 
 enum LibraryRepositoryError: LocalizedError, Equatable {
@@ -213,6 +310,9 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case recordingNotFound(reference: String)
     case ambiguousRecording(reference: String)
     case staleRecording(reference: String, expected: Date?, actual: Date?)
+    case processingJobNotFound(reference: String)
+    case ambiguousProcessingJob(reference: String)
+    case staleProcessingJob(reference: String, expected: Date?, actual: Date?)
     case writeFailed(operation: String, reason: String)
 
     var errorDescription: String? {
@@ -227,6 +327,14 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The recording identity is ambiguous: \(reference)"
         case .staleRecording(let reference, let expected, let actual):
             return "The recording changed before it could be updated (\(reference)); "
+                + "expected last modified \(String(describing: expected)), "
+                + "found \(String(describing: actual))."
+        case .processingJobNotFound(let reference):
+            return "The processing job could not be found: \(reference)"
+        case .ambiguousProcessingJob(let reference):
+            return "The processing-job identity is ambiguous: \(reference)"
+        case .staleProcessingJob(let reference, let expected, let actual):
+            return "The processing job changed before it could be updated (\(reference)); "
                 + "expected last modified \(String(describing: expected)), "
                 + "found \(String(describing: actual))."
         case .writeFailed(let operation, let reason):

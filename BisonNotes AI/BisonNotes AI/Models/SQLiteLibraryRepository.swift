@@ -52,6 +52,12 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws -> LibraryRecordingSnapshot {
         try await store.setCloudSyncDisabled(command)
     }
+
+    func updateProcessingJob(
+        _ command: LibraryProcessingJobUpdateCommand
+    ) async throws -> LibraryProcessingJobSnapshot {
+        try await store.updateProcessingJob(command)
+    }
 }
 
 extension SQLiteLibraryStore {
@@ -152,6 +158,73 @@ extension SQLiteLibraryStore {
         }
     }
 
+    func updateProcessingJob(
+        _ command: LibraryProcessingJobUpdateCommand
+    ) throws -> LibraryProcessingJobSnapshot {
+        try command.validate()
+        let reference = try Self.normalizedProcessingJobReference(command.reference)
+        let modifiedAt = command.modifiedAt.timeIntervalSinceReferenceDate
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchProcessingJobRows(for: reference, in: database)
+            let current = try Self.validateProcessingJobTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+
+            let error: String?
+            switch command.error {
+            case .preserve:
+                error = current.error
+            case .set(let value):
+                error = value
+            }
+
+            let completionTime: Double?
+            switch command.completionTime {
+            case .preserve:
+                completionTime = current.completionTime?.timeIntervalSinceReferenceDate
+            case .set(let value):
+                completionTime = value?.timeIntervalSinceReferenceDate
+            }
+
+            try database.execute(
+                sql: """
+                UPDATE processing_jobs
+                SET status = ?, progress = ?, error = ?, completionTime = ?, lastModified = ?
+                WHERE storageID = ?
+                """,
+                arguments: [
+                    command.status,
+                    command.progress,
+                    error,
+                    completionTime,
+                    modifiedAt,
+                    current.storageID
+                ]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "update processing job",
+                    reason: "the processing-job row was not updated"
+                )
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .processingJob,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.modifiedAt
+            )
+            return try Self.fetchUpdatedProcessingJob(
+                storageID: current.storageID,
+                in: database
+            )
+        }
+    }
+
     private static func normalizedReference(
         _ reference: LibraryRecordingReference
     ) throws -> LibraryRecordingReference {
@@ -163,6 +236,22 @@ extension SQLiteLibraryStore {
             )
         }
         return LibraryRecordingReference(
+            storageID: storageID?.isEmpty == false ? storageID : nil,
+            legacyID: legacyID?.isEmpty == false ? legacyID : nil
+        )
+    }
+
+    private static func normalizedProcessingJobReference(
+        _ reference: LibraryProcessingJobReference
+    ) throws -> LibraryProcessingJobReference {
+        let storageID = reference.storageID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let legacyID = reference.legacyID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard storageID?.isEmpty == false || legacyID?.isEmpty == false else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job reference must contain a storage ID or legacy ID"
+            )
+        }
+        return LibraryProcessingJobReference(
             storageID: storageID?.isEmpty == false ? storageID : nil,
             legacyID: legacyID?.isEmpty == false ? legacyID : nil
         )
@@ -195,6 +284,34 @@ extension SQLiteLibraryStore {
         )
     }
 
+    private static func fetchProcessingJobRows(
+        for reference: LibraryProcessingJobReference,
+        in database: Database
+    ) throws -> [Row] {
+        let columns = """
+            storageID, completionTime, engine, error, id, jobType,
+            lastModified, modelName, progress, recordingName, recordingURL,
+            recordingStorageID, startTime, status
+            """
+        if let storageID = reference.storageID {
+            return try Row.fetchAll(
+                database,
+                sql: "SELECT \(columns) FROM processing_jobs WHERE storageID = ? LIMIT 2",
+                arguments: [storageID]
+            )
+        }
+        guard let legacyID = reference.legacyID else {
+            throw LibraryRepositoryError.invalidCommand(
+                "processing-job reference must contain a storage ID or legacy ID"
+            )
+        }
+        return try Row.fetchAll(
+            database,
+            sql: "SELECT \(columns) FROM processing_jobs WHERE id = ? LIMIT 2",
+            arguments: [legacyID]
+        )
+    }
+
     private static func validateRecordingTarget(
         rows: [Row],
         reference: LibraryRecordingReference,
@@ -211,6 +328,34 @@ extension SQLiteLibraryStore {
         guard expectedLastModified == nil
                 || expectedLastModified == current.lastModified else {
             throw LibraryRepositoryError.staleRecording(
+                reference: reference.displayValue,
+                expected: expectedLastModified,
+                actual: current.lastModified
+            )
+        }
+        return current
+    }
+
+    private static func validateProcessingJobTarget(
+        rows: [Row],
+        reference: LibraryProcessingJobReference,
+        expectedLastModified: Date?
+    ) throws -> LibraryProcessingJobSnapshot {
+        guard !rows.isEmpty else {
+            throw LibraryRepositoryError.processingJobNotFound(
+                reference: reference.displayValue
+            )
+        }
+        guard rows.count == 1 else {
+            throw LibraryRepositoryError.ambiguousProcessingJob(
+                reference: reference.displayValue
+            )
+        }
+
+        let current = try SQLiteLibraryRepositoryMapper.processingJob(from: rows[0])
+        guard expectedLastModified == nil
+                || expectedLastModified == current.lastModified else {
+            throw LibraryRepositoryError.staleProcessingJob(
                 reference: reference.displayValue,
                 expected: expectedLastModified,
                 actual: current.lastModified
@@ -414,6 +559,28 @@ extension SQLiteLibraryStore {
             )
         }
         return try SQLiteLibraryRepositoryMapper.snapshot(from: updatedRow)
+    }
+
+    private static func fetchUpdatedProcessingJob(
+        storageID: String,
+        in database: Database
+    ) throws -> LibraryProcessingJobSnapshot {
+        let columns = """
+            storageID, completionTime, engine, error, id, jobType,
+            lastModified, modelName, progress, recordingName, recordingURL,
+            recordingStorageID, startTime, status
+            """
+        guard let updatedRow = try Row.fetchOne(
+            database,
+            sql: "SELECT \(columns) FROM processing_jobs WHERE storageID = ?",
+            arguments: [storageID]
+        ) else {
+            throw LibraryRepositoryError.writeFailed(
+                operation: "update processing job",
+                reason: "the updated processing-job row could not be read"
+            )
+        }
+        return try SQLiteLibraryRepositoryMapper.processingJob(from: updatedRow)
     }
 
     func fetchRecordingSummaries() throws -> [LibraryRecordingSnapshot] {
