@@ -212,6 +212,9 @@ class CoreDataManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
 
+    /// Shared with the controller's repository and migration coordinator.
+    let maintenanceGate: LibraryMaintenanceGate
+
     #if DEBUG
     var contextForTesting: NSManagedObjectContext {
         context
@@ -228,6 +231,7 @@ class CoreDataManager: ObservableObject {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
+        self.maintenanceGate = resolvedPersistenceController.maintenanceGate
         if resolvedPersistenceController.storageStatus.isOperational {
             _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
         } else {

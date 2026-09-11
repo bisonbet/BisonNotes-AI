@@ -3,6 +3,46 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
+    func testRepositoryAccessWaitsBehindSharedMaintenanceGate() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            makeVerifierSnapshot(migrationRunID: nil),
+            into: store,
+            batchSize: 10,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+
+        let gate = LibraryMaintenanceGate()
+        let repository = SQLiteLibraryRepository(store: store, maintenanceGate: gate)
+        let exclusiveLease = try await gate.acquireExclusive()
+        let writeTask = Task {
+            try await repository.renameRecording(
+                LibraryRecordingRenameCommand(
+                    reference: LibraryRecordingReference(storageID: "recording-storage"),
+                    name: "Gated recording",
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+                )
+            )
+        }
+
+        for _ in 0..<100 where await gate.status().waitingNormalCount != 1 {
+            await Task.yield()
+        }
+        let waitingStatus = await gate.status()
+        XCTAssertEqual(waitingStatus.waitingNormalCount, 1)
+
+        await exclusiveLease.release()
+        let updated = try await writeTask.value
+        XCTAssertEqual(updated.name, "Gated recording")
+        let finalStatus = await gate.status()
+        XCTAssertEqual(finalStatus.activeNormalCount, 0)
+    }
+
     func testRepositoryReturnsStorageNeutralRecordingSnapshot() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

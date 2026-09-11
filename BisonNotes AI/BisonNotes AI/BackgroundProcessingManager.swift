@@ -521,7 +521,10 @@ class BackgroundProcessingManager: ObservableObject {
     private let audioSessionManager: EnhancedAudioSessionManager
     private let coreDataManager = CoreDataManager()
     private lazy var libraryRepository: any LibraryRepository = {
-        CoreDataLibraryRepository(context: coreDataManager.managedObjectContext)
+        CoreDataLibraryRepository(
+            context: coreDataManager.managedObjectContext,
+            maintenanceGate: coreDataManager.maintenanceGate
+        )
     }()
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false

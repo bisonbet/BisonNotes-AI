@@ -4,6 +4,50 @@ import XCTest
 @testable import BisonNotes_AI
 
 final class LibraryRepositoryContractTests: XCTestCase {
+    func testCoreDataRepositoryAccessWaitsBehindSharedMaintenanceGate() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-gated.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let gate = LibraryMaintenanceGate()
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext,
+            maintenanceGate: gate
+        )
+        let exclusiveLease = try await gate.acquireExclusive()
+        let writeTask = Task {
+            try await repository.renameRecording(
+                LibraryRecordingRenameCommand(
+                    reference: LibraryRecordingReference(
+                        legacyID: "10000000-0000-0000-0000-000000000001"
+                    ),
+                    name: "Gated recording",
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 300)
+                )
+            )
+        }
+
+        for _ in 0..<100 where await gate.status().waitingNormalCount != 1 {
+            await Task.yield()
+        }
+        let waitingStatus = await gate.status()
+        XCTAssertEqual(waitingStatus.waitingNormalCount, 1)
+
+        await exclusiveLease.release()
+        let updated = try await writeTask.value
+        XCTAssertEqual(updated.name, "Gated recording")
+        let finalStatus = await gate.status()
+        XCTAssertEqual(finalStatus.activeNormalCount, 0)
+    }
+
     func testCoreDataRepositoryReturnsStorageNeutralRecordingSnapshot() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

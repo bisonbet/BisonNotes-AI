@@ -15,12 +15,16 @@ import AVFoundation
 class RecordingWorkflowManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+
+    /// Shared with the controller's repository and migration coordinator.
+    let maintenanceGate: LibraryMaintenanceGate
     private var appCoordinator: AppDataCoordinator?
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
+        self.maintenanceGate = resolvedPersistenceController.maintenanceGate
         self.appCoordinator = nil // Will be set later to avoid circular dependency
     }
 

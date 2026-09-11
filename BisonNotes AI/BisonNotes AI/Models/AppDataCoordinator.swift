@@ -41,7 +41,10 @@ class AppDataCoordinator: ObservableObject {
         // Initialize Core Data system
         self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
         self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
-        self.libraryRepository = CoreDataLibraryRepository(context: viewContext)
+        self.libraryRepository = CoreDataLibraryRepository(
+            context: viewContext,
+            maintenanceGate: resolvedPersistenceController.maintenanceGate
+        )
         self.libraryObservation = CoreDataLibraryObservation(container: resolvedPersistenceController.container)
 
         // SummaryManager initializes its engine registry during first access.

@@ -526,6 +526,10 @@ struct PersistenceController {
 
     let container: NSPersistentContainer
     let storageStatus: PersistenceStoreStatus
+    /// One process-wide gate for this persistence generation. Managers and
+    /// repository adapters constructed from the same controller must share it
+    /// so an exclusive migration lease blocks every repository-backed write.
+    let maintenanceGate: LibraryMaintenanceGate
 
     init(inMemory: Bool = false, storeURL: URL? = nil) {
         let persistentContainer = NSPersistentContainer(name: "BisonNotes_AI")
@@ -576,6 +580,7 @@ struct PersistenceController {
         }
         container = persistentContainer
         storageStatus = resolvedStorageStatus
+        maintenanceGate = LibraryMaintenanceGate()
         container.viewContext.automaticallyMergesChangesFromParent = true
         container.viewContext.transactionAuthor = CoreDataLibraryObservation.applicationTransactionAuthor
     }

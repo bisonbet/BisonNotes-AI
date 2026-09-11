@@ -2,69 +2,94 @@ import CoreData
 import CryptoKit
 import Foundation
 
-/// Read-only repository adapter over the current Core Data context.
+/// Repository adapter over the current Core Data context.
 ///
 /// The adapter copies values while it owns the fetch and never returns managed
 /// objects. It is intentionally standalone: application startup still uses
 /// the existing Core Data manager until the migration coordinator is ready.
 final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
     private let context: NSManagedObjectContext
+    private let maintenanceGate: LibraryMaintenanceGate
 
-    init(context: NSManagedObjectContext) {
+    init(
+        context: NSManagedObjectContext,
+        maintenanceGate: LibraryMaintenanceGate = LibraryMaintenanceGate()
+    ) {
         self.context = context
+        self.maintenanceGate = maintenanceGate
     }
 
     func fetchRecordingSummaries() async throws -> [LibraryRecordingSnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "RecordingEntry"))
-                .map(Self.snapshot(from:))
-                .sorted(by: LibraryRecordingSnapshot.stableOrder)
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "RecordingEntry"))
+                    .map(Self.snapshot(from:))
+                    .sorted(by: LibraryRecordingSnapshot.stableOrder)
+            }
         }
     }
 
     func fetchTranscriptSnapshots() async throws -> [LibraryTranscriptSnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "TranscriptEntry"))
-                .map(Self.transcriptSnapshot(from:))
-                .sorted { $0.storageID < $1.storageID }
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "TranscriptEntry"))
+                    .map(Self.transcriptSnapshot(from:))
+                    .sorted { $0.storageID < $1.storageID }
+            }
         }
     }
 
     func fetchSummarySnapshots() async throws -> [LibrarySummarySnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "SummaryEntry"))
-                .map(Self.summarySnapshot(from:))
-                .sorted { $0.storageID < $1.storageID }
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "SummaryEntry"))
+                    .map(Self.summarySnapshot(from:))
+                    .sorted { $0.storageID < $1.storageID }
+            }
         }
     }
 
     func fetchProcessingJobSnapshots() async throws -> [LibraryProcessingJobSnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "ProcessingJobEntry"))
-                .map(Self.processingJobSnapshot(from:))
-                .sorted { $0.storageID < $1.storageID }
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "ProcessingJobEntry"))
+                    .map(Self.processingJobSnapshot(from:))
+                    .sorted { $0.storageID < $1.storageID }
+            }
         }
     }
 
     func fetchArchiveLocationSnapshots() async throws -> [LibraryArchiveLocationSnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "RecordingArchiveLocationEntry"))
-                .map(Self.archiveLocationSnapshot(from:))
-                .sorted { $0.storageID < $1.storageID }
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "RecordingArchiveLocationEntry"))
+                    .map(Self.archiveLocationSnapshot(from:))
+                    .sorted { $0.storageID < $1.storageID }
+            }
         }
     }
 
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot] {
-        let context = context
-        return try context.performAndWait {
-            try context.fetch(Self.fetchRequest(entityName: "PendingCloudMutation"))
-                .map(Self.pendingCloudMutationSnapshot(from:))
-                .sorted { $0.storageID < $1.storageID }
+        try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                try context.fetch(Self.fetchRequest(entityName: "PendingCloudMutation"))
+                    .map(Self.pendingCloudMutationSnapshot(from:))
+                    .sorted { $0.storageID < $1.storageID }
+            }
+        }
+    }
+
+    private func withNormalAccess<T: Sendable>(
+        _ operation: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        try await maintenanceGate.withNormalAccess {
+            try operation()
         }
     }
 
@@ -287,120 +312,124 @@ extension CoreDataLibraryRepository {
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
-        let context = context
-        return try context.performAndWait {
-            let request = Self.fetchRequest(entityName: "RecordingEntry")
-            request.fetchLimit = 2
-            request.predicate = try Self.recordingPredicate(for: command.reference)
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
 
-            let matches = try context.fetch(request)
-            guard !matches.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.reference.displayValue
-                )
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.normalizedName, forKey: "recordingName")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "rename recording",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
             }
-            guard matches.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.reference.displayValue
-                )
-            }
-
-            let recording = matches[0]
-            let current = try Self.snapshot(from: recording)
-            guard command.expectedLastModified == nil
-                    || command.expectedLastModified == current.lastModified else {
-                throw LibraryRepositoryError.staleRecording(
-                    reference: command.reference.displayValue,
-                    expected: command.expectedLastModified,
-                    actual: current.lastModified
-                )
-            }
-
-            recording.setValue(command.normalizedName, forKey: "recordingName")
-            recording.setValue(command.modifiedAt, forKey: "lastModified")
-
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "rename recording",
-                    reason: error.localizedDescription
-                )
-            }
-
-            return try Self.snapshot(from: recording)
         }
     }
 
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot {
-        let context = context
-        return try context.performAndWait {
-            let request = Self.fetchRequest(entityName: "RecordingEntry")
-            request.fetchLimit = 2
-            request.predicate = try Self.recordingPredicate(for: command.reference)
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
 
-            let matches = try context.fetch(request)
-            guard !matches.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.reference.displayValue
-                )
-            }
-            guard matches.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.reference.displayValue
-                )
-            }
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
 
-            let recording = matches[0]
-            let current = try Self.snapshot(from: recording)
-            guard command.expectedLastModified == nil
-                    || command.expectedLastModified == current.lastModified else {
-                throw LibraryRepositoryError.staleRecording(
-                    reference: command.reference.displayValue,
-                    expected: command.expectedLastModified,
-                    actual: current.lastModified
-                )
-            }
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
 
-            guard let legacyID = current.legacyID,
-                  let targetID = UUID(uuidString: legacyID) else {
-                throw LibraryRepositoryError.invalidRecord(
-                    entity: "RecordingEntry",
-                    field: "id"
-                )
-            }
+                guard let legacyID = current.legacyID,
+                      let targetID = UUID(uuidString: legacyID) else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "RecordingEntry",
+                        field: "id"
+                    )
+                }
 
-            recording.setValue(command.disabled, forKey: "isCloudSyncDisabled")
-            recording.setValue(command.modifiedAt, forKey: "lastModified")
-            if command.disabled {
-                try PendingCloudMutationStore.enqueue(
-                    PendingCloudMutation(
+                recording.setValue(command.disabled, forKey: "isCloudSyncDisabled")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+                if command.disabled {
+                    try PendingCloudMutationStore.enqueue(
+                        PendingCloudMutation(
+                            kind: .localOnlyRemoval,
+                            targetId: targetID,
+                            requestedAt: command.requestedAt
+                        ),
+                        in: context
+                    )
+                } else {
+                    try PendingCloudMutationStore.remove(
                         kind: .localOnlyRemoval,
                         targetId: targetID,
-                        requestedAt: command.requestedAt
-                    ),
-                    in: context
-                )
-            } else {
-                try PendingCloudMutationStore.remove(
-                    kind: .localOnlyRemoval,
-                    targetId: targetID,
-                    from: context
-                )
-            }
+                        from: context
+                    )
+                }
 
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "set cloud sync preference",
-                    reason: error.localizedDescription
-                )
-            }
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "set cloud sync preference",
+                        reason: error.localizedDescription
+                    )
+                }
 
-            return try Self.snapshot(from: recording)
+                return try Self.snapshot(from: recording)
+            }
         }
     }
 
@@ -408,50 +437,52 @@ extension CoreDataLibraryRepository {
         _ command: LibraryRecordingArchiveCommand
     ) async throws -> LibraryRecordingSnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let request = Self.fetchRequest(entityName: "RecordingEntry")
-            request.fetchLimit = 2
-            request.predicate = try Self.recordingPredicate(for: command.reference)
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
 
-            let matches = try context.fetch(request)
-            guard !matches.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.reference.displayValue
-                )
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.archived, forKey: "isArchived")
+                recording.setValue(command.persistedArchivedAt, forKey: "archivedAt")
+                recording.setValue(command.persistedArchiveNote, forKey: "archiveNote")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "set archive state",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
             }
-            guard matches.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.reference.displayValue
-                )
-            }
-
-            let recording = matches[0]
-            let current = try Self.snapshot(from: recording)
-            guard command.expectedLastModified == nil
-                    || command.expectedLastModified == current.lastModified else {
-                throw LibraryRepositoryError.staleRecording(
-                    reference: command.reference.displayValue,
-                    expected: command.expectedLastModified,
-                    actual: current.lastModified
-                )
-            }
-
-            recording.setValue(command.archived, forKey: "isArchived")
-            recording.setValue(command.persistedArchivedAt, forKey: "archivedAt")
-            recording.setValue(command.persistedArchiveNote, forKey: "archiveNote")
-            recording.setValue(command.modifiedAt, forKey: "lastModified")
-
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "set archive state",
-                    reason: error.localizedDescription
-                )
-            }
-
-            return try Self.snapshot(from: recording)
         }
     }
 
@@ -459,76 +490,84 @@ extension CoreDataLibraryRepository {
         _ command: LibraryArchiveLocationUpsertCommand
     ) async throws -> LibraryArchiveLocationSnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
-            recordingRequest.fetchLimit = 2
-            recordingRequest.predicate = try Self.recordingPredicate(
-                for: command.recordingReference
-            )
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.fetchLimit = 2
+                recordingRequest.predicate = try Self.recordingPredicate(
+                    for: command.recordingReference
+                )
 
-            let recordings = try context.fetch(recordingRequest)
-            guard !recordings.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.recordingReference.displayValue
-                )
-            }
-            guard recordings.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.recordingReference.displayValue
-                )
-            }
-            let recording = recordings[0]
-            guard let recordingID = recording.value(forKey: "id") as? UUID else {
-                throw LibraryRepositoryError.invalidRecord(
-                    entity: "RecordingEntry",
-                    field: "id"
-                )
-            }
+                let recordings = try context.fetch(recordingRequest)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
+                let recording = recordings[0]
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "RecordingEntry",
+                        field: "id"
+                    )
+                }
 
-            let idRequest = Self.fetchRequest(entityName: "RecordingArchiveLocationEntry")
-            idRequest.fetchLimit = 2
-            idRequest.predicate = NSPredicate(
-                format: "id == %@",
-                command.id as CVarArg
-            )
-            let idMatches = try context.fetch(idRequest)
-            guard idMatches.count <= 1 else {
-                throw LibraryRepositoryError.ambiguousArchiveLocation(
-                    reference: command.id.uuidString.lowercased()
+                let idRequest = Self.fetchRequest(entityName: "RecordingArchiveLocationEntry")
+                idRequest.fetchLimit = 2
+                idRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
                 )
-            }
-
-            let location: NSManagedObject
-            let isNewLocation: Bool
-            if let existing = idMatches.first {
-                if let existingRecordingID = existing.value(forKey: "recordingId") as? UUID,
-                   existingRecordingID != recordingID {
-                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                let idMatches = try context.fetch(idRequest)
+                guard idMatches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousArchiveLocation(
                         reference: command.id.uuidString.lowercased()
                     )
                 }
-                location = existing
-                isNewLocation = false
-            } else if let destinationURLString = command.destinationURLString {
-                let destinationRequest = Self.fetchRequest(
-                    entityName: "RecordingArchiveLocationEntry"
-                )
-                destinationRequest.fetchLimit = 2
-                destinationRequest.predicate = NSPredicate(
-                    format: "recordingId == %@ AND destinationURLString == %@",
-                    recordingID as CVarArg,
-                    destinationURLString
-                )
-                let destinationMatches = try context.fetch(destinationRequest)
-                guard destinationMatches.count <= 1 else {
-                    throw LibraryRepositoryError.ambiguousArchiveLocation(
-                        reference: destinationURLString
-                    )
-                }
-                if let existing = destinationMatches.first {
+
+                let location: NSManagedObject
+                let isNewLocation: Bool
+                if let existing = idMatches.first {
+                    if let existingRecordingID = existing.value(forKey: "recordingId") as? UUID,
+                       existingRecordingID != recordingID {
+                        throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                            reference: command.id.uuidString.lowercased()
+                        )
+                    }
                     location = existing
                     isNewLocation = false
+                } else if let destinationURLString = command.destinationURLString {
+                    let destinationRequest = Self.fetchRequest(
+                        entityName: "RecordingArchiveLocationEntry"
+                    )
+                    destinationRequest.fetchLimit = 2
+                    destinationRequest.predicate = NSPredicate(
+                        format: "recordingId == %@ AND destinationURLString == %@",
+                        recordingID as CVarArg,
+                        destinationURLString
+                    )
+                    let destinationMatches = try context.fetch(destinationRequest)
+                    guard destinationMatches.count <= 1 else {
+                        throw LibraryRepositoryError.ambiguousArchiveLocation(
+                            reference: destinationURLString
+                        )
+                    }
+                    if let existing = destinationMatches.first {
+                        location = existing
+                        isNewLocation = false
+                    } else {
+                        location = NSEntityDescription.insertNewObject(
+                            forEntityName: "RecordingArchiveLocationEntry",
+                            into: context
+                        )
+                        isNewLocation = true
+                    }
                 } else {
                     location = NSEntityDescription.insertNewObject(
                         forEntityName: "RecordingArchiveLocationEntry",
@@ -536,64 +575,58 @@ extension CoreDataLibraryRepository {
                     )
                     isNewLocation = true
                 }
-            } else {
-                location = NSEntityDescription.insertNewObject(
-                    forEntityName: "RecordingArchiveLocationEntry",
-                    into: context
-                )
-                isNewLocation = true
-            }
 
-            if let destinationURLString = command.destinationURLString {
-                let destinationRequest = Self.fetchRequest(
-                    entityName: "RecordingArchiveLocationEntry"
-                )
-                destinationRequest.fetchLimit = 2
-                destinationRequest.predicate = NSPredicate(
-                    format: "recordingId == %@ AND destinationURLString == %@",
-                    recordingID as CVarArg,
-                    destinationURLString
-                )
-                let destinationMatches = try context.fetch(destinationRequest)
-                guard destinationMatches.count <= 1 else {
-                    throw LibraryRepositoryError.ambiguousArchiveLocation(
-                        reference: destinationURLString
+                if let destinationURLString = command.destinationURLString {
+                    let destinationRequest = Self.fetchRequest(
+                        entityName: "RecordingArchiveLocationEntry"
+                    )
+                    destinationRequest.fetchLimit = 2
+                    destinationRequest.predicate = NSPredicate(
+                        format: "recordingId == %@ AND destinationURLString == %@",
+                        recordingID as CVarArg,
+                        destinationURLString
+                    )
+                    let destinationMatches = try context.fetch(destinationRequest)
+                    guard destinationMatches.count <= 1 else {
+                        throw LibraryRepositoryError.ambiguousArchiveLocation(
+                            reference: destinationURLString
+                        )
+                    }
+                    if let existing = destinationMatches.first,
+                       existing.objectID != location.objectID {
+                        throw LibraryRepositoryError.archiveLocationAlreadyExists(
+                            reference: destinationURLString
+                        )
+                    }
+                }
+
+                let locationID = (location.value(forKey: "id") as? UUID) ?? command.id
+                location.setValue(locationID, forKey: "id")
+                location.setValue(recordingID, forKey: "recordingId")
+                location.setValue(command.bookmarkData, forKey: "bookmarkData")
+                location.setValue(command.destinationURLString, forKey: "destinationURLString")
+                location.setValue(command.displayName, forKey: "displayName")
+                location.setValue(command.exportedAt, forKey: "exportedAt")
+                location.setValue(command.exportedFilename, forKey: "exportedFilename")
+                location.setValue(command.fileSize, forKey: "fileSize")
+                location.setValue(command.lastVerifiedAt, forKey: "lastVerifiedAt")
+                location.setValue(command.providerDisplayName, forKey: "providerDisplayName")
+                location.setValue(command.status, forKey: "status")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewLocation {
+                        context.delete(location)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert archive location",
+                        reason: error.localizedDescription
                     )
                 }
-                if let existing = destinationMatches.first,
-                   existing.objectID != location.objectID {
-                    throw LibraryRepositoryError.archiveLocationAlreadyExists(
-                        reference: destinationURLString
-                    )
-                }
+
+                return try Self.archiveLocationSnapshot(from: location)
             }
-
-            let locationID = (location.value(forKey: "id") as? UUID) ?? command.id
-            location.setValue(locationID, forKey: "id")
-            location.setValue(recordingID, forKey: "recordingId")
-            location.setValue(command.bookmarkData, forKey: "bookmarkData")
-            location.setValue(command.destinationURLString, forKey: "destinationURLString")
-            location.setValue(command.displayName, forKey: "displayName")
-            location.setValue(command.exportedAt, forKey: "exportedAt")
-            location.setValue(command.exportedFilename, forKey: "exportedFilename")
-            location.setValue(command.fileSize, forKey: "fileSize")
-            location.setValue(command.lastVerifiedAt, forKey: "lastVerifiedAt")
-            location.setValue(command.providerDisplayName, forKey: "providerDisplayName")
-            location.setValue(command.status, forKey: "status")
-
-            do {
-                try context.save()
-            } catch {
-                if isNewLocation {
-                    context.delete(location)
-                }
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "upsert archive location",
-                    reason: error.localizedDescription
-                )
-            }
-
-            return try Self.archiveLocationSnapshot(from: location)
         }
     }
 
@@ -601,109 +634,111 @@ extension CoreDataLibraryRepository {
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
-            recordingRequest.fetchLimit = 2
-            recordingRequest.predicate = try Self.recordingPredicate(
-                for: command.recordingReference
-            )
-
-            let recordings = try context.fetch(recordingRequest)
-            guard !recordings.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.recordingReference.displayValue
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.fetchLimit = 2
+                recordingRequest.predicate = try Self.recordingPredicate(
+                    for: command.recordingReference
                 )
-            }
-            guard recordings.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.recordingReference.displayValue
-                )
-            }
 
-            let recording = recordings[0]
-            guard let recordingID = recording.value(forKey: "id") as? UUID else {
-                throw LibraryRepositoryError.invalidRecord(
-                    entity: "RecordingEntry",
-                    field: "id"
-                )
-            }
+                let recordings = try context.fetch(recordingRequest)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
 
-            let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
-            transcriptRequest.fetchLimit = 2
-            transcriptRequest.predicate = NSPredicate(
-                format: "recording == %@ OR recordingId == %@",
-                recording,
-                recordingID as CVarArg
-            )
-            let transcripts = try context.fetch(transcriptRequest)
-            guard transcripts.count <= 1 else {
-                throw LibraryRepositoryError.ambiguousTranscript(
-                    reference: command.recordingReference.displayValue
-                )
-            }
-
-            let transcript: NSManagedObject
-            let transcriptID: UUID
-            let isNewTranscript = transcripts.isEmpty
-            if let existingTranscript = transcripts.first {
-                guard let existingID = existingTranscript.value(forKey: "id") as? UUID else {
+                let recording = recordings[0]
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
                     throw LibraryRepositoryError.invalidRecord(
-                        entity: "TranscriptEntry",
+                        entity: "RecordingEntry",
                         field: "id"
                     )
                 }
-                transcript = existingTranscript
-                transcriptID = existingID
-            } else {
-                let collisionRequest = Self.fetchRequest(entityName: "TranscriptEntry")
-                collisionRequest.fetchLimit = 2
-                collisionRequest.predicate = NSPredicate(
-                    format: "id == %@",
-                    command.id as CVarArg
+
+                let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                transcriptRequest.fetchLimit = 2
+                transcriptRequest.predicate = NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
                 )
-                guard try context.fetch(collisionRequest).isEmpty else {
-                    throw LibraryRepositoryError.transcriptAlreadyExists(
-                        reference: command.id.uuidString.lowercased()
+                let transcripts = try context.fetch(transcriptRequest)
+                guard transcripts.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousTranscript(
+                        reference: command.recordingReference.displayValue
                     )
                 }
 
-                transcript = NSEntityDescription.insertNewObject(
-                    forEntityName: "TranscriptEntry",
-                    into: context
-                )
-                transcriptID = command.id
-                transcript.setValue(command.id, forKey: "id")
-                transcript.setValue(command.createdAt, forKey: "createdAt")
-            }
+                let transcript: NSManagedObject
+                let transcriptID: UUID
+                let isNewTranscript = transcripts.isEmpty
+                if let existingTranscript = transcripts.first {
+                    guard let existingID = existingTranscript.value(forKey: "id") as? UUID else {
+                        throw LibraryRepositoryError.invalidRecord(
+                            entity: "TranscriptEntry",
+                            field: "id"
+                        )
+                    }
+                    transcript = existingTranscript
+                    transcriptID = existingID
+                } else {
+                    let collisionRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                    collisionRequest.fetchLimit = 2
+                    collisionRequest.predicate = NSPredicate(
+                        format: "id == %@",
+                        command.id as CVarArg
+                    )
+                    guard try context.fetch(collisionRequest).isEmpty else {
+                        throw LibraryRepositoryError.transcriptAlreadyExists(
+                            reference: command.id.uuidString.lowercased()
+                        )
+                    }
 
-            transcript.setValue(recordingID, forKey: "recordingId")
-            transcript.setValue(command.modifiedAt, forKey: "lastModified")
-            transcript.setValue(command.engine, forKey: "engine")
-            transcript.setValue(command.processingTime, forKey: "processingTime")
-            transcript.setValue(command.confidence, forKey: "confidence")
-            transcript.setValue(command.segments, forKey: "segments")
-            transcript.setValue(command.speakerMappings, forKey: "speakerMappings")
-            transcript.setValue(recording, forKey: "recording")
-
-            recording.setValue(transcript, forKey: "transcript")
-            recording.setValue(transcriptID, forKey: "transcriptId")
-            recording.setValue("Completed", forKey: "transcriptionStatus")
-            recording.setValue(command.modifiedAt, forKey: "lastModified")
-
-            do {
-                try context.save()
-            } catch {
-                if isNewTranscript {
-                    context.delete(transcript)
+                    transcript = NSEntityDescription.insertNewObject(
+                        forEntityName: "TranscriptEntry",
+                        into: context
+                    )
+                    transcriptID = command.id
+                    transcript.setValue(command.id, forKey: "id")
+                    transcript.setValue(command.createdAt, forKey: "createdAt")
                 }
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "upsert transcript",
-                    reason: error.localizedDescription
-                )
-            }
 
-            return try Self.transcriptSnapshot(from: transcript)
+                transcript.setValue(recordingID, forKey: "recordingId")
+                transcript.setValue(command.modifiedAt, forKey: "lastModified")
+                transcript.setValue(command.engine, forKey: "engine")
+                transcript.setValue(command.processingTime, forKey: "processingTime")
+                transcript.setValue(command.confidence, forKey: "confidence")
+                transcript.setValue(command.segments, forKey: "segments")
+                transcript.setValue(command.speakerMappings, forKey: "speakerMappings")
+                transcript.setValue(recording, forKey: "recording")
+
+                recording.setValue(transcript, forKey: "transcript")
+                recording.setValue(transcriptID, forKey: "transcriptId")
+                recording.setValue("Completed", forKey: "transcriptionStatus")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewTranscript {
+                        context.delete(transcript)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert transcript",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.transcriptSnapshot(from: transcript)
+            }
         }
     }
 
@@ -711,150 +746,152 @@ extension CoreDataLibraryRepository {
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
-            recordingRequest.fetchLimit = 2
-            recordingRequest.predicate = try Self.recordingPredicate(
-                for: command.recordingReference
-            )
-
-            let recordings = try context.fetch(recordingRequest)
-            guard !recordings.isEmpty else {
-                throw LibraryRepositoryError.recordingNotFound(
-                    reference: command.recordingReference.displayValue
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.fetchLimit = 2
+                recordingRequest.predicate = try Self.recordingPredicate(
+                    for: command.recordingReference
                 )
-            }
-            guard recordings.count == 1 else {
-                throw LibraryRepositoryError.ambiguousRecording(
-                    reference: command.recordingReference.displayValue
-                )
-            }
 
-            let recording = recordings[0]
-            guard let recordingID = recording.value(forKey: "id") as? UUID else {
-                throw LibraryRepositoryError.invalidRecord(
-                    entity: "RecordingEntry",
-                    field: "id"
-                )
-            }
+                let recordings = try context.fetch(recordingRequest)
+                guard !recordings.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.recordingReference.displayValue
+                    )
+                }
 
-            let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
-            summaryRequest.fetchLimit = 2
-            summaryRequest.sortDescriptors = [
-                NSSortDescriptor(key: "generatedAt", ascending: false)
-            ]
-            summaryRequest.predicate = NSPredicate(
-                format: "recording == %@ OR recordingId == %@",
-                recording,
-                recordingID as CVarArg
-            )
-            let summaries = try context.fetch(summaryRequest)
-            guard summaries.count <= 1 else {
-                throw LibraryRepositoryError.ambiguousSummary(
-                    reference: command.recordingReference.displayValue
-                )
-            }
-
-            let summary: NSManagedObject
-            let summaryID: UUID
-            let isNewSummary = summaries.isEmpty
-            if let existingSummary = summaries.first {
-                guard let existingID = existingSummary.value(forKey: "id") as? UUID else {
+                let recording = recordings[0]
+                guard let recordingID = recording.value(forKey: "id") as? UUID else {
                     throw LibraryRepositoryError.invalidRecord(
-                        entity: "SummaryEntry",
+                        entity: "RecordingEntry",
                         field: "id"
                     )
                 }
-                summary = existingSummary
-                summaryID = existingID
-            } else {
-                let collisionRequest = Self.fetchRequest(entityName: "SummaryEntry")
-                collisionRequest.fetchLimit = 2
-                collisionRequest.predicate = NSPredicate(
-                    format: "id == %@",
-                    command.id as CVarArg
+
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.fetchLimit = 2
+                summaryRequest.sortDescriptors = [
+                    NSSortDescriptor(key: "generatedAt", ascending: false)
+                ]
+                summaryRequest.predicate = NSPredicate(
+                    format: "recording == %@ OR recordingId == %@",
+                    recording,
+                    recordingID as CVarArg
                 )
-                guard try context.fetch(collisionRequest).isEmpty else {
-                    throw LibraryRepositoryError.summaryAlreadyExists(
-                        reference: command.id.uuidString.lowercased()
+                let summaries = try context.fetch(summaryRequest)
+                guard summaries.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousSummary(
+                        reference: command.recordingReference.displayValue
                     )
                 }
 
-                summary = NSEntityDescription.insertNewObject(
-                    forEntityName: "SummaryEntry",
-                    into: context
-                )
-                summaryID = command.id
-                summary.setValue(command.id, forKey: "id")
-            }
-
-            let resolvedTranscript: NSManagedObject?
-            if let transcriptID = command.transcriptID {
-                let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
-                transcriptRequest.fetchLimit = 2
-                transcriptRequest.predicate = NSPredicate(
-                    format: "id == %@",
-                    transcriptID as CVarArg
-                )
-                let transcripts = try context.fetch(transcriptRequest)
-                guard !transcripts.isEmpty else {
-                    throw LibraryRepositoryError.transcriptNotFound(
-                        reference: transcriptID.uuidString.lowercased()
+                let summary: NSManagedObject
+                let summaryID: UUID
+                let isNewSummary = summaries.isEmpty
+                if let existingSummary = summaries.first {
+                    guard let existingID = existingSummary.value(forKey: "id") as? UUID else {
+                        throw LibraryRepositoryError.invalidRecord(
+                            entity: "SummaryEntry",
+                            field: "id"
+                        )
+                    }
+                    summary = existingSummary
+                    summaryID = existingID
+                } else {
+                    let collisionRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                    collisionRequest.fetchLimit = 2
+                    collisionRequest.predicate = NSPredicate(
+                        format: "id == %@",
+                        command.id as CVarArg
                     )
-                }
-                guard transcripts.count == 1 else {
-                    throw LibraryRepositoryError.ambiguousTranscript(
-                        reference: transcriptID.uuidString.lowercased()
+                    guard try context.fetch(collisionRequest).isEmpty else {
+                        throw LibraryRepositoryError.summaryAlreadyExists(
+                            reference: command.id.uuidString.lowercased()
+                        )
+                    }
+
+                    summary = NSEntityDescription.insertNewObject(
+                        forEntityName: "SummaryEntry",
+                        into: context
                     )
+                    summaryID = command.id
+                    summary.setValue(command.id, forKey: "id")
                 }
-                resolvedTranscript = transcripts[0]
-            } else {
-                resolvedTranscript = nil
-            }
 
-            summary.setValue(recordingID, forKey: "recordingId")
-            if isNewSummary {
-                summary.setValue(nil, forKey: "transcriptId")
-                summary.setValue(nil, forKey: "transcript")
-            }
-            if let transcriptID = command.transcriptID {
-                summary.setValue(transcriptID, forKey: "transcriptId")
-                summary.setValue(resolvedTranscript, forKey: "transcript")
-            }
-            summary.setValue(command.generatedAt, forKey: "generatedAt")
-            summary.setValue(command.aiMethod, forKey: "aiMethod")
-            summary.setValue(command.processingTime, forKey: "processingTime")
-            summary.setValue(command.confidence, forKey: "confidence")
-            summary.setValue(command.summary, forKey: "summary")
-            summary.setValue(command.contentType, forKey: "contentType")
-            summary.setValue(command.wordCount, forKey: "wordCount")
-            summary.setValue(command.originalLength, forKey: "originalLength")
-            summary.setValue(command.compressionRatio, forKey: "compressionRatio")
-            summary.setValue(command.version, forKey: "version")
-            summary.setValue(command.tasks, forKey: "tasks")
-            summary.setValue(command.reminders, forKey: "reminders")
-            summary.setValue(command.titles, forKey: "titles")
-            summary.setValue(recording, forKey: "recording")
+                let resolvedTranscript: NSManagedObject?
+                if let transcriptID = command.transcriptID {
+                    let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                    transcriptRequest.fetchLimit = 2
+                    transcriptRequest.predicate = NSPredicate(
+                        format: "id == %@",
+                        transcriptID as CVarArg
+                    )
+                    let transcripts = try context.fetch(transcriptRequest)
+                    guard !transcripts.isEmpty else {
+                        throw LibraryRepositoryError.transcriptNotFound(
+                            reference: transcriptID.uuidString.lowercased()
+                        )
+                    }
+                    guard transcripts.count == 1 else {
+                        throw LibraryRepositoryError.ambiguousTranscript(
+                            reference: transcriptID.uuidString.lowercased()
+                        )
+                    }
+                    resolvedTranscript = transcripts[0]
+                } else {
+                    resolvedTranscript = nil
+                }
 
-            recording.setValue(summary, forKey: "summary")
-            recording.setValue(summaryID, forKey: "summaryId")
-            recording.setValue(ProcessingStatus.completed.rawValue, forKey: "summaryStatus")
-            recording.setValue(command.generatedAt, forKey: "lastModified")
-
-            do {
-                try context.save()
-            } catch {
+                summary.setValue(recordingID, forKey: "recordingId")
                 if isNewSummary {
-                    context.delete(summary)
+                    summary.setValue(nil, forKey: "transcriptId")
+                    summary.setValue(nil, forKey: "transcript")
                 }
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "upsert summary",
-                    reason: error.localizedDescription
-                )
-            }
+                if let transcriptID = command.transcriptID {
+                    summary.setValue(transcriptID, forKey: "transcriptId")
+                    summary.setValue(resolvedTranscript, forKey: "transcript")
+                }
+                summary.setValue(command.generatedAt, forKey: "generatedAt")
+                summary.setValue(command.aiMethod, forKey: "aiMethod")
+                summary.setValue(command.processingTime, forKey: "processingTime")
+                summary.setValue(command.confidence, forKey: "confidence")
+                summary.setValue(command.summary, forKey: "summary")
+                summary.setValue(command.contentType, forKey: "contentType")
+                summary.setValue(command.wordCount, forKey: "wordCount")
+                summary.setValue(command.originalLength, forKey: "originalLength")
+                summary.setValue(command.compressionRatio, forKey: "compressionRatio")
+                summary.setValue(command.version, forKey: "version")
+                summary.setValue(command.tasks, forKey: "tasks")
+                summary.setValue(command.reminders, forKey: "reminders")
+                summary.setValue(command.titles, forKey: "titles")
+                summary.setValue(recording, forKey: "recording")
 
-            return try Self.summarySnapshot(from: summary)
+                recording.setValue(summary, forKey: "summary")
+                recording.setValue(summaryID, forKey: "summaryId")
+                recording.setValue(ProcessingStatus.completed.rawValue, forKey: "summaryStatus")
+                recording.setValue(command.generatedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewSummary {
+                        context.delete(summary)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert summary",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.summarySnapshot(from: summary)
+            }
         }
     }
 
@@ -862,67 +899,69 @@ extension CoreDataLibraryRepository {
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let duplicateRequest = Self.fetchRequest(entityName: "ProcessingJobEntry")
-            duplicateRequest.fetchLimit = 2
-            duplicateRequest.predicate = NSPredicate(
-                format: "id == %@",
-                command.id as CVarArg
-            )
-            guard try context.fetch(duplicateRequest).isEmpty else {
-                throw LibraryRepositoryError.processingJobAlreadyExists(
-                    reference: command.id.uuidString.lowercased()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let duplicateRequest = Self.fetchRequest(entityName: "ProcessingJobEntry")
+                duplicateRequest.fetchLimit = 2
+                duplicateRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
                 )
-            }
-
-            let recording: NSManagedObject?
-            if let reference = command.recordingReference {
-                let request = Self.fetchRequest(entityName: "RecordingEntry")
-                request.fetchLimit = 2
-                request.predicate = try Self.recordingPredicate(for: reference)
-                let matches = try context.fetch(request)
-                guard !matches.isEmpty else {
-                    throw LibraryRepositoryError.recordingNotFound(
-                        reference: reference.displayValue
+                guard try context.fetch(duplicateRequest).isEmpty else {
+                    throw LibraryRepositoryError.processingJobAlreadyExists(
+                        reference: command.id.uuidString.lowercased()
                     )
                 }
-                guard matches.count == 1 else {
-                    throw LibraryRepositoryError.ambiguousRecording(
-                        reference: reference.displayValue
+
+                let recording: NSManagedObject?
+                if let reference = command.recordingReference {
+                    let request = Self.fetchRequest(entityName: "RecordingEntry")
+                    request.fetchLimit = 2
+                    request.predicate = try Self.recordingPredicate(for: reference)
+                    let matches = try context.fetch(request)
+                    guard !matches.isEmpty else {
+                        throw LibraryRepositoryError.recordingNotFound(
+                            reference: reference.displayValue
+                        )
+                    }
+                    guard matches.count == 1 else {
+                        throw LibraryRepositoryError.ambiguousRecording(
+                            reference: reference.displayValue
+                        )
+                    }
+                    recording = matches[0]
+                } else {
+                    recording = nil
+                }
+
+                let job = ProcessingJobEntry(context: context)
+                job.id = command.id
+                job.jobType = command.jobType
+                job.engine = command.engine
+                job.recordingURL = command.recordingURL
+                job.recordingName = command.recordingName
+                job.modelName = command.modelName
+                job.status = command.status
+                job.progress = command.progress
+                job.startTime = command.startTime
+                job.completionTime = command.completionTime
+                job.error = command.error
+                job.lastModified = command.modifiedAt
+                job.setValue(recording, forKey: "recording")
+
+                do {
+                    try context.save()
+                } catch {
+                    context.delete(job)
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "create processing job",
+                        reason: error.localizedDescription
                     )
                 }
-                recording = matches[0]
-            } else {
-                recording = nil
+
+                return try Self.processingJobSnapshot(from: job)
             }
-
-            let job = ProcessingJobEntry(context: context)
-            job.id = command.id
-            job.jobType = command.jobType
-            job.engine = command.engine
-            job.recordingURL = command.recordingURL
-            job.recordingName = command.recordingName
-            job.modelName = command.modelName
-            job.status = command.status
-            job.progress = command.progress
-            job.startTime = command.startTime
-            job.completionTime = command.completionTime
-            job.error = command.error
-            job.lastModified = command.modifiedAt
-            job.setValue(recording, forKey: "recording")
-
-            do {
-                try context.save()
-            } catch {
-                context.delete(job)
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "create processing job",
-                    reason: error.localizedDescription
-                )
-            }
-
-            return try Self.processingJobSnapshot(from: job)
         }
     }
 
@@ -930,67 +969,69 @@ extension CoreDataLibraryRepository {
         _ command: LibraryProcessingJobUpdateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
         try command.validate()
-        let context = context
-        return try context.performAndWait {
-            let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
-            request.fetchLimit = 2
-            request.predicate = try Self.processingJobPredicate(for: command.reference)
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.processingJobPredicate(for: command.reference)
 
-            let matches = try context.fetch(request)
-            guard !matches.isEmpty else {
-                throw LibraryRepositoryError.processingJobNotFound(
-                    reference: command.reference.displayValue
-                )
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.processingJobNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousProcessingJob(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let job = matches[0]
+                let current = try Self.processingJobSnapshot(from: job)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleProcessingJob(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                let error: String?
+                switch command.error {
+                case .preserve:
+                    error = current.error
+                case .set(let value):
+                    error = value
+                }
+
+                let completionTime: Date?
+                switch command.completionTime {
+                case .preserve:
+                    completionTime = current.completionTime
+                case .set(let value):
+                    completionTime = value
+                }
+
+                job.setValue(command.status, forKey: "status")
+                job.setValue(command.progress, forKey: "progress")
+                job.setValue(error, forKey: "error")
+                job.setValue(completionTime, forKey: "completionTime")
+                job.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "update processing job",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.processingJobSnapshot(from: job)
             }
-            guard matches.count == 1 else {
-                throw LibraryRepositoryError.ambiguousProcessingJob(
-                    reference: command.reference.displayValue
-                )
-            }
-
-            let job = matches[0]
-            let current = try Self.processingJobSnapshot(from: job)
-            guard command.expectedLastModified == nil
-                    || command.expectedLastModified == current.lastModified else {
-                throw LibraryRepositoryError.staleProcessingJob(
-                    reference: command.reference.displayValue,
-                    expected: command.expectedLastModified,
-                    actual: current.lastModified
-                )
-            }
-
-            let error: String?
-            switch command.error {
-            case .preserve:
-                error = current.error
-            case .set(let value):
-                error = value
-            }
-
-            let completionTime: Date?
-            switch command.completionTime {
-            case .preserve:
-                completionTime = current.completionTime
-            case .set(let value):
-                completionTime = value
-            }
-
-            job.setValue(command.status, forKey: "status")
-            job.setValue(command.progress, forKey: "progress")
-            job.setValue(error, forKey: "error")
-            job.setValue(completionTime, forKey: "completionTime")
-            job.setValue(command.modifiedAt, forKey: "lastModified")
-
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "update processing job",
-                    reason: error.localizedDescription
-                )
-            }
-
-            return try Self.processingJobSnapshot(from: job)
         }
     }
 
@@ -1003,45 +1044,47 @@ extension CoreDataLibraryRepository {
                 "processing-job deletion dates must be finite"
             )
         }
-        let context = context
-        return try context.performAndWait {
-            let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
-            request.fetchLimit = 2
-            request.predicate = try Self.processingJobPredicate(for: command.reference)
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.processingJobPredicate(for: command.reference)
 
-            let matches = try context.fetch(request)
-            guard !matches.isEmpty else {
-                throw LibraryRepositoryError.processingJobNotFound(
-                    reference: command.reference.displayValue
-                )
-            }
-            guard matches.count == 1 else {
-                throw LibraryRepositoryError.ambiguousProcessingJob(
-                    reference: command.reference.displayValue
-                )
-            }
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.processingJobNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousProcessingJob(
+                        reference: command.reference.displayValue
+                    )
+                }
 
-            let job = matches[0]
-            let current = try Self.processingJobSnapshot(from: job)
-            guard command.expectedLastModified == nil
-                    || command.expectedLastModified == current.lastModified else {
-                throw LibraryRepositoryError.staleProcessingJob(
-                    reference: command.reference.displayValue,
-                    expected: command.expectedLastModified,
-                    actual: current.lastModified
-                )
-            }
+                let job = matches[0]
+                let current = try Self.processingJobSnapshot(from: job)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleProcessingJob(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
 
-            context.delete(job)
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "delete processing job",
-                    reason: error.localizedDescription
-                )
+                context.delete(job)
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete processing job",
+                        reason: error.localizedDescription
+                    )
+                }
+                return current
             }
-            return current
         }
     }
 
@@ -1050,32 +1093,34 @@ extension CoreDataLibraryRepository {
     ) async throws -> [LibraryProcessingJobSnapshot] {
         try command.validate()
         let terminalStatuses = Set(command.normalizedStatuses)
-        let context = context
-        return try context.performAndWait {
-            let jobs = try context.fetch(Self.fetchRequest(entityName: "ProcessingJobEntry"))
-                .filter { job in
-                    guard let status = job.value(forKey: "status") as? String else {
-                        return false
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let jobs = try context.fetch(Self.fetchRequest(entityName: "ProcessingJobEntry"))
+                    .filter { job in
+                        guard let status = job.value(forKey: "status") as? String else {
+                            return false
+                        }
+                        return terminalStatuses.contains(
+                            status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        )
                     }
-                    return terminalStatuses.contains(
-                        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let snapshots = try jobs.map(Self.processingJobSnapshot(from:))
+                guard !jobs.isEmpty else {
+                    return []
+                }
+
+                jobs.forEach(context.delete)
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "delete terminal processing jobs",
+                        reason: error.localizedDescription
                     )
                 }
-            let snapshots = try jobs.map(Self.processingJobSnapshot(from:))
-            guard !jobs.isEmpty else {
-                return []
+                return snapshots
             }
-
-            jobs.forEach(context.delete)
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "delete terminal processing jobs",
-                    reason: error.localizedDescription
-                )
-            }
-            return snapshots
         }
     }
 
@@ -1084,59 +1129,61 @@ extension CoreDataLibraryRepository {
     ) async throws -> [LibraryProcessingJobSnapshot] {
         try command.validate()
         let terminalStatuses = Set(["completed", "failed", "cancelled"])
-        let context = context
-        return try context.performAndWait {
-            var jobs: [NSManagedObject] = []
-            var seenObjectIDs = Set<String>()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                var jobs: [NSManagedObject] = []
+                var seenObjectIDs = Set<String>()
 
-            for reference in command.references {
-                let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
-                request.fetchLimit = 2
-                request.predicate = try Self.processingJobPredicate(for: reference)
-                let matches = try context.fetch(request)
-                guard matches.count <= 1 else {
-                    throw LibraryRepositoryError.ambiguousProcessingJob(
-                        reference: reference.displayValue
+                for reference in command.references {
+                    let request = Self.fetchRequest(entityName: "ProcessingJobEntry")
+                    request.fetchLimit = 2
+                    request.predicate = try Self.processingJobPredicate(for: reference)
+                    let matches = try context.fetch(request)
+                    guard matches.count <= 1 else {
+                        throw LibraryRepositoryError.ambiguousProcessingJob(
+                            reference: reference.displayValue
+                        )
+                    }
+                    guard let job = matches.first else {
+                        continue
+                    }
+                    let objectID = job.objectID.uriRepresentation().absoluteString
+                    guard seenObjectIDs.insert(objectID).inserted else {
+                        continue
+                    }
+                    jobs.append(job)
+                }
+
+                let jobsToRecover = jobs.filter { job in
+                    guard let status = job.value(forKey: "status") as? String else {
+                        return true
+                    }
+                    return !terminalStatuses.contains(
+                        status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     )
                 }
-                guard let job = matches.first else {
-                    continue
+                guard !jobsToRecover.isEmpty else {
+                    return []
                 }
-                let objectID = job.objectID.uriRepresentation().absoluteString
-                guard seenObjectIDs.insert(objectID).inserted else {
-                    continue
+
+                for job in jobsToRecover {
+                    job.setValue(command.status, forKey: "status")
+                    job.setValue(command.failureMessage, forKey: "error")
+                    job.setValue(command.modifiedAt, forKey: "completionTime")
+                    job.setValue(command.modifiedAt, forKey: "lastModified")
                 }
-                jobs.append(job)
-            }
 
-            let jobsToRecover = jobs.filter { job in
-                guard let status = job.value(forKey: "status") as? String else {
-                    return true
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "recover processing jobs after crash",
+                        reason: error.localizedDescription
+                    )
                 }
-                return !terminalStatuses.contains(
-                    status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                )
+                return try jobsToRecover.map(Self.processingJobSnapshot(from:))
             }
-            guard !jobsToRecover.isEmpty else {
-                return []
-            }
-
-            for job in jobsToRecover {
-                job.setValue(command.status, forKey: "status")
-                job.setValue(command.failureMessage, forKey: "error")
-                job.setValue(command.modifiedAt, forKey: "completionTime")
-                job.setValue(command.modifiedAt, forKey: "lastModified")
-            }
-
-            do {
-                try context.save()
-            } catch {
-                throw LibraryRepositoryError.writeFailed(
-                    operation: "recover processing jobs after crash",
-                    reason: error.localizedDescription
-                )
-            }
-            return try jobsToRecover.map(Self.processingJobSnapshot(from:))
         }
     }
 

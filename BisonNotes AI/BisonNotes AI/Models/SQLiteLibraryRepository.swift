@@ -8,6 +8,15 @@ import GRDB
 /// before any caller is moved away from Core Data.
 struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable {
     let store: SQLiteLibraryStore
+    let maintenanceGate: LibraryMaintenanceGate
+
+    init(
+        store: SQLiteLibraryStore,
+        maintenanceGate: LibraryMaintenanceGate = LibraryMaintenanceGate()
+    ) {
+        self.store = store
+        self.maintenanceGate = maintenanceGate
+    }
 
     func currentRevision() async throws -> Int64 {
         try await store.currentLibraryRevision()
@@ -18,93 +27,133 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     }
 
     func fetchRecordingSummaries() async throws -> [LibraryRecordingSnapshot] {
-        try await store.fetchRecordingSummaries()
+        try await withNormalAccess { [store] in
+            try await store.fetchRecordingSummaries()
+        }
     }
 
     func fetchTranscriptSnapshots() async throws -> [LibraryTranscriptSnapshot] {
-        try await store.fetchTranscriptSnapshots()
+        try await withNormalAccess { [store] in
+            try await store.fetchTranscriptSnapshots()
+        }
     }
 
     func fetchSummarySnapshots() async throws -> [LibrarySummarySnapshot] {
-        try await store.fetchSummarySnapshots()
+        try await withNormalAccess { [store] in
+            try await store.fetchSummarySnapshots()
+        }
     }
 
     func fetchProcessingJobSnapshots() async throws -> [LibraryProcessingJobSnapshot] {
-        try await store.fetchProcessingJobSnapshots()
+        try await withNormalAccess { [store] in
+            try await store.fetchProcessingJobSnapshots()
+        }
     }
 
     func fetchArchiveLocationSnapshots() async throws -> [LibraryArchiveLocationSnapshot] {
-        try await store.fetchArchiveLocationSnapshots()
+        try await withNormalAccess { [store] in
+            try await store.fetchArchiveLocationSnapshots()
+        }
     }
 
     func fetchPendingCloudMutationSnapshots() async throws -> [LibraryPendingCloudMutationSnapshot] {
-        try await store.fetchPendingCloudMutationSnapshots()
+        try await withNormalAccess { [store] in
+            try await store.fetchPendingCloudMutationSnapshots()
+        }
     }
 
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
-        try await store.renameRecording(command)
+        try await withNormalAccess { [store] in
+            try await store.renameRecording(command)
+        }
     }
 
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot {
-        try await store.setCloudSyncDisabled(command)
+        try await withNormalAccess { [store] in
+            try await store.setCloudSyncDisabled(command)
+        }
     }
 
     func setArchiveState(
         _ command: LibraryRecordingArchiveCommand
     ) async throws -> LibraryRecordingSnapshot {
-        try await store.setArchiveState(command)
+        try await withNormalAccess { [store] in
+            try await store.setArchiveState(command)
+        }
     }
 
     func upsertArchiveLocation(
         _ command: LibraryArchiveLocationUpsertCommand
     ) async throws -> LibraryArchiveLocationSnapshot {
-        try await store.upsertArchiveLocation(command)
+        try await withNormalAccess { [store] in
+            try await store.upsertArchiveLocation(command)
+        }
     }
 
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot {
-        try await store.upsertTranscript(command)
+        try await withNormalAccess { [store] in
+            try await store.upsertTranscript(command)
+        }
     }
 
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot {
-        try await store.upsertSummary(command)
+        try await withNormalAccess { [store] in
+            try await store.upsertSummary(command)
+        }
     }
 
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
-        try await store.createProcessingJob(command)
+        try await withNormalAccess { [store] in
+            try await store.createProcessingJob(command)
+        }
     }
 
     func updateProcessingJob(
         _ command: LibraryProcessingJobUpdateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
-        try await store.updateProcessingJob(command)
+        try await withNormalAccess { [store] in
+            try await store.updateProcessingJob(command)
+        }
     }
 
     func deleteProcessingJob(
         _ command: LibraryProcessingJobDeleteCommand
     ) async throws -> LibraryProcessingJobSnapshot {
-        try await store.deleteProcessingJob(command)
+        try await withNormalAccess { [store] in
+            try await store.deleteProcessingJob(command)
+        }
     }
 
     func deleteTerminalProcessingJobs(
         _ command: LibraryProcessingJobTerminalCleanupCommand
     ) async throws -> [LibraryProcessingJobSnapshot] {
-        try await store.deleteTerminalProcessingJobs(command)
+        try await withNormalAccess { [store] in
+            try await store.deleteTerminalProcessingJobs(command)
+        }
     }
 
     func recoverProcessingJobsAfterCrash(
         _ command: LibraryProcessingJobCrashRecoveryCommand
     ) async throws -> [LibraryProcessingJobSnapshot] {
-        try await store.recoverProcessingJobsAfterCrash(command)
+        try await withNormalAccess { [store] in
+            try await store.recoverProcessingJobsAfterCrash(command)
+        }
+    }
+
+    private func withNormalAccess<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await maintenanceGate.withNormalAccess(operation)
     }
 }
 
