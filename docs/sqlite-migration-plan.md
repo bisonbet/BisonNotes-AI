@@ -19,8 +19,8 @@ reconciliation and cleanup paths routed through the repository, and a
 transcript-upsert command with Core Data/SQLite adapters plus asynchronous
 production transcription callers, a summary-upsert command with Core
 Data/SQLite adapters plus asynchronous background and regeneration callers,
-and a recording archive-state command with Core Data/SQLite adapters are
-implemented, but no SQLite migration is enabled**.
+and recording archive-state/archive-location commands with Core Data/SQLite
+adapters are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
 Reviewed 2026-09-07 on `v2.5`, clean starting checkout at
@@ -159,6 +159,18 @@ work, which still requires its own receipt/order boundary. The macOS and iOS
 app-hosted build-for-testing checks pass, and the full host suite passes 88
 tests. No repository backend is selected for production startup and no SQLite
 cutover is enabled.
+
+The current archive-location checkpoint is `4e35a7d9` (`feat: add archive
+location repository command`). `LibraryArchiveLocationUpsertCommand` records
+the metadata for an already-verified external destination through both
+adapters, preserves stable IDs on retry, reuses same-recording/same-destination
+legacy rows and rejects ambiguous or cross-recording collisions. SQLite emits
+the archive-location change in the same GRDB transaction. The command does not
+copy files, acquire security-scoped bookmarks, restore audio or remove sources;
+`RecordingArchiveService` remains unwired until those operations have a
+durable receipt/order boundary. The macOS and iOS app-hosted build-for-testing
+checks pass, and the full host suite passes 89 tests. No repository backend is
+selected for production startup and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
@@ -418,7 +430,9 @@ Completed in this slice:
   marker together; transcript upsert resolves a recording's existing transcript
   and updates both rows atomically; summary upsert preserves a recording's
   existing summary identity and updates both rows atomically; archive-state
-  changes commit recording archive metadata with the same revision guard.
+  changes commit recording archive metadata with the same revision guard;
+  archive-location upsert records verified destination metadata with stable
+  retry and conflict semantics.
   Core Data and SQLite adapters return
   committed snapshots and distinguish invalid, missing, ambiguous, stale and
   failed writes. The
@@ -432,9 +446,9 @@ Completed in this slice:
 - The durable observation boundary is now defined by `LibraryObservation`, with
   a global revision cursor and ordered `LibraryChange` values. SQLite schema v3
   adds `library_changes`; the SQLite adapter emits one change in the same
-  transaction as recording rename, archive-state, cloud-sync preference and
-  allowlisted settings writes, and tests verify invalid cursors, reopen
-  behavior and exact committed timestamps.
+  transaction as recording rename, archive-state, archive-location, cloud-sync
+  preference and allowlisted settings writes, and tests verify invalid cursors,
+  reopen behavior and exact committed timestamps.
 - `CoreDataLibraryObservation` now reads retained `NSPersistentHistory`
   transactions and exposes the relevant changes through the same cursor
   contract. Durable Core Data stores enable history tracking and remote-change
@@ -495,8 +509,8 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every Core Data,
   settings, Watch, share and background caller, and broader read/write
-  repository contracts (including recording creation/deletion, archive-location
-  and file-owning operations) and app-wired importer
+  repository contracts (including recording creation/deletion, production
+  archive-location caller/order and file-owning operations) and app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
   and are not a user-data destination.
@@ -1067,7 +1081,7 @@ or task unless the owner requests it.
 | 0: Baseline / contract | Revalidate HEAD and instructions; complete data ledger from appendix, runtime store paths and defaults suites; inspect release history for every supported model. Add benchmark/evidence spec in `docs/sqlite-migration-evidence.md`. Pin GRDB **7.11.1** with system SQLite, resolve it for the app/test targets and run an isolated file-backed smoke test. | Schema coverage includes every model field/relationship and non-database category; baseline tests and timings recorded with limitations. The GRDB pin, system-SQLite choice, Apple-device-backup/iCloud policy, metadata budget and first-boot/background-media policy are recorded. **In progress:** caller gate adoption, historical fixtures and measurements remain open. |
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** the cancellation-safe gate and disposable source harness exist; gate adoption by Core Data, settings, Watch, extension and background callers remains open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
 | 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, a candidate app-owned logical media-root mapping, a checksum-bound transfer planner, a bounded restartable background reconciler and a receipt-gated source-retention executor now accompany the isolated root-relative media file-operation journal/worker; final production root selection, caller integration, recovery UI and attachment/archive/file-service adaptation remain. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
-| 3: Repository boundary | **Started:** immutable snapshots for all six metadata entities, typed allowlisted settings adapters, recording rename, archive-state and cloud-sync commands, transcript and summary upserts, processing-job create/update/delete, terminal-cleanup and crash-recovery commands, Core Data and SQLite adapters, durable SQLite/Core Data observation adapters, the read-only Core Data migration source reader, and disposable contract tests are in place. `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration paths now use the Core Data adapter for display-name-only writes; synchronous background job creation, asynchronous status/reconciliation, terminal cleanup and startup crash reconciliation use the processing-job adapter; production transcription persistence uses the transcript-upsert adapter, and background summarization plus summary regeneration use the summary-upsert adapter. Archive metadata now has a repository command, while archive-location/file-owning service work remains separate. Startup subscription, file-owning commands, and the remaining `AppDataCoordinator`, `RecordingWorkflowManager`, imports/archive services, UI, cloud store access, fixtures and previews remain. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapters and the legacy importer; all callers/targets audited. |
+| 3: Repository boundary | **Started:** immutable snapshots for all six metadata entities, typed allowlisted settings adapters, recording rename, archive-state, archive-location and cloud-sync commands, transcript and summary upserts, processing-job create/update/delete, terminal-cleanup and crash-recovery commands, Core Data and SQLite adapters, durable SQLite/Core Data observation adapters, the read-only Core Data migration source reader, and disposable contract tests are in place. `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration paths now use the Core Data adapter for display-name-only writes; synchronous background job creation, asynchronous status/reconciliation, terminal cleanup and startup crash reconciliation use the processing-job adapter; production transcription persistence uses the transcript-upsert adapter, and background summarization plus summary regeneration use the summary-upsert adapter. Archive metadata and verified archive-location persistence now have repository commands, while production archive-location/file-owning service work remains separate. Startup subscription, file-owning commands, and the remaining `AppDataCoordinator`, `RecordingWorkflowManager`, imports/archive services, UI, cloud store access, fixtures and previews remain. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapters and the legacy importer; all callers/targets audited. |
 | 4: SQLite backend | **Started:** the isolated SQLite adapter now has a durable v3 change log for the first rename/settings/processing-job writes, cursor/reopen tests, a schema-v4 source-transfer identity, a root-relative media operation journal/worker with checksum validation, an idempotent import-receipt/retention boundary, a candidate application root mapping, a checksum-bound planner, a serialized background reconciler and a guarded source-retention executor. Extend it into the complete repository implementation, final production root selection, caller receipt/retention integration and metrics using the pinned GRDB product. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; all transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
 | 5: Import / verifier | The model-aware read-only Core Data source reader, explicit Core Data-plus-settings input boundary, lossless row map, importer, validation, recovery reports, resumable metadata/settings coordinator and disposable source-backed gate harness are now isolated foundations; production source/settings acquisition and the production state machine remain open. | Both source models plus skipped-version legacy fixtures migrate; every transition survives process kill; anomalies block safely; no cloud side effects. |
 | 6: Shadow qualification | Read-only SQLite comparisons from a frozen source snapshot; retain Core Data as sole authority. Store per-field mismatch reports without content leakage. | Zero unexplained mismatches across representative fixtures/libraries. If legacy writes resume, candidate invalidated/rebuilt; do not pretend it remains current. |
