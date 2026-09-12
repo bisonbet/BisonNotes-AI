@@ -160,9 +160,10 @@ extension SQLiteLibraryStore {
                 id, assetID, operation, state, ownerStorageID, ownerRevision,
                 sourceRoot, sourceRelativePath, destinationRoot,
                 destinationRelativePath, expectedByteLength, expectedSHA256,
-                attemptCount, lastError, createdAt, updatedAt, metadataState
+                attemptCount, lastError, createdAt, updatedAt, metadataState,
+                metadataPayload
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 plan.operationID,
@@ -181,7 +182,8 @@ extension SQLiteLibraryStore {
                 nil,
                 timestamp,
                 timestamp,
-                SQLiteMediaMetadataState.pending
+                SQLiteMediaMetadataState.pending,
+                plan.metadataPayload
             ]
         )
     }
@@ -201,6 +203,7 @@ extension SQLiteLibraryStore {
                    file_operations.sourceRoot, file_operations.sourceRelativePath,
                    file_operations.destinationRoot, file_operations.destinationRelativePath,
                    file_operations.expectedByteLength, file_operations.expectedSHA256,
+                   file_operations.metadataPayload,
                    file_operations.attemptCount, file_operations.lastError,
                    file_operations.createdAt, file_operations.updatedAt,
                    asset_catalog.sourceTransferID AS sourceTransferID
@@ -241,6 +244,7 @@ extension SQLiteLibraryStore {
             destinationRelativePath: row["destinationRelativePath"],
             expectedByteLength: row["expectedByteLength"],
             expectedSHA256: row["expectedSHA256"],
+            metadataPayload: row["metadataPayload"],
             attemptCount: attemptCount,
             lastError: row["lastError"],
             createdAt: Date(timeIntervalSinceReferenceDate: createdAt),
@@ -264,7 +268,8 @@ extension SQLiteLibraryStore {
             operation.destinationRoot == plan.destinationRoot &&
             operation.destinationRelativePath == plan.destinationRelativePath &&
             operation.expectedByteLength == plan.expectedByteLength &&
-            operation.expectedSHA256?.lowercased() == plan.expectedSHA256.lowercased()
+            operation.expectedSHA256?.lowercased() == plan.expectedSHA256.lowercased() &&
+            operation.metadataPayload == plan.metadataPayload
     }
 
     static func fetchArchiveRestoreOperation(

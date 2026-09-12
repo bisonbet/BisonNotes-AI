@@ -4,6 +4,100 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteMediaTransferRuntimeTests: XCTestCase {
+    func testMetadataDescriptorRejectsPayloadLargerThanJournalLimit() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        let oversizedPayload = Data(repeating: 0x01, count: 64 * 1024 + 1)
+        let plan = SQLiteMediaCopyPlan(
+            operationID: fixture.transfer.copyPlan.operationID,
+            assetID: fixture.transfer.copyPlan.assetID,
+            ownerStorageID: fixture.transfer.copyPlan.ownerStorageID,
+            ownerRevision: fixture.transfer.copyPlan.ownerRevision,
+            sourceRoot: fixture.transfer.copyPlan.sourceRoot,
+            sourceRelativePath: fixture.transfer.copyPlan.sourceRelativePath,
+            destinationRoot: fixture.transfer.copyPlan.destinationRoot,
+            destinationRelativePath: fixture.transfer.copyPlan.destinationRelativePath,
+            expectedByteLength: fixture.transfer.copyPlan.expectedByteLength,
+            expectedSHA256: fixture.transfer.copyPlan.expectedSHA256,
+            metadataPayload: oversizedPayload
+        )
+
+        do {
+            _ = try await store.enqueueMediaCopy(
+                SQLiteMediaTransferPlan(
+                    sourceTransferID: fixture.transfer.sourceTransferID,
+                    copyPlan: plan
+                )
+            )
+            XCTFail("Expected the metadata descriptor size limit")
+        } catch let error as SQLiteMediaFileOperationError {
+            XCTAssertEqual(error, .invalidMetadataPayload)
+        }
+    }
+
+    func testMetadataDescriptorSurvivesReopenAndConflictingRetryFailsClosed() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let databaseURL = fixture.directory.appendingPathComponent("library.sqlite")
+        let payload = Data("watch-metadata-v1".utf8)
+        let plan = SQLiteMediaCopyPlan(
+            operationID: fixture.transfer.copyPlan.operationID,
+            assetID: fixture.transfer.copyPlan.assetID,
+            ownerStorageID: fixture.transfer.copyPlan.ownerStorageID,
+            ownerRevision: fixture.transfer.copyPlan.ownerRevision,
+            sourceRoot: fixture.transfer.copyPlan.sourceRoot,
+            sourceRelativePath: fixture.transfer.copyPlan.sourceRelativePath,
+            destinationRoot: fixture.transfer.copyPlan.destinationRoot,
+            destinationRelativePath: fixture.transfer.copyPlan.destinationRelativePath,
+            expectedByteLength: fixture.transfer.copyPlan.expectedByteLength,
+            expectedSHA256: fixture.transfer.copyPlan.expectedSHA256,
+            metadataPayload: payload
+        )
+        let transfer = SQLiteMediaTransferPlan(
+            sourceTransferID: fixture.transfer.sourceTransferID,
+            copyPlan: plan
+        )
+
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let operation = try await store.enqueueMediaCopy(transfer)
+        XCTAssertEqual(operation.metadataPayload, payload)
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let reopenedOperationValue = try await reopenedStore.mediaFileOperation(id: operation.id)
+        let reopenedOperation = try XCTUnwrap(reopenedOperationValue)
+        XCTAssertEqual(reopenedOperation.metadataPayload, payload)
+
+        let conflictingPlan = SQLiteMediaCopyPlan(
+            operationID: plan.operationID,
+            assetID: plan.assetID,
+            ownerStorageID: plan.ownerStorageID,
+            ownerRevision: plan.ownerRevision,
+            sourceRoot: plan.sourceRoot,
+            sourceRelativePath: plan.sourceRelativePath,
+            destinationRoot: plan.destinationRoot,
+            destinationRelativePath: plan.destinationRelativePath,
+            expectedByteLength: plan.expectedByteLength,
+            expectedSHA256: plan.expectedSHA256,
+            metadataPayload: Data("different-metadata".utf8)
+        )
+        do {
+            _ = try await reopenedStore.enqueueMediaCopy(
+                SQLiteMediaTransferPlan(
+                    sourceTransferID: transfer.sourceTransferID,
+                    copyPlan: conflictingPlan
+                )
+            )
+            XCTFail("Expected metadata descriptor conflict")
+        } catch let error as SQLiteMediaFileOperationError {
+            XCTAssertEqual(error, .operationConflict)
+        }
+    }
+
     func testCoordinatorRecordsReceiptAndKeepsSourceUntilExplicitRemoval() async throws {
         let fixture = try makeMediaTransferFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -40,6 +134,36 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         )
         XCTAssertEqual(retry.receipt, result.receipt)
         XCTAssertEqual(retry.sourceRetention, .eligibleForRemoval)
+    }
+
+    func testEligibleSourceQuerySupportsRestartCleanup() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: fixture.registry
+        ).reconcile(
+            fixture.transfer,
+            metadataCommit: { _ in }
+        )
+
+        let eligible = try await store.mediaOperationsEligibleForSourceRemoval(
+            sourceRoot: "source"
+        )
+        XCTAssertEqual(eligible.map(\.id), [fixture.transfer.copyPlan.operationID])
+
+        _ = try await SQLiteMediaSourceRetentionExecutor(
+            store: store,
+            rootRegistry: fixture.registry
+        ).removeSourceIfEligible(
+            sourceTransferID: fixture.transfer.sourceTransferID,
+            operationID: fixture.transfer.copyPlan.operationID
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
     }
 
     func testMetadataFailureRetainsPublishedSourceWithoutReceiptAndCanRetry() async throws {

@@ -117,6 +117,44 @@ extension SQLiteLibraryStore {
         }
     }
 
+    /// Returns completed operations whose committed receipt makes source
+    /// removal eligible. A caller uses this after relaunch to finish cleanup
+    /// that may have been interrupted after the receipt was recorded but
+    /// before the source-specific retention action ran.
+    func mediaOperationsEligibleForSourceRemoval(
+        sourceRoot: String? = nil,
+        limit: Int = 8
+    ) throws -> [SQLiteMediaFileOperation] {
+        try SQLiteMediaFileOperationValidation.batchLimit(limit)
+        if let sourceRoot {
+            try SQLiteMediaFileOperationValidation.root(sourceRoot)
+        }
+        return try databaseQueue.read { database in
+            let operationIDs = try String.fetchAll(
+                database,
+                sql: """
+                SELECT file_operations.id
+                FROM file_operations
+                JOIN asset_catalog
+                    ON asset_catalog.storageID = file_operations.assetID
+                JOIN import_receipts
+                    ON import_receipts.sourceTransferID = asset_catalog.sourceTransferID
+                WHERE file_operations.state = 'completed'
+                  AND file_operations.metadataState IN ('committed', 'legacy')
+                  AND asset_catalog.sourceTransferID IS NOT NULL
+                  AND import_receipts.outcome = 'committed'
+                  AND (? IS NULL OR file_operations.sourceRoot = ?)
+                ORDER BY file_operations.updatedAt, file_operations.id
+                LIMIT ?
+                """,
+                arguments: [sourceRoot, sourceRoot, limit]
+            )
+            return try operationIDs.compactMap { operationID in
+                try Self.fetchMediaFileOperation(id: operationID, from: database)
+            }
+        }
+    }
+
     /// Converts copy or metadata operations left in-flight by a terminated
     /// process back to retryable work. The operation and asset updates happen
     /// together so a later worker cannot observe a stale in-flight state.

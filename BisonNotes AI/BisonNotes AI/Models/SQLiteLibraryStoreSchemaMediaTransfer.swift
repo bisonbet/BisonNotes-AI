@@ -151,4 +151,25 @@ extension SQLiteLibraryStoreSchema {
             ]
         )
     }
+
+    static func addMediaMetadataPayload(in database: Database) throws {
+        try database.execute(
+            sql: """
+            ALTER TABLE file_operations
+            ADD COLUMN metadataPayload BLOB
+            """
+        )
+
+        try database.execute(
+            sql: """
+            UPDATE library_metadata
+            SET schemaVersion = ?, updatedAt = ?
+            WHERE id = 1
+            """,
+            arguments: [
+                mediaMetadataPayloadSchemaVersion,
+                Date().timeIntervalSinceReferenceDate
+            ]
+        )
+    }
 }

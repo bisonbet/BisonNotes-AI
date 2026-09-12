@@ -257,6 +257,128 @@ class AppDataCoordinator: ObservableObject {
         return recordingID
     }
 
+    /// Creates or validates the Core Data metadata for a Watch transfer whose
+    /// audio has already been copied and verified by the media journal. The
+    /// Watch recording ID is the durable identity, so a process restart or a
+    /// duplicate delivery can safely replay this method without creating a
+    /// second row.
+    @discardableResult
+    func createOrValidateWatchRecordingUsingRepository(
+        id: UUID,
+        url: URL,
+        name: String,
+        date: Date,
+        fileSize: Int64,
+        duration: TimeInterval,
+        quality: AudioQuality,
+        locationData: LocationData? = nil
+    ) async throws -> UUID {
+        guard let recordingURL = coreDataManager.urlToRelativePath(url) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "Watch recording URL could not be represented as a relative path"
+            )
+        }
+
+        let command = LibraryRecordingCreateCommand(
+            id: id,
+            recordingURL: recordingURL,
+            name: name,
+            recordingDate: date,
+            duration: duration,
+            fileSize: fileSize,
+            audioQuality: quality.rawValue,
+            locationAccuracy: locationData.map { $0.accuracy ?? 0.0 },
+            locationAddress: locationData?.address,
+            locationLatitude: locationData?.latitude,
+            locationLongitude: locationData?.longitude,
+            locationTimestamp: locationData?.timestamp
+        )
+
+        let existingRecordings = try await libraryRepository.fetchRecordingSummaries()
+        if let existing = existingRecordings.first(where: { recording in
+            recording.legacyID?.caseInsensitiveCompare(id.uuidString) == .orderedSame
+        }) {
+            try validateWatchRecording(
+                existing,
+                expectedID: id,
+                recordingURL: recordingURL,
+                name: name,
+                date: date,
+                fileSize: fileSize,
+                duration: duration,
+                locationData: locationData
+            )
+            return id
+        }
+
+        do {
+            _ = try await libraryRepository.createRecording(command)
+        } catch let error as LibraryRepositoryError {
+            // Another delivery can win the race between the read above and
+            // this insert. Re-read and validate the winner rather than
+            // treating a matching retry as a failed import.
+            guard case .recordingAlreadyExists = error else {
+                throw error
+            }
+            let recordingsAfterRace = try await libraryRepository.fetchRecordingSummaries()
+            guard let existing = recordingsAfterRace.first(where: { recording in
+                recording.legacyID?.caseInsensitiveCompare(id.uuidString) == .orderedSame
+            }) else {
+                throw error
+            }
+            try validateWatchRecording(
+                existing,
+                expectedID: id,
+                recordingURL: recordingURL,
+                name: name,
+                date: date,
+                fileSize: fileSize,
+                duration: duration,
+                locationData: locationData
+            )
+            return id
+        }
+
+        scheduleAutoBackupIfEnabled()
+        objectWillChange.send()
+        return id
+    }
+
+    private func validateWatchRecording(
+        _ existing: LibraryRecordingSnapshot,
+        expectedID: UUID,
+        recordingURL: String,
+        name: String,
+        date: Date,
+        fileSize: Int64,
+        duration: TimeInterval,
+        locationData: LocationData?
+    ) throws {
+        let datesMatch = existing.recordingDate.map {
+            abs($0.timeIntervalSince1970 - date.timeIntervalSince1970) < 0.001
+        } == true
+        let durationMatches = existing.duration.map {
+            abs($0 - duration) < 0.001
+        } == true
+        let expectedLocationAccuracy = locationData.map { $0.accuracy ?? 0.0 }
+        let locationMatches = existing.locationLatitude == locationData?.latitude
+            && existing.locationLongitude == locationData?.longitude
+            && existing.locationTimestamp == locationData?.timestamp
+            && existing.locationAccuracy == expectedLocationAccuracy
+
+        guard existing.legacyID?.caseInsensitiveCompare(expectedID.uuidString) == .orderedSame,
+              existing.recordingURL == recordingURL,
+              existing.name == name,
+              datesMatch,
+              existing.fileSize == fileSize,
+              durationMatches,
+              locationMatches else {
+            throw LibraryRepositoryError.recordingAlreadyExists(
+                reference: expectedID.uuidString.lowercased()
+            )
+        }
+    }
+
     /// Applies CloudKit recording metadata without taking ownership of the
     /// audio file. Existing local audio and archive state are preserved until
     /// a later, independently retryable media-link operation succeeds.

@@ -66,6 +66,7 @@ class FileImportManager: NSObject, ObservableObject {
         var successful = 0
         var failed = 0
         var errors: [String] = []
+        var successfulSourcePaths: Set<String> = []
 
         for (index, sourceURL) in urls.enumerated() {
             currentlyImporting = "Importing \(sourceURL.lastPathComponent)..."
@@ -74,6 +75,7 @@ class FileImportManager: NSObject, ObservableObject {
             do {
                 try await importAudioFile(from: sourceURL)
                 successful += 1
+                successfulSourcePaths.insert(sourceURL.standardizedFileURL.path)
             } catch {
                 failed += 1
                 errors.append("\(sourceURL.lastPathComponent): \(error.localizedDescription)")
@@ -90,7 +92,8 @@ class FileImportManager: NSObject, ObservableObject {
             total: totalCount,
             successful: successful,
             failed: failed,
-            errors: errors
+            errors: errors,
+            successfulSourcePaths: successfulSourcePaths
         )
 
         completeImport(with: results)
@@ -535,6 +538,21 @@ struct ImportResults {
     let successful: Int
     let failed: Int
     let errors: [String]
+    let successfulSourcePaths: Set<String>
+
+    init(
+        total: Int,
+        successful: Int,
+        failed: Int,
+        errors: [String],
+        successfulSourcePaths: Set<String> = []
+    ) {
+        self.total = total
+        self.successful = successful
+        self.failed = failed
+        self.errors = errors
+        self.successfulSourcePaths = successfulSourcePaths
+    }
 
     var successRate: Double {
         return total > 0 ? Double(successful) / Double(total) : 0.0

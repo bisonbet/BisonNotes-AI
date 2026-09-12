@@ -17,6 +17,37 @@ struct SQLiteMediaCopyPlan: Equatable, Sendable {
     let expectedByteLength: Int64
     let expectedSHA256: String
 
+    /// A small, caller-owned descriptor used to reconstruct the metadata
+    /// acknowledgement after a process restart. This is deliberately not an
+    /// audio payload; the media bytes remain in the source/destination files.
+    let metadataPayload: Data?
+
+    init(
+        operationID: String,
+        assetID: String,
+        ownerStorageID: String?,
+        ownerRevision: Int?,
+        sourceRoot: String,
+        sourceRelativePath: String,
+        destinationRoot: String,
+        destinationRelativePath: String,
+        expectedByteLength: Int64,
+        expectedSHA256: String,
+        metadataPayload: Data? = nil
+    ) {
+        self.operationID = operationID
+        self.assetID = assetID
+        self.ownerStorageID = ownerStorageID
+        self.ownerRevision = ownerRevision
+        self.sourceRoot = sourceRoot
+        self.sourceRelativePath = sourceRelativePath
+        self.destinationRoot = destinationRoot
+        self.destinationRelativePath = destinationRelativePath
+        self.expectedByteLength = expectedByteLength
+        self.expectedSHA256 = expectedSHA256
+        self.metadataPayload = metadataPayload
+    }
+
     func validate() throws {
         try SQLiteMediaFileOperationValidation.identifier(operationID)
         try SQLiteMediaFileOperationValidation.identifier(assetID)
@@ -28,6 +59,7 @@ struct SQLiteMediaCopyPlan: Equatable, Sendable {
             throw SQLiteMediaFileOperationError.invalidByteLength
         }
         try SQLiteMediaFileOperationValidation.sha256(expectedSHA256)
+        try SQLiteMediaFileOperationValidation.metadataPayload(metadataPayload)
     }
 }
 
@@ -48,6 +80,7 @@ struct SQLiteMediaFileOperation: Equatable, Sendable {
     let destinationRelativePath: String?
     let expectedByteLength: Int64?
     let expectedSHA256: String?
+    let metadataPayload: Data?
     let attemptCount: Int
     let lastError: String?
     let createdAt: Date
@@ -80,6 +113,7 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
     case invalidRelativePath
     case invalidByteLength
     case invalidSHA256
+    case invalidMetadataPayload
     case invalidBatchLimit
     case operationNotFound
     case operationConflict
@@ -102,6 +136,8 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
             return "The media operation byte length is invalid."
         case .invalidSHA256:
             return "The media operation checksum is invalid."
+        case .invalidMetadataPayload:
+            return "The media operation metadata descriptor is too large."
         case .invalidBatchLimit:
             return "The media operation batch limit is invalid."
         case .operationNotFound:
@@ -157,6 +193,13 @@ enum SQLiteMediaFileOperationValidation {
         guard normalized.count == 64,
               normalized.allSatisfy({ $0.isHexDigit }) else {
             throw SQLiteMediaFileOperationError.invalidSHA256
+        }
+    }
+
+    static func metadataPayload(_ value: Data?) throws {
+        guard let value else { return }
+        guard value.count <= 64 * 1024 else {
+            throw SQLiteMediaFileOperationError.invalidMetadataPayload
         }
     }
 

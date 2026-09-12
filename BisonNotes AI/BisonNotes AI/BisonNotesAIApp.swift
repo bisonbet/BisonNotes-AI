@@ -855,6 +855,7 @@ struct BisonNotesAIApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
                     appCoordinator.pollLibraryObservationIfNeeded()
+                    recorderVM.retryPendingWatchTransfers()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
                     // applicationDidBecomeActive) ensures this fires reliably in
@@ -1122,10 +1123,14 @@ struct BisonNotesAIApp: App {
                 isHandlingOpenURL = false
             }
 
-            await importFileByExtension(url)
+            let imported = await importFileByExtension(url)
 
             // Clean up the Inbox copy (iOS places shared files in Documents/Inbox/)
-            cleanupInboxFileIfNeeded(url)
+            if imported {
+                cleanupInboxFileIfNeeded(url)
+            } else {
+                NSLog("📎 Import did not complete; retaining Inbox source for retry")
+            }
 
             // Clear dedup guard after a delay so re-sharing the same file still works
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
@@ -1195,6 +1200,7 @@ struct BisonNotesAIApp: App {
 
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
+            var successfulSourcePaths: Set<String> = []
 
             let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
             let textExtensions = ShareExtensionContract.supportedExtensions
@@ -1213,19 +1219,37 @@ struct BisonNotesAIApp: App {
             if !audioFiles.isEmpty {
                 NSLog("📎 Shared container: importing \(audioFiles.count) audio file(s)")
                 await fileImportManager.importAudioFiles(from: audioFiles)
+                successfulSourcePaths.formUnion(
+                    fileImportManager.importResults?.successfulSourcePaths ?? []
+                )
             }
 
             if !textFiles.isEmpty {
                 NSLog("📎 Shared container: importing \(textFiles.count) text file(s)")
                 await transcriptImportManager.importTranscriptFiles(from: textFiles)
+                successfulSourcePaths.formUnion(
+                    transcriptImportManager.importResults?.successfulSourcePaths ?? []
+                )
             }
 
-            // Clean up all files from the shared container after import
-            for file in files {
+            // Remove only sources that their importer reported as committed.
+            // Failed and unsupported files remain available for a later retry
+            // or for the user to inspect.
+            for file in files where successfulSourcePaths.contains(file.standardizedFileURL.path) {
                 try? FileManager.default.removeItem(at: file)
             }
 
-            NSLog("📎 Shared container: cleanup complete")
+            let remaining = (try? FileManager.default.contentsOfDirectory(
+                at: containerURL,
+                includingPropertiesForKeys: nil
+            ).filter { $0.lastPathComponent != ShareImportAuthorization.tokenFileName }) ?? []
+            if !remaining.isEmpty {
+                ShareImportAuthorization.rearmToken(in: containerURL)
+            }
+            NSLog(
+                "📎 Shared container: removed \(successfulSourcePaths.count) source(s), "
+                    + "retained \(remaining.count) for retry or review"
+            )
         }
     }
 
@@ -1268,6 +1292,7 @@ struct BisonNotesAIApp: App {
             var audioFiles: [URL] = []
             var textFiles: [URL] = []
             var unsupported: [URL] = []
+            var successfulSourcePaths: Set<String> = []
 
             let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
             let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
@@ -1286,15 +1311,22 @@ struct BisonNotesAIApp: App {
             if !audioFiles.isEmpty {
                 NSLog("📎 Inbox scan: importing \(audioFiles.count) audio file(s)")
                 await fileImportManager.importAudioFiles(from: audioFiles)
+                successfulSourcePaths.formUnion(
+                    fileImportManager.importResults?.successfulSourcePaths ?? []
+                )
             }
 
             if !textFiles.isEmpty {
                 NSLog("📎 Inbox scan: importing \(textFiles.count) text file(s)")
                 await transcriptImportManager.importTranscriptFiles(from: textFiles)
+                successfulSourcePaths.formUnion(
+                    transcriptImportManager.importResults?.successfulSourcePaths ?? []
+                )
             }
 
-            // Clean up all Inbox files after import (including unsupported ones)
-            for file in files {
+            // Remove only successfully committed inputs. Unsupported and
+            // failed files are intentionally retained rather than discarded.
+            for file in files where successfulSourcePaths.contains(file.standardizedFileURL.path) {
                 try? FileManager.default.removeItem(at: file)
             }
 
@@ -1305,28 +1337,44 @@ struct BisonNotesAIApp: App {
             }
 
             if !unsupported.isEmpty {
-                NSLog("📎 Inbox scan: \(unsupported.count) unsupported file(s) cleaned up")
+                NSLog("📎 Inbox scan: \(unsupported.count) unsupported file(s) retained")
             }
+            let retainedCount = remaining.filter {
+                !successfulSourcePaths.contains($0.standardizedFileURL.path)
+            }.count
+            NSLog(
+                "📎 Inbox scan: removed \(successfulSourcePaths.count) source(s), "
+                    + "retained \(retainedCount) for retry or review"
+            )
         }
     }
 
     // MARK: - Import Helpers
 
     /// Classifies a file by extension and imports via the appropriate manager.
-    private func importFileByExtension(_ url: URL) async {
+    private func importFileByExtension(_ url: URL) async -> Bool {
         let ext = url.pathExtension.lowercased()
         let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
         let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
 
         if audioExtensions.contains(ext) {
             NSLog("📎 Importing audio file (.\(ext))")
+            guard !fileImportManager.isImporting else { return false }
             await fileImportManager.importAudioFiles(from: [url])
+            return fileImportManager.importResults?.successfulSourcePaths.contains(
+                url.standardizedFileURL.path
+            ) == true
         } else if textExtensions.contains(ext) {
             NSLog("📎 Importing text file (.\(ext))")
+            guard !transcriptImportManager.isImporting else { return false }
             await transcriptImportManager.importTranscriptFiles(from: [url])
+            return transcriptImportManager.importResults?.successfulSourcePaths.contains(
+                url.standardizedFileURL.path
+            ) == true
         } else {
             NSLog("📎 Unsupported file type: \(ext)")
             NotificationCenter.default.post(name: Notification.Name("UnsupportedFileTypeFromShare"), object: nil)
+            return false
         }
     }
 

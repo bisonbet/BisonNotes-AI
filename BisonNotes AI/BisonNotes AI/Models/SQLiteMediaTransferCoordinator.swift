@@ -115,3 +115,169 @@ struct SQLiteMediaTransferCoordinator: Sendable {
         )
     }
 }
+
+/// Adapts the generic media journal to application-owned logical roots.
+///
+/// This is a pre-cutover service: it journals an incoming media handoff beside
+/// the current Core Data store, while the caller keeps Core Data authoritative
+/// for metadata. The destination root is selected in the request so this
+/// boundary cannot silently move audio into the future SQLite media root.
+struct SQLiteApplicationMediaTransferCoordinator: Sendable {
+    let store: SQLiteLibraryStore
+    let mapping: SQLiteApplicationMediaRootMapping
+
+    func transfer(
+        _ request: SQLiteMediaTransferRequest,
+        at date: Date = Date(),
+        metadataCommit: @escaping SQLiteMediaMetadataCommit,
+        progress: (@Sendable (SQLiteMediaReconciliationProgress) -> Void)? = nil
+    ) async throws -> SQLiteMediaTransferResult {
+        let plan = try SQLiteApplicationMediaTransferPlanner(
+            mapping: mapping
+        ).makePlan(request)
+        return try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: mapping.registry
+        ).reconcile(
+            plan,
+            at: date,
+            metadataCommit: metadataCommit
+        )
+    }
+
+    func enqueue(
+        _ request: SQLiteMediaTransferRequest,
+        fileManager: FileManager = .default,
+        at date: Date = Date()
+    ) async throws -> SQLiteMediaFileOperation {
+        let plan = try SQLiteApplicationMediaTransferPlanner(
+            mapping: mapping
+        ).makePlan(request, fileManager: fileManager)
+        return try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: mapping.registry
+        ).enqueue(plan, at: date)
+    }
+
+    func reconcilePending(
+        maxOperations: Int = 8,
+        at date: Date = Date(),
+        metadataCommit: @escaping SQLiteMediaMetadataCommit,
+        progress: (@Sendable (SQLiteMediaReconciliationProgress) -> Void)? = nil
+    ) async throws -> SQLiteMediaReconciliationReport {
+        try await SQLiteMediaBackgroundReconciler(
+            store: store,
+            rootRegistry: mapping.registry
+        ).run(
+            maxOperations: maxOperations,
+            at: date,
+            metadataCommit: metadataCommit,
+            progress: progress
+        )
+    }
+
+    func removeSourceIfEligible(
+        sourceTransferID: String,
+        operationID: String
+    ) async throws -> SQLiteMediaFileOperation {
+        try await SQLiteMediaSourceRetentionExecutor(
+            store: store,
+            rootRegistry: mapping.registry
+        ).removeSourceIfEligible(
+            sourceTransferID: sourceTransferID,
+            operationID: operationID
+        )
+    }
+
+    /// Finishes source cleanup that may have been interrupted after the
+    /// receipt was recorded. The source root filter prevents a Watch retry
+    /// pass from deleting an unrelated provider or share source.
+    func removeEligibleSources(
+        sourceRoot: String,
+        maxOperations: Int = 8
+    ) async throws -> Int {
+        try SQLiteMediaFileOperationValidation.root(sourceRoot)
+        let operations = try await store.mediaOperationsEligibleForSourceRemoval(
+            sourceRoot: sourceRoot,
+            limit: maxOperations
+        )
+        let executor = SQLiteMediaSourceRetentionExecutor(
+            store: store,
+            rootRegistry: mapping.registry
+        )
+        var removedCount = 0
+        for operation in operations {
+            guard let sourceTransferID = operation.sourceTransferID else { continue }
+            do {
+                _ = try await executor.removeSourceIfEligible(
+                    sourceTransferID: sourceTransferID,
+                    operationID: operation.id
+                )
+                removedCount += 1
+            } catch {
+                // A failed cleanup remains eligible for the next bounded
+                // pass. Never turn a cleanup failure into data loss.
+            }
+        }
+        return removedCount
+    }
+}
+
+/// Serializes direct application transfers with restart reconciliation against
+/// the same durable journal. The actor prevents an activation retry from
+/// racing a just-arrived Watch/share handoff.
+actor SQLiteApplicationMediaTransferRuntime {
+    let coordinator: SQLiteApplicationMediaTransferCoordinator
+
+    init(coordinator: SQLiteApplicationMediaTransferCoordinator) {
+        self.coordinator = coordinator
+    }
+
+    func transfer(
+        _ request: SQLiteMediaTransferRequest,
+        at date: Date = Date(),
+        metadataCommit: @escaping SQLiteMediaMetadataCommit,
+        progress: (@Sendable (SQLiteMediaReconciliationProgress) -> Void)? = nil
+    ) async throws -> SQLiteMediaTransferResult {
+        try await coordinator.transfer(
+            request,
+            at: date,
+            metadataCommit: metadataCommit,
+            progress: progress
+        )
+    }
+
+    func reconcilePending(
+        maxOperations: Int = 8,
+        at date: Date = Date(),
+        metadataCommit: @escaping SQLiteMediaMetadataCommit,
+        progress: (@Sendable (SQLiteMediaReconciliationProgress) -> Void)? = nil
+    ) async throws -> SQLiteMediaReconciliationReport {
+        try await coordinator.reconcilePending(
+            maxOperations: maxOperations,
+            at: date,
+            metadataCommit: metadataCommit,
+            progress: progress
+        )
+    }
+
+    func removeSourceIfEligible(
+        sourceTransferID: String,
+        operationID: String
+    ) async throws -> SQLiteMediaFileOperation {
+        try await coordinator.removeSourceIfEligible(
+            sourceTransferID: sourceTransferID,
+            operationID: operationID
+        )
+    }
+
+    func removeEligibleSources(
+        sourceRoot: String,
+        maxOperations: Int = 8
+    ) async throws -> Int {
+        try await coordinator.removeEligibleSources(
+            sourceRoot: sourceRoot,
+            maxOperations: maxOperations
+        )
+    }
+}

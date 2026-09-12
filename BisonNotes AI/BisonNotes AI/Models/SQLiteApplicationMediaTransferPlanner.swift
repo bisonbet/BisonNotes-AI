@@ -41,6 +41,7 @@ struct SQLiteMediaTransferRequest: Sendable {
     let sourceURL: URL
     let destinationRootID: String
     let destinationRelativePath: String
+    let metadataPayload: Data?
 
     init(
         sourceTransferID: String,
@@ -50,7 +51,8 @@ struct SQLiteMediaTransferRequest: Sendable {
         ownerRevision: Int?,
         sourceURL: URL,
         destinationRootID: String = SQLiteApplicationMediaRootID.sqliteMedia.rawValue,
-        destinationRelativePath: String
+        destinationRelativePath: String,
+        metadataPayload: Data? = nil
     ) {
         self.sourceTransferID = sourceTransferID
         self.operationID = operationID
@@ -60,6 +62,7 @@ struct SQLiteMediaTransferRequest: Sendable {
         self.sourceURL = sourceURL
         self.destinationRootID = destinationRootID
         self.destinationRelativePath = destinationRelativePath
+        self.metadataPayload = metadataPayload
     }
 }
 
@@ -95,7 +98,8 @@ struct SQLiteApplicationMediaTransferPlanner: Sendable {
             destinationRoot: destinationRoot,
             destinationRelativePath: request.destinationRelativePath,
             expectedByteLength: fingerprint.byteLength,
-            expectedSHA256: fingerprint.sha256
+            expectedSHA256: fingerprint.sha256,
+            metadataPayload: request.metadataPayload
         )
         try plan.validate()
         return SQLiteMediaTransferPlan(

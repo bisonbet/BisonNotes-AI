@@ -51,6 +51,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// Reference to the app coordinator for adding recordings to registry
 	var appCoordinator: AppDataCoordinator?
+	var watchMediaTransferRuntime: SQLiteApplicationMediaTransferRuntime?
+	var watchMediaTransferMapping: SQLiteApplicationMediaRootMapping?
+	var watchMediaTransferRetryTask: Task<Void, Never>?
 	var cancellables = Set<AnyCancellable>()
 
 	var audioRecorder: AVAudioRecorder?

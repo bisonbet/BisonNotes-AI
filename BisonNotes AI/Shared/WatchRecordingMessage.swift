@@ -113,7 +113,7 @@ extension WCSession {
 #endif
 
 /// Data structure for sync request
-struct WatchSyncRequest: Codable {
+struct WatchSyncRequest: Codable, Sendable {
     let recordingId: UUID
     let filename: String
     let duration: TimeInterval
@@ -183,7 +183,7 @@ struct WatchSyncRequest: Codable {
 }
 
 /// Data structure for location data from watch recordings
-struct WatchLocationData: Codable, Equatable {
+struct WatchLocationData: Codable, Equatable, Sendable {
     let latitude: Double
     let longitude: Double
     let timestamp: Date

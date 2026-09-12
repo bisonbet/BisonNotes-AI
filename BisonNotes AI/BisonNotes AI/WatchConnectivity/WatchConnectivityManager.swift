@@ -23,6 +23,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchAppInstalled: Bool = false
 
     var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchSyncFileReceived: ((URL, WatchSyncRequest) -> Void)?
     var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
 
     static let shared = WatchConnectivityManager()
@@ -33,10 +34,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 /// Manages WatchConnectivity session and communication with Apple Watch.
 ///
 /// The watch delivers recordings as complete files via WCSession.transferFile.
-/// This manager stages the file, verifies it, hands the audio to the app via
-/// `onWatchSyncRecordingReceived`, and reports the outcome back to the watch
+/// This manager stages the file, verifies it, hands the staged URL to the app
+/// via `onWatchSyncFileReceived`, and reports the outcome back to the watch
 /// over a queued channel (transferUserInfo) so confirmations survive
-/// unreachability.
+/// unreachability. The staged file is removed only after the app acknowledges
+/// the durable metadata commit.
 @MainActor
 class WatchConnectivityManager: NSObject, ObservableObject {
 
@@ -56,6 +58,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     // Dedupe tracking: watch-side retries can deliver the same recording twice
     private var inFlightRecordingIds: Set<UUID> = []
+    private var stagedRecordingURLs: [UUID: URL] = [:]
     private var importBackgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
     private let processedRecordingIdsKey = "processedWatchRecordingIds"
     private let maxProcessedIdsRetained = 200
@@ -63,6 +66,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     // MARK: - File sync callbacks
     var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchSyncFileReceived: ((URL, WatchSyncRequest) -> Void)?
     var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
 
     // MARK: - Singleton
@@ -120,8 +124,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     // MARK: - Receiving Recordings
 
-    /// Handle completed file transfer from watch (file already staged by the
-    /// delegate; the staged copy is cleaned up by the caller)
+    /// Handle completed file transfer from watch. The staged copy remains in
+    /// Application Support until the completion callback acknowledges the
+    /// repository metadata commit.
     private func handleWatchRecordingReceived(fileURL: URL, metadata: [String: Any]) {
         guard let recordingIdString = metadata["recordingId"] as? String,
               let recordingId = UUID(uuidString: recordingIdString) else {
@@ -138,11 +143,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 "confirmed": true,
                 "timestamp": Date().timeIntervalSince1970
             ])
+            stagedRecordingURLs.removeValue(forKey: recordingId)
+            try? FileManager.default.removeItem(at: fileURL)
             return
         }
 
         guard !inFlightRecordingIds.contains(recordingId) else {
             AppLog.shared.watchConnectivity("Recording \(recordingId) import already in flight - ignoring duplicate", level: .debug)
+            if stagedRecordingURLs[recordingId]?.standardizedFileURL != fileURL.standardizedFileURL {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
             return
         }
 
@@ -155,6 +165,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
 
         inFlightRecordingIds.insert(recordingId)
+        stagedRecordingURLs[recordingId] = fileURL
 
         // Keep the app alive while the import runs, even if backgrounded
         // (the system may have launched us in the background for this file).
@@ -180,41 +191,75 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             checksumMD5: metadata["checksumMD5"] as? String ?? "",
             locationData: locationData
         )
+        let retryCount = metadata["retryCount"] as? Int
 
         let receivedSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         let fileSizeMB = Double(receivedSize) / (1024 * 1024)
         AppLog.shared.watchConnectivity("Received recording file (\(String(format: "%.1f", fileSizeMB)) MB)")
 
-        do {
-            // Read the audio data
-            let audioData = try Data(contentsOf: fileURL)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.processWatchRecording(
+                fileURL: fileURL,
+                syncRequest: syncRequest,
+                retryCount: retryCount
+            )
+        }
+    }
 
-            // Verify checksum if provided
+    private func processWatchRecording(
+        fileURL: URL,
+        syncRequest: WatchSyncRequest,
+        retryCount: Int?
+    ) async {
+        do {
+            try Task.checkCancellation()
+
+            let receivedSize = (try fileURL.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
+            guard Int64(receivedSize) == syncRequest.fileSize else {
+                AppLog.shared.watchConnectivity("File size mismatch for recording", level: .error)
+                handleSyncFailure(syncRequest.recordingId, reason: "file_size_mismatch")
+                return
+            }
+
+            // Verify the sender-provided checksum without keeping the audio
+            // bytes on the main actor. The later media worker computes and
+            // verifies its own SHA-256 fingerprint before publication.
             if !syncRequest.checksumMD5.isEmpty {
-                let actualChecksum = audioData.md5
-                if actualChecksum != syncRequest.checksumMD5 {
+                let expectedChecksum = syncRequest.checksumMD5
+                let actualChecksum = try await Task.detached(priority: .utility) {
+                    try Data(contentsOf: fileURL).md5
+                }.value
+                if actualChecksum != expectedChecksum {
                     AppLog.shared.watchConnectivity("Checksum mismatch for recording", level: .error)
-                    handleSyncFailure(recordingId, reason: "checksum_mismatch")
+                    handleSyncFailure(syncRequest.recordingId, reason: "checksum_mismatch")
                     return
                 }
             }
 
-            if let retryCount = metadata["retryCount"] as? Int, retryCount > 1 {
+            if let retryCount, retryCount > 1 {
                 AppLog.shared.watchConnectivity("Processing retried transfer (attempt #\(retryCount))", level: .debug)
             }
 
-            // Create Core Data entry via callback
-            if let callback = onWatchSyncRecordingReceived {
-                callback(audioData, syncRequest)
-                // Outcome is reported via confirmSyncComplete
+            if let fileCallback = onWatchSyncFileReceived {
+                fileCallback(fileURL, syncRequest)
+            } else if let dataCallback = onWatchSyncRecordingReceived {
+                // Compatibility fallback for callers that have not adopted
+                // the file-based boundary yet. Production setup installs the
+                // file callback so the audio is not copied into memory.
+                let audioData = try await Task.detached(priority: .utility) {
+                    try Data(contentsOf: fileURL)
+                }.value
+                dataCallback(audioData, syncRequest)
             } else {
-                AppLog.shared.watchConnectivity("onWatchSyncRecordingReceived callback is nil - file will not be processed", level: .error)
-                handleSyncFailure(recordingId, reason: "callback_not_set")
+                AppLog.shared.watchConnectivity("No watch sync callback is configured - file will not be processed", level: .error)
+                handleSyncFailure(syncRequest.recordingId, reason: "callback_not_set")
             }
-
+        } catch is CancellationError {
+            handleSyncFailure(syncRequest.recordingId, reason: "processing_cancelled")
         } catch {
-            AppLog.shared.watchConnectivity("Failed to read received file: \(error.localizedDescription)", level: .error)
-            handleSyncFailure(recordingId, reason: "file_read_error")
+            AppLog.shared.watchConnectivity("Failed to process received file: \(error.localizedDescription)", level: .error)
+            handleSyncFailure(syncRequest.recordingId, reason: "file_read_error")
         }
     }
 
@@ -241,6 +286,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // watch being unreachable; lost confirmations would strand files
             // on the watch.
             sendQueuedSyncMessage(.syncComplete, info: confirmationInfo)
+
+            if let stagedURL = stagedRecordingURLs.removeValue(forKey: recordingId) {
+                try? FileManager.default.removeItem(at: stagedURL)
+            }
 
             cleanupSyncOperation(recordingId)
 
@@ -559,16 +608,58 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
-        // The system deletes file.fileURL as soon as this delegate method returns,
-        // so the file must be moved to a staging location synchronously, before
-        // any async processing.
+        guard let recordingIdString = metadata["recordingId"] as? String,
+              let recordingId = UUID(uuidString: recordingIdString) else {
+            AppLog.shared.watchConnectivity("Received watch file without a valid recording ID", level: .error)
+            return
+        }
+
+        // The system deletes file.fileURL as soon as this delegate method
+        // returns, so the file must be moved to a persistent staging location
+        // synchronously, before any async processing. The recording ID makes
+        // retries resolve to one stable source path instead of creating a new
+        // journal conflict for every delivery.
         let fileManager = FileManager.default
-        let stagingDir = fileManager.temporaryDirectory.appendingPathComponent("WatchTransferStaging", isDirectory: true)
-        let stagedURL = stagingDir.appendingPathComponent("\(UUID().uuidString)-\(file.fileURL.lastPathComponent)")
+        guard let applicationSupportURL = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            AppLog.shared.watchConnectivity("Application Support is unavailable; cannot persist watch transfer", level: .error)
+            return
+        }
+        let stagingDir = applicationSupportURL.appendingPathComponent(
+            SQLiteApplicationMediaRootMapping.watchTransferStagingDirectoryName,
+            isDirectory: true
+        )
+        let stagedURL = stagingDir.appendingPathComponent(
+            "\(recordingId.uuidString.lowercased()).m4a",
+            isDirectory: false
+        )
 
         do {
             try fileManager.createDirectory(at: stagingDir, withIntermediateDirectories: true)
-            try fileManager.moveItem(at: file.fileURL, to: stagedURL)
+            AppFileProtection.apply(to: stagingDir)
+
+            if fileManager.fileExists(atPath: stagedURL.path) {
+                let values = try stagedURL.resourceValues(
+                    forKeys: [.isRegularFileKey, .isSymbolicLinkKey]
+                )
+                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                    AppLog.shared.watchConnectivity("Existing watch staging path is not a regular file", level: .error)
+                    return
+                }
+                if let declaredFileSize = metadata["fileSize"] as? Int64,
+                   let existingFileSize = values.fileSize,
+                   Int64(existingFileSize) != declaredFileSize {
+                    AppLog.shared.watchConnectivity("Existing watch staging file conflicts with the incoming size", level: .error)
+                    return
+                }
+                // Keep the first durable copy. The processing path verifies
+                // its checksum before the callback can publish metadata.
+            } else {
+                try fileManager.moveItem(at: file.fileURL, to: stagedURL)
+            }
+            AppFileProtection.apply(to: stagedURL)
         } catch {
             AppLog.shared.watchConnectivity("Failed to stage received watch file: \(error.localizedDescription)", level: .error)
             return
@@ -581,7 +672,6 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 return
             }
             self.handleWatchRecordingReceived(fileURL: stagedURL, metadata: metadata)
-            try? FileManager.default.removeItem(at: stagedURL)
         }
     }
 }
