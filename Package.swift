@@ -53,6 +53,7 @@ let package = Package(
                 "TranscriptManager.swift",
                 "TranscriptionStarter.swift",
                 "UserPreferences.swift",
+                "SQLiteMigrationProgressViewModel.swift",
                 "SQLiteMigrationStartupBoundary.swift"
             ],
             sources: [
@@ -80,6 +81,7 @@ let package = Package(
                 "SQLiteLibraryStoreRecovery.swift",
                 "SQLiteLibraryStoreMigrationRuns.swift",
                 "SQLiteMigrationCoordinator.swift",
+                "SQLiteMigrationPresentation.swift",
                 "SQLiteLibraryRepository.swift",
                 "SQLiteLibraryRepositoryMapper.swift",
                 "SQLiteMigrationModels.swift",
