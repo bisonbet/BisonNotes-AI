@@ -555,6 +555,17 @@ purge behavior, orphaned completed downloads and signed-device qualification
 remain open; video extraction, transcript downloads and in-memory/test imports
 retain their direct paths. This adds no live-data or SQLite-cutover behavior.
 
+The current document-picker audio checkpoint is `a54e7078` (`feat: journal
+document picker audio imports`). The Recordings view now opts audio selections
+into the durable path. External security-scoped selections are copied on a
+utility task into the existing `Documents/Inbox` managed root before the
+checksum-bound transfer, so a process kill leaves the staged source available
+to the normal inbox scan or journal retry; the original user-selected file is
+never removed. Archive-token matching still runs first, while video extraction,
+transcript imports and in-memory/test imports retain their existing behavior.
+This is pre-cutover and has macOS build evidence only; signed-device and live
+file-provider qualification remain open.
+
 The current recording metadata-edit checkpoint is `ed898703` (`feat: route
 recording metadata edits through repository`). `LibraryRecordingDateUpdateCommand`
 and `LibraryRecordingLocationUpdateCommand` validate finite dates, coordinates
@@ -1083,9 +1094,10 @@ Not yet implemented or closed:
   and startup progress-screen wiring. Watch intake and Share/Inbox audio imports now use
   the generic media transfer/receipt/retention boundary; failed or unsupported
   inbox sources remain available for retry. Supported web audio now uses the
-  same boundary, while external document-picker imports, video extraction,
-  archive-token restores and other file-owning paths still need explicit journal
-  or exclusion decisions. Provider archive restore is journaled in production
+  same boundary, while video extraction, archive-token restores and other
+  file-owning paths still need explicit journal or exclusion decisions.
+  Document-picker audio now stages external selections into the managed Inbox
+  before using that boundary. Provider archive restore is journaled in production
   through the existing Documents path with bounded
   startup/activation retry and a dedicated iOS processing-task request.
   Signed-device scheduling delivery/expiration validation, retry metrics,
@@ -1110,8 +1122,9 @@ as well; its zero-audio anchor deliberately leaves audio/media work to a later
 operation. The recording metadata and post-copy audio-link legs of CloudKit
 restore now share guarded repository boundaries as well; transcript/summary
 relationship repair remains explicit, while provider archive restore, Share/Inbox
-audio and supported web audio now have durable pre-cutover paths. Remaining
-direct media callers still need an explicit journal or safe exclusion. After that, audit and
+audio, supported web audio and document-picker audio now have durable
+pre-cutover paths. Remaining direct media callers still need an explicit journal
+or safe exclusion. After that, audit and
 install the maintenance gate around every remaining direct source mutation.
 The repository-backed production paths now share the gate; direct managed-
 object, settings, remaining file-owning and sync callers still need conversion
@@ -1871,7 +1884,8 @@ current host-independent suite passes 133 tests with 0 failures, including the
 durable provider archive-restore journal, generic media descriptor, production
 Watch-transfer boundary and web-audio root planning. Focused media and
 migration-version tests pass within that suite. The native macOS app
-build-for-testing check also passes. The full iOS build remains blocked before
+build-for-testing check also passes for the document-picker audio caller; the
+full iOS build remains blocked before
 app/test compilation by the
 pre-existing Watch Widget `accessoryCorner` availability error, and direct
 simulator XCTest execution remains unavailable. No production upgrade, Apple
