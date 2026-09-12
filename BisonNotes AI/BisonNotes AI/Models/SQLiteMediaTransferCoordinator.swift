@@ -2,6 +2,12 @@ import Foundation
 
 typealias SQLiteMediaMetadataCommit = @Sendable (SQLiteMediaFileOperation) async throws -> Void
 
+enum SQLiteApplicationMediaTransferLifecycle {
+    static let retryRequested = Notification.Name(
+        "BisonNotes.SQLiteApplicationMediaTransferRetryRequested"
+    )
+}
+
 /// Runs the metadata half of a generic media transfer after its destination
 /// has been verified. The callback must be idempotent because a process can
 /// terminate after the caller's metadata transaction but before this journal

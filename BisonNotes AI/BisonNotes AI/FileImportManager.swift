@@ -388,6 +388,10 @@ class FileImportManager: NSObject, ObservableObject {
             destinationRelativePath: destinationRelativePath,
             metadataPayload: metadataPayload
         )
+        NotificationCenter.default.post(
+            name: SQLiteApplicationMediaTransferLifecycle.retryRequested,
+            object: nil
+        )
         let metadataCommit = makeImportedAudioMetadataCommit(
             mapping: dependencies.mapping
         )
@@ -413,32 +417,52 @@ class FileImportManager: NSObject, ObservableObject {
     func retryPendingMediaTransfers() {
         mediaTransferRetryTask?.cancel()
         mediaTransferRetryTask = Task { @MainActor [weak self] in
-            await self?.reconcilePendingMediaTransfers()
+            await self?.reconcilePendingMediaTransfers(requestOSRetry: true)
         }
     }
 
-    private func reconcilePendingMediaTransfers() async {
-        guard persistenceController.storageStatus.isDurable else { return }
+    /// Runs one bounded media retry pass and reports whether the caller should
+    /// request another opportunity from the OS scheduler.
+    func reconcilePendingMediaTransfersForBackgroundTask() async -> Bool {
+        mediaTransferRetryTask?.cancel()
+        mediaTransferRetryTask = nil
+        return await reconcilePendingMediaTransfers(requestOSRetry: false)
+    }
+
+    @discardableResult
+    private func reconcilePendingMediaTransfers(requestOSRetry: Bool) async -> Bool {
+        guard persistenceController.storageStatus.isDurable else { return false }
 
         do {
             guard let dependencies = try mediaTransferDependencies(createIfMissing: false) else {
-                return
+                return false
             }
+            let maxOperations = 8
             let metadataCommit = makeImportedAudioMetadataCommit(
                 mapping: dependencies.mapping
             )
             let report = try await dependencies.runtime.reconcilePending(
-                maxOperations: 8,
+                maxOperations: maxOperations,
                 metadataCommit: metadataCommit
             )
             let inboxRemoved = try await dependencies.runtime.removeEligibleSources(
                 sourceRoot: SQLiteApplicationMediaRootID.documentsInbox.rawValue,
-                maxOperations: 8
+                maxOperations: maxOperations
             )
             let shareRemoved = try await dependencies.runtime.removeEligibleSources(
                 sourceRoot: SQLiteApplicationMediaRootID.shareInbox.rawValue,
-                maxOperations: 8
+                maxOperations: maxOperations
             )
+            let shouldRetry = report.selectedOperationCount >= maxOperations
+                || report.failedOperationCount > 0
+                || inboxRemoved >= maxOperations
+                || shareRemoved >= maxOperations
+            if shouldRetry && requestOSRetry {
+                NotificationCenter.default.post(
+                    name: SQLiteApplicationMediaTransferLifecycle.retryRequested,
+                    object: nil
+                )
+            }
             if report.selectedOperationCount > 0 || inboxRemoved > 0 || shareRemoved > 0 {
                 AppLog.shared.fileManagement(
                     "Shared media retry pass: selected=\(report.selectedOperationCount), "
@@ -448,13 +472,21 @@ class FileImportManager: NSObject, ObservableObject {
                     level: .debug
                 )
             }
+            return shouldRetry
         } catch is CancellationError {
-            return
+            return true
         } catch {
             AppLog.shared.fileManagement(
                 "Shared media retry pass failed; sources remain for retry: \(error)",
                 level: .error
             )
+            if requestOSRetry {
+                NotificationCenter.default.post(
+                    name: SQLiteApplicationMediaTransferLifecycle.retryRequested,
+                    object: nil
+                )
+            }
+            return true
         }
     }
 

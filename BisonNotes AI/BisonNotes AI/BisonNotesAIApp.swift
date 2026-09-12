@@ -25,6 +25,8 @@ struct BisonNotesAIApp: App {
     #if os(iOS)
     private static let archiveRestoreBackgroundTaskIdentifier =
         "com.bisonai.archive-restore"
+    private static let mediaReconciliationBackgroundTaskIdentifier =
+        "com.bisonai.media-reconciliation"
     #endif
 
     let persistenceController = PersistenceController.shared
@@ -837,6 +839,13 @@ struct BisonNotesAIApp: App {
                 ) { _ in
                     scheduleArchiveRestoreBackgroundTask()
                 }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: SQLiteApplicationMediaTransferLifecycle.retryRequested
+                    )
+                ) { _ in
+                    scheduleMediaReconciliationBackgroundTask()
+                }
                 #endif
                 .onOpenURL(perform: handleOpenURL)
                 #if os(iOS)
@@ -1418,6 +1427,17 @@ struct BisonNotesAIApp: App {
             }
             handleArchiveRestoreBackgroundProcessing(task: processingTask)
         }
+
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.mediaReconciliationBackgroundTaskIdentifier,
+            using: nil
+        ) { task in
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            handleMediaReconciliationBackgroundProcessing(task: processingTask)
+        }
         #endif
         // macOS: no BGTaskScheduler — the app keeps running; jobs continue in-process.
     }
@@ -1452,6 +1472,25 @@ struct BisonNotesAIApp: App {
         }
     }
 
+    private func scheduleMediaReconciliationBackgroundTask() {
+        let request = BGProcessingTaskRequest(
+            identifier: Self.mediaReconciliationBackgroundTaskIdentifier
+        )
+        request.requiresNetworkConnectivity = false
+        request.requiresExternalPower = false
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 30)
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            AppLog.shared.general("Scheduled background media reconciliation retry")
+        } catch {
+            AppLog.shared.general(
+                "Failed to schedule background media reconciliation retry: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
     private func handleArchiveRestoreBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background archive restore retry started")
 
@@ -1480,6 +1519,35 @@ struct BisonNotesAIApp: App {
             workTask.cancel()
             AppLog.shared.general(
                 "Background archive restore retry expired",
+                level: .error
+            )
+        }
+    }
+
+    private func handleMediaReconciliationBackgroundProcessing(task: BGProcessingTask) {
+        AppLog.shared.general("Background media reconciliation retry started")
+
+        let workTask = Task { @MainActor in
+            let shouldRetry = await fileImportManager
+                .reconcilePendingMediaTransfersForBackgroundTask()
+            if Task.isCancelled {
+                task.setTaskCompleted(success: false)
+                return
+            }
+
+            if shouldRetry {
+                scheduleMediaReconciliationBackgroundTask()
+            }
+            task.setTaskCompleted(success: true)
+            AppLog.shared.general(
+                "Background media reconciliation retry completed (follow-up: \(shouldRetry))"
+            )
+        }
+
+        task.expirationHandler = {
+            workTask.cancel()
+            AppLog.shared.general(
+                "Background media reconciliation retry expired",
                 level: .error
             )
         }

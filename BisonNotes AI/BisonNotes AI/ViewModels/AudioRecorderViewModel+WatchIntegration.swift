@@ -138,6 +138,10 @@ extension AudioRecorderViewModel {
 				destinationRelativePath: "apprecording-watch-\(recordingKey).m4a",
 				metadataPayload: metadataPayload
 			)
+			NotificationCenter.default.post(
+				name: SQLiteApplicationMediaTransferLifecycle.retryRequested,
+				object: nil
+			)
 			let metadataCommit = makeWatchMetadataCommit(
 				appCoordinator: appCoordinator,
 				mapping: dependencies.mapping

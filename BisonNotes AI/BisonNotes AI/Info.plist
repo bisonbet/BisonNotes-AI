@@ -9,6 +9,7 @@
 		<string>com.bisonai.audio-processing</string>
 		<string>com.bisonai.app-refresh</string>
 		<string>com.bisonai.archive-restore</string>
+		<string>com.bisonai.media-reconciliation</string>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
