@@ -342,13 +342,37 @@ remains committed and the recording URL remains available for retry; a failed
 repository operation leaves local audio untouched. `RecordingsListView` awaits
 the operation and keeps the selection available when a partial operation
 reports an error. The production archive-export completion path no longer
-mutates Core Data directly, but archive-location reads, restore, clear-flags,
-file-provider deletion and the full production media/file journal remain open.
+mutates Core Data directly, but archive-location reads, file-provider restore,
+source deletion and the full production media/file journal remain open.
 The standalone suite passes 101/101 and the macOS app-hosted build-for-testing
 check passes. The current full iOS scheme build-for-testing is blocked by the
 pre-existing `BisonNotesComplications.swift:107` `accessoryCorner`-unavailable
 error in the watch-widget target; direct simulator XCTest execution remains
 unavailable because the runner exits before XCTest bootstrapping. No repository
+backend is selected for startup and no SQLite cutover is enabled.
+
+The current recording-file cleanup checkpoint is `fde51735` (`feat: make
+recording deletion cleanup retry-safe`). `EnhancedFileManager` now uses the
+storage-neutral file store for both full and preserve-summary deletion paths.
+Cleanup is idempotent for a missing main file, removes known sidecars through
+the same resolver, and runs before the repository metadata transaction so a
+process kill or metadata failure leaves the recording URL available as a
+durable retry handle. The full media/file journal and production file-manager
+caller integration remain open.
+
+The current archive re-import checkpoint is `880b2c03` (`feat: route archive
+reimports through repository`). `LibraryRecordingAudioRestoreCommand` commits
+the restored recording URL, optional file size, archive-flag clearing and
+`lastModified` together through both adapters with an optional revision guard.
+`RecordingArchiveService` uses the command for imported-audio restores and
+archive-flag clearing; `FileImportManager` and `RecordingsListView` now await
+the repository-backed operations and surface failures. The file-provider
+restore workflow still has direct location reads/source deletion and remains
+blocked on the durable media/file-operation boundary. The standalone suite
+passes 102/102 and the macOS app-hosted build-for-testing check passes. The
+full iOS scheme build-for-testing remains blocked by the pre-existing
+`BisonNotesComplications.swift:107` `accessoryCorner`-unavailable watch-widget
+error; direct simulator XCTest execution remains unavailable. No repository
 backend is selected for startup and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
@@ -646,7 +670,8 @@ Completed in this slice:
   intents atomically in both adapters; its app callers use the same bridge.
   Inbound whole-recording, transcript, summary and imported-audio tombstones now
   use repository deletion transactions. Imported-audio file cleanup is
-  storage-neutral and retry-safe, while archive restore/read/clear and the
+  storage-neutral and retry-safe, and archive re-import restore/clear-flag
+  metadata now uses repository transactions. The file-provider restore/read and
   remaining file-owning operations remain separate lifecycle work. Host and
   app-hosted contract coverage exercises both adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
@@ -671,9 +696,9 @@ Completed in this slice:
   `LibraryObservationSubscription` anchors before an initial snapshot and
   advances only across validated contiguous batches. The pre-cutover startup
   boundary now anchors a durable Core Data subscription and polls it on remote
-  store changes and activation; history-retention/purge policy and
-  archive restore/read/clear and file-owning repository write commands are
-  intentionally not implemented yet. Repository observation polling remains
+  store changes and activation; history-retention/purge policy, file-provider
+  archive restore/read/source deletion and file-owning repository write commands
+  are intentionally not implemented yet. Repository observation polling remains
   outside the normal-access gate so an exclusive source lease cannot deadlock
   while it validates the source revision.
 - The isolated migration coordinator now composes source validation, durable
@@ -724,8 +749,8 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every remaining direct
   Core Data, settings, Watch, share and background caller, and broader read/write
-  repository contracts (including archive restore/read/clear paths and
-  file-owning operations) and
+  repository contracts (including file-provider archive restore/read/source
+  deletion paths and file-owning operations) and
   app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
@@ -751,8 +776,8 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to finish the remaining archive restore/read/
-clear paths and outbound preserve-summary file-manager ordering, then expand
+The next safe work package is to finish the remaining file-provider archive
+restore/read/source-deletion paths and the production media/file journal, then expand
 the remaining metadata commands and convert additional non-startup callers
 behind the Core Data adapter with shared behavior tests. After that, audit and
 install the maintenance gate around every remaining direct source mutation.
