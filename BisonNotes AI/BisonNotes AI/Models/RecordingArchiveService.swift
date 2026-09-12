@@ -34,7 +34,7 @@ private struct ArchiveLocationCandidate {
     let command: LibraryArchiveLocationUpsertCommand
 }
 
-enum RecordingArchiveError: LocalizedError {
+enum RecordingArchiveError: LocalizedError, Sendable {
     case persistenceUnavailable
     case noArchiveLocation
     case locationNotFound
@@ -354,6 +354,47 @@ class RecordingArchiveService: ObservableObject {
 
         let fileManager = FileManager.default
         let destinationAlreadyPresent = fileManager.fileExists(atPath: destinationURL.path)
+        try await copyAndValidateArchiveAudio(
+            from: sourceURL,
+            to: destinationURL
+        )
+
+        do {
+            _ = try await restoreRecordingUsingRepository(
+                recording,
+                newAudioURL: destinationURL
+            )
+        } catch {
+            if !destinationAlreadyPresent {
+                try? fileManager.removeItem(at: destinationURL)
+            }
+            throw error
+        }
+
+        // Metadata is committed before source removal. A source-delete failure
+        // must not roll back or remove the successfully restored local audio.
+        try await deleteArchivedSource(at: sourceURL)
+        return destinationURL
+    }
+
+    private func copyAndValidateArchiveAudio(
+        from sourceURL: URL,
+        to destinationURL: URL
+    ) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.copyAndValidateArchiveAudioSynchronously(
+                from: sourceURL,
+                to: destinationURL
+            )
+        }.value
+    }
+
+    private nonisolated static func copyAndValidateArchiveAudioSynchronously(
+        from sourceURL: URL,
+        to destinationURL: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let destinationAlreadyPresent = fileManager.fileExists(atPath: destinationURL.path)
         if !destinationAlreadyPresent {
             var coordinatorError: NSError?
             var operationError: Error?
@@ -397,26 +438,17 @@ class RecordingArchiveService: ObservableObject {
             }
             throw error
         }
-
-        do {
-            _ = try await restoreRecordingUsingRepository(
-                recording,
-                newAudioURL: destinationURL
-            )
-        } catch {
-            if !destinationAlreadyPresent {
-                try? fileManager.removeItem(at: destinationURL)
-            }
-            throw error
-        }
-
-        // Metadata is committed before source removal. A source-delete failure
-        // must not roll back or remove the successfully restored local audio.
-        try deleteArchivedSource(at: sourceURL)
-        return destinationURL
     }
 
-    private func deleteArchivedSource(at sourceURL: URL) throws {
+    private func deleteArchivedSource(at sourceURL: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.deleteArchivedSourceSynchronously(at: sourceURL)
+        }.value
+    }
+
+    private nonisolated static func deleteArchivedSourceSynchronously(
+        at sourceURL: URL
+    ) throws {
         var coordinatorError: NSError?
         var operationError: Error?
         var didDelete = false
@@ -705,7 +737,7 @@ class RecordingArchiveService: ObservableObject {
                let attributes = try? fileManager.attributesOfItem(atPath: originalURL.path),
                let actualSize = attributes[.size] as? Int64,
                actualSize == recording.fileSize,
-               (try? validateAudioFile(at: originalURL)) != nil {
+               (try? Self.validateAudioFile(at: originalURL)) != nil {
                 return originalURL
             }
         }
@@ -725,7 +757,7 @@ class RecordingArchiveService: ObservableObject {
         return candidate
     }
 
-    private func validateAudioFile(at url: URL) throws {
+    private nonisolated static func validateAudioFile(at url: URL) throws {
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             if player.duration <= 0 {

@@ -258,4 +258,72 @@ extension SQLiteLibraryStore {
             operation.expectedByteLength == plan.expectedByteLength &&
             operation.expectedSHA256?.lowercased() == plan.expectedSHA256.lowercased()
     }
+
+    static func fetchArchiveRestoreOperation(
+        id: String,
+        from database: Database
+    ) throws -> SQLiteArchiveRestoreOperation? {
+        guard let row = try Row.fetchOne(
+            database,
+            sql: """
+            SELECT id, archiveLocationID, ownerStorageID, ownerRevision,
+                   sourceRoot, sourceRelativePath, destinationRoot,
+                   destinationRelativePath, expectedByteLength, expectedSHA256,
+                   phase, attemptCount, lastError, createdAt, updatedAt
+            FROM archive_restore_operations
+            WHERE id = ?
+            """,
+            arguments: [id]
+        ) else {
+            return nil
+        }
+
+        guard let operationID: String = row["id"],
+              let archiveLocationID: String = row["archiveLocationID"],
+              let sourceRoot: String = row["sourceRoot"],
+              let sourceRelativePath: String = row["sourceRelativePath"],
+              let destinationRoot: String = row["destinationRoot"],
+              let destinationRelativePath: String = row["destinationRelativePath"],
+              let expectedByteLength: Int64 = row["expectedByteLength"],
+              let expectedSHA256: String = row["expectedSHA256"],
+              let phase: String = row["phase"],
+              let attemptCount: Int = row["attemptCount"],
+              let createdAt: Double = row["createdAt"],
+              let updatedAt: Double = row["updatedAt"] else {
+            throw SQLiteLibraryStoreError.invalidMetadata
+        }
+        return SQLiteArchiveRestoreOperation(
+            id: operationID,
+            archiveLocationID: archiveLocationID,
+            ownerStorageID: row["ownerStorageID"],
+            ownerRevision: row["ownerRevision"],
+            sourceRoot: sourceRoot,
+            sourceRelativePath: sourceRelativePath,
+            destinationRoot: destinationRoot,
+            destinationRelativePath: destinationRelativePath,
+            expectedByteLength: expectedByteLength,
+            expectedSHA256: expectedSHA256,
+            phase: phase,
+            attemptCount: attemptCount,
+            lastError: row["lastError"],
+            createdAt: Date(timeIntervalSinceReferenceDate: createdAt),
+            updatedAt: Date(timeIntervalSinceReferenceDate: updatedAt)
+        )
+    }
+
+    static func matches(
+        _ operation: SQLiteArchiveRestoreOperation,
+        plan: SQLiteArchiveRestorePlan
+    ) -> Bool {
+        operation.id == plan.operationID &&
+            operation.archiveLocationID == plan.archiveLocationID &&
+            operation.ownerStorageID == plan.ownerStorageID &&
+            operation.ownerRevision == plan.ownerRevision &&
+            operation.sourceRoot == plan.sourceRoot &&
+            operation.sourceRelativePath == plan.sourceRelativePath &&
+            operation.destinationRoot == plan.destinationRoot &&
+            operation.destinationRelativePath == plan.destinationRelativePath &&
+            operation.expectedByteLength == plan.expectedByteLength &&
+            operation.expectedSHA256.lowercased() == plan.expectedSHA256.lowercased()
+    }
 }

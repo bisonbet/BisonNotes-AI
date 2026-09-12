@@ -188,4 +188,235 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
     }
+
+    func testArchiveRestoreReconcilerCommitsMetadataBeforeRemovingSource() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let databaseURL = fixture.directory.appendingPathComponent("library.sqlite")
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let plan = makeArchiveRestorePlan(from: fixture)
+        _ = try await store.enqueueArchiveRestore(plan)
+        let metadataRecorder = SQLiteArchiveRestoreMetadataRecorder()
+
+        let report = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            metadataRecorder.record(operation)
+        }
+
+        XCTAssertEqual(report.recoveredOperationCount, 0)
+        XCTAssertEqual(report.selectedOperationCount, 1)
+        XCTAssertEqual(report.completedOperationCount, 1)
+        XCTAssertEqual(report.failedOperationCount, 0)
+        XCTAssertEqual(metadataRecorder.phases, [SQLiteArchiveRestorePhase.committingMetadata])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+        let restoredURL = fixture.directory
+            .appendingPathComponent("destination", isDirectory: true)
+            .appendingPathComponent("restored", isDirectory: true)
+            .appendingPathComponent("recording.m4a")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
+
+        let persistedOperation = try await store.archiveRestoreOperation(id: plan.operationID)
+        let operation = try XCTUnwrap(persistedOperation)
+        XCTAssertEqual(operation.phase, SQLiteArchiveRestorePhase.completed)
+        XCTAssertEqual(operation.attemptCount, 3)
+
+        let repeatedReport = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            metadataRecorder.record(operation)
+        }
+        XCTAssertEqual(repeatedReport.selectedOperationCount, 0)
+        XCTAssertEqual(metadataRecorder.phases, [SQLiteArchiveRestorePhase.committingMetadata])
+    }
+
+    func testArchiveRestoreMetadataFailureRetainsCopiedFileForRetry() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        let plan = makeArchiveRestorePlan(from: fixture)
+        _ = try await store.enqueueArchiveRestore(plan)
+        let metadataRecorder = SQLiteArchiveRestoreMetadataRecorder(failuresRemaining: 1)
+
+        let failedReport = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            try metadataRecorder.recordOrFail(operation)
+        }
+
+        XCTAssertEqual(failedReport.completedOperationCount, 0)
+        XCTAssertEqual(failedReport.failedOperationCount, 1)
+        let persistedFailedOperation = try await store.archiveRestoreOperation(id: plan.operationID)
+        let failedOperation = try XCTUnwrap(persistedFailedOperation)
+        XCTAssertEqual(failedOperation.phase, SQLiteArchiveRestorePhase.metadataFailed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+        let restoredURL = fixture.directory
+            .appendingPathComponent("destination", isDirectory: true)
+            .appendingPathComponent("restored", isDirectory: true)
+            .appendingPathComponent("recording.m4a")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
+
+        let retryReport = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            try metadataRecorder.recordOrFail(operation)
+        }
+        XCTAssertEqual(retryReport.completedOperationCount, 1)
+        XCTAssertEqual(retryReport.failedOperationCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+    }
+
+    func testArchiveRestoreMetadataRetryRefusesChangedDestination() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        let plan = makeArchiveRestorePlan(from: fixture)
+        _ = try await store.enqueueArchiveRestore(plan)
+        let metadataRecorder = SQLiteArchiveRestoreMetadataRecorder(failuresRemaining: 1)
+
+        _ = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            try metadataRecorder.recordOrFail(operation)
+        }
+        let restoredURL = fixture.directory
+            .appendingPathComponent("destination", isDirectory: true)
+            .appendingPathComponent("restored", isDirectory: true)
+            .appendingPathComponent("recording.m4a")
+        try Data("changed-after-copy".utf8).write(to: restoredURL)
+
+        let retryReport = try await SQLiteArchiveRestoreReconciler(
+            store: store,
+            rootRegistry: fixture.registry
+        ).run { operation in
+            try metadataRecorder.recordOrFail(operation)
+        }
+
+        XCTAssertEqual(retryReport.selectedOperationCount, 1)
+        XCTAssertEqual(retryReport.completedOperationCount, 0)
+        XCTAssertEqual(retryReport.failedOperationCount, 1)
+        XCTAssertEqual(
+            metadataRecorder.phases,
+            [SQLiteArchiveRestorePhase.committingMetadata]
+        )
+        let failedOperation = try await store.archiveRestoreOperation(
+            id: plan.operationID
+        )
+        XCTAssertEqual(
+            failedOperation?.phase,
+            SQLiteArchiveRestorePhase.metadataFailed
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+    }
+
+    func testArchiveRestoreRecoversInFlightMetadataAndSourceDeletionPhases() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let databaseURL = fixture.directory.appendingPathComponent("library.sqlite")
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let plan = makeArchiveRestorePlan(from: fixture)
+        _ = try await store.enqueueArchiveRestore(plan)
+        let claimedCopy = try await store.claimArchiveRestoreCopy(id: plan.operationID)
+        XCTAssertEqual(claimedCopy.phase, SQLiteArchiveRestorePhase.copying)
+        let recoveredCopyCount = try await store.recoverInterruptedArchiveRestores()
+        XCTAssertEqual(recoveredCopyCount, 1)
+        let pendingOperation = try await store.archiveRestoreOperation(id: plan.operationID)
+        XCTAssertEqual(pendingOperation?.phase, SQLiteArchiveRestorePhase.pending)
+
+        let copied = try await SQLiteArchiveRestoreCopyWorker(store: store).run(
+            operationID: plan.operationID,
+            rootRegistry: fixture.registry
+        )
+        XCTAssertEqual(copied.phase, SQLiteArchiveRestorePhase.copied)
+        let committing = try await store.claimArchiveRestoreMetadata(id: plan.operationID)
+        XCTAssertEqual(committing.phase, SQLiteArchiveRestorePhase.committingMetadata)
+        _ = try await store.recoverInterruptedArchiveRestores()
+        let copiedAfterRecovery = try await store.archiveRestoreOperation(id: plan.operationID)
+        XCTAssertEqual(copiedAfterRecovery?.phase, SQLiteArchiveRestorePhase.copied)
+        _ = try await store.claimArchiveRestoreMetadata(id: plan.operationID)
+        _ = try await store.completeArchiveRestoreMetadata(id: plan.operationID)
+        let deleting = try await store.claimArchiveRestoreSourceDeletion(id: plan.operationID)
+        XCTAssertEqual(deleting.phase, SQLiteArchiveRestorePhase.deletingSource)
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let recoveredDeleteCount = try await reopenedStore.recoverInterruptedArchiveRestores()
+        XCTAssertEqual(recoveredDeleteCount, 1)
+        let committedAfterRecovery = try await reopenedStore.archiveRestoreOperation(id: plan.operationID)
+        XCTAssertEqual(committedAfterRecovery?.phase, SQLiteArchiveRestorePhase.metadataCommitted)
+        let completed = try await SQLiteArchiveRestoreSourceDeletionWorker(
+            store: reopenedStore
+        ).run(
+            operationID: plan.operationID,
+            rootRegistry: fixture.registry
+        )
+        XCTAssertEqual(completed.phase, SQLiteArchiveRestorePhase.completed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+    }
+}
+
+private func makeArchiveRestorePlan(
+    from fixture: SQLiteMediaTransferFixture
+) -> SQLiteArchiveRestorePlan {
+    SQLiteArchiveRestorePlan(
+        operationID: "archive-restore-operation",
+        archiveLocationID: "archive-location-1",
+        ownerStorageID: "recording-1",
+        ownerRevision: 1,
+        sourceRoot: "source",
+        sourceRelativePath: "incoming/recording.m4a",
+        destinationRoot: "destination",
+        destinationRelativePath: "restored/recording.m4a",
+        expectedByteLength: fixture.transfer.copyPlan.expectedByteLength,
+        expectedSHA256: fixture.transfer.copyPlan.expectedSHA256
+    )
+}
+
+private final class SQLiteArchiveRestoreMetadataRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedPhases: [String] = []
+    private var failuresRemaining: Int
+
+    init(failuresRemaining: Int = 0) {
+        self.failuresRemaining = failuresRemaining
+    }
+
+    var phases: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedPhases
+    }
+
+    func record(_ operation: SQLiteArchiveRestoreOperation) {
+        lock.lock()
+        storedPhases.append(operation.phase)
+        lock.unlock()
+    }
+
+    func recordOrFail(_ operation: SQLiteArchiveRestoreOperation) throws {
+        lock.lock()
+        storedPhases.append(operation.phase)
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            lock.unlock()
+            throw SQLiteArchiveRestoreTestError.metadataCommitFailed
+        }
+        lock.unlock()
+    }
+}
+
+private enum SQLiteArchiveRestoreTestError: Error {
+    case metadataCommitFailed
 }

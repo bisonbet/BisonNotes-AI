@@ -65,6 +65,119 @@ struct SQLiteMediaFileOperationWorker: Sendable {
     }
 }
 
+/// Executes the copy phase of a provider archive restore. The source and
+/// destination roots are resolved by the caller while any security-scoped
+/// access is active; the potentially large file work is detached from the
+/// application actor.
+struct SQLiteArchiveRestoreCopyWorker: Sendable {
+    let store: SQLiteLibraryStore
+
+    func run(
+        operationID: String,
+        rootRegistry: SQLiteMediaRootRegistry,
+        at date: Date = Date()
+    ) async throws -> SQLiteArchiveRestoreOperation {
+        guard let operation = try await store.archiveRestoreOperation(id: operationID) else {
+            throw SQLiteArchiveRestoreError.operationNotFound
+        }
+        let roots = try rootRegistry.roots(
+            sourceRoot: operation.sourceRoot,
+            destinationRoot: operation.destinationRoot
+        )
+        let claimed = try await store.claimArchiveRestoreCopy(id: operationID, at: date)
+
+        do {
+            switch claimed.phase {
+            case SQLiteArchiveRestorePhase.pending,
+                 SQLiteArchiveRestorePhase.copyFailed,
+                 SQLiteArchiveRestorePhase.copying:
+                let result = try await executeCopy(for: claimed, roots: roots)
+                try Task.checkCancellation()
+                return try await store.completeArchiveRestoreCopy(
+                    id: claimed.id,
+                    byteLength: result.byteLength,
+                    sha256: result.sha256,
+                    at: date
+                )
+            case SQLiteArchiveRestorePhase.copied,
+                 SQLiteArchiveRestorePhase.metadataFailed:
+                try await verifyPublishedCopy(for: claimed, roots: roots)
+                return claimed
+            case SQLiteArchiveRestorePhase.committingMetadata,
+                 SQLiteArchiveRestorePhase.metadataCommitted,
+                 SQLiteArchiveRestorePhase.deletingSource,
+                 SQLiteArchiveRestorePhase.sourceDeletionFailed,
+                 SQLiteArchiveRestorePhase.completed:
+                return claimed
+            default:
+                throw SQLiteArchiveRestoreError.unsupportedPhase
+            }
+        } catch is CancellationError {
+            _ = try? await store.requeueArchiveRestore(id: claimed.id, at: date)
+            throw CancellationError()
+        } catch {
+            _ = try? await store.failArchiveRestoreCopy(id: claimed.id, at: date)
+            throw error
+        }
+    }
+}
+
+/// Executes the final provider-source deletion phase after the recording
+/// metadata acknowledgement has committed. Source and destination are
+/// re-verified immediately before deletion, and an already-absent source is a
+/// successful retry.
+struct SQLiteArchiveRestoreSourceDeletionWorker: Sendable {
+    let store: SQLiteLibraryStore
+
+    func run(
+        operationID: String,
+        rootRegistry: SQLiteMediaRootRegistry,
+        at date: Date = Date()
+    ) async throws -> SQLiteArchiveRestoreOperation {
+        guard let operation = try await store.archiveRestoreOperation(id: operationID) else {
+            throw SQLiteArchiveRestoreError.operationNotFound
+        }
+        let roots = try rootRegistry.roots(
+            sourceRoot: operation.sourceRoot,
+            destinationRoot: operation.destinationRoot
+        )
+        let claimed = try await store.claimArchiveRestoreSourceDeletion(
+            id: operationID,
+            at: date
+        )
+        guard claimed.phase == SQLiteArchiveRestorePhase.deletingSource else {
+            return claimed
+        }
+
+        do {
+            try Task.checkCancellation()
+            let urls = try Self.resolveURLs(for: claimed, roots: roots)
+            try await Task.detached(priority: .utility) {
+                try SQLiteArchiveRestoreSourceDeletionExecutor(
+                    sourceURL: urls.source,
+                    destinationURL: urls.destination,
+                    expectedByteLength: claimed.expectedByteLength,
+                    expectedSHA256: claimed.expectedSHA256
+                ).run()
+            }.value
+            try Task.checkCancellation()
+            return try await store.completeArchiveRestoreSourceDeletion(
+                id: claimed.id,
+                at: date
+            )
+        } catch is CancellationError {
+            _ = try? await store.requeueArchiveRestore(id: claimed.id, at: date)
+            throw CancellationError()
+        } catch {
+            _ = try? await store.failArchiveRestoreSourceDeletion(
+                id: claimed.id,
+                at: date
+            )
+            throw error
+        }
+    }
+}
+
 private extension SQLiteMediaFileOperationWorker {
     func executeCopy(
         for operation: SQLiteMediaFileOperation,
@@ -98,6 +211,91 @@ private extension SQLiteMediaFileOperationWorker {
                 expectedSHA256: operation.expectedSHA256
             ).verifyInstalled()
         }.value
+    }
+}
+
+private extension SQLiteArchiveRestoreCopyWorker {
+    func executeCopy(
+        for operation: SQLiteArchiveRestoreOperation,
+        roots: SQLiteMediaFileOperationRoots
+    ) async throws -> SQLiteMediaFileCopyResult {
+        let urls = try Self.resolveURLs(for: operation, roots: roots)
+        try Task.checkCancellation()
+        return try await Task.detached(priority: .utility) {
+            try SQLiteMediaFileCopyExecutor(
+                sourceURL: urls.source,
+                destinationURL: urls.destination,
+                partialURL: urls.partial,
+                expectedByteLength: operation.expectedByteLength,
+                expectedSHA256: operation.expectedSHA256
+            ).run()
+        }.value
+    }
+
+    func verifyPublishedCopy(
+        for operation: SQLiteArchiveRestoreOperation,
+        roots: SQLiteMediaFileOperationRoots
+    ) async throws {
+        let urls = try Self.resolveURLs(for: operation, roots: roots)
+        try Task.checkCancellation()
+        try await Task.detached(priority: .utility) {
+            try SQLiteMediaFileCopyExecutor(
+                sourceURL: urls.source,
+                destinationURL: urls.destination,
+                partialURL: urls.partial,
+                expectedByteLength: operation.expectedByteLength,
+                expectedSHA256: operation.expectedSHA256
+            ).verifyInstalled()
+        }.value
+    }
+
+    static func resolveURLs(
+        for operation: SQLiteArchiveRestoreOperation,
+        roots: SQLiteMediaFileOperationRoots
+    ) throws -> (source: URL, destination: URL, partial: URL) {
+        guard let sourceBase = roots.source[operation.sourceRoot],
+              let destinationBase = roots.destination[operation.destinationRoot] else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+        let source = try SQLiteMediaRootPathResolver.resolve(
+            relativePath: operation.sourceRelativePath,
+            under: sourceBase
+        )
+        let destination = try SQLiteMediaRootPathResolver.resolve(
+            relativePath: operation.destinationRelativePath,
+            under: destinationBase
+        )
+        let token = SHA256.hash(data: Data(operation.id.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let partial = destination.deletingLastPathComponent()
+            .appendingPathComponent(".sqlite-archive-restore-\(token).partial")
+        guard source.resolvingSymlinksInPath().standardizedFileURL
+                != destination.resolvingSymlinksInPath().standardizedFileURL else {
+            throw SQLiteArchiveRestoreError.sourceDestinationAlias
+        }
+        return (source: source, destination: destination, partial: partial)
+    }
+}
+
+private extension SQLiteArchiveRestoreSourceDeletionWorker {
+    static func resolveURLs(
+        for operation: SQLiteArchiveRestoreOperation,
+        roots: SQLiteMediaFileOperationRoots
+    ) throws -> (source: URL, destination: URL) {
+        guard let sourceBase = roots.source[operation.sourceRoot],
+              let destinationBase = roots.destination[operation.destinationRoot] else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+        let source = try SQLiteMediaRootPathResolver.resolve(
+            relativePath: operation.sourceRelativePath,
+            under: sourceBase
+        )
+        let destination = try SQLiteMediaRootPathResolver.resolve(
+            relativePath: operation.destinationRelativePath,
+            under: destinationBase
+        )
+        return (source: source, destination: destination)
     }
 }
 
@@ -176,6 +374,19 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
         try Self.verify(
             destinationURL,
             missingError: .copyFailed,
+            expectedByteLength: expectedByteLength,
+            expectedSHA256: expectedSHA256
+        )
+    }
+
+    func verifySource() throws {
+        guard let expectedByteLength,
+              let expectedSHA256 else {
+            throw SQLiteMediaFileOperationError.operationConflict
+        }
+        try Self.verify(
+            sourceURL,
+            missingError: .sourceMissing,
             expectedByteLength: expectedByteLength,
             expectedSHA256: expectedSHA256
         )
@@ -306,6 +517,91 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
 
     private static func hexDigest(_ digest: SHA256.Digest) -> String {
         digest.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private struct SQLiteArchiveRestoreSourceDeletionExecutor: Sendable {
+    let sourceURL: URL
+    let destinationURL: URL
+    let expectedByteLength: Int64
+    let expectedSHA256: String
+
+    func run() throws {
+        guard sourceURL.resolvingSymlinksInPath().standardizedFileURL
+                != destinationURL.resolvingSymlinksInPath().standardizedFileURL else {
+            throw SQLiteArchiveRestoreError.sourceDestinationAlias
+        }
+
+        let verifier = SQLiteMediaFileCopyExecutor(
+            sourceURL: sourceURL,
+            destinationURL: destinationURL,
+            partialURL: destinationURL
+                .deletingLastPathComponent()
+                .appendingPathComponent(".sqlite-archive-delete-verification.partial"),
+            expectedByteLength: expectedByteLength,
+            expectedSHA256: expectedSHA256
+        )
+        do {
+            try verifier.verifyInstalled()
+        } catch let error as SQLiteMediaFileOperationError {
+            throw Self.mapVerificationError(error, destination: true)
+        }
+
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            return
+        }
+        do {
+            try verifier.verifySource()
+        } catch let error as SQLiteMediaFileOperationError {
+            throw Self.mapVerificationError(error, destination: false)
+        }
+
+        var coordinatorError: NSError?
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.coordinate(
+            writingItemAt: sourceURL,
+            options: .forDeleting,
+            error: &coordinatorError
+        ) { coordinatedURL in
+            try? fileManager.removeItem(at: coordinatedURL)
+        }
+
+        if fileManager.fileExists(atPath: sourceURL.path) {
+            // Some local file systems reject NSFileCoordinator coordination
+            // without a presenter (for example, a plain test directory), and
+            // some providers return a coordinated URL that is not removable
+            // until the scope is refreshed. Re-verify the exact source before
+            // this idempotent fallback; a provider error still leaves the
+            // journal retryable.
+            do {
+                try verifier.verifySource()
+                try fileManager.removeItem(at: sourceURL)
+            } catch {
+                throw SQLiteArchiveRestoreError.sourceDeletionFailed
+            }
+        }
+        if fileManager.fileExists(atPath: sourceURL.path) {
+            throw SQLiteArchiveRestoreError.sourceDeletionFailed
+        }
+    }
+
+    private static func mapVerificationError(
+        _ error: SQLiteMediaFileOperationError,
+        destination: Bool
+    ) -> SQLiteArchiveRestoreError {
+        switch error {
+        case .sourceMissing:
+            return .sourceMissing
+        case .destinationConflict:
+            return .destinationConflict
+        case .integrityMismatch:
+            return .integrityMismatch
+        case .copyFailed:
+            return destination ? .destinationConflict : .sourceDeletionFailed
+        default:
+            return .sourceDeletionFailed
+        }
     }
 }
 

@@ -89,3 +89,144 @@ actor SQLiteMediaBackgroundReconciler {
         )
     }
 }
+
+struct SQLiteArchiveRestoreProgress: Equatable, Sendable {
+    let total: Int
+    let completed: Int
+    let failed: Int
+}
+
+struct SQLiteArchiveRestoreReport: Equatable, Sendable {
+    let recoveredOperationCount: Int
+    let selectedOperationCount: Int
+    let completedOperationCount: Int
+    let failedOperationCount: Int
+}
+
+/// Reconciles provider archive restores in bounded, durable phases.
+///
+/// The metadata callback is supplied by the eventual app integration because
+/// the current production source is still Core Data. It must be idempotent for
+/// the operation's owner/revision. The journal acknowledges that callback only
+/// after it returns, and source deletion is attempted only after that durable
+/// acknowledgement.
+actor SQLiteArchiveRestoreReconciler {
+    let store: SQLiteLibraryStore
+    let rootRegistry: SQLiteMediaRootRegistry
+
+    init(
+        store: SQLiteLibraryStore,
+        rootRegistry: SQLiteMediaRootRegistry
+    ) {
+        self.store = store
+        self.rootRegistry = rootRegistry
+    }
+
+    func run(
+        maxOperations: Int = 8,
+        at date: Date = Date(),
+        metadataCommit: @escaping @Sendable (SQLiteArchiveRestoreOperation) async throws -> Void,
+        progress: (@Sendable (SQLiteArchiveRestoreProgress) -> Void)? = nil
+    ) async throws -> SQLiteArchiveRestoreReport {
+        guard (1...100).contains(maxOperations) else {
+            throw SQLiteArchiveRestoreError.invalidBatchLimit
+        }
+
+        let recoveredCount = try await store.recoverInterruptedArchiveRestores(at: date)
+        let operations = try await store.archiveRestoreOperationsNeedingReconciliation(
+            limit: maxOperations
+        )
+        var completedCount = 0
+        var failedCount = 0
+        progress?(SQLiteArchiveRestoreProgress(
+            total: operations.count,
+            completed: completedCount,
+            failed: failedCount
+        ))
+
+        let copyWorker = SQLiteArchiveRestoreCopyWorker(store: store)
+        let sourceDeletionWorker = SQLiteArchiveRestoreSourceDeletionWorker(store: store)
+
+        for operation in operations {
+            try Task.checkCancellation()
+            do {
+                let afterCopy = try await copyWorker.run(
+                    operationID: operation.id,
+                    rootRegistry: rootRegistry,
+                    at: date
+                )
+                let afterMetadata = try await commitMetadataIfNeeded(
+                    for: afterCopy,
+                    at: date,
+                    metadataCommit: metadataCommit
+                )
+                let finalOperation = try await sourceDeletionWorker.run(
+                    operationID: afterMetadata.id,
+                    rootRegistry: rootRegistry,
+                    at: date
+                )
+                if finalOperation.phase == SQLiteArchiveRestorePhase.completed {
+                    completedCount += 1
+                } else {
+                    throw SQLiteArchiveRestoreError.operationConflict
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                failedCount += 1
+            }
+            progress?(SQLiteArchiveRestoreProgress(
+                total: operations.count,
+                completed: completedCount,
+                failed: failedCount
+            ))
+        }
+
+        return SQLiteArchiveRestoreReport(
+            recoveredOperationCount: recoveredCount,
+            selectedOperationCount: operations.count,
+            completedOperationCount: completedCount,
+            failedOperationCount: failedCount
+        )
+    }
+}
+
+private extension SQLiteArchiveRestoreReconciler {
+    func commitMetadataIfNeeded(
+        for operation: SQLiteArchiveRestoreOperation,
+        at date: Date,
+        metadataCommit: @escaping @Sendable (SQLiteArchiveRestoreOperation) async throws -> Void
+    ) async throws -> SQLiteArchiveRestoreOperation {
+        switch operation.phase {
+        case SQLiteArchiveRestorePhase.copied,
+             SQLiteArchiveRestorePhase.metadataFailed:
+            let committing = try await store.claimArchiveRestoreMetadata(
+                id: operation.id,
+                at: date
+            )
+            do {
+                try await metadataCommit(committing)
+            } catch is CancellationError {
+                _ = try? await store.requeueArchiveRestore(id: committing.id, at: date)
+                throw CancellationError()
+            } catch {
+                _ = try? await store.failArchiveRestoreMetadata(
+                    id: committing.id,
+                    at: date
+                )
+                throw error
+            }
+            return try await store.completeArchiveRestoreMetadata(
+                id: committing.id,
+                at: date
+            )
+        case SQLiteArchiveRestorePhase.metadataCommitted,
+             SQLiteArchiveRestorePhase.sourceDeletionFailed:
+            return operation
+        case SQLiteArchiveRestorePhase.completed:
+            return operation
+        default:
+            throw SQLiteArchiveRestoreError.operationConflict
+        }
+    }
+}

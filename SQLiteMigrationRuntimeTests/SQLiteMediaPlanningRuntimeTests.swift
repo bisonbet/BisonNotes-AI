@@ -142,6 +142,146 @@ final class SQLiteMediaPlanningRuntimeTests: XCTestCase {
             )
         }
     }
+
+    func testArchiveRestorePlannerUsesBookmarkRootAndFingerprintsSource() throws {
+        let fixture = try makePlannerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let archiveRoot = fixture.directory.appendingPathComponent(
+            "ResolvedArchive",
+            isDirectory: true
+        )
+        let sourceURL = archiveRoot.appendingPathComponent(
+            "Exports",
+            isDirectory: true
+        ).appendingPathComponent("restored-recording.m4a")
+        let data = Data("archive-restore-planner-fixture".utf8)
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: sourceURL)
+
+        let plan = try SQLiteApplicationArchiveRestorePlanner(
+            mapping: fixture.mapping
+        ).makePlan(
+            SQLiteArchiveRestoreRequest(
+                operationID: "archive-restore-operation-1",
+                archiveLocationID: "archive-location-1",
+                ownerStorageID: "sqlite-recording-1",
+                ownerRevision: 7,
+                sourceRootID: "archive-bookmark-root-1",
+                sourceRootURL: archiveRoot,
+                sourceURL: sourceURL,
+                destinationRelativePath: "recordings/recording-1.m4a"
+            )
+        )
+        let expectedSHA256 = SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+
+        XCTAssertEqual(plan.sourceRoot, "archive-bookmark-root-1")
+        XCTAssertEqual(plan.sourceRelativePath, "Exports/restored-recording.m4a")
+        XCTAssertEqual(plan.destinationRoot, SQLiteApplicationMediaRootID.sqliteMedia.rawValue)
+        XCTAssertEqual(plan.destinationRelativePath, "recordings/recording-1.m4a")
+        XCTAssertEqual(plan.ownerRevision, 7)
+        XCTAssertEqual(plan.expectedByteLength, Int64(data.count))
+        XCTAssertEqual(plan.expectedSHA256, expectedSHA256)
+        let registry = try fixture.mapping.registry(
+            addingSourceRootID: plan.sourceRoot,
+            url: archiveRoot
+        )
+        XCTAssertEqual(
+            try registry.sourceURL(
+                root: plan.sourceRoot,
+                relativePath: plan.sourceRelativePath
+            ),
+            sourceURL.standardizedFileURL
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.mapping.destinationURLs[.sqliteMedia]!.path
+            )
+        )
+    }
+
+    func testArchiveRestorePlannerRejectsSourceOutsideResolvedBookmarkRoot() throws {
+        let fixture = try makePlannerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let archiveRoot = fixture.directory.appendingPathComponent(
+            "ResolvedArchive",
+            isDirectory: true
+        )
+        let outsideURL = fixture.directory.appendingPathComponent(
+            "OutsideArchiveRoot",
+            isDirectory: true
+        ).appendingPathComponent("recording.m4a")
+        try FileManager.default.createDirectory(
+            at: archiveRoot,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: outsideURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("outside-root".utf8).write(to: outsideURL)
+
+        XCTAssertThrowsError(
+            try SQLiteApplicationArchiveRestorePlanner(mapping: fixture.mapping).makePlan(
+                SQLiteArchiveRestoreRequest(
+                    operationID: "archive-restore-operation-outside",
+                    archiveLocationID: "archive-location-outside",
+                    ownerStorageID: nil,
+                    ownerRevision: nil,
+                    sourceRootID: "archive-bookmark-root-outside",
+                    sourceRootURL: archiveRoot,
+                    sourceURL: outsideURL,
+                    destinationRelativePath: "recordings/outside.m4a"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteMediaPlanningError,
+                .sourceOutsideManagedRoots
+            )
+        }
+    }
+
+    func testArchiveRestorePlannerRejectsSourceDestinationAlias() throws {
+        let fixture = try makePlannerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let destinationRoot = try XCTUnwrap(
+            fixture.mapping.destinationURLs[.sqliteMedia]
+        )
+        let sourceURL = destinationRoot.appendingPathComponent("same-file.m4a")
+        try FileManager.default.createDirectory(
+            at: destinationRoot,
+            withIntermediateDirectories: true
+        )
+        try Data("alias".utf8).write(to: sourceURL)
+
+        XCTAssertThrowsError(
+            try SQLiteApplicationArchiveRestorePlanner(mapping: fixture.mapping).makePlan(
+                SQLiteArchiveRestoreRequest(
+                    operationID: "archive-restore-operation-alias",
+                    archiveLocationID: "archive-location-alias",
+                    ownerStorageID: nil,
+                    ownerRevision: nil,
+                    sourceRootID: "archive-bookmark-root-alias",
+                    sourceRootURL: destinationRoot,
+                    sourceURL: sourceURL,
+                    destinationRelativePath: "same-file.m4a"
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SQLiteMediaPlanningError,
+                .sourceDestinationAlias
+            )
+        }
+    }
 }
 
 private struct SQLiteMediaPlannerFixture {

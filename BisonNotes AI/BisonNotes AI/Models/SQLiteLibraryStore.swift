@@ -111,12 +111,13 @@ private func readSQLiteRuntimeSnapshot(from database: Database) throws -> SQLite
 /// durable schema migrations and the operational tables required by the import
 /// and recovery work that follows.
 actor SQLiteLibraryStore {
-    static let schemaVersion = 4
+    static let schemaVersion = 5
     static let minimumReaderVersion = 1
     static let initialSchemaMigrationIdentifier = "v1"
     static let settingsSchemaMigrationIdentifier = "v2"
     static let changesSchemaMigrationIdentifier = "v3"
     static let mediaTransferSchemaMigrationIdentifier = "v4"
+    static let archiveRestoreSchemaMigrationIdentifier = "v5"
 
     struct Diagnostics: Equatable, Sendable {
         let libraryID: String

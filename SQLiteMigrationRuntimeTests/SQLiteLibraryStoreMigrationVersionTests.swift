@@ -4,7 +4,7 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
-    func testExistingV2StoreMigratesToV4MediaTransferSchema() async throws {
+    func testExistingV2StoreMigratesToV5ArchiveRestoreSchema() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -36,10 +36,11 @@ final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
         let store = try SQLiteLibraryStore(databaseURL: databaseURL)
         let diagnostics = try await store.diagnostics()
         let tables = Set(try await store.tableNames())
-        XCTAssertEqual(diagnostics.schemaVersion, 4)
+        XCTAssertEqual(diagnostics.schemaVersion, 5)
         XCTAssertEqual(diagnostics.revision, 0)
         XCTAssertTrue(tables.contains("library_settings"))
         XCTAssertTrue(tables.contains("library_changes"))
+        XCTAssertTrue(tables.contains("archive_restore_operations"))
 
         let transfer = SQLiteMediaTransferPlan(
             sourceTransferID: "migrated-source-transfer",

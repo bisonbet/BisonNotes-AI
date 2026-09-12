@@ -71,6 +71,33 @@ struct SQLiteApplicationMediaRootMapping: Sendable {
             shareContainerRoot: shareContainerRoot
         )
     }
+
+    /// Returns a process-local registry that adds one currently resolved
+    /// provider root to the app-owned mapping. The caller must keep the
+    /// security-scoped bookmark access active while workers use the registry;
+    /// only `sourceRootID` is persisted in a restore plan.
+    func registry(
+        addingSourceRootID sourceRootID: String,
+        url sourceRootURL: URL
+    ) throws -> SQLiteMediaRootRegistry {
+        try SQLiteMediaFileOperationValidation.root(sourceRootID)
+        let normalizedSourceRootPath = sourceRootURL.standardizedFileURL.path
+        guard sourceURLs.values.allSatisfy({
+            $0.standardizedFileURL.path != normalizedSourceRootPath
+        }) else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+
+        var sourceRoots = Self.stringKeyed(sourceURLs)
+        guard sourceRoots[sourceRootID] == nil else {
+            throw SQLiteMediaFileOperationError.invalidRoot
+        }
+        sourceRoots[sourceRootID] = sourceRootURL
+        return try SQLiteMediaRootRegistry(
+            sourceRoots: sourceRoots,
+            destinationRoots: Self.stringKeyed(destinationURLs)
+        )
+    }
 }
 
 private extension SQLiteApplicationMediaRootMapping {

@@ -141,3 +141,146 @@ enum SQLiteMediaFileOperationValidation {
         }
     }
 }
+
+/// A root-relative archive restore request.
+///
+/// Archive locations are resolved from a security-scoped bookmark by the
+/// eventual application caller. Only the logical roots and relative paths are
+/// persisted here, so a container relocation or bookmark refresh never writes
+/// an absolute provider path into the SQLite journal.
+struct SQLiteArchiveRestorePlan: Equatable, Sendable {
+    let operationID: String
+    let archiveLocationID: String
+    let ownerStorageID: String?
+    let ownerRevision: Int?
+    let sourceRoot: String
+    let sourceRelativePath: String
+    let destinationRoot: String
+    let destinationRelativePath: String
+    let expectedByteLength: Int64
+    let expectedSHA256: String
+
+    func validate() throws {
+        try SQLiteMediaFileOperationValidation.identifier(operationID)
+        try SQLiteMediaFileOperationValidation.identifier(archiveLocationID)
+        if let ownerStorageID {
+            try SQLiteMediaFileOperationValidation.identifier(ownerStorageID)
+        }
+        if let ownerRevision {
+            guard ownerRevision >= 0 else {
+                throw SQLiteArchiveRestoreError.invalidOwnerRevision
+            }
+        }
+        try SQLiteMediaFileOperationValidation.root(sourceRoot)
+        try SQLiteMediaFileOperationValidation.root(destinationRoot)
+        try SQLiteMediaFileOperationValidation.relativePath(sourceRelativePath)
+        try SQLiteMediaFileOperationValidation.relativePath(destinationRelativePath)
+        guard expectedByteLength >= 0 else {
+            throw SQLiteMediaFileOperationError.invalidByteLength
+        }
+        try SQLiteMediaFileOperationValidation.sha256(expectedSHA256)
+    }
+}
+
+/// Durable phases for a provider archive restore.
+///
+/// The metadata acknowledgement is intentionally a separate phase. The
+/// destination file may be safely retained while a Core Data or SQLite
+/// recording-link transaction is retried, and source deletion is never
+/// attempted until that acknowledgement is durable.
+struct SQLiteArchiveRestoreOperation: Equatable, Sendable {
+    let id: String
+    let archiveLocationID: String
+    let ownerStorageID: String?
+    let ownerRevision: Int?
+    let sourceRoot: String
+    let sourceRelativePath: String
+    let destinationRoot: String
+    let destinationRelativePath: String
+    let expectedByteLength: Int64
+    let expectedSHA256: String
+    let phase: String
+    let attemptCount: Int
+    let lastError: String?
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+enum SQLiteArchiveRestoreError: LocalizedError, Equatable {
+    case invalidOwnerRevision
+    case invalidBatchLimit
+    case operationNotFound
+    case operationConflict
+    case unsupportedPhase
+    case sourceMissing
+    case sourceNotRegularFile
+    case sourceDestinationAlias
+    case destinationConflict
+    case integrityMismatch
+    case copyFailed
+    case sourceDeletionFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidOwnerRevision:
+            return "The archive restore owner revision is invalid."
+        case .invalidBatchLimit:
+            return "The archive restore batch limit is invalid."
+        case .operationNotFound:
+            return "The archive restore operation was not found."
+        case .operationConflict:
+            return "The archive restore operation is in an incompatible phase."
+        case .unsupportedPhase:
+            return "The archive restore phase is unsupported."
+        case .sourceMissing:
+            return "The archived audio source is unavailable."
+        case .sourceNotRegularFile:
+            return "The archived audio source is not a regular file."
+        case .sourceDestinationAlias:
+            return "The archive source and local destination must remain distinct."
+        case .destinationConflict:
+            return "The local restore destination contains different content."
+        case .integrityMismatch:
+            return "The archive restore file failed integrity verification."
+        case .copyFailed:
+            return "The archive restore copy could not be completed."
+        case .sourceDeletionFailed:
+            return "The archived source could not be removed."
+        }
+    }
+}
+
+enum SQLiteArchiveRestorePhase {
+    static let pending = "pending"
+    static let copying = "copying"
+    static let copyFailed = "copyFailed"
+    static let copied = "copied"
+    static let committingMetadata = "committingMetadata"
+    static let metadataFailed = "metadataFailed"
+    static let metadataCommitted = "metadataCommitted"
+    static let deletingSource = "deletingSource"
+    static let sourceDeletionFailed = "sourceDeletionFailed"
+    static let completed = "completed"
+
+    static let all: Set<String> = [
+        pending,
+        copying,
+        copyFailed,
+        copied,
+        committingMetadata,
+        metadataFailed,
+        metadataCommitted,
+        deletingSource,
+        sourceDeletionFailed,
+        completed
+    ]
+
+    static let retryable: Set<String> = [
+        pending,
+        copyFailed,
+        copied,
+        metadataFailed,
+        metadataCommitted,
+        sourceDeletionFailed
+    ]
+}

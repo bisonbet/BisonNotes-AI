@@ -42,6 +42,7 @@ final class SQLiteLibraryStoreTests: XCTestCase {
             "migration_row_map",
             "asset_catalog",
             "file_operations",
+            "archive_restore_operations",
             "import_receipts",
             "sync_state",
             "sync_outbox",
