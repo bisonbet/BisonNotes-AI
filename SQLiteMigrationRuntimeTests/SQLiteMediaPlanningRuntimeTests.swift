@@ -4,6 +4,51 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteMediaPlanningRuntimeTests: XCTestCase {
+    func testPlannerUsesExplicitDocumentsDestinationRoot() throws {
+        let fixture = try makePlannerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let sourceURL = fixture.documentsRoot
+            .appendingPathComponent("Inbox", isDirectory: true)
+            .appendingPathComponent("watch-recording.m4a")
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("documents-destination".utf8).write(to: sourceURL)
+
+        let plan = try SQLiteApplicationMediaTransferPlanner(
+            mapping: fixture.mapping
+        ).makePlan(
+            SQLiteMediaTransferRequest(
+                sourceTransferID: "documents-transfer-1",
+                operationID: "documents-operation-1",
+                assetID: "documents-asset-1",
+                ownerStorageID: nil,
+                ownerRevision: nil,
+                sourceURL: sourceURL,
+                destinationRootID: SQLiteApplicationMediaRootID.documents.rawValue,
+                destinationRelativePath: "Imported/watch-recording.m4a"
+            )
+        )
+
+        XCTAssertEqual(
+            plan.copyPlan.destinationRoot,
+            SQLiteApplicationMediaRootID.documents.rawValue
+        )
+        XCTAssertEqual(
+            plan.copyPlan.destinationRelativePath,
+            "Imported/watch-recording.m4a"
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: fixture.documentsRoot
+                    .appendingPathComponent("Imported/watch-recording.m4a")
+                    .path
+            )
+        )
+    }
+
     func testPlannerUsesMostSpecificDocumentsInboxRootAndFingerprintsSource() throws {
         let fixture = try makePlannerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

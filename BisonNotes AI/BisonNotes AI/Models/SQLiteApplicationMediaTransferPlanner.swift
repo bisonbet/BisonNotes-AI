@@ -39,7 +39,28 @@ struct SQLiteMediaTransferRequest: Sendable {
     let ownerStorageID: String?
     let ownerRevision: Int?
     let sourceURL: URL
+    let destinationRootID: String
     let destinationRelativePath: String
+
+    init(
+        sourceTransferID: String,
+        operationID: String,
+        assetID: String,
+        ownerStorageID: String?,
+        ownerRevision: Int?,
+        sourceURL: URL,
+        destinationRootID: String = SQLiteApplicationMediaRootID.sqliteMedia.rawValue,
+        destinationRelativePath: String
+    ) {
+        self.sourceTransferID = sourceTransferID
+        self.operationID = operationID
+        self.assetID = assetID
+        self.ownerStorageID = ownerStorageID
+        self.ownerRevision = ownerRevision
+        self.sourceURL = sourceURL
+        self.destinationRootID = destinationRootID
+        self.destinationRelativePath = destinationRelativePath
+    }
 }
 
 struct SQLiteApplicationMediaTransferPlanner: Sendable {
@@ -50,7 +71,8 @@ struct SQLiteApplicationMediaTransferPlanner: Sendable {
         fileManager: FileManager = .default
     ) throws -> SQLiteMediaTransferPlan {
         let source = try resolveSource(at: request.sourceURL, fileManager: fileManager)
-        let destinationRoot = SQLiteApplicationMediaRootID.sqliteMedia.rawValue
+        try SQLiteMediaFileOperationValidation.root(request.destinationRootID)
+        let destinationRoot = request.destinationRootID
         let destinationURL = try mapping.registry.destinationURL(
             root: destinationRoot,
             relativePath: request.destinationRelativePath
@@ -127,8 +149,9 @@ struct SQLiteArchiveRestoreRequest: Sendable {
 
 /// Builds a root-relative, checksum-bound archive restore plan without
 /// creating directories or copying/deleting provider files. The destination
-/// is the candidate app-owned SQLite media root; production wiring must still
-/// choose the final root registry and retain the bookmark needed for retries.
+/// root is selected explicitly by the caller; the default remains the
+/// candidate app-owned SQLite media root until production policy selects the
+/// final root.
 struct SQLiteApplicationArchiveRestorePlanner: Sendable {
     let mapping: SQLiteApplicationMediaRootMapping
 
