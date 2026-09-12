@@ -29,6 +29,8 @@ enum SQLiteMediaSourceRetentionPolicy {
     ) throws -> SQLiteMediaSourceRetentionDisposition {
         try SQLiteImportReceiptValidation.identifier(sourceTransferID)
         guard operation.state == "completed",
+              operation.metadataState == SQLiteMediaMetadataState.committed ||
+                operation.metadataState == SQLiteMediaMetadataState.legacy,
               let assetID = operation.assetID,
               let receipt,
               receipt.sourceTransferID == sourceTransferID,
