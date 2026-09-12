@@ -34,8 +34,23 @@ Current first-boot migration-presentation checkpoint: `01887385`.
 Current production recording-creation checkpoint: `47cf88d5`.
 Current CloudKit summary-restore checkpoint: `8d63a010`.
 Current CloudKit recording-restore checkpoint: `91406ea2`.
+Current CloudKit transcript-restore checkpoint: `961a5837`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
+
+### CloudKit transcript restore checkpoint
+
+Checkpoint `961a5837` routes transcript scalar metadata through
+`LibraryTranscriptCloudRestoreCommand` in both repository adapters. The command
+accepts legacy CloudKit records with missing segments, checks stable UUID and
+expected `lastModified` identity, preserves the existing recording relationship
+during the metadata commit and records a durable SQLite transcript observation.
+The Core Data restore captures the recording transcript link before recording
+metadata is applied, then performs timestamp-arbitrated relationship repair and
+restores the prior pointer/status when the incoming child loses. This is still
+a Core Data-authoritative, pre-cutover boundary; summary restore relationship
+work, production SQLite selection and live CloudKit/user-data validation remain
+open.
 
 Every attribute maps unchanged by name into its proposed table; preserve nulls and raw values. Relationships map through the source row map independently of scalar UUID references. No unlisted field may be silently ignored.
 
@@ -782,9 +797,10 @@ resolved.
 | Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/setting/archive-state/archive-location/cloud-sync, transcript, summary and pending-marker events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. Repository observation polling intentionally stays outside the normal-access gate because the source coordinator polls during its exclusive lease. | Host tests reject negative/ahead cursors, verify exact rename and cloud-sync events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, exercise subscription across a commit and cancellation, and prove repository writes wait behind the gate. The app-hosted startup boundary is compile-checked; history retention/purge policy, production provider archive-journal integration and remaining file-owning write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
-production recording-creation callers and CloudKit summary/recording-restore
-metadata callers now share repository commit boundaries; synchronous Core Data
-helpers remain only for deterministic test fixtures and legacy compatibility.
+production recording-creation callers and CloudKit
+summary/recording/transcript-restore metadata callers now share repository
+commit boundaries; synchronous Core Data helpers remain only for deterministic
+test fixtures and legacy compatibility.
 The bookmark lease,
 summary anchor and migration-progress screen are reusable process-local or
 presentation seams, but none selects a production store or starts a live

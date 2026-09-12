@@ -45,6 +45,8 @@ and CloudKit summary restore routed through repository upserts with explicit
 incoming-identity handling and an atomic zero-audio summary anchor,
 and CloudKit recording restore metadata/audio-link application routed through
 guarded repository commands that preserve local audio and archive state,
+and CloudKit transcript restore metadata routed through a guarded repository
+command with relationship repair kept as a separate timestamp-arbitrated phase,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -511,6 +513,21 @@ is enabled. The standalone suite passes 120/120 and the macOS app build-for-
 testing check passes. The generic iOS build-for-testing remains blocked before
 app/test compilation by the pre-existing `withSecurityScope` iOS availability
 error.
+
+The current CloudKit transcript-restore checkpoint is `961a5837` (`feat: route
+cloud transcript restore through repository`). The transcript leg now applies
+CloudKit scalar metadata through `LibraryTranscriptCloudRestoreCommand` in
+both repository adapters, accepts legacy records with missing segments,
+preserves the existing relationship during the metadata transaction, and
+rejects stale or conflicting identities. SQLite records the transcript
+observation durably. The Core Data restore then repairs the recording
+relationship only after comparing the incoming transcript with the link
+captured before recording metadata was applied, restoring the prior pointer and
+status when the local transcript remains newer. The standalone suite passes
+121/121 and the macOS app build-for-testing check passes. Generic iOS
+build-for-testing remains blocked before app/test compilation by the
+pre-existing `withSecurityScope` iOS availability error; no repository backend
+or live CloudKit/user store is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
