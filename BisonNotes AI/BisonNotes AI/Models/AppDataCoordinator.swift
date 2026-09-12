@@ -853,6 +853,13 @@ class AppDataCoordinator: ObservableObject {
         return snapshot
     }
 
+    /// Reads archive-location metadata through the storage-neutral repository.
+    /// Callers receive copied values, so this remains safe when the active
+    /// backend later changes from Core Data to SQLite.
+    func fetchArchiveLocationSnapshotsUsingRepository() async throws -> [LibraryArchiveLocationSnapshot] {
+        try await libraryRepository.fetchArchiveLocationSnapshots()
+    }
+
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         _ = try await libraryRepository.setCloudSyncDisabled(

@@ -72,6 +72,7 @@ struct RecordingsListView: View {
     @State private var archiveInfoRecording: AudioRecordingFile?
     @State private var archiveRestoreError: String?
     @State private var restoringArchiveRecordingId: UUID?
+    @State private var archiveLocationsByRecordingID: [UUID: [RecordingArchiveLocationInfo]] = [:]
     @State private var showDateFilter = false
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
     @State private var dateFilterEnd: Date = Date()
@@ -250,7 +251,9 @@ struct RecordingsListView: View {
                 if let rec = archiveInfoRecording {
                     let note = rec.archiveNote ?? "Exported to iCloud Drive"
                     let dateStr = rec.archivedAtString ?? ""
-                    let location = RecordingArchiveService.shared.primaryArchiveLocation(for: rec.recordingId)
+                    let location = rec.recordingId.flatMap {
+                        archiveLocationsByRecordingID[$0]?.first
+                    }
                     let locationText = location.map { "\nSaved location: \($0.providerDisplayName) / \($0.displayName)" } ?? ""
                     Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\(locationText)\n\nThe audio file is no longer stored locally. Use the download button to restore it, or use \"Import Audio Files\" if the file was moved.")
                 }
@@ -324,6 +327,7 @@ struct RecordingsListView: View {
         .onAppear {
             refreshFileRelationships()
             loadRecordings()
+            loadArchiveLocations()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryCreated"))) { _ in
             loadRecordings()
@@ -344,6 +348,7 @@ struct RecordingsListView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
             loadRecordings()
             refreshFileRelationships()
+            loadArchiveLocations()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingAdded"))) { _ in
             loadRecordings()
@@ -874,7 +879,9 @@ struct RecordingsListView: View {
                 }
                 .foregroundColor(.orange)
 
-                if let location = RecordingArchiveService.shared.primaryArchiveLocation(for: recording.recordingId) {
+                if let location = recording.recordingId.flatMap({
+                    archiveLocationsByRecordingID[$0]?.first
+                }) {
                     Label("\(location.providerDisplayName) / \(location.displayName)", systemImage: "externaldrive.badge.checkmark")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -1166,6 +1173,7 @@ struct RecordingsListView: View {
                     isSelectionMode = false
                     selectedRecordings.removeAll()
                     loadRecordings()
+                    loadArchiveLocations()
                 }
             } catch {
                 archiveRestoreError = error.localizedDescription
@@ -1279,6 +1287,23 @@ struct RecordingsListView: View {
 
         // Geocode locations for all recordings (with rate limiting)
         loadLocationAddressesBatch(for: recordings)
+    }
+
+    private func loadArchiveLocations() {
+        Task { @MainActor in
+            do {
+                archiveLocationsByRecordingID = try await RecordingArchiveService.shared
+                    .archiveLocationsByRecordingUsingRepository()
+            } catch {
+                // Archive-location metadata is supplemental to the recording
+                // list. Keep the last successful cache so a transient read
+                // failure cannot hide a previously displayed destination.
+                AppLog.shared.recording(
+                    "Archive: failed to load archive locations through repository: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
+        }
     }
 
     private func isGenericName(_ name: String) -> Bool {
@@ -1589,13 +1614,21 @@ struct RecordingsListView: View {
 
         Task { @MainActor in
             do {
-                _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
+                _ = try await RecordingArchiveService.shared
+                    .restoreArchivedRecordingUsingRepository(recordingEntry)
                 loadRecordings()
                 refreshFileRelationships()
+                loadArchiveLocations()
                 if let restoredRecording = recordings.first(where: { $0.recordingId == recordingId }) {
                     openOrSelectRecording(restoredRecording)
                 }
             } catch {
+                // The repository commit intentionally precedes archive-source
+                // deletion. Refresh even when source cleanup reports an error
+                // so a successfully restored local recording is visible.
+                loadRecordings()
+                refreshFileRelationships()
+                loadArchiveLocations()
                 archiveRestoreError = error.localizedDescription
             }
             restoringArchiveRecordingId = nil

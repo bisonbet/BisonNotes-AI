@@ -10,7 +10,7 @@ import Foundation
 import CoreData
 import AVFoundation
 
-struct RecordingArchiveLocationInfo: Identifiable, Equatable {
+struct RecordingArchiveLocationInfo: Identifiable, Equatable, Sendable {
     let id: UUID
     let recordingId: UUID
     let providerDisplayName: String
@@ -76,7 +76,6 @@ class RecordingArchiveService: ObservableObject {
 
     @Published var isArchiving = false
 
-    private static let archiveLocationEntityName = "RecordingArchiveLocationEntry"
     private static let statusAvailable = "available"
     private static let statusStaleBookmark = "staleBookmark"
     private static let statusMissing = "missing"
@@ -242,41 +241,6 @@ class RecordingArchiveService: ObservableObject {
         AppLog.shared.recording("Restored archived recording: \(recordingName)")
     }
 
-    /// Legacy restore path used by the file-provider workflow. Its copy and
-    /// archive-location cleanup still need a durable file-operation boundary;
-    /// keep that larger workflow isolated while re-import restores use the
-    /// repository-backed method above.
-    func restoreRecording(_ recording: RecordingEntry, newAudioURL: URL) {
-        let context = viewContext
-
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-        let relativePath: String
-        if let docs = documentsPath, newAudioURL.path.hasPrefix(docs.path) {
-            relativePath = String(newAudioURL.path.dropFirst(docs.path.count + 1))
-        } else {
-            relativePath = newAudioURL.lastPathComponent
-        }
-
-        recording.recordingURL = relativePath
-        recording.isArchived = false
-        recording.archivedAt = nil
-        recording.archiveNote = nil
-        recording.lastModified = Date()
-
-        // Update file size from restored file
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: newAudioURL.path),
-           let size = attrs[.size] as? Int64 {
-            recording.fileSize = size
-        }
-
-        do {
-            try context.save()
-            AppLog.shared.recording("Restored archived recording: \(recording.recordingName ?? "unknown")")
-        } catch {
-            AppLog.shared.recording("Failed to restore recording: \(error.localizedDescription)", level: .error)
-        }
-    }
-
     /// Clear archive flags on a recording whose local audio is already present.
     /// Used when the user archived without removing local audio, then re-imports
     /// the exported copy — no file copy needed, just flip the flags.
@@ -297,42 +261,70 @@ class RecordingArchiveService: ObservableObject {
 
     // MARK: - Archive Locations
 
-    func archiveLocations(for recordingId: UUID?) -> [RecordingArchiveLocationInfo] {
-        guard let recordingId else { return [] }
-
-        let request = NSFetchRequest<NSManagedObject>(entityName: Self.archiveLocationEntityName)
-        request.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        request.sortDescriptors = [NSSortDescriptor(key: "exportedAt", ascending: false)]
-
-        do {
-            return try viewContext.fetch(request).compactMap(Self.locationInfo(from:))
-        } catch {
-            AppLog.shared.recording("Archive: failed to fetch archive locations: \(error.localizedDescription)", level: .error)
-            return []
+    /// Reads all archive locations through the repository and groups them for
+    /// the recordings list. Keeping the fetch batched avoids one repository
+    /// read per visible row and leaves the UI independent of managed objects.
+    func archiveLocationsByRecordingUsingRepository() async throws -> [UUID: [RecordingArchiveLocationInfo]] {
+        guard let appCoordinator else {
+            throw RecordingArchiveError.persistenceUnavailable
         }
+
+        let snapshots = try await appCoordinator.fetchArchiveLocationSnapshotsUsingRepository()
+        var locationsByRecording: [UUID: [RecordingArchiveLocationInfo]] = [:]
+        for snapshot in snapshots {
+            guard let recordingID = snapshot.recordingLegacyID.flatMap(UUID.init(uuidString:)),
+                  let location = Self.locationInfo(from: snapshot) else {
+                AppLog.shared.recording(
+                    "Archive: ignoring archive location with an invalid recording or location identity",
+                    level: .error
+                )
+                continue
+            }
+            locationsByRecording[recordingID, default: []].append(location)
+        }
+
+        for recordingID in locationsByRecording.keys {
+            locationsByRecording[recordingID]?.sort { lhs, rhs in
+                switch (lhs.exportedAt, rhs.exportedAt) {
+                case let (leftDate?, rightDate?) where leftDate != rightDate:
+                    return leftDate > rightDate
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    return lhs.id.uuidString < rhs.id.uuidString
+                }
+            }
+        }
+        return locationsByRecording
     }
 
-    func primaryArchiveLocation(for recordingId: UUID?) -> RecordingArchiveLocationInfo? {
-        archiveLocations(for: recordingId).first
-    }
-
+    /// Restores an archive through repository metadata reads and writes. The
+    /// copy is verified before metadata changes, while the external source is
+    /// removed only after the local recording link commits. If the process is
+    /// killed between those steps, the local copy is authoritative and the
+    /// archive source remains recoverable for a later cleanup pass.
     @discardableResult
-    func restoreArchivedRecording(_ recording: RecordingEntry, from locationId: UUID? = nil) throws -> URL {
-        let locationObject: NSManagedObject
-        if let locationId {
-            guard let fetched = archiveLocationObject(id: locationId) else {
-                throw RecordingArchiveError.locationNotFound
-            }
-            locationObject = fetched
-        } else {
-            guard let recordingId = recording.id,
-                  let first = archiveLocationObject(forRecordingId: recordingId) else {
-                throw RecordingArchiveError.noArchiveLocation
-            }
-            locationObject = first
+    func restoreArchivedRecordingUsingRepository(
+        _ recording: RecordingEntry,
+        from locationId: UUID? = nil
+    ) async throws -> URL {
+        guard let appCoordinator,
+              let recordingID = recording.id else {
+            throw RecordingArchiveError.persistenceUnavailable
         }
 
-        let sourceURL = try resolvedArchiveURL(from: locationObject)
+        let snapshots = try await appCoordinator.fetchArchiveLocationSnapshotsUsingRepository()
+        let locationSnapshot = try Self.archiveLocationSnapshot(
+            from: snapshots,
+            recordingID: recordingID,
+            locationID: locationId
+        )
+        let sourceURL = try await resolvedArchiveURL(
+            from: locationSnapshot,
+            using: appCoordinator
+        )
         let sourceName = sourceURL.lastPathComponent
         let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -342,54 +334,85 @@ class RecordingArchiveService: ObservableObject {
         }
 
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            locationObject.setValue(Self.statusMissing, forKey: "status")
-            locationObject.setValue(Date(), forKey: "lastVerifiedAt")
-            try? viewContext.save()
+            await updateArchiveLocationStatusUsingRepository(
+                locationSnapshot,
+                status: Self.statusMissing,
+                using: appCoordinator
+            )
             throw RecordingArchiveError.sourceMissing(sourceName)
         }
 
-        let destinationURL = try localRestoreDestination(for: recording, sourceURL: sourceURL)
-        var coordinatorError: NSError?
-        var operationError: Error?
-        var didCopy = false
-        let coordinator = NSFileCoordinator(filePresenter: nil)
-        coordinator.coordinate(readingItemAt: sourceURL, options: [], error: &coordinatorError) { coordinatedURL in
-            do {
-                try FileManager.default.copyItem(at: coordinatedURL, to: destinationURL)
-                AppFileProtection.apply(to: destinationURL)
-                didCopy = true
-            } catch {
-                operationError = error
-            }
+        let destinationURL = try localRestoreDestination(
+            for: recording,
+            sourceURL: sourceURL
+        )
+        guard sourceURL.standardizedFileURL != destinationURL.standardizedFileURL else {
+            throw RecordingArchiveError.copyFailed(
+                "The archive source and local destination are the same file."
+            )
         }
 
-        if let operationError {
-            throw RecordingArchiveError.copyFailed(operationError.localizedDescription)
-        }
-        if let coordinatorError {
-            throw RecordingArchiveError.copyFailed(coordinatorError.localizedDescription)
-        }
-        guard didCopy else {
-            throw RecordingArchiveError.copyFailed("The file provider did not return a readable file.")
+        let fileManager = FileManager.default
+        let destinationAlreadyPresent = fileManager.fileExists(atPath: destinationURL.path)
+        if !destinationAlreadyPresent {
+            var coordinatorError: NSError?
+            var operationError: Error?
+            var didCopy = false
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            coordinator.coordinate(
+                readingItemAt: sourceURL,
+                options: [],
+                error: &coordinatorError
+            ) { coordinatedURL in
+                do {
+                    try fileManager.copyItem(at: coordinatedURL, to: destinationURL)
+                    AppFileProtection.apply(to: destinationURL)
+                    didCopy = true
+                } catch {
+                    operationError = error
+                }
+            }
+
+            if let operationError {
+                try? fileManager.removeItem(at: destinationURL)
+                throw RecordingArchiveError.copyFailed(operationError.localizedDescription)
+            }
+            if let coordinatorError {
+                try? fileManager.removeItem(at: destinationURL)
+                throw RecordingArchiveError.copyFailed(coordinatorError.localizedDescription)
+            }
+            guard didCopy else {
+                try? fileManager.removeItem(at: destinationURL)
+                throw RecordingArchiveError.copyFailed(
+                    "The file provider did not return a readable file."
+                )
+            }
         }
 
         do {
             try validateAudioFile(at: destinationURL)
         } catch {
-            try? FileManager.default.removeItem(at: destinationURL)
+            if !destinationAlreadyPresent {
+                try? fileManager.removeItem(at: destinationURL)
+            }
             throw error
         }
 
         do {
-            try deleteArchivedSource(at: sourceURL)
+            _ = try await restoreRecordingUsingRepository(
+                recording,
+                newAudioURL: destinationURL
+            )
         } catch {
-            try? FileManager.default.removeItem(at: destinationURL)
+            if !destinationAlreadyPresent {
+                try? fileManager.removeItem(at: destinationURL)
+            }
             throw error
         }
 
-        restoreRecording(recording, newAudioURL: destinationURL)
-        viewContext.delete(locationObject)
-        try viewContext.save()
+        // Metadata is committed before source removal. A source-delete failure
+        // must not roll back or remove the successfully restored local audio.
+        try deleteArchivedSource(at: sourceURL)
         return destinationURL
     }
 
@@ -538,33 +561,51 @@ class RecordingArchiveService: ObservableObject {
         }
     }
 
-    private func archiveLocationObject(forRecordingId recordingId: UUID) -> NSManagedObject? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: Self.archiveLocationEntityName)
-        request.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        request.sortDescriptors = [NSSortDescriptor(key: "exportedAt", ascending: false)]
-        request.fetchLimit = 1
-        return try? viewContext.fetch(request).first
+    private static func archiveLocationSnapshot(
+        from snapshots: [LibraryArchiveLocationSnapshot],
+        recordingID: UUID,
+        locationID: UUID?
+    ) throws -> LibraryArchiveLocationSnapshot {
+        if let locationID {
+            guard let snapshot = snapshots.first(where: {
+                $0.legacyID.flatMap({ UUID(uuidString: $0) }) == locationID
+            }),
+            snapshot.recordingLegacyID.flatMap({ UUID(uuidString: $0) }) == recordingID else {
+                throw RecordingArchiveError.locationNotFound
+            }
+            return snapshot
+        }
+
+        let matchingSnapshots = snapshots.filter {
+            $0.recordingLegacyID.flatMap({ UUID(uuidString: $0) }) == recordingID
+        }
+        guard let snapshot = matchingSnapshots.sorted(by: Self.archiveLocationSort).first else {
+            throw RecordingArchiveError.noArchiveLocation
+        }
+        return snapshot
     }
 
-    private func archiveLocationObject(id: UUID) -> NSManagedObject? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: Self.archiveLocationEntityName)
-        request.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        request.fetchLimit = 1
-        return try? viewContext.fetch(request).first
+    private static func archiveLocationSort(
+        _ lhs: LibraryArchiveLocationSnapshot,
+        _ rhs: LibraryArchiveLocationSnapshot
+    ) -> Bool {
+        switch (lhs.exportedAt, rhs.exportedAt) {
+        case let (leftDate?, rightDate?) where leftDate != rightDate:
+            return leftDate > rightDate
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            return (lhs.storageID) < (rhs.storageID)
+        }
     }
 
-    private func archiveLocationObject(recordingId: UUID, destinationURL: URL) -> NSManagedObject? {
-        let request = NSFetchRequest<NSManagedObject>(entityName: Self.archiveLocationEntityName)
-        request.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            NSPredicate(format: "recordingId == %@", recordingId as CVarArg),
-            NSPredicate(format: "destinationURLString == %@", destinationURL.absoluteString)
-        ])
-        request.fetchLimit = 1
-        return try? viewContext.fetch(request).first
-    }
-
-    private func resolvedArchiveURL(from locationObject: NSManagedObject) throws -> URL {
-        if let bookmarkData = locationObject.value(forKey: "bookmarkData") as? Data {
+    private func resolvedArchiveURL(
+        from snapshot: LibraryArchiveLocationSnapshot,
+        using appCoordinator: AppDataCoordinator
+    ) async throws -> URL {
+        if let bookmarkData = snapshot.bookmarkData {
             var isStale = false
             // Mac builds store security-scoped bookmarks; resolution must pass
             // the matching option so access can be restored after relaunch.
@@ -583,9 +624,11 @@ class RecordingArchiveService: ObservableObject {
                     bookmarkDataIsStale: &isStale
                 )
                 if isStale {
-                    locationObject.setValue(Self.statusStaleBookmark, forKey: "status")
-                    locationObject.setValue(Date(), forKey: "lastVerifiedAt")
-                    try? viewContext.save()
+                    await updateArchiveLocationStatusUsingRepository(
+                        snapshot,
+                        status: Self.statusStaleBookmark,
+                        using: appCoordinator
+                    )
                 }
                 return url
             } catch {
@@ -593,7 +636,7 @@ class RecordingArchiveService: ObservableObject {
             }
         }
 
-        if let urlString = locationObject.value(forKey: "destinationURLString") as? String,
+        if let urlString = snapshot.destinationURLString,
            let url = URL(string: urlString) {
             return url
         }
@@ -601,17 +644,70 @@ class RecordingArchiveService: ObservableObject {
         throw RecordingArchiveError.unableToResolveLocation
     }
 
+    private func updateArchiveLocationStatusUsingRepository(
+        _ snapshot: LibraryArchiveLocationSnapshot,
+        status: String,
+        using appCoordinator: AppDataCoordinator
+    ) async {
+        guard let locationID = snapshot.legacyID.flatMap({ UUID(uuidString: $0) }),
+              let recordingID = snapshot.recordingLegacyID,
+              let exportedFilename = snapshot.exportedFilename,
+              !exportedFilename.isEmpty,
+              snapshot.bookmarkData != nil || snapshot.destinationURLString != nil else {
+            return
+        }
+
+        do {
+            _ = try await appCoordinator.upsertArchiveLocationUsingRepository(
+                LibraryArchiveLocationUpsertCommand(
+                    id: locationID,
+                    recordingReference: LibraryRecordingReference(legacyID: recordingID),
+                    bookmarkData: snapshot.bookmarkData,
+                    destinationURLString: snapshot.destinationURLString,
+                    displayName: snapshot.displayName,
+                    exportedAt: snapshot.exportedAt,
+                    exportedFilename: exportedFilename,
+                    fileSize: snapshot.fileSize,
+                    lastVerifiedAt: Date(),
+                    providerDisplayName: snapshot.providerDisplayName,
+                    status: status
+                )
+            )
+        } catch {
+            // A status update is diagnostic metadata. Do not turn a source
+            // resolution failure into a second failure if the row changed
+            // concurrently or the repository is temporarily unavailable.
+            AppLog.shared.recording(
+                "Archive: failed to persist location status \(status): \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
     private func localRestoreDestination(for recording: RecordingEntry, sourceURL: URL) throws -> URL {
         let fileManager = FileManager.default
 
         if let urlString = recording.recordingURL,
-           let originalURL = Self.resolveLocalURL(from: urlString),
-           !fileManager.fileExists(atPath: originalURL.path) {
-            try fileManager.createDirectory(
-                at: originalURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            return originalURL
+           let originalURL = Self.resolveLocalURL(from: urlString) {
+            if !fileManager.fileExists(atPath: originalURL.path) {
+                try fileManager.createDirectory(
+                    at: originalURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                return originalURL
+            }
+
+            // A process kill after copying but before the repository commit
+            // leaves the persisted recording URL pointing at a valid local
+            // file. Reuse that file instead of creating a second restore.
+            if recording.isArchived,
+               recording.fileSize > 0,
+               let attributes = try? fileManager.attributesOfItem(atPath: originalURL.path),
+               let actualSize = attributes[.size] as? Int64,
+               actualSize == recording.fileSize,
+               (try? validateAudioFile(at: originalURL)) != nil {
+                return originalURL
+            }
         }
 
         guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -642,22 +738,22 @@ class RecordingArchiveService: ObservableObject {
         }
     }
 
-    private static func locationInfo(from object: NSManagedObject) -> RecordingArchiveLocationInfo? {
-        guard let id = object.value(forKey: "id") as? UUID,
-              let recordingId = object.value(forKey: "recordingId") as? UUID else {
+    private static func locationInfo(from snapshot: LibraryArchiveLocationSnapshot) -> RecordingArchiveLocationInfo? {
+        guard let id = snapshot.legacyID.flatMap(UUID.init(uuidString:)),
+              let recordingId = snapshot.recordingLegacyID.flatMap(UUID.init(uuidString:)) else {
             return nil
         }
 
         return RecordingArchiveLocationInfo(
             id: id,
             recordingId: recordingId,
-            providerDisplayName: object.value(forKey: "providerDisplayName") as? String ?? "External Storage",
-            displayName: object.value(forKey: "displayName") as? String ?? object.value(forKey: "exportedFilename") as? String ?? "Archived audio",
-            exportedFilename: object.value(forKey: "exportedFilename") as? String ?? "",
-            destinationURLString: object.value(forKey: "destinationURLString") as? String,
-            exportedAt: object.value(forKey: "exportedAt") as? Date,
-            fileSize: object.value(forKey: "fileSize") as? Int64 ?? 0,
-            status: object.value(forKey: "status") as? String ?? Self.statusAvailable
+            providerDisplayName: snapshot.providerDisplayName ?? "External Storage",
+            displayName: snapshot.displayName ?? snapshot.exportedFilename ?? "Archived audio",
+            exportedFilename: snapshot.exportedFilename ?? "",
+            destinationURLString: snapshot.destinationURLString,
+            exportedAt: snapshot.exportedAt,
+            fileSize: snapshot.fileSize ?? 0,
+            status: snapshot.status ?? Self.statusAvailable
         )
     }
 
