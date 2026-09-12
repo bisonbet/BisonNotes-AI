@@ -47,6 +47,9 @@ and CloudKit recording restore metadata/audio-link application routed through
 guarded repository commands that preserve local audio and archive state,
 and CloudKit transcript restore metadata routed through a guarded repository
 command with relationship repair kept as a separate timestamp-arbitrated phase,
+and CloudKit summary restore metadata routed through a guarded repository
+command with pre-restore recording-link arbitration and relationship repair kept
+separate from scalar metadata writes,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -507,9 +510,9 @@ remains a separate retryable operation: only after a staged copy succeeds does
 `LibraryRecordingAudioLinkCommand` commit the local URL, without changing the
 cloud-content timestamp or archive state. The imported-audio clear path uses the
 same link boundary. SQLite records durable recording observations for both
-operations. Transcript/summary scalar writes and relationship repair in the same
-full-restore method remain the next boundary, and no SQLite backend or live data
-is enabled. The standalone suite passes 120/120 and the macOS app build-for-
+operations. Transcript and summary child relationship repair remain explicit
+follow-on phases, and no SQLite backend or live data is enabled. The standalone
+suite passes 120/120 and the macOS app build-for-
 testing check passes. The generic iOS build-for-testing remains blocked before
 app/test compilation by the pre-existing `withSecurityScope` iOS availability
 error.
@@ -528,6 +531,23 @@ status when the local transcript remains newer. The standalone suite passes
 build-for-testing remains blocked before app/test compilation by the
 pre-existing `withSecurityScope` iOS availability error; no repository backend
 or live CloudKit/user store is enabled.
+
+The current CloudKit summary-metadata restore checkpoint is `96e49c91` (`feat:
+route cloud summary restore through repository`). The summary leg now applies
+CloudKit scalar metadata through `LibrarySummaryCloudRestoreCommand` in both
+repository adapters, accepts records with omitted summary fields, preserves
+existing Core Data/SQLite relationship state during the metadata commit, and
+rejects stale generated-date revisions and conflicting recording/transcript
+identities. SQLite records the summary observation durably. The full restore
+then arbitrates the recording's summary link against the pointer captured before
+recording metadata was applied, restores the prior pointer/status when the local
+summary remains newer, and only repairs the transcript relationship after the
+summary metadata is accepted. Attachments, audio and production SQLite startup
+remain separate boundaries. The standalone suite passes 122/122 and the macOS
+app build-for-testing check passes. Generic iOS build-for-testing still stops
+before app/test compilation on the pre-existing `withSecurityScope` iOS
+availability error; no repository backend or live CloudKit/user store is
+enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
