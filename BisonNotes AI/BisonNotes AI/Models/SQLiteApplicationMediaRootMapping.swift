@@ -87,7 +87,7 @@ struct SQLiteApplicationMediaRootMapping: Sendable {
                 Self.watchTransferStagingDirectoryName,
                 isDirectory: true
             ),
-            webImportStagingRoot: fileManager.temporaryDirectory.appendingPathComponent(
+            webImportStagingRoot: applicationSupportRoot.appendingPathComponent(
                 Self.webImportStagingDirectoryName,
                 isDirectory: true
             )

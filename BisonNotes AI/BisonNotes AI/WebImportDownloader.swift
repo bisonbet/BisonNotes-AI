@@ -2,7 +2,7 @@
 //  WebImportDownloader.swift
 //  BisonNotes AI
 //
-//  Downloads direct audio, video, and transcript URLs to temporary files.
+//  Downloads direct audio, video, and transcript URLs to staging files.
 //
 
 import Foundation
@@ -98,7 +98,7 @@ struct WebImportDownloader {
             )
             let result = try await transfer.start(request: request)
             let mimeType = result.response.mimeType?.lowercased()
-            let destinationURL = try moveToImportTempDirectory(
+            let destinationURL = try moveToImportStagingDirectory(
                 stagingURL,
                 sourceURL: result.response.url ?? url,
                 response: result.response,
@@ -185,7 +185,7 @@ struct WebImportDownloader {
         return stagingURL
     }
 
-    private func moveToImportTempDirectory(
+    private func moveToImportStagingDirectory(
         _ temporaryURL: URL,
         sourceURL: URL,
         response: HTTPURLResponse,
@@ -204,8 +204,10 @@ struct WebImportDownloader {
             fileExtension: fileExtension
         )
 
-        let destinationDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        let destinationDirectory = importStagingDirectory(
+            route: route,
+            fileExtension: fileExtension
+        )
         try FileManager.default.createDirectory(
             at: destinationDirectory,
             withIntermediateDirectories: true
@@ -217,6 +219,25 @@ struct WebImportDownloader {
         try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
         AppFileProtection.apply(to: destinationURL)
         return destinationURL
+    }
+
+    private func importStagingDirectory(
+        route: WebImportRoute,
+        fileExtension: String
+    ) -> URL {
+        guard route == .audioOrVideo,
+              audioExtensions.contains(fileExtension),
+              let applicationSupportRoot = FileManager.default.urls(
+                  for: .applicationSupportDirectory,
+                  in: .userDomainMask
+              ).first else {
+            return FileManager.default.temporaryDirectory
+                .appendingPathComponent("BisonNotesWebImports", isDirectory: true)
+        }
+        return applicationSupportRoot.appendingPathComponent(
+            "BisonNotesWebImports",
+            isDirectory: true
+        )
     }
 
     private func inferredFileExtension(

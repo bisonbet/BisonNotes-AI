@@ -131,12 +131,17 @@ final class SQLiteMediaPlanningRuntimeTests: XCTestCase {
         let fixture = try makePlannerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
 
-        let sourceURL = fixture.temporaryRoot
-            .appendingPathComponent(
-                SQLiteApplicationMediaRootMapping.webImportStagingDirectoryName,
-                isDirectory: true
-            )
-            .appendingPathComponent("downloaded-recording.wav")
+        let webImportRoot = fixture.applicationSupportRoot.appendingPathComponent(
+            SQLiteApplicationMediaRootMapping.webImportStagingDirectoryName,
+            isDirectory: true
+        )
+        let mapping = try SQLiteApplicationMediaRootMapping(
+            documentsRoot: fixture.documentsRoot,
+            applicationSupportRoot: fixture.applicationSupportRoot,
+            temporaryRoot: fixture.temporaryRoot,
+            webImportStagingRoot: webImportRoot
+        )
+        let sourceURL = webImportRoot.appendingPathComponent("downloaded-recording.wav")
         try FileManager.default.createDirectory(
             at: sourceURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -144,7 +149,7 @@ final class SQLiteMediaPlanningRuntimeTests: XCTestCase {
         try Data("web-import-fixture".utf8).write(to: sourceURL)
 
         let plan = try SQLiteApplicationMediaTransferPlanner(
-            mapping: fixture.mapping
+            mapping: mapping
         ).makePlan(
             SQLiteMediaTransferRequest(
                 sourceTransferID: "web-transfer-1",
