@@ -464,6 +464,15 @@ evidence only: real-device task delivery, expiration timing, power behavior and
 provider behavior still require signed hardware validation, while generic media
 transfer scheduling and SQLite cutover remain open.
 
+The current media-root selection checkpoint is `a786fcd6` (`feat: make media
+destination root explicit`). `SQLiteMediaTransferRequest` now carries an
+explicit destination root, with the isolated SQLite-media root retained as the
+default for compatibility while production callers choose Documents or a
+future SQLite media root deliberately. Planner coverage verifies a
+Documents-relative destination without creating it. This closes the implicit
+root-selection gap but does not yet add a metadata-acknowledgement phase to the
+generic transfer journal or wire Watch/share callers.
+
 The current recording metadata-edit checkpoint is `ed898703` (`feat: route
 recording metadata edits through repository`). `LibraryRecordingDateUpdateCommand`
 and `LibraryRecordingLocationUpdateCommand` validate finite dates, coordinates
