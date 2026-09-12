@@ -41,6 +41,8 @@ a storage-neutral recording date/location update boundary, an owned
 security-scoped bookmark lease for provider restores, and a redacted first-boot
 migration progress presentation seam, and production recorder/Watch/combine
 recording-creation callers routed through the repository bridge,
+and CloudKit summary restore routed through repository upserts with explicit
+incoming-identity handling and an atomic zero-audio summary anchor,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -475,6 +477,22 @@ the full scheme also retains the pre-existing `accessoryCorner` error. These
 are compile/host-test results, not simulator, signed-device or live-data proof;
 no repository backend is selected for startup and no SQLite cutover is enabled.
 
+The current CloudKit summary-restore checkpoint is `8d63a010` (`feat: route
+cloud summary restore through repository`). Linked cloud summaries now use the
+repository summary-upsert command, with an explicit incoming-identity policy
+that preserves the adapter storage identity while making the cloud UUID the
+authoritative summary identity. The coordinator migrates the existing
+summary's notes/attachment directory after a successful identity change so
+supplemental data remains reachable. A cloud summary without a local recording
+uses one repository transaction to create or retry a zero-audio recording
+anchor and its summary; a transcript that has not arrived yet is retained as a
+raw UUID for later linking. Core Data and SQLite both reject identity
+collisions, ambiguous relationships and invalid rows before committing. The
+standalone suite passes 118/118 and the macOS app-hosted build-for-testing
+check passes. This is still Core Data-authoritative: no SQLite backend is
+selected for startup, no audio is copied by this command, and no live account
+or user store was used.
+
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
 now sends one storage-neutral command to the repository. The Core Data adapter
@@ -859,6 +877,12 @@ Not yet implemented or closed:
   combine and audio-finalization creation callers now use the repository bridge;
   the synchronous creation helper remains intentionally limited to test
   fixtures and legacy compatibility.
+- The production CloudKit summary-restore caller now uses the repository for
+  linked summaries and summary-only recording anchors. The legacy synchronous
+  `CoreDataManager` summary helpers remain for test fixtures and compatibility;
+  they are not the active CloudKit restore path. Supplemental attachments still
+  require a post-commit file move when an incoming cloud UUID replaces a local
+  summary UUID.
 - Processing-job creation, status transitions, cleanup and startup crash
   reconciliation now use storage-neutral repository commands. The crash command
   marks the known nonterminal set in memory before startup work, persists it in
@@ -894,7 +918,9 @@ production startup wiring. Then expand the remaining metadata commands and
 convert additional non-startup callers behind the Core Data adapter with
 shared behavior tests; the production recording-creation callers now share one
 repository commit boundary, while the synchronous test/legacy helper remains
-out of production. After that, audit and install the maintenance gate
+out of production. CloudKit summary restore now shares the repository boundary
+as well; its zero-audio anchor deliberately leaves audio/media work to a later
+operation. After that, audit and install the maintenance gate
 around every remaining direct source mutation.
 The repository-backed production paths now share the gate; direct managed-
 object, settings, Watch/share and sync callers still need conversion or an

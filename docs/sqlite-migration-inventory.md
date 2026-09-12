@@ -1,6 +1,6 @@
 # SQLite migration inventory
 
-Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`; Core Data migration source reader/catalog: `630a513e`; resumable metadata coordinator: `230e511c`; durable pause/settings phase: `5c88828b`; explicit Core Data/settings input boundary: `54e6c141`; durable media operation worker: `44515c52`; durable import receipt idempotency: `b8b80783`; media transfer/retention boundary: `c8b70087`; application media roots/source retention: `88c393e9`; provider archive-restore journal/planner/reconciler: `2ba09adf`; recording metadata edits: `ed898703`; security-scoped bookmark lease: `60f4d84f`; migration progress presentation: `01887385`; production recording-creation callers: `47cf88d5`.
+Source: `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa`, inspected 2026-09-07. Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0` (kept at the `v2.5` baseline). Isolated schema/checkpoint/runtime foundation: `e612ebdcbbabb9522cdb4e9b15489324af1476a4`. Closed-snapshot verifier: `444542ac`; Core Data source fixtures: `5f9744d`; metadata importer: `9731e69a`; recovery reports: `40b431a0`; repository/settings checkpoint: `b71d9984`; observation checkpoint: `cdd0bf8e`; schema/contract tests: `82e687e8`; settings catalog checkpoint: `5232640`; catalog validation: `52101ae0`; CloudKit source contract: `e2ff6c0`; legacy source contract: `f8b4d6c7`; Core Data history observation: `c692c8c7`; Core Data migration source reader/catalog: `630a513e`; resumable metadata coordinator: `230e511c`; durable pause/settings phase: `5c88828b`; explicit Core Data/settings input boundary: `54e6c141`; durable media operation worker: `44515c52`; durable import receipt idempotency: `b8b80783`; media transfer/retention boundary: `c8b70087`; application media roots/source retention: `88c393e9`; provider archive-restore journal/planner/reconciler: `2ba09adf`; recording metadata edits: `ed898703`; security-scoped bookmark lease: `60f4d84f`; migration progress presentation: `01887385`; production recording-creation callers: `47cf88d5`; CloudKit summary restore repository boundary: `8d63a010`.
 Current restartable media reconciliation checkpoint: `fe99e3ff`.
 Current settings source-inventory checkpoint: `9dfed6fd`.
 Current observation-subscription checkpoint: `33bdc7ed`.
@@ -32,6 +32,7 @@ Current recording metadata-edit checkpoint: `ed898703`.
 Current security-scoped bookmark-lifetime checkpoint: `60f4d84f`.
 Current first-boot migration-presentation checkpoint: `01887385`.
 Current production recording-creation checkpoint: `47cf88d5`.
+Current CloudKit summary-restore checkpoint: `8d63a010`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -647,6 +648,21 @@ restore caller now performs provider copy/validation and source deletion off
 the main actor but is not yet journal-backed. Four archive-reconciler host tests
 and three archive-planner tests cover the new behavior. No production SQLite
 store, root selection, bookmark retry scheduler or cutover is enabled.
+
+The CloudKit summary-restore checkpoint `8d63a010` routes linked summary
+application through `AppDataCoordinator` and `LibrarySummaryUpsertCommand`,
+using an explicit incoming-identity policy for cloud-authoritative UUIDs. If
+the incoming UUID replaces a local summary UUID, the coordinator preserves
+notes and attachments with a post-commit supplemental-directory move. When no
+local recording exists, `LibrarySummaryAnchorUpsertCommand` creates or retries
+the summary and a zero-audio recording anchor atomically through Core Data or
+SQLite. Missing transcripts remain represented by their raw UUID until a later
+transcript restore can resolve the link. The legacy synchronous
+`CoreDataManager` orphan helper remains only for compatibility/test callers;
+production CloudKit restore no longer calls it. The standalone suite passes
+118/118 and the macOS app-hosted build-for-testing check passes; no SQLite
+backend is wired to startup and no live user store or account was used.
+
 The SQLite-only `LibraryObservation` implementation persists a global
 `library_changes` cursor and emits recording-rename/archive-state/cloud-sync/
 settings events atomically, including the pending-marker changes associated
@@ -660,7 +676,7 @@ activation and persistent-store remote-change notifications. The history-
 retention/purge policy remains intentionally open.
 The redacted recovery-report API is persisted in `recovery_items` but is not
 yet connected to coordinator policy or user-facing recovery state. The
-standalone runtime harness has passed 90 disposable macOS tests; the app-hosted
+standalone runtime harness passes 118 disposable macOS tests; the app-hosted
 adapter fixture and repository contracts are compile-checked by iOS
 build-for-testing but have not executed because the current simulator runner
 exits before XCTest bootstrapping. No test inspects or modifies a live user
@@ -732,6 +748,7 @@ resolved.
 | Recording rename command | `LibraryRecordingRenameCommand` addresses a row by legacy ID or storage ID, applies the existing `[Watch]` normalization, and can require an expected `lastModified`. Core Data and SQLite adapters return the committed snapshot or explicit not-found, ambiguous, stale or write errors. | Host tests cover SQLite commit and stale rejection; app-hosted contract coverage checks the Core Data commit. The display-name-only `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration callers use the Core Data adapter. The file-owning AI rename stays outside this command pending a journaled file-operation boundary. |
 | Recording date/location update commands | `LibraryRecordingDateUpdateCommand` and `LibraryRecordingLocationUpdateCommand` preserve the recording row, atomically set or clear the date/location projection, validate finite dates, coordinates and accuracy, and optionally require an expected `lastModified`. Both adapters return the committed snapshot and durable recording change; `AppDataCoordinator` and `SummaryDetailView` route user edits through these commands while Core Data remains authoritative. | Focused runtime coverage verifies date/location updates, complete location clearing and stale revision rejection; the app-hosted Core Data contract compiles the equivalent behavior. The standalone suite passes 116/116 and the macOS app-hosted build-for-testing check passes. The full iOS scheme remains blocked by the pre-existing watch-widget `accessoryCorner` availability error, and direct simulator XCTest execution remains unavailable. |
 | Production recording-creation callers | `AudioRecorderViewModel` normal completion, interruption/unprocessed recovery, segment merge, live-transcription and native-Mac finalization paths, Watch intake, and `CombineRecordingsView` now await `AppDataCoordinator.createRecordingUsingRepository`. The helper preserves an iOS recovery snapshot when metadata commit fails; Watch removes a destination with no repository row so the source can retry; combine removes an uncommitted output while leaving its source recordings intact. The synchronous `AppDataCoordinator.addRecording` remains only for deterministic UI-test seeding and legacy compatibility. | The macOS app-hosted target compiles all changed callers and the standalone suite passes 116/116. The iOS target-only compile remains blocked before app compilation by the watch `AppIcon` asset and Textual dependency module-resolution issues; the known full scheme also has the pre-existing watch-widget `accessoryCorner` error. No simulator or live-data test ran. Production SQLite startup/journal wiring remains open. |
+| CloudKit summary restore and summary-only anchors | `iCloudStorageManager` routes linked cloud summaries through `AppDataCoordinator.upsertSummaryUsingRepository` with incoming cloud identity semantics. Summary-only cloud records use `upsertOrphanedSummaryUsingRepository`, whose Core Data and SQLite adapters create or retry one zero-audio recording anchor and summary in a single metadata transaction; missing transcript IDs remain retryable raw references. Incoming UUID replacement preserves the adapter storage identity and moves supplemental notes/attachments after the metadata commit. | Core Data and SQLite contract tests cover incoming identity, collision rejection, atomic anchor creation and idempotent retry; the CloudKit orphan regression now exercises the coordinator bridge. The standalone suite passes 118/118 and the macOS app-hosted build-for-testing check passes. Direct simulator XCTest execution and live CloudKit/user-data validation remain unavailable; no repository backend is wired to startup. |
 | Security-scoped bookmark lease | `SQLiteSecurityScopedBookmarkLease` resolves bookmarks with generic errors, reports stale resolution, starts access exactly once and pairs it with idempotent stop/deinit cleanup. `RecordingArchiveService` retains the lease across detached provider copy and source-deletion tasks; persisted archive state continues to use bookmark and logical-root identities rather than absolute provider paths. | Two focused runtime tests cover valid resolution/idempotent stop and invalid-bookmark failure; the macOS app-hosted build-for-testing check passes. This is a process-local lifetime primitive only: the durable archive journal, production SQLite store, root selection and retry scheduler remain unwired. |
 | First-boot migration progress presentation | `SQLiteMigrationPresentationModel` provides redacted idle/running/paused/failed/completed state with durable progress, safe pause, retry, generic failure and terminal completion semantics. The injected app view model and `SQLiteMigrationProgressView` render a blocking progress/retry screen without selecting a store or reading user data. | Four pure state-machine tests are included in the 116/116 standalone suite, and the macOS app-hosted build-for-testing check compiles the view and view model. Startup wiring, source-backed coordinator integration and recovery-report policy remain open; the full iOS scheme is still blocked by the pre-existing watch-widget availability error and direct simulator execution is unavailable. |
 | Transcript upsert command | `LibraryTranscriptUpsertCommand` carries encoded transcript payloads, resolves one recording and preserves the existing transcript identity on replacement. Core Data and SQLite create or update the transcript and recording link/status atomically; SQLite records both changes in its durable observation log. | Two focused SQLite tests cover replacement identity/payload updates and stable new-row retry; the app-hosted contract covers Core Data replacement identity and persisted payloads. Production transcription persistence uses the async repository path; the synchronous helper remains for UI-test seeding and legacy compatibility. No backend is selected for startup. |
@@ -745,11 +762,12 @@ resolved.
 | Durable observation cursor | `LibraryObservation` exposes a global revision and ordered `LibraryChange` values. `SQLiteLibraryStore` persists `library_changes` in schema v3 and the SQLite repository emits recording/setting/archive-state/archive-location/cloud-sync, transcript, summary and pending-marker events in the same transaction as those writes. `CoreDataLibraryObservation` reads retained `NSPersistentHistory` transactions with hashed object-URI identities, and durable `PersistenceController` stores enable history tracking. `LibraryObservationSubscription` anchors before the initial snapshot, validates contiguous change batches and owns explicit cancellation. The app startup boundary anchors a Core Data subscription for durable stores and polls it from persistent-store remote-change and activation notifications; in-memory stores are explicitly not applicable. Repository observation polling intentionally stays outside the normal-access gate because the source coordinator polls during its exclusive lease. | Host tests reject negative/ahead cursors, verify exact rename and cloud-sync events survive database reopen, upgrade a disposable v2 store to v3, exercise Core Data insert/update/delete history while filtering an unrelated entity, exercise subscription across a commit and cancellation, and prove repository writes wait behind the gate. The app-hosted startup boundary is compile-checked; history retention/purge policy, production provider archive-journal integration and remaining file-owning write commands are still open. |
 
 This is still a pre-cutover boundary, not production migration evidence. The
-production recording-creation callers now share one repository commit boundary;
-the synchronous creation helper is retained only for deterministic test fixtures
-and legacy compatibility. The bookmark lease and migration-progress screen are
-reusable process-local and presentation seams, but neither selects a production
-store or starts a live migration. The next inventory update must expand command/error coverage,
+production recording-creation callers and CloudKit summary-restore callers now
+share repository commit boundaries; synchronous Core Data helpers remain only
+for deterministic test fixtures and legacy compatibility. The bookmark lease,
+summary anchor and migration-progress screen are reusable process-local or
+presentation seams, but none selects a production store or starts a live
+migration. The next inventory update must expand command/error coverage,
 connect the durable archive-restore journal to a selected production SQLite
 store, bookmark/root lifetime and retry scheduler, convert or explicitly
 exclude every remaining direct source mutation caller from the
