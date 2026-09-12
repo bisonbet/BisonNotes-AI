@@ -408,35 +408,20 @@ final class EnhancedFileManager: ObservableObject {
         // Stop any playback if this recording is currently playing
         // Note: This would need to be coordinated with the AudioRecorderViewModel
 
-        // Delete the audio file if it exists
-        if relationships.hasRecording {
-            do {
-                try FileManager.default.removeItem(at: normalizedURL)
+        // Remove file bytes before changing metadata. The recording URL remains
+        // the durable retry handle if the process is killed before the
+        // repository transaction commits. The storage-neutral file store makes
+        // a missing main file an idempotent replay and cleans known sidecars.
+        if relationships.hasRecording || recordingEntry.recordingURL != nil {
+            let storedURL = recordingEntry.recordingURL ?? normalizedURL.path
+            let removed = try LibraryImportedAudioFileStore.remove(storedURL: storedURL)
+            if removed {
                 AppLog.shared.fileManagement("Deleted audio file: \(normalizedURL.lastPathComponent)")
-            } catch {
-                if error.isThumbnailGenerationError {
-                    AppLog.shared.fileManagement("Thumbnail generation warning during file deletion: \(error.localizedDescription)", level: .debug)
-                    // Continue with deletion even if thumbnail generation fails
-                } else {
-                    throw error
-                }
-            }
-
-            // Delete associated sidecar files if they exist
-            for ext in ["location", "recordingmeta"] {
-                let sidecarURL = normalizedURL.deletingPathExtension().appendingPathExtension(ext)
-                if FileManager.default.fileExists(atPath: sidecarURL.path) {
-                    do {
-                        try FileManager.default.removeItem(at: sidecarURL)
-                        AppLog.shared.fileManagement("Deleted \(ext) file: \(sidecarURL.lastPathComponent)")
-                    } catch {
-                        if error.isThumbnailGenerationError {
-                            AppLog.shared.fileManagement("Thumbnail generation warning during \(ext) file deletion: \(error.localizedDescription)", level: .debug)
-                        } else {
-                            throw error
-                        }
-                    }
-                }
+            } else {
+                AppLog.shared.fileManagement(
+                    "Audio file was already absent; continuing deletion replay for \(normalizedURL.lastPathComponent)",
+                    level: .debug
+                )
             }
         }
 
