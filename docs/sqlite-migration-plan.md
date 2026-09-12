@@ -43,6 +43,8 @@ migration progress presentation seam, and production recorder/Watch/combine
 recording-creation callers routed through the repository bridge,
 and CloudKit summary restore routed through repository upserts with explicit
 incoming-identity handling and an atomic zero-audio summary anchor,
+and CloudKit recording restore metadata/audio-link application routed through
+guarded repository commands that preserve local audio and archive state,
 are implemented, but no SQLite migration is enabled**.
 Implementation branch: `v3.0-sqlitemigration`; clean PR target: `v3.0`, which is
 kept at the `v2.5` baseline.
@@ -493,6 +495,23 @@ check passes. This is still Core Data-authoritative: no SQLite backend is
 selected for startup, no audio is copied by this command, and no live account
 or user store was used.
 
+The current CloudKit recording-restore checkpoint is `91406ea2` (`feat: route
+cloud recording restore through repository`). The recording leg of
+`iCloudStorageManager.performRestore` now applies cloud scalar metadata through
+`LibraryRecordingCloudRestoreCommand`, with an optimistic `lastModified` guard,
+metadata-only creation for cloud rows without a local recording, and preservation
+of existing local audio, archive flags and cloud-sync state. Audio installation
+remains a separate retryable operation: only after a staged copy succeeds does
+`LibraryRecordingAudioLinkCommand` commit the local URL, without changing the
+cloud-content timestamp or archive state. The imported-audio clear path uses the
+same link boundary. SQLite records durable recording observations for both
+operations. Transcript/summary scalar writes and relationship repair in the same
+full-restore method remain the next boundary, and no SQLite backend or live data
+is enabled. The standalone suite passes 120/120 and the macOS app build-for-
+testing check passes. The generic iOS build-for-testing remains blocked before
+app/test compilation by the pre-existing `withSecurityScope` iOS availability
+error.
+
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
 now sends one storage-neutral command to the repository. The Core Data adapter
@@ -920,7 +939,10 @@ shared behavior tests; the production recording-creation callers now share one
 repository commit boundary, while the synchronous test/legacy helper remains
 out of production. CloudKit summary restore now shares the repository boundary
 as well; its zero-audio anchor deliberately leaves audio/media work to a later
-operation. After that, audit and install the maintenance gate
+operation. The recording metadata and post-copy audio-link legs of CloudKit
+restore now share guarded repository boundaries as well; transcript/summary
+relationship repair and durable media-worker integration remain open. After
+that, audit and install the maintenance gate
 around every remaining direct source mutation.
 The repository-backed production paths now share the gate; direct managed-
 object, settings, Watch/share and sync callers still need conversion or an
