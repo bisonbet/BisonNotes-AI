@@ -31,20 +31,52 @@ private struct SQLiteImportedAudioMetadata: Codable, Sendable {
 
 private enum SQLiteImportedAudioTransferError: LocalizedError {
     case persistenceUnavailable
-    case sourceNotEligible
     case invalidDescriptor
     case destinationUnavailable
 
     var errorDescription: String? {
         switch self {
         case .persistenceUnavailable:
-            return "Durable storage is unavailable for the shared audio import."
-        case .sourceNotEligible:
-            return "The shared audio source is not in an approved import inbox."
+            return "Durable storage is unavailable for this audio import."
         case .invalidDescriptor:
-            return "The shared audio import metadata descriptor is invalid."
+            return "The managed audio import metadata descriptor is invalid."
         case .destinationUnavailable:
-            return "The shared audio import destination is unavailable."
+            return "The managed audio import destination is unavailable."
+        }
+    }
+}
+
+/// Copies a security-scoped document-picker source into the app-owned import
+/// inbox without doing large file work on the main actor. The caller keeps the
+/// source security scope active until this task completes.
+private struct SQLiteExternalAudioImportCopy: Sendable {
+    enum Outcome: Sendable {
+        case copied
+        case failed(String)
+    }
+
+    let sourceURL: URL
+    let destinationURL: URL
+
+    func run() -> Outcome {
+        let fileManager = FileManager()
+        do {
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                return .failed("The selected audio file is unavailable.")
+            }
+            let values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else {
+                return .failed("The selected audio item is not a regular file.")
+            }
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            return .copied
+        } catch {
+            try? fileManager.removeItem(at: destinationURL)
+            return .failed(error.localizedDescription)
         }
     }
 }
@@ -264,21 +296,15 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.unsupportedFormat(fileExtension)
         }
 
-        if useDurableMediaJournal {
-            do {
-                try await importAudioFileUsingMediaJournal(from: sourceURL)
-                return
-            } catch SQLiteImportedAudioTransferError.sourceNotEligible {
-                // Direct document-picker URLs can live outside the managed
-                // roots. Preserve their existing import path; only
-                // inbox/web-owned sources receive journal-driven cleanup.
-            }
-        }
-
         // If the filename carries an archive token, try to restore onto the
         // original recording entry rather than create a duplicate.
         if let restoreCandidate = matchArchivedRecording(for: sourceURL) {
             try await restoreArchivedRecording(restoreCandidate, from: sourceURL)
+            return
+        }
+
+        if useDurableMediaJournal {
+            try await importAudioFileUsingMediaJournal(from: sourceURL)
             return
         }
 
@@ -328,22 +354,37 @@ class FileImportManager: NSObject, ObservableObject {
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
     }
 
-    /// Imports an audio file from one of the app's share/document inboxes or
-    /// the web-import staging root through the durable media journal. The
-    /// source stays in its managed root until the destination is verified,
-    /// Core Data metadata is committed, the receipt is recorded and the
-    /// source-removal check succeeds.
-    private func importAudioFileUsingMediaJournal(from sourceURL: URL) async throws {
+    /// Imports an audio file from one of the app's share/document inboxes, the
+    /// web-import staging root or a staged document-picker source through the
+    /// durable media journal. The source stays in its managed root until the
+    /// destination is verified, Core Data metadata is committed, the receipt
+    /// is recorded and the source-removal check succeeds.
+    private func importAudioFileUsingMediaJournal(
+        from sourceURL: URL,
+        originalName: String? = nil
+    ) async throws {
         guard persistenceController.storageStatus.isDurable else {
             throw SQLiteImportedAudioTransferError.persistenceUnavailable
         }
 
-        guard let dependencies = try mediaTransferDependencies(createIfMissing: true),
-              SQLiteImportedAudioTransferSupport.sourceRoot(
-                  for: sourceURL,
-                  mapping: dependencies.mapping
-              ) != nil else {
-            throw SQLiteImportedAudioTransferError.sourceNotEligible
+        guard let dependencies = try mediaTransferDependencies(createIfMissing: true) else {
+            throw SQLiteImportedAudioTransferError.persistenceUnavailable
+        }
+
+        guard SQLiteImportedAudioTransferSupport.sourceRoot(
+            for: sourceURL,
+            mapping: dependencies.mapping
+        ) != nil else {
+            currentlyImporting = "Staging audio..."
+            let stagedURL = try await stageExternalAudioForJournal(
+                from: sourceURL,
+                mapping: dependencies.mapping
+            )
+            try await importAudioFileUsingMediaJournal(
+                from: stagedURL,
+                originalName: sourceURL.deletingPathExtension().lastPathComponent
+            )
+            return
         }
 
         try validateAudioFile(at: sourceURL)
@@ -362,7 +403,8 @@ class FileImportManager: NSObject, ObservableObject {
         )
         let recordingID = SQLiteImportedAudioTransferSupport.stableUUID(for: stableKey)
         let recordingName = AudioRecorderViewModel.generateImportedFileName(
-            originalName: sourceURL.deletingPathExtension().lastPathComponent
+            originalName: originalName
+                ?? sourceURL.deletingPathExtension().lastPathComponent
         )
         let fileExtension = sourceURL.pathExtension.lowercased()
         let destinationRelativePath = "apprecording-import-\(stableKey).\(fileExtension)"
@@ -409,8 +451,39 @@ class FileImportManager: NSObject, ObservableObject {
             operationID: request.operationID
         )
         AppLog.shared.fileManagement(
-            "Journaled shared audio import: \(sourceURL.lastPathComponent)"
+            "Journaled managed audio import: \(sourceURL.lastPathComponent)"
         )
+    }
+
+    private func stageExternalAudioForJournal(
+        from sourceURL: URL,
+        mapping: SQLiteApplicationMediaRootMapping
+    ) async throws -> URL {
+        guard let inboxRoot = mapping.sourceURLs[
+            SQLiteApplicationMediaRootID.documentsInbox
+        ] else {
+            throw ImportError.copyFailed("The app import inbox is unavailable.")
+        }
+
+        let fileExtension = sourceURL.pathExtension.lowercased()
+        let stagedURL = inboxRoot.appendingPathComponent(
+            "document-import-\(UUID().uuidString).\(fileExtension)",
+            isDirectory: false
+        )
+        let copy = SQLiteExternalAudioImportCopy(
+            sourceURL: sourceURL,
+            destinationURL: stagedURL
+        )
+        let outcome = await Task.detached(priority: .utility) {
+            copy.run()
+        }.value
+        switch outcome {
+        case .copied:
+            AppFileProtection.apply(to: stagedURL)
+            return stagedURL
+        case .failed(let message):
+            throw ImportError.copyFailed(message)
+        }
     }
 
     /// Replays journaled inbox/web media operations left by a terminated

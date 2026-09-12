@@ -188,7 +188,10 @@ struct RecordingsView: View {
         switch importKind {
         case .audio:
             handleImport(result) { urls in
-                await importManager.importAudioFiles(from: urls)
+                await importManager.importAudioFiles(
+                    from: urls,
+                    useDurableMediaJournal: true
+                )
             }
         case .transcript:
             handleImport(result) { urls in
