@@ -743,6 +743,47 @@ class AppDataCoordinator: ObservableObject {
         return deleted
     }
 
+    /// Applies an inbound imported-audio tombstone through the storage-neutral
+    /// repository. The file is removed before the metadata transaction clears
+    /// its URL: if the process dies between those operations, the still-present
+    /// URL lets the replayed cloud marker retry the cleanup. A missing file is
+    /// already a successful cleanup and still allows the URL to be cleared.
+    @discardableResult
+    func applyRemoteImportedAudioRemovalUsingRepository(
+        id: UUID,
+        requestedAt: Date
+    ) async throws -> Bool {
+        let recordings = try await libraryRepository.fetchRecordingSummaries()
+        guard let recording = recordings.first(where: { snapshot in
+            guard let legacyID = snapshot.legacyID else { return false }
+            return legacyID.caseInsensitiveCompare(id.uuidString) == .orderedSame
+        }) else {
+            return false
+        }
+        guard recording.isCloudSyncDisabled != true else {
+            return false
+        }
+
+        // Keep the URL in metadata until file cleanup succeeds. The inbound
+        // CloudKit marker is the durable retry record if the app is killed after
+        // this operation and before the repository transaction below commits.
+        if let storedURL = recording.recordingURL, !storedURL.isEmpty {
+            _ = try LibraryImportedAudioFileStore.remove(storedURL: storedURL)
+        }
+
+        let cleared = try await libraryRepository.removeImportedAudio(
+            LibraryImportedAudioRemovalCommand(
+                id: id,
+                requestedAt: requestedAt,
+                enqueueCloudDeletion: false
+            )
+        )
+        if cleared {
+            objectWillChange.send()
+        }
+        return cleared
+    }
+
     func updateRecordingName(recordingId: UUID, newName: String) async throws {
         _ = try await libraryRepository.renameRecording(
             LibraryRecordingRenameCommand(

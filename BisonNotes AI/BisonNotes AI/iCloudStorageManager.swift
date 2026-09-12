@@ -6821,15 +6821,11 @@ extension iCloudStorageManager {
             // marker exists purely so the *other* devices drop their copy — the half
             // that was missing, and the reason a deleted placeholder was uploaded
             // again on the next pass and restored on the device that deleted it.
-            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
-                  recording.isCloudSyncDisabled == false else {
-                return
-            }
             do {
                 // Applying another device's marker; raising one of our own would
                 // re-create the tombstone after a revive withdrew it.
-                let cleared = try appCoordinator.coreDataManager.applyImportedAudioRemoval(
-                    recordingId: target.id,
+                let cleared = try await appCoordinator.applyRemoteImportedAudioRemovalUsingRepository(
+                    id: target.id,
                     requestedAt: target.deletedAt
                 )
                 if cleared {

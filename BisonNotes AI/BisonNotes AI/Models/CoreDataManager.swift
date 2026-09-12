@@ -366,25 +366,10 @@ class CoreDataManager: ObservableObject {
     /// `getAbsoluteURL` it touches neither the file system nor the managed
     /// object, so a diagnostic can call it without rewriting a row.
     nonisolated static func storedURLCandidates(_ storedURL: String, documentsURL: URL) -> [URL] {
-        let primaryURL: URL?
-        if storedURL.hasPrefix("/") {
-            primaryURL = URL(fileURLWithPath: storedURL)
-        } else if let parsed = URL(string: storedURL), parsed.isFileURL {
-            // Only an explicit `file:` URL takes this branch. Testing
-            // `scheme != nil` instead would capture ordinary filenames that
-            // happen to contain a colon — `URL(string:)` reads
-            // "meeting:notes.m4a" as scheme "meeting" — and strand a recording
-            // whose audio is sitting in Documents under exactly that name.
-            primaryURL = parsed
-        } else {
-            // Decode URL-encoded characters (like %20 for spaces)
-            let decoded = storedURL.removingPercentEncoding ?? storedURL
-            primaryURL = documentsURL.appendingPathComponent(decoded)
-        }
-
-        guard let primaryURL else { return [] }
-        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
-        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
+        LibraryImportedAudioFileStore.storedURLCandidates(
+            storedURL,
+            documentsURL: documentsURL
+        )
     }
 
     /// Gets the current absolute URL for a recording, handling container ID changes
@@ -697,57 +682,14 @@ class CoreDataManager: ObservableObject {
             return false
         }
 
-        guard let documentsURL = FileManager.default.urls(
-            for: .documentDirectory,
-            in: .userDomainMask
-        ).first else {
-            throw NSError(
-                domain: "CoreDataManager",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "The Documents directory is unavailable"]
+        do {
+            _ = try LibraryImportedAudioFileStore.remove(storedURL: storedURL)
+        } catch {
+            AppLog.shared.coreData(
+                "Could not remove imported audio for recording \(recordingId.uuidString): \(error)",
+                level: .error
             )
-        }
-
-        let fileManager = FileManager.default
-        let candidates = Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
-        for url in candidates where fileManager.fileExists(atPath: url.path) {
-            do {
-                try fileManager.removeItem(at: url)
-            } catch {
-                // A concurrent cleanup can win between the existence check and
-                // removeItem. Only a file that is still present is a failed delete.
-                if fileManager.fileExists(atPath: url.path) {
-                    AppLog.shared.coreData(
-                        "Could not remove imported audio for recording \(recordingId.uuidString): \(error)",
-                        level: .error
-                    )
-                    throw error
-                }
-            }
-        }
-        guard !candidates.contains(where: { fileManager.fileExists(atPath: $0.path) }) else {
-            throw NSError(
-                domain: "CoreDataManager",
-                code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Imported audio still exists after removal"]
-            )
-        }
-
-        // Sidecars are useful cleanup, but the main audio file is the retry gate.
-        // A stale sidecar must not keep the recording URL alive forever.
-        for url in candidates {
-            for ext in AdvancedTroubleshootingService.permittedSidecarExtensions {
-                let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
-                guard fileManager.fileExists(atPath: sidecarURL.path) else { continue }
-                do {
-                    try fileManager.removeItem(at: sidecarURL)
-                } catch {
-                    AppLog.shared.coreData(
-                        "Could not remove imported audio sidecar for recording \(recordingId.uuidString): \(error)",
-                        level: .error
-                    )
-                }
-            }
+            throw error
         }
 
         recording.recordingURL = nil

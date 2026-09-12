@@ -450,6 +450,69 @@ final class LibraryRepositoryContractTests: XCTestCase {
         )
     }
 
+    func testCoreDataRepositoryRemovesImportedAudioAndQueuesCloudRemovalIntent() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-imported-audio-removal.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let requestedAt = Date(timeIntervalSinceReferenceDate: 204)
+
+        let removed = try await repository.removeImportedAudio(
+            LibraryImportedAudioRemovalCommand(
+                id: recordingID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertTrue(removed)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertNil(recordings[0].recordingURL)
+        XCTAssertEqual(recordings[0].lastModified, requestedAt)
+        let transcripts = try await repository.fetchTranscriptSnapshots()
+        let summaries = try await repository.fetchSummarySnapshots()
+        XCTAssertEqual(transcripts.count, 1)
+        XCTAssertEqual(summaries.count, 1)
+
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let audioRemovals = pendingMutations.filter {
+            $0.kind == PendingCloudMutationKind.importedAudioRemoval.rawValue
+        }
+        XCTAssertEqual(audioRemovals.count, 1)
+        XCTAssertEqual(audioRemovals[0].targetID, recordingID.uuidString.lowercased())
+        XCTAssertNil(audioRemovals[0].recordingLegacyID)
+        XCTAssertEqual(audioRemovals[0].requestedAt, requestedAt)
+
+        let pendingMutationCountAfterRemoval = pendingMutations.count
+        let repeatedRemoval = try await repository.removeImportedAudio(
+            LibraryImportedAudioRemovalCommand(
+                id: recordingID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertFalse(repeatedRemoval)
+        let pendingMutationsAfterRemoval =
+            try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(
+            pendingMutationsAfterRemoval.count,
+            pendingMutationCountAfterRemoval
+        )
+    }
+
     func testCoreDataRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

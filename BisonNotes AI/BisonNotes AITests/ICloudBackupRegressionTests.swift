@@ -417,7 +417,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
     /// Applying another device's imported-audio tombstone unlinks the placeholder
     /// and removes the file, but leaves the recording row and its summary standing.
-    func testApplyingImportedAudioRemovalKeepsTheRecordingAndSummary() throws {
+    func testApplyingImportedAudioRemovalKeepsTheRecordingAndSummary() async throws {
         let recordingId = try createRecordingOnly(named: "Imported audio removal")
         let context = appCoordinator.coreDataManager.managedObjectContext
         let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
@@ -440,8 +440,8 @@ final class ICloudBackupRegressionTests: XCTestCase {
         try context.save()
 
         let deletedAt = Date()
-        let cleared = try appCoordinator.coreDataManager.applyImportedAudioRemoval(
-            recordingId: recordingId,
+        let cleared = try await appCoordinator.applyRemoteImportedAudioRemovalUsingRepository(
+            id: recordingId,
             requestedAt: deletedAt
         )
 
@@ -453,15 +453,14 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
 
         // Idempotent: nothing left to unlink on a second application.
-        XCTAssertFalse(
-            try appCoordinator.coreDataManager.applyImportedAudioRemoval(
-                recordingId: recordingId,
-                requestedAt: deletedAt
-            )
+        let repeatedClear = try await appCoordinator.applyRemoteImportedAudioRemovalUsingRepository(
+            id: recordingId,
+            requestedAt: deletedAt
         )
+        XCTAssertFalse(repeatedClear)
     }
 
-    func testApplyingImportedAudioRemovalKeepsTheURLWhenMainFileRemovalFails() throws {
+    func testApplyingImportedAudioRemovalKeepsTheURLWhenMainFileRemovalFails() async throws {
         let recordingId = try createRecordingOnly(named: "Imported audio removal retry")
         let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
         let blockingDirectory = tempDirectory.appendingPathComponent("protected-audio-directory")
@@ -488,12 +487,16 @@ final class ICloudBackupRegressionTests: XCTestCase {
         recording.recordingURL = blockingDirectory.path
         try appCoordinator.coreDataManager.saveContext()
 
-        XCTAssertThrowsError(
-            try appCoordinator.coreDataManager.applyImportedAudioRemoval(
-                recordingId: recordingId,
+        do {
+            _ = try await appCoordinator.applyRemoteImportedAudioRemovalUsingRepository(
+                id: recordingId,
                 requestedAt: Date()
             )
-        )
+            XCTFail("Expected the imported audio removal to remain retryable")
+        } catch {
+            // The repository transaction must not run while the file is still
+            // present, so the URL remains available for the next marker replay.
+        }
         XCTAssertEqual(
             appCoordinator.getRecording(id: recordingId)?.recordingURL,
             blockingDirectory.path,
@@ -504,7 +507,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
     /// A local edit made after the delete is still the newer edit. Stamping the
     /// marker's `deletedAt` over it would hand the row to the cloud copy.
-    func testApplyingImportedAudioRemovalNeverMovesLastModifiedBackward() throws {
+    func testApplyingImportedAudioRemovalNeverMovesLastModifiedBackward() async throws {
         let recordingId = try createRecordingOnly(named: "Renamed after the delete")
         let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
         let audioURL = tempDirectory.appendingPathComponent("\(recordingId.uuidString).m4a")
@@ -516,8 +519,8 @@ final class ICloudBackupRegressionTests: XCTestCase {
         recording.lastModified = laterEdit
         try appCoordinator.coreDataManager.managedObjectContext.save()
 
-        try appCoordinator.coreDataManager.applyImportedAudioRemoval(
-            recordingId: recordingId,
+        _ = try await appCoordinator.applyRemoteImportedAudioRemovalUsingRepository(
+            id: recordingId,
             requestedAt: laterEdit.addingTimeInterval(-3_600)
         )
 

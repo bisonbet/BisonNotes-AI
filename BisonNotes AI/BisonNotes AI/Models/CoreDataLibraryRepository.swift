@@ -900,6 +900,76 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    @discardableResult
+    func removeImportedAudio(
+        _ command: LibraryImportedAudioRemovalCommand
+    ) async throws -> Bool {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                recordingRequest.fetchLimit = 2
+                recordingRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let recordings = try context.fetch(recordingRequest)
+                guard !recordings.isEmpty else {
+                    return false
+                }
+                guard recordings.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                let recording = recordings[0]
+                guard recording.value(forKey: "recordingURL") != nil else {
+                    return false
+                }
+
+                var committed = false
+                defer {
+                    if !committed {
+                        context.rollback()
+                    }
+                }
+
+                if command.enqueueCloudDeletion {
+                    try PendingCloudMutationStore.enqueue(
+                        PendingCloudMutation(
+                            kind: .importedAudioRemoval,
+                            targetId: command.id,
+                            requestedAt: command.requestedAt
+                        ),
+                        in: context
+                    )
+                }
+
+                recording.setValue(nil, forKey: "recordingURL")
+                let existingLastModified = recording.value(forKey: "lastModified") as? Date
+                if let existingLastModified,
+                   existingLastModified >= command.requestedAt {
+                    // Keep a newer local edit from moving backward.
+                } else {
+                    recording.setValue(command.requestedAt, forKey: "lastModified")
+                }
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "remove imported audio",
+                        reason: error.localizedDescription
+                    )
+                }
+                committed = true
+                return true
+            }
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {

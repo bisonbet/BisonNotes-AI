@@ -475,6 +475,111 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         )
     }
 
+    func testRepositoryRemovesImportedAudioWhenTheFileIsAlreadyMissing() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000010")
+        )
+        _ = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "missing-after-crash.m4a",
+                name: "Imported audio",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                createdAt: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 4,
+                fileSize: 12,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+        let revisionBeforeRemoval = try await repository.currentRevision()
+        let requestedAt = Date(timeIntervalSinceReferenceDate: 300)
+
+        let removed = try await repository.removeImportedAudio(
+            LibraryImportedAudioRemovalCommand(
+                id: recordingID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertTrue(removed)
+
+        let recordingsAfterRemoval = try await repository.fetchRecordingSummaries()
+        let recording = try XCTUnwrap(recordingsAfterRemoval.first)
+        XCTAssertNil(recording.recordingURL)
+        XCTAssertEqual(recording.lastModified, requestedAt)
+        let pendingMutations = try await repository.fetchPendingCloudMutationSnapshots()
+        let audioRemoval = try XCTUnwrap(
+            pendingMutations.first { $0.kind == "importedAudioRemoval" }
+        )
+        XCTAssertEqual(audioRemoval.targetID, recordingID.uuidString.lowercased())
+        XCTAssertNil(audioRemoval.recordingLegacyID)
+        XCTAssertEqual(audioRemoval.requestedAt, requestedAt)
+
+        let removalChanges = try await repository.changes(since: revisionBeforeRemoval)
+        XCTAssertEqual(
+            removalChanges.filter {
+                $0.entity == .pendingCloudMutation && $0.operation == .inserted
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            removalChanges.filter {
+                $0.entity == .recording && $0.operation == .updated
+            }.count,
+            1
+        )
+
+        let revisionAfterRemoval = try await repository.currentRevision()
+        let repeatedRemoval = try await repository.removeImportedAudio(
+            LibraryImportedAudioRemovalCommand(
+                id: recordingID,
+                requestedAt: requestedAt
+            )
+        )
+        XCTAssertFalse(repeatedRemoval)
+        let revisionAfterRepeatedRemoval = try await repository.currentRevision()
+        XCTAssertEqual(revisionAfterRepeatedRemoval, revisionAfterRemoval)
+        let pendingMutationsAfterRepeatedRemoval =
+            try await repository.fetchPendingCloudMutationSnapshots()
+        XCTAssertEqual(
+            pendingMutationsAfterRepeatedRemoval
+                .filter { $0.kind == "importedAudioRemoval" }
+                .count,
+            1
+        )
+    }
+
+    func testImportedAudioFileStoreRemovesMainFileAndSidecarsIdempotently() throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let audioURL = directory.appendingPathComponent("imported-audio.m4a")
+        try Data("audio".utf8).write(to: audioURL)
+        let sidecarURLs = LibraryImportedAudioFileStore.permittedSidecarExtensions.map {
+            audioURL.deletingPathExtension().appendingPathExtension($0)
+        }
+        for sidecarURL in sidecarURLs {
+            try Data("sidecar".utf8).write(to: sidecarURL)
+        }
+
+        XCTAssertTrue(
+            try LibraryImportedAudioFileStore.remove(storedURL: audioURL.path)
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+        for sidecarURL in sidecarURLs {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: sidecarURL.path))
+        }
+        XCTAssertFalse(
+            try LibraryImportedAudioFileStore.remove(storedURL: audioURL.path)
+        )
+    }
+
     func testRepositoryPreservesSummaryAndQueuesTranscriptAudioRemovalIntents() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

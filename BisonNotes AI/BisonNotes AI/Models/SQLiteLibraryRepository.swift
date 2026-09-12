@@ -117,6 +117,15 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    @discardableResult
+    func removeImportedAudio(
+        _ command: LibraryImportedAudioRemovalCommand
+    ) async throws -> Bool {
+        try await withNormalAccess { [store] in
+            try await store.removeImportedAudio(command)
+        }
+    }
+
     func renameRecording(
         _ command: LibraryRecordingRenameCommand
     ) async throws -> LibraryRecordingSnapshot {
@@ -958,6 +967,80 @@ extension SQLiteLibraryStore {
                 operation: "delete transcript",
                 at: command.requestedAt,
                 in: database
+            )
+            return true
+        }
+    }
+
+    @discardableResult
+    func removeImportedAudio(
+        _ command: LibraryImportedAudioRemovalCommand
+    ) throws -> Bool {
+        try command.validate()
+        let requestedAt = command.requestedAt.timeIntervalSinceReferenceDate
+        let reference = LibraryRecordingReference(
+            legacyID: command.id.uuidString.lowercased()
+        )
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            guard !rows.isEmpty else {
+                return false
+            }
+            guard rows.count == 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(
+                    reference: reference.displayValue
+                )
+            }
+
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: nil
+            )
+            guard current.recordingURL != nil else {
+                return false
+            }
+            guard let legacyID = current.legacyID, !legacyID.isEmpty else {
+                throw LibraryRepositoryError.invalidRecord(
+                    entity: "recordings",
+                    field: "id"
+                )
+            }
+
+            if command.enqueueCloudDeletion {
+                try Self.enqueueImportedAudioRemovalMutation(
+                    recordingStorageID: current.storageID,
+                    recordingID: legacyID,
+                    requestedAt: requestedAt,
+                    in: database,
+                    committedAt: command.requestedAt
+                )
+            }
+
+            let updatedAt: Date
+            if let existingLastModified = current.lastModified,
+               existingLastModified > command.requestedAt {
+                updatedAt = existingLastModified
+            } else {
+                updatedAt = command.requestedAt
+            }
+            try database.execute(
+                sql: "UPDATE recordings SET recordingURL = ?, lastModified = ? WHERE storageID = ?",
+                arguments: [nil, updatedAt.timeIntervalSinceReferenceDate, current.storageID]
+            )
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "remove imported audio",
+                    reason: "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.requestedAt
             )
             return true
         }

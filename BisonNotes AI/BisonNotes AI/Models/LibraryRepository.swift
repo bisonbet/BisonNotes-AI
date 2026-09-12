@@ -56,6 +56,111 @@ struct LibraryRecordingReference: Equatable, Sendable {
     }
 }
 
+enum LibraryImportedAudioFileStoreError: LocalizedError {
+    case invalidStoredURL
+    case documentsDirectoryUnavailable
+    case fileStillExists(URL)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidStoredURL:
+            return "The imported audio URL is empty or could not be resolved."
+        case .documentsDirectoryUnavailable:
+            return "The Documents directory is unavailable."
+        case .fileStillExists(let url):
+            return "Imported audio still exists after removal: \(url.path)"
+        }
+    }
+}
+
+/// Resolves and removes recording-owned imported audio without depending on a
+/// persistence adapter. The stored URL remains in metadata until the caller's
+/// repository transaction commits, so a failed removal is retryable.
+enum LibraryImportedAudioFileStore {
+    static let permittedSidecarExtensions = ["location", "recordingmeta"]
+
+    /// Returns the stored path and the Documents-relative filename fallback
+    /// used when an app container path changed between launches.
+    static func storedURLCandidates(
+        _ storedURL: String,
+        documentsURL: URL?
+    ) -> [URL] {
+        guard !storedURL.isEmpty else { return [] }
+
+        let primaryURL: URL?
+        if storedURL.hasPrefix("/") {
+            primaryURL = URL(fileURLWithPath: storedURL)
+        } else if let parsed = URL(string: storedURL), parsed.isFileURL {
+            primaryURL = parsed
+        } else {
+            guard let documentsURL else { return [] }
+            let decoded = storedURL.removingPercentEncoding ?? storedURL
+            primaryURL = documentsURL.appendingPathComponent(decoded)
+        }
+
+        guard let primaryURL else { return [] }
+        guard let documentsURL else { return [primaryURL] }
+        let fallbackURL = documentsURL.appendingPathComponent(primaryURL.lastPathComponent)
+        return fallbackURL == primaryURL ? [primaryURL] : [primaryURL, fallbackURL]
+    }
+
+    /// Removes every known representation of the main file and best-effort
+    /// sidecars. The main file is the retry gate; a sidecar failure must not keep
+    /// a valid metadata tombstone from completing.
+    @discardableResult
+    static func remove(
+        storedURL: String,
+        fileManager: FileManager = .default
+    ) throws -> Bool {
+        let documentsURL = fileManager.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first
+        let candidates = storedURLCandidates(storedURL, documentsURL: documentsURL)
+        guard !candidates.isEmpty else {
+            throw documentsURL == nil
+                ? LibraryImportedAudioFileStoreError.documentsDirectoryUnavailable
+                : LibraryImportedAudioFileStoreError.invalidStoredURL
+        }
+
+        var removedMainFile = false
+        for url in candidates where fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.removeItem(at: url)
+                removedMainFile = true
+            } catch {
+                // A concurrent cleanup can win between the existence check and
+                // removeItem. Only a file that is still present is a failure.
+                if fileManager.fileExists(atPath: url.path) {
+                    throw error
+                }
+            }
+        }
+
+        if let remainingURL = candidates.first(where: {
+            fileManager.fileExists(atPath: $0.path)
+        }) {
+            throw LibraryImportedAudioFileStoreError.fileStillExists(remainingURL)
+        }
+
+        for url in candidates {
+            for sidecarExtension in permittedSidecarExtensions {
+                let sidecarURL = url.deletingPathExtension()
+                    .appendingPathExtension(sidecarExtension)
+                guard fileManager.fileExists(atPath: sidecarURL.path) else { continue }
+                do {
+                    try fileManager.removeItem(at: sidecarURL)
+                } catch {
+                    // The main file is the durable retry gate. A stale sidecar
+                    // should not strand the recording URL forever.
+                }
+            }
+        }
+
+        return removedMainFile
+    }
+}
+
 /// Creates the metadata row for an audio recording whose file is already owned
 /// by the caller. Audio copying, file naming and source retention are separate
 /// journaled operations; this command only commits recording metadata.
@@ -639,6 +744,36 @@ extension LibrarySummaryDeleteCommand {
     }
 }
 
+/// Removes only a recording's imported-audio link while retaining the recording
+/// and all metadata rows. The file operation is performed by the coordinator
+/// before this metadata transaction; the repository owns the link and optional
+/// durable CloudKit intent.
+struct LibraryImportedAudioRemovalCommand: Equatable, Sendable {
+    let id: UUID
+    let requestedAt: Date
+    let enqueueCloudDeletion: Bool
+
+    init(
+        id: UUID,
+        requestedAt: Date = Date(),
+        enqueueCloudDeletion: Bool = true
+    ) {
+        self.id = id
+        self.requestedAt = requestedAt
+        self.enqueueCloudDeletion = enqueueCloudDeletion
+    }
+}
+
+extension LibraryImportedAudioRemovalCommand {
+    func validate() throws {
+        guard requestedAt.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "imported audio removal date must be finite"
+            )
+        }
+    }
+}
+
 /// Creates or replaces the summary attached to one recording.
 ///
 /// Structured task/reminder/title values are carried in their encoded form so
@@ -1153,6 +1288,10 @@ protocol LibraryRepository: Sendable {
     @discardableResult
     func deleteSummary(
         _ command: LibrarySummaryDeleteCommand
+    ) async throws -> Bool
+    @discardableResult
+    func removeImportedAudio(
+        _ command: LibraryImportedAudioRemovalCommand
     ) async throws -> Bool
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
