@@ -298,6 +298,105 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(recordings[0].name, "Cloud-only retry")
     }
 
+    func testRepositoryUpsertsCloudTranscriptWithoutMutatingRelationshipState() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000015")
+        )
+        _ = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "local-recording.m4a",
+                name: "Transcript owner",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 3,
+                fileSize: 20,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000015")
+        )
+        let firstTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+        let inserted = try await repository.upsertCloudTranscript(
+            LibraryTranscriptCloudRestoreCommand(
+                id: transcriptID,
+                recordingID: recordingID,
+                createdAt: Date(timeIntervalSinceReferenceDate: 199),
+                segments: nil,
+                speakerMappings: nil,
+                engine: "cloud-engine",
+                processingTime: 1.25,
+                confidence: 0.91,
+                lastModified: firstTimestamp,
+                observedAt: firstTimestamp
+            )
+        )
+
+        XCTAssertEqual(
+            inserted.storageID,
+            "sqlite-transcript-\(transcriptID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(inserted.recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertNil(inserted.recordingStorageID)
+        XCTAssertNil(inserted.segments)
+        XCTAssertEqual(inserted.engine, "cloud-engine")
+        XCTAssertEqual(inserted.lastModified, firstTimestamp)
+
+        let secondTimestamp = Date(timeIntervalSinceReferenceDate: 201)
+        let updated = try await repository.upsertCloudTranscript(
+            LibraryTranscriptCloudRestoreCommand(
+                id: transcriptID,
+                recordingID: nil,
+                createdAt: Date(timeIntervalSinceReferenceDate: 199),
+                segments: "{\"segments\":[]}",
+                speakerMappings: "{}",
+                engine: "updated-engine",
+                processingTime: 2,
+                confidence: 0.95,
+                lastModified: secondTimestamp,
+                expectedLastModified: inserted.lastModified,
+                observedAt: secondTimestamp
+            )
+        )
+        XCTAssertEqual(updated.recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(updated.segments, "{\"segments\":[]}")
+        XCTAssertEqual(updated.lastModified, secondTimestamp)
+
+        do {
+            _ = try await repository.upsertCloudTranscript(
+                LibraryTranscriptCloudRestoreCommand(
+                    id: transcriptID,
+                    recordingID: recordingID,
+                    createdAt: Date(timeIntervalSinceReferenceDate: 199),
+                    segments: "stale",
+                    speakerMappings: nil,
+                    engine: "stale-engine",
+                    lastModified: Date(timeIntervalSinceReferenceDate: 202),
+                    expectedLastModified: inserted.lastModified,
+                    observedAt: Date(timeIntervalSinceReferenceDate: 202)
+                )
+            )
+            XCTFail("Expected stale cloud transcript restore to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleTranscript(
+                    reference: transcriptID.uuidString.lowercased(),
+                    expected: inserted.lastModified,
+                    actual: updated.lastModified
+                )
+            )
+        }
+    }
+
     func testRepositoryUpdatesRecordingDateAndLocationWithRevisionGuards() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

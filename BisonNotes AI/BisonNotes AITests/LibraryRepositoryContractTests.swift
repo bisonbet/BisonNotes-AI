@@ -323,6 +323,102 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(linked.lastModified, cloudTimestamp)
     }
 
+    func testCoreDataRepositoryUpsertsCloudTranscriptWithoutReplacingRelationshipState() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-cloud-transcript.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000002")
+        )
+        let initial = try XCTUnwrap(
+            (try await repository.fetchTranscriptSnapshots()).first {
+                $0.legacyID == transcriptID.uuidString.lowercased()
+            }
+        )
+        let cloudTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+
+        let restored = try await repository.upsertCloudTranscript(
+            LibraryTranscriptCloudRestoreCommand(
+                id: transcriptID,
+                recordingID: nil,
+                createdAt: Date(timeIntervalSinceReferenceDate: 199),
+                segments: nil,
+                speakerMappings: "{}",
+                engine: "cloud-engine",
+                processingTime: 4,
+                confidence: 0.87,
+                lastModified: cloudTimestamp,
+                expectedLastModified: initial.lastModified,
+                observedAt: cloudTimestamp
+            )
+        )
+
+        XCTAssertEqual(restored.recordingLegacyID, initial.recordingLegacyID)
+        XCTAssertEqual(restored.recordingStorageID, initial.recordingStorageID)
+        XCTAssertNil(restored.segments)
+        XCTAssertEqual(restored.engine, "cloud-engine")
+        XCTAssertEqual(restored.lastModified, cloudTimestamp)
+
+        let recordingRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        recordingRequest.predicate = NSPredicate(
+            format: "id == %@",
+            recordingID as CVarArg
+        )
+        let recording = try XCTUnwrap(
+            try fixture.container.viewContext.fetch(recordingRequest).first
+        )
+        let transcriptRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        transcriptRequest.predicate = NSPredicate(
+            format: "id == %@",
+            transcriptID as CVarArg
+        )
+        let transcript = try XCTUnwrap(
+            try fixture.container.viewContext.fetch(transcriptRequest).first
+        )
+        XCTAssertIdentical(transcript.recording, recording)
+
+        do {
+            _ = try await repository.upsertCloudTranscript(
+                LibraryTranscriptCloudRestoreCommand(
+                    id: transcriptID,
+                    recordingID: recordingID,
+                    createdAt: Date(timeIntervalSinceReferenceDate: 199),
+                    segments: "stale",
+                    speakerMappings: nil,
+                    engine: "stale-engine",
+                    lastModified: Date(timeIntervalSinceReferenceDate: 201),
+                    expectedLastModified: initial.lastModified,
+                    observedAt: Date(timeIntervalSinceReferenceDate: 201)
+                )
+            )
+            XCTFail("Expected stale cloud transcript restore to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleTranscript(
+                    reference: transcriptID.uuidString.lowercased(),
+                    expected: initial.lastModified,
+                    actual: restored.lastModified
+                )
+            )
+        }
+    }
+
     func testCoreDataRepositoryDiscardsOnlyMetadataOrphanAndRetainsDependents() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

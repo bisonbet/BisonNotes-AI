@@ -269,6 +269,18 @@ class AppDataCoordinator: ObservableObject {
         return snapshot
     }
 
+    /// Applies CloudKit transcript metadata without mutating either side of
+    /// the recording relationship. Restore repairs that relationship only
+    /// after timestamp arbitration against the recording's pre-restore link.
+    @discardableResult
+    func upsertCloudTranscriptUsingRepository(
+        _ command: LibraryTranscriptCloudRestoreCommand
+    ) async throws -> LibraryTranscriptSnapshot {
+        let snapshot = try await libraryRepository.upsertCloudTranscript(command)
+        objectWillChange.send()
+        return snapshot
+    }
+
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         let result = workflowManager.createTranscript(
             for: recordingId,

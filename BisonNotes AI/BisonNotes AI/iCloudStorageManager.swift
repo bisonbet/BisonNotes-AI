@@ -4905,9 +4905,22 @@ extension iCloudStorageManager {
             summaryRecords = summaryResolution.keptRecords
 
             var recordingsById = [UUID: RecordingEntry]()
+            var transcriptIDsBeforeRestore = [UUID: UUID]()
+            var transcriptTimestampsBeforeRestore = [UUID: Date]()
+            var transcriptionStatusesBeforeRestore = [UUID: String]()
             for recording in appCoordinator.coreDataManager.getAllRecordings() {
                 if let id = recording.id {
                     recordingsById[id] = recording
+                    if let transcriptID = recording.transcriptId ?? recording.transcript?.id {
+                        transcriptIDsBeforeRestore[id] = transcriptID
+                    }
+                    if let transcript = recording.transcript,
+                       let timestamp = localTranscriptContentTimestamp(transcript) {
+                        transcriptTimestampsBeforeRestore[id] = timestamp
+                    }
+                    if let status = recording.transcriptionStatus {
+                        transcriptionStatusesBeforeRestore[id] = status
+                    }
                 }
             }
 
@@ -5085,12 +5098,6 @@ extension iCloudStorageManager {
                         continue
                     }
                 }
-                let entry = existing ?? TranscriptEntry(context: context)
-
-                if existing == nil {
-                    entry.id = transcriptId
-                    result.transcriptsRestored += 1
-                }
 
                 let applyCloudTranscript = existing.map { local in
                     Self.shouldApplyCloudVersion(
@@ -5102,33 +5109,74 @@ extension iCloudStorageManager {
                     )
                 } ?? true
 
-                if applyCloudTranscript {
-                    entry.recordingId = recordingId
-                    entry.engine = record[Self.fieldEngine] as? String
-                    entry.createdAt = record[Self.fieldCreatedAt] as? Date
-                    entry.lastModified = record[Self.fieldLastModified] as? Date
-                    entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
-                    entry.confidence = doubleValue(from: record[Self.fieldConfidence])
-                    entry.segments = record[Self.fieldSegments] as? String
-                    entry.speakerMappings = record[Self.fieldSpeakerMappings] as? String
-                } else {
+                guard applyCloudTranscript else {
                     result.localItemsKeptAsNewer += 1
+                    if let existing {
+                        transcriptsById[transcriptId] = existing
+                    }
+                    continue
+                }
+
+                let restoredTranscript: LibraryTranscriptSnapshot
+                do {
+                    restoredTranscript = try await appCoordinator.upsertCloudTranscriptUsingRepository(
+                        LibraryTranscriptCloudRestoreCommand(
+                            id: transcriptId,
+                            recordingID: recordingId,
+                            createdAt: record[Self.fieldCreatedAt] as? Date,
+                            segments: record[Self.fieldSegments] as? String,
+                            speakerMappings: record[Self.fieldSpeakerMappings] as? String,
+                            engine: record[Self.fieldEngine] as? String,
+                            processingTime: doubleValue(from: record[Self.fieldProcessingTime]),
+                            confidence: doubleValue(from: record[Self.fieldConfidence], defaultValue: 0.5),
+                            lastModified: record[Self.fieldLastModified] as? Date,
+                            expectedLastModified: existing?.lastModified,
+                            observedAt: backupRecordContentTimestamp(
+                                record,
+                                keys: Self.transcriptContentTimestampKeys
+                            ) ?? Date()
+                        )
+                    )
+                } catch let error as LibraryRepositoryError {
+                    if case .staleTranscript = error {
+                        // A local edit won the race after the timestamp
+                        // arbitration above. Leave its row and relationship intact.
+                        result.localItemsKeptAsNewer += 1
+                        continue
+                    }
+                    throw error
+                }
+
+                if existing == nil {
+                    result.transcriptsRestored += 1
+                }
+                guard let entry = appCoordinator.coreDataManager.getTranscript(id: transcriptId) else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "TranscriptEntry",
+                        field: "id"
+                    )
                 }
 
                 if let recordingId, let recording = recordingsById[recordingId] {
-                    entry.recording = recording
+                    let priorTranscriptID = transcriptIDsBeforeRestore[recordingId]
+                    let priorTranscriptTimestamp = transcriptTimestampsBeforeRestore[recordingId]
+                    let priorTranscriptionStatus = transcriptionStatusesBeforeRestore[recordingId]
 
-                    // `existing` is matched on transcript id, so a cloud row with a
-                    // *different* id — the other device deleted and retranscribed —
-                    // arrives with nothing to compare against and would relink the
-                    // recording to the older transcript. Arbitrate against whatever
-                    // the recording currently points at before repointing it.
+                    // The existing row is matched on transcript id, so a cloud row
+                    // with a different id — the other device deleted and
+                    // retranscribed — arrives with nothing to compare against and
+                    // would relink the recording to the older transcript. The
+                    // recording metadata upsert ran first and may have replaced
+                    // only its denormalized transcriptId, so arbitrate against
+                    // the link captured before that metadata phase.
                     if Self.shouldRelinkRestoredRow(
                         candidateId: transcriptId,
-                        candidateTimestamp: localTranscriptContentTimestamp(entry),
-                        linkedId: recording.transcriptId ?? recording.transcript?.id,
-                        linkedTimestamp: recording.transcript.map(localTranscriptContentTimestamp) ?? nil
+                        candidateTimestamp: restoredTranscript.lastModified
+                            ?? restoredTranscript.createdAt,
+                        linkedId: priorTranscriptID,
+                        linkedTimestamp: priorTranscriptTimestamp
                     ) {
+                        entry.recording = recording
                         recording.transcript = entry
                         recording.transcriptId = transcriptId
                         if recording.transcriptionStatus == nil || recording.transcriptionStatus?.isEmpty == true {
@@ -5136,6 +5184,14 @@ extension iCloudStorageManager {
                         }
                     } else {
                         result.localItemsKeptAsNewer += 1
+                        // The cloud recording row was allowed to restore scalar
+                        // metadata before this child was arbitrated. Restore the
+                        // prior pointer/status when the local child remains the
+                        // winner so a rejected child cannot leave a dangling
+                        // denormalized link.
+                        recording.transcriptId = priorTranscriptID
+                        recording.transcript = priorTranscriptID.flatMap { transcriptsById[$0] }
+                        recording.transcriptionStatus = priorTranscriptionStatus
                     }
                 }
 

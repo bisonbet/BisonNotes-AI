@@ -134,7 +134,7 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             recordingLegacyID: relatedLegacyID(
                 from: object,
                 relationship: "recording"
-            ),
+            ) ?? identifier(from: object.value(forKey: "recordingId")),
             segments: object.value(forKey: "segments") as? String,
             speakerMappings: object.value(forKey: "speakerMappings") as? String
         )
@@ -465,6 +465,91 @@ extension CoreDataLibraryRepository {
                 }
 
                 return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
+    func upsertCloudTranscript(
+        _ command: LibraryTranscriptCloudRestoreCommand
+    ) async throws -> LibraryTranscriptSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "TranscriptEntry")
+                request.fetchLimit = 2
+                request.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let matches = try context.fetch(request)
+                guard matches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousTranscript(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                let transcript: NSManagedObject
+                let isNewTranscript: Bool
+                if let existing = matches.first {
+                    let current = try Self.transcriptSnapshot(from: existing)
+                    guard command.expectedLastModified == nil
+                            || command.expectedLastModified == current.lastModified else {
+                        throw LibraryRepositoryError.staleTranscript(
+                            reference: command.id.uuidString.lowercased(),
+                            expected: command.expectedLastModified,
+                            actual: current.lastModified
+                        )
+                    }
+
+                    if let recordingID = command.recordingID {
+                        if let existingRecordingID = existing.value(forKey: "recordingId") as? UUID,
+                           existingRecordingID != recordingID {
+                            throw LibraryRepositoryError.invalidCommand(
+                                "cloud transcript recording identity conflicts with the existing row"
+                            )
+                        }
+                        if let recording = existing.value(forKey: "recording") as? NSManagedObject,
+                           let relatedRecordingID = recording.value(forKey: "id") as? UUID,
+                           relatedRecordingID != recordingID {
+                            throw LibraryRepositoryError.invalidCommand(
+                                "cloud transcript recording relationship conflicts with the existing row"
+                            )
+                        }
+                    }
+
+                    transcript = existing
+                    isNewTranscript = false
+                } else {
+                    transcript = TranscriptEntry(context: context)
+                    transcript.setValue(command.id, forKey: "id")
+                    isNewTranscript = true
+                }
+
+                if let recordingID = command.recordingID {
+                    transcript.setValue(recordingID, forKey: "recordingId")
+                }
+                transcript.setValue(command.createdAt, forKey: "createdAt")
+                transcript.setValue(command.engine, forKey: "engine")
+                transcript.setValue(command.lastModified, forKey: "lastModified")
+                transcript.setValue(command.processingTime, forKey: "processingTime")
+                transcript.setValue(command.confidence, forKey: "confidence")
+                transcript.setValue(command.segments, forKey: "segments")
+                transcript.setValue(command.speakerMappings, forKey: "speakerMappings")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewTranscript {
+                        context.delete(transcript)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud transcript",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.transcriptSnapshot(from: transcript)
             }
         }
     }

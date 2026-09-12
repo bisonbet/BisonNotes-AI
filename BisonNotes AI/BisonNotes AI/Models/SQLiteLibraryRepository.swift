@@ -206,6 +206,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func upsertCloudTranscript(
+        _ command: LibraryTranscriptCloudRestoreCommand
+    ) async throws -> LibraryTranscriptSnapshot {
+        try await withNormalAccess { [store] in
+            try await store.upsertCloudTranscript(command)
+        }
+    }
+
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot {
@@ -2085,6 +2093,149 @@ extension SQLiteLibraryStore {
                 at: command.modifiedAt
             )
 
+            return try Self.fetchUpdatedTranscript(
+                storageID: transcriptStorageID,
+                in: database
+            )
+        }
+    }
+
+    func upsertCloudTranscript(
+        _ command: LibraryTranscriptCloudRestoreCommand
+    ) throws -> LibraryTranscriptSnapshot {
+        try command.validate()
+        let requestedID = command.id.uuidString.lowercased()
+        let stableStorageID = Self.transcriptStorageID(for: command.id)
+        let transcriptColumns = """
+            storageID, confidence, createdAt, engine, id, lastModified,
+            processingTime, recordingStorageID, recordingId, segments,
+            speakerMappings
+            """
+
+        return try databaseQueue.write { database in
+            let rows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(transcriptColumns)
+                FROM transcripts
+                WHERE storageID = ? OR lower(id) = lower(?)
+                ORDER BY storageID
+                LIMIT 2
+                """,
+                arguments: [stableStorageID, requestedID]
+            )
+            guard rows.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousTranscript(reference: requestedID)
+            }
+
+            let transcriptStorageID: String
+            let operation: LibraryChangeOperation
+            if let existingRow = rows.first {
+                let current = try SQLiteLibraryRepositoryMapper.transcript(
+                    from: existingRow
+                )
+                guard let existingID = current.legacyID,
+                      !existingID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "transcripts",
+                        field: "id"
+                    )
+                }
+                guard Self.normalizedID(existingID) == requestedID else {
+                    throw LibraryRepositoryError.transcriptAlreadyExists(
+                        reference: requestedID
+                    )
+                }
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleTranscript(
+                        reference: requestedID,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                if let incomingRecordingID = command.recordingID?.uuidString,
+                   let existingRecordingID = current.recordingLegacyID,
+                   Self.normalizedID(existingRecordingID) != Self.normalizedID(incomingRecordingID) {
+                    throw LibraryRepositoryError.invalidCommand(
+                        "cloud transcript recording identity conflicts with the existing row"
+                    )
+                }
+
+                transcriptStorageID = current.storageID
+                operation = .updated
+            } else {
+                transcriptStorageID = stableStorageID
+                operation = .inserted
+            }
+
+            if operation == .inserted {
+                try database.execute(
+                    sql: """
+                    INSERT INTO transcripts (
+                        storageID, confidence, createdAt, engine, id, lastModified,
+                        processingTime, recordingStorageID, recordingId, segments,
+                        speakerMappings
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        transcriptStorageID,
+                        command.confidence,
+                        command.createdAt?.timeIntervalSinceReferenceDate,
+                        command.engine,
+                        requestedID,
+                        command.lastModified?.timeIntervalSinceReferenceDate,
+                        command.processingTime,
+                        nil,
+                        command.recordingID?.uuidString.lowercased(),
+                        command.segments,
+                        command.speakerMappings
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud transcript",
+                        reason: "the transcript row was not inserted"
+                    )
+                }
+            } else {
+                try database.execute(
+                    sql: """
+                    UPDATE transcripts
+                    SET confidence = ?, createdAt = ?, engine = ?, lastModified = ?,
+                        processingTime = ?, recordingId = COALESCE(?, recordingId),
+                        segments = ?, speakerMappings = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.confidence,
+                        command.createdAt?.timeIntervalSinceReferenceDate,
+                        command.engine,
+                        command.lastModified?.timeIntervalSinceReferenceDate,
+                        command.processingTime,
+                        command.recordingID?.uuidString.lowercased(),
+                        command.segments,
+                        command.speakerMappings,
+                        transcriptStorageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud transcript",
+                        reason: "the transcript row was not updated"
+                    )
+                }
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .transcript,
+                storageID: transcriptStorageID,
+                operation: operation,
+                at: command.observedAt
+            )
             return try Self.fetchUpdatedTranscript(
                 storageID: transcriptStorageID,
                 in: database

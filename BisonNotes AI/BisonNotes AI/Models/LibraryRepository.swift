@@ -469,6 +469,75 @@ extension LibraryRecordingAudioLinkCommand {
     }
 }
 
+/// Applies the scalar metadata carried by a CloudKit transcript backup record.
+///
+/// CloudKit backup records from older app versions can omit transcript fields,
+/// so the command keeps those values optional and does not require a segments
+/// payload. The repository owns identity and revision checks, but deliberately
+/// leaves Core Data/SQLite relationships for the restore relationship phase.
+struct LibraryTranscriptCloudRestoreCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingID: UUID?
+    let createdAt: Date?
+    let segments: String?
+    let speakerMappings: String?
+    let engine: String?
+    let processingTime: Double
+    let confidence: Double
+    let lastModified: Date?
+    let expectedLastModified: Date?
+    let observedAt: Date
+
+    init(
+        id: UUID,
+        recordingID: UUID?,
+        createdAt: Date?,
+        segments: String?,
+        speakerMappings: String?,
+        engine: String?,
+        processingTime: Double = 0,
+        confidence: Double = 0.5,
+        lastModified: Date?,
+        expectedLastModified: Date? = nil,
+        observedAt: Date = Date()
+    ) {
+        self.id = id
+        self.recordingID = recordingID
+        self.createdAt = createdAt
+        self.segments = segments
+        self.speakerMappings = speakerMappings
+        self.engine = engine
+        self.processingTime = processingTime
+        self.confidence = confidence
+        self.lastModified = lastModified
+        self.expectedLastModified = expectedLastModified
+        self.observedAt = observedAt
+    }
+}
+
+extension LibraryTranscriptCloudRestoreCommand {
+    func validate() throws {
+        guard processingTime.isFinite, processingTime >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud transcript processing time must be finite and non-negative"
+            )
+        }
+        guard confidence.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud transcript confidence must be finite"
+            )
+        }
+
+        let dates = [createdAt, lastModified, expectedLastModified, observedAt]
+            .compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud transcript dates must be finite"
+            )
+        }
+    }
+}
+
 /// Removes a newly-created recording when a multi-step import cannot finish.
 ///
 /// This is intentionally narrower than user deletion: it refuses to remove a
@@ -1721,6 +1790,9 @@ protocol LibraryRepository: Sendable {
     func upsertTranscript(
         _ command: LibraryTranscriptUpsertCommand
     ) async throws -> LibraryTranscriptSnapshot
+    func upsertCloudTranscript(
+        _ command: LibraryTranscriptCloudRestoreCommand
+    ) async throws -> LibraryTranscriptSnapshot
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot
@@ -1755,6 +1827,7 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case staleRecording(reference: String, expected: Date?, actual: Date?)
     case transcriptAlreadyExists(reference: String)
     case ambiguousTranscript(reference: String)
+    case staleTranscript(reference: String, expected: Date?, actual: Date?)
     case summaryAlreadyExists(reference: String)
     case ambiguousSummary(reference: String)
     case transcriptNotFound(reference: String)
@@ -1790,6 +1863,10 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The transcript already exists: \(reference)"
         case .ambiguousTranscript(let reference):
             return "The transcript identity is ambiguous: \(reference)"
+        case .staleTranscript(let reference, let expected, let actual):
+            return "The transcript changed before it could be updated (\(reference)); "
+                + "expected last modified \(String(describing: expected)), "
+                + "found \(String(describing: actual))."
         case .summaryAlreadyExists(let reference):
             return "The summary already exists: \(reference)"
         case .ambiguousSummary(let reference):
