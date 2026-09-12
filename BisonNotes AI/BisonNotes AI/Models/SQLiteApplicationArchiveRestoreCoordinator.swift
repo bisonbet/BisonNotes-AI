@@ -11,6 +11,12 @@ enum SQLiteApplicationArchiveRestoreError: LocalizedError, Equatable, Sendable {
     }
 }
 
+enum SQLiteArchiveRestoreLifecycle {
+    static let retryRequested = Notification.Name(
+        "BisonNotes.SQLiteArchiveRestoreRetryRequested"
+    )
+}
+
 /// Connects the root-relative archive journal to application-owned paths.
 ///
 /// This coordinator does not choose a live library backend. Callers supply the

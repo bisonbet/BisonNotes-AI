@@ -146,7 +146,7 @@ class RecordingArchiveService: ObservableObject {
             let coordinator = appCoordinator
             let mapping = dependencies.mapping
             let snapshotMap = snapshotsByID
-            return try await dependencies.runtime.reconcilePending(
+            let report = try await dependencies.runtime.reconcilePending(
                 maxOperations: maxOperations,
                 rootAccessForOperation: { operation in
                     guard let snapshot = snapshotMap[operation.archiveLocationID.lowercased()] else {
@@ -174,6 +174,10 @@ class RecordingArchiveService: ObservableObject {
                     )
                 }
             )
+            if report.selectedOperationCount > report.completedOperationCount {
+                requestArchiveRestoreRetry()
+            }
+            return report
         } catch is CancellationError {
             return nil
         } catch {
@@ -473,25 +477,38 @@ class RecordingArchiveService: ObservableObject {
             destinationRelativePath: destinationRelativePath
         )
         let coordinator = appCoordinator
-        let completed = try await dependencies.runtime.restore(
-            request,
-            rootAccess: SQLiteArchiveRestoreRootAccess(
-                rootRegistry: sourceRegistry,
-                securityScopedBookmarkLease: resolvedSource.securityScopedBookmarkLease
-            ),
-            metadataCommit: { operation, localURL in
-                try await Self.commitArchiveRestoreMetadata(
-                    operation,
-                    destinationURL: localURL,
-                    documentsRoot: try Self.documentsRoot(from: dependencies.mapping),
-                    using: coordinator
-                )
-            }
-        )
+        let completed: SQLiteArchiveRestoreOperation
+        do {
+            completed = try await dependencies.runtime.restore(
+                request,
+                rootAccess: SQLiteArchiveRestoreRootAccess(
+                    rootRegistry: sourceRegistry,
+                    securityScopedBookmarkLease: resolvedSource.securityScopedBookmarkLease
+                ),
+                metadataCommit: { operation, localURL in
+                    try await Self.commitArchiveRestoreMetadata(
+                        operation,
+                        destinationURL: localURL,
+                        documentsRoot: try Self.documentsRoot(from: dependencies.mapping),
+                        using: coordinator
+                    )
+                }
+            )
+        } catch {
+            requestArchiveRestoreRetry()
+            throw error
+        }
 
         return try dependencies.mapping.registry.destinationURL(
             root: completed.destinationRoot,
             relativePath: completed.destinationRelativePath
+        )
+    }
+
+    private func requestArchiveRestoreRetry() {
+        NotificationCenter.default.post(
+            name: SQLiteArchiveRestoreLifecycle.retryRequested,
+            object: nil
         )
     }
 

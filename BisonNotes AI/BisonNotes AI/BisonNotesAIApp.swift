@@ -22,6 +22,11 @@ import Darwin
 
 @main
 struct BisonNotesAIApp: App {
+    #if os(iOS)
+    private static let archiveRestoreBackgroundTaskIdentifier =
+        "com.bisonai.archive-restore"
+    #endif
+
     let persistenceController = PersistenceController.shared
     @StateObject private var appCoordinator = AppDataCoordinator()
     @StateObject private var recorderVM = AudioRecorderViewModel()
@@ -824,6 +829,15 @@ struct BisonNotesAIApp: App {
                     appCoordinator.observeNetworkRestorationForiCloud()
                     appCoordinator.reconcileiCloudIfEnabled(reason: .appLaunch, force: true)
                 }
+                #if os(iOS)
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: SQLiteArchiveRestoreLifecycle.retryRequested
+                    )
+                ) { _ in
+                    scheduleArchiveRestoreBackgroundTask()
+                }
+                #endif
                 .onOpenURL(perform: handleOpenURL)
                 #if os(iOS)
                 // iOS can kill a backgrounded app without ever sending willTerminate, so
@@ -858,6 +872,11 @@ struct BisonNotesAIApp: App {
                     scanSharedContainerForImports(trigger: .pendingToken)
                     // Also scan Documents/Inbox/ for files from "Open In" / document interaction.
                     scanInboxForImportableFiles()
+                    Task { @MainActor in
+                        RecordingArchiveService.shared.setCoordinator(appCoordinator)
+                        _ = await RecordingArchiveService.shared
+                            .reconcilePendingArchiveRestoresUsingRepository()
+                    }
                     // Not forced: the launch pass is usually still running, and an
                     // activation with nothing pending has nothing to do.
                     appCoordinator.reconcileiCloudIfEnabled(reason: .appBecameActive)
@@ -1330,6 +1349,17 @@ struct BisonNotesAIApp: App {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.bisonai.app-refresh", using: nil) { task in
             handleAppRefresh(task: task as! BGAppRefreshTask)
         }
+
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.archiveRestoreBackgroundTaskIdentifier,
+            using: nil
+        ) { task in
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            handleArchiveRestoreBackgroundProcessing(task: processingTask)
+        }
         #endif
         // macOS: no BGTaskScheduler — the app keeps running; jobs continue in-process.
     }
@@ -1345,6 +1375,58 @@ struct BisonNotesAIApp: App {
     }
 
     #if os(iOS)
+    private func scheduleArchiveRestoreBackgroundTask() {
+        let request = BGProcessingTaskRequest(
+            identifier: Self.archiveRestoreBackgroundTaskIdentifier
+        )
+        request.requiresNetworkConnectivity = false
+        request.requiresExternalPower = false
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 30)
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            AppLog.shared.general("Scheduled background archive restore retry")
+        } catch {
+            AppLog.shared.general(
+                "Failed to schedule background archive restore retry: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func handleArchiveRestoreBackgroundProcessing(task: BGProcessingTask) {
+        AppLog.shared.general("Background archive restore retry started")
+
+        let workTask = Task { @MainActor in
+            RecordingArchiveService.shared.setCoordinator(appCoordinator)
+            let report = await RecordingArchiveService.shared
+                .reconcilePendingArchiveRestoresUsingRepository(maxOperations: 2)
+            if Task.isCancelled {
+                task.setTaskCompleted(success: false)
+                return
+            }
+
+            let succeeded = report.map {
+                $0.failedOperationCount == 0
+            } ?? true
+            if !succeeded {
+                scheduleArchiveRestoreBackgroundTask()
+            }
+            task.setTaskCompleted(success: succeeded)
+            AppLog.shared.general(
+                "Background archive restore retry completed (success: \(succeeded))"
+            )
+        }
+
+        task.expirationHandler = {
+            workTask.cancel()
+            AppLog.shared.general(
+                "Background archive restore retry expired",
+                level: .error
+            )
+        }
+    }
+
     private func handleBackgroundProcessing(task: BGProcessingTask) {
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
