@@ -821,6 +821,15 @@ class AppDataCoordinator: ObservableObject {
         return snapshot
     }
 
+    @discardableResult
+    func upsertArchiveLocationUsingRepository(
+        _ command: LibraryArchiveLocationUpsertCommand
+    ) async throws -> LibraryArchiveLocationSnapshot {
+        let snapshot = try await libraryRepository.upsertArchiveLocation(command)
+        objectWillChange.send()
+        return snapshot
+    }
+
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         _ = try await libraryRepository.setCloudSyncDisabled(

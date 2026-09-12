@@ -1138,22 +1138,39 @@ struct RecordingsListView: View {
 
     private func completeArchiveExport(exportedURLs: [URL]?) {
         showingArchiveExportPicker = false
-        if let exportedURLs {
-            let archivedCount = RecordingArchiveService.shared.archiveRecordings(
-                recordingsToArchive,
-                removeLocal: removeLocalAfterArchive,
-                exportedURLs: exportedURLs
-            )
-            if archivedCount == 0 {
-                archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
-            }
-            isSelectionMode = false
-            selectedRecordings.removeAll()
-            loadRecordings()
+        guard let exportedURLs else {
+            recordingsToArchive = []
+            archiveExportURLs = []
+            RecordingArchiveService.shared.cleanupArchiveStaging()
+            return
         }
-        recordingsToArchive = []
-        archiveExportURLs = []
-        RecordingArchiveService.shared.cleanupArchiveStaging()
+
+        let recordings = recordingsToArchive
+        let removeLocal = removeLocalAfterArchive
+        Task { @MainActor in
+            defer {
+                recordingsToArchive = []
+                archiveExportURLs = []
+                RecordingArchiveService.shared.cleanupArchiveStaging()
+            }
+
+            do {
+                let archivedCount = try await RecordingArchiveService.shared.archiveRecordings(
+                    recordings,
+                    removeLocal: removeLocal,
+                    exportedURLs: exportedURLs
+                )
+                if archivedCount == 0 {
+                    archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
+                } else {
+                    isSelectionMode = false
+                    selectedRecordings.removeAll()
+                    loadRecordings()
+                }
+            } catch {
+                archiveRestoreError = error.localizedDescription
+            }
+        }
     }
 
     private func completeAudioExport(success: Bool) {

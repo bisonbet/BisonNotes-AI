@@ -29,17 +29,26 @@ struct RecordingArchiveLocationInfo: Identifiable, Equatable {
     }
 }
 
+private struct ArchiveLocationCandidate {
+    let recordingID: UUID
+    let command: LibraryArchiveLocationUpsertCommand
+}
+
 enum RecordingArchiveError: LocalizedError {
+    case persistenceUnavailable
     case noArchiveLocation
     case locationNotFound
     case unableToResolveLocation
     case sourceMissing(String)
     case copyFailed(String)
     case deleteFailed(String)
+    case localCleanupFailed(String)
     case invalidAudio(String)
 
     var errorDescription: String? {
         switch self {
+        case .persistenceUnavailable:
+            return "Archive storage is not ready. Please try again after the library finishes loading."
         case .noArchiveLocation:
             return "No archive location is saved for this recording."
         case .locationNotFound:
@@ -52,6 +61,8 @@ enum RecordingArchiveError: LocalizedError {
             return "Could not download archived audio: \(reason)"
         case .deleteFailed(let reason):
             return "Downloaded audio, but could not remove the archived copy: \(reason)"
+        case .localCleanupFailed(let reason):
+            return "The recording was archived, but its local audio could not be removed: \(reason)"
         case .invalidAudio(let reason):
             return "Downloaded file is not valid audio: \(reason)"
         }
@@ -74,6 +85,15 @@ class RecordingArchiveService: ObservableObject {
         PersistenceController.shared.container.viewContext
     }
 
+    /// The coordinator owns the storage-neutral repository bridge. Keep this
+    /// weak so the singleton service does not extend the app coordinator's
+    /// lifetime or create a retain cycle during previews and teardown.
+    private weak var appCoordinator: AppDataCoordinator?
+
+    func setCoordinator(_ coordinator: AppDataCoordinator) {
+        appCoordinator = coordinator
+    }
+
     // MARK: - Archive Recordings
 
     /// Mark recordings as archived and optionally remove local audio files.
@@ -81,64 +101,91 @@ class RecordingArchiveService: ObservableObject {
     /// New archive destinations are limited to iCloud Drive; older saved
     /// locations from previous builds can still be restored.
     @discardableResult
-    func archiveRecordings(_ recordings: [RecordingEntry], removeLocal: Bool, exportedURLs: [URL] = []) -> Int {
-        let context = viewContext
+    func archiveRecordings(
+        _ recordings: [RecordingEntry],
+        removeLocal: Bool,
+        exportedURLs: [URL] = []
+    ) async throws -> Int {
+        guard let appCoordinator else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+
         let now = Date()
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         let dateString = formatter.string(from: now)
-        let savedLocations = recordArchiveLocations(for: recordings, exportedURLs: exportedURLs, exportedAt: now)
-        let savedByRecordingId = Dictionary(grouping: savedLocations, by: \.recordingId)
+        let locationCandidates = recordArchiveLocationCandidates(
+            for: recordings,
+            exportedURLs: exportedURLs,
+            exportedAt: now
+        )
+        let savedByRecordingId = Dictionary(grouping: locationCandidates, by: \.recordingID)
 
         var archivedCount = 0
+        var firstError: Error?
         for recording in recordings {
             guard let recordingId = recording.id,
                   let locations = savedByRecordingId[recordingId],
                   !locations.isEmpty else {
-                recording.lastModified = now
                 AppLog.shared.recording("Archive: not marking \(recording.recordingName ?? "unknown") archived because no destination URL was saved", level: .error)
                 continue
             }
 
-            recording.isArchived = true
-            recording.archivedAt = now
-            let firstLocation = locations[0]
-            let locationCount = locations.count
-            if locationCount > 1 {
-                recording.archiveNote = "Exported to \(locationCount) locations on \(dateString)"
-            } else {
-                recording.archiveNote = "Exported to \(firstLocation.providerDisplayName) on \(dateString)"
-            }
-            recording.lastModified = now
-            archivedCount += 1
-
-            if removeLocal, let urlString = recording.recordingURL {
-                let fileURL = Self.resolveLocalURL(from: urlString)
-
-                if let url = fileURL, FileManager.default.fileExists(atPath: url.path) {
-                    do {
-                        try FileManager.default.removeItem(at: url)
-                        AppLog.shared.recording("Archived: removed local audio \(url.lastPathComponent)")
-                    } catch {
-                        AppLog.shared.recording("Archived: failed to remove local audio: \(error.localizedDescription)", level: .error)
-                    }
-                    // Clean up sidecar files alongside the audio
-                    for ext in ["location", "recordingmeta"] {
-                        let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
-                        try? FileManager.default.removeItem(at: sidecarURL)
-                    }
+            do {
+                // Persist the external location before changing archive state.
+                // Both repository operations are independently retryable: a
+                // lost acknowledgement can reuse the existing location row,
+                // and the archive-state command is idempotent for the recording.
+                for location in locations {
+                    _ = try await appCoordinator.upsertArchiveLocationUsingRepository(location.command)
                 }
+
+                let firstProvider = locations[0].command.providerDisplayName ?? "External Storage"
+                let archiveNote: String
+                if locations.count > 1 {
+                    archiveNote = "Exported to \(locations.count) locations on \(dateString)"
+                } else {
+                    archiveNote = "Exported to \(firstProvider) on \(dateString)"
+                }
+                _ = try await appCoordinator.setRecordingArchiveState(
+                    recordingId: recordingId,
+                    archived: true,
+                    archivedAt: now,
+                    archiveNote: archiveNote,
+                    modifiedAt: now
+                )
+                archivedCount += 1
+
+                // Metadata commits first. If local cleanup fails, the recording
+                // remains archived with its URL intact and can be retried.
+                if removeLocal, let urlString = recording.recordingURL {
+                    try removeLocalAudio(storedURL: urlString)
+                }
+            } catch {
+                firstError = firstError ?? error
+                AppLog.shared.recording(
+                    "Archive: failed to persist or clean up \(recording.recordingName ?? "unknown"): \(error.localizedDescription)",
+                    level: .error
+                )
             }
         }
 
-        do {
-            try context.save()
-            AppLog.shared.recording("Archived \(archivedCount) of \(recordings.count) recording(s), removeLocal=\(removeLocal)")
-        } catch {
-            AppLog.shared.recording("Failed to save archive state: \(error.localizedDescription)", level: .error)
+        AppLog.shared.recording("Archived \(archivedCount) of \(recordings.count) recording(s), removeLocal=\(removeLocal)")
+        if let firstError {
+            throw firstError
         }
-
         return archivedCount
+    }
+
+    private func removeLocalAudio(storedURL: String) throws {
+        do {
+            let removed = try LibraryImportedAudioFileStore.remove(storedURL: storedURL)
+            if removed, let url = Self.resolveLocalURL(from: storedURL) {
+                AppLog.shared.recording("Archived: removed local audio \(url.lastPathComponent)")
+            }
+        } catch {
+            throw RecordingArchiveError.localCleanupFailed(error.localizedDescription)
+        }
     }
 
     // MARK: - Query
@@ -340,7 +387,11 @@ class RecordingArchiveService: ObservableObject {
         }
     }
 
-    private func recordArchiveLocations(for recordings: [RecordingEntry], exportedURLs: [URL], exportedAt: Date) -> [RecordingArchiveLocationInfo] {
+    private func recordArchiveLocationCandidates(
+        for recordings: [RecordingEntry],
+        exportedURLs: [URL],
+        exportedAt: Date
+    ) -> [ArchiveLocationCandidate] {
         guard !exportedURLs.isEmpty else { return [] }
 
         let exportCandidates = expandedExportedURLs(for: recordings, exportedURLs: exportedURLs)
@@ -351,7 +402,7 @@ class RecordingArchiveService: ObservableObject {
             }
         )
 
-        var saved: [RecordingArchiveLocationInfo] = []
+        var saved: [ArchiveLocationCandidate] = []
         for url in exportCandidates {
             guard let parsed = Self.parseArchiveToken(fromFilename: url.lastPathComponent),
                   let recording = recordingsByToken[parsed.token],
@@ -372,20 +423,6 @@ class RecordingArchiveService: ObservableObject {
                 continue
             }
 
-            let existingObject = archiveLocationObject(recordingId: recordingId, destinationURL: url)
-            let locationObject = existingObject
-                ?? NSEntityDescription.insertNewObject(forEntityName: Self.archiveLocationEntityName, into: viewContext)
-
-            locationObject.setValue((locationObject.value(forKey: "id") as? UUID) ?? UUID(), forKey: "id")
-            locationObject.setValue(recordingId, forKey: "recordingId")
-            locationObject.setValue(Self.providerDisplayName(for: url), forKey: "providerDisplayName")
-            locationObject.setValue(Self.displayName(for: url), forKey: "displayName")
-            locationObject.setValue(url.lastPathComponent, forKey: "exportedFilename")
-            locationObject.setValue(url.absoluteString, forKey: "destinationURLString")
-            locationObject.setValue(exportedAt, forKey: "exportedAt")
-            locationObject.setValue(exportedAt, forKey: "lastVerifiedAt")
-            locationObject.setValue(Self.statusAvailable, forKey: "status")
-
             // Persist a security-scoped bookmark so sandbox access survives
             // app launches. Native macOS requires the
             // explicit option; on iOS the picker-granted scope is retained.
@@ -403,21 +440,33 @@ class RecordingArchiveService: ObservableObject {
             )
 
             if bookmarkData == nil && !FileManager.default.fileExists(atPath: url.path) {
-                if existingObject == nil {
-                    viewContext.delete(locationObject)
-                }
                 AppLog.shared.recording("Archive: skipped untrackable destination URL \(url.lastPathComponent)", level: .error)
                 continue
             }
-            locationObject.setValue(bookmarkData, forKey: "bookmarkData")
 
             let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64)
                 ?? recording.fileSize
-            locationObject.setValue(size, forKey: "fileSize")
-
-            if let info = Self.locationInfo(from: locationObject) {
-                saved.append(info)
-            }
+            saved.append(
+                ArchiveLocationCandidate(
+                    recordingID: recordingId,
+                    command: LibraryArchiveLocationUpsertCommand(
+                        id: UUID(),
+                        recordingReference: LibraryRecordingReference(
+                            legacyID: recordingId.uuidString
+                        ),
+                        bookmarkData: bookmarkData,
+                        destinationURLString: url.absoluteString,
+                        displayName: Self.displayName(for: url),
+                        exportedAt: exportedAt,
+                        exportedFilename: url.lastPathComponent,
+                        fileSize: size,
+                        lastVerifiedAt: exportedAt,
+                        providerDisplayName: Self.providerDisplayName(for: url),
+                        status: Self.statusAvailable,
+                        modifiedAt: exportedAt
+                    )
+                )
+            )
         }
 
         return saved

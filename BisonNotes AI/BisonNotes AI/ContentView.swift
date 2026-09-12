@@ -459,6 +459,10 @@ struct ContentView: View {
                     // Set up the enhanced file manager with the coordinator
                     EnhancedFileManager.shared.setCoordinator(appCoordinator)
 
+                    // Route archive metadata writes through the storage-neutral
+                    // repository while Core Data remains the active adapter.
+                    RecordingArchiveService.shared.setCoordinator(appCoordinator)
+
                     // Add a small delay to ensure everything is properly set up
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
 
