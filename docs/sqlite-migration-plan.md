@@ -528,6 +528,21 @@ app/test compilation by the pre-existing Watch Widget `accessoryCorner`
 availability error; no signed device, live user store or live CloudKit account
 was used.
 
+The current OS-managed media retry checkpoint is `9557c09f` (`feat: schedule
+durable media reconciliation`). An eligible Watch or Share/Inbox journal
+request, and any bounded activation retry that still has work, now requests the
+permitted iOS `BGProcessingTask` identifier
+`com.bisonai.media-reconciliation`. The handler reconciles at most eight media
+operations and receipt-gated source removals per pass, cancels on expiration,
+and schedules a follow-up when work remains; native macOS continues to use
+activation retry because it has no `BGTaskScheduler`. This establishes the
+production scheduling boundary but is not signed-device evidence: delivery,
+expiration timing, power behavior, retry metrics and final media-root selection
+still require qualification. The full standalone suite passes 132/132 and the
+macOS app-hosted build-for-testing check passes; the iOS scheme remains blocked
+by the pre-existing Watch Widget `accessoryCorner` availability error. No
+SQLite cutover or live user data was used.
+
 The current recording metadata-edit checkpoint is `ed898703` (`feat: route
 recording metadata edits through repository`). `LibraryRecordingDateUpdateCommand`
 and `LibraryRecordingLocationUpdateCommand` validate finite dates, coordinates
@@ -1052,27 +1067,27 @@ Not yet implemented or closed:
   checked-in original and active v2 compiled models with synthetic rows.
 - Share/background caller gates and the remaining file-operation/media
   integration: final production root selection for post-cutover media,
-  source-retention scheduling beyond activation retries, and startup
-  progress-screen wiring. Watch intake and Share/Inbox audio imports now use
+  signed-device background delivery/expiration validation, retry observability,
+  and startup progress-screen wiring. Watch intake and Share/Inbox audio imports now use
   the generic media transfer/receipt/retention boundary; failed or unsupported
   inbox sources remain available for retry. External document-picker/web
   imports, video extraction, archive-token restores and other file-owning paths
   still need explicit journal or exclusion decisions. Provider archive restore
   is journaled in production through the existing Documents path with bounded
   startup/activation retry and a dedicated iOS processing-task request.
-  Signed-device scheduling validation, generic background-media scheduling,
+  Signed-device scheduling delivery/expiration validation, retry metrics,
   and final SQLite media-root selection remain open.
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
 The next safe work package is to finish the production media lifecycle around
 the now-journaled provider restore, Watch intake and Share/Inbox audio path:
-qualify signed-device background delivery, define the final app-owned media
-roots, add bounded background scheduling and decide the remaining direct
-file-owning callers. The provider restore retry pass is now bounded
-startup/activation work plus a dedicated iOS processing-task request, and the
-first-boot progress screen remains an injected presentation seam; neither
-selects SQLite or starts a live migration.
+qualify signed-device background delivery and expiration behavior, add retry
+observability, define the final app-owned media roots, and decide the remaining
+direct file-owning callers. The provider restore and generic media retry passes
+are now bounded startup/activation work plus dedicated iOS processing-task
+requests, and the first-boot progress screen remains an injected presentation
+seam; neither selects SQLite or starts a live migration.
 Then expand the remaining metadata commands and convert additional non-startup callers behind the Core Data adapter with
 shared behavior tests; the production recording-creation callers now share one
 repository commit boundary, while the synchronous test/legacy helper remains
@@ -1087,7 +1102,7 @@ install the maintenance gate around every remaining direct source mutation.
 The repository-backed production paths now share the gate; direct managed-
 object, settings, remaining file-owning and sync callers still need conversion
 or an explicit safe exclusion. In parallel, select the final production roots,
-add OS background scheduling and metrics, and extend the media worker, receipt
+validate OS background scheduling, add retry metrics, and extend the media worker, receipt
 boundary, retention executor and bounded reconciler to any remaining eligible
 media callers without allowing them into first-boot activation yet. Close the
 remaining Phase 0/1 evidence and caller-gate gaps.
@@ -1630,10 +1645,10 @@ or task unless the owner requests it.
 | 1: Safety prerequisites | `Persistence.swift`, `BisonNotesAIApp.swift`, `ContentView.swift`, `AppDataCoordinator`, cleanup/troubleshooting and Watch receipt/retention paths: explicit storage health, startup gate, throwing critical reads, durable failure behavior. **In progress:** the cancellation-safe gate and disposable source harness exist; gate adoption by Core Data, settings, Watch, extension and background callers remains open. | Open/read/save failure never looks like empty success, triggers cleanup, acknowledges a lost import or accepts ephemeral "saved" data; existing behavior suites pass. |
 | 2: Recovery and media safety | New durable migration checkpoints, source snapshot/validation services, a candidate app-owned logical media-root mapping, checksum-bound transfer and archive-restore planners, bounded restartable background reconcilers, receipt-gated source retention, a schema-v6 provider archive-restore journal/worker and a schema-v8 generic media metadata-acknowledgement/descriptor gate now accompany the isolated root-relative media operations. The provider restore journal is connected to the production archive caller through the existing Documents path with bounded startup/activation retry and a dedicated iOS processing-task request; the Watch and Share/Inbox audio callers now use persistent/stable source handling, the generic transfer journal and activation retry, while signed-device scheduling validation, final production root selection, recovery UI and attachment/archive/file-service adaptation remain. Keep Core Data authoritative. Do not add an app export/restore package. | Metadata source/candidate recovery across crash, kill, low-space and malformed input; bounded background media reconciliation; current library preserved on every failure. |
 | 3: Repository boundary | **Started:** immutable snapshots for all six metadata entities, typed allowlisted settings adapters, recording rename, date/location, archive-state, archive-location and cloud-sync commands, transcript and summary upserts, processing-job create/update/delete, terminal-cleanup and crash-recovery commands, full-recording and preserve-summary deletion commands, Core Data and SQLite adapters, durable SQLite/Core Data observation adapters, the read-only Core Data migration source reader, and disposable contract tests are in place. `AudioPlayerView`, `SummaryDetailView`, `EditableTranscriptView` and summary-regeneration paths now use the Core Data adapter for display-name-only writes; recording date/location edits in `SummaryDetailView` now use repository commands through `AppDataCoordinator`; synchronous background job creation, asynchronous status/reconciliation, terminal cleanup and startup crash reconciliation use the processing-job adapter; production transcription persistence uses the transcript-upsert adapter, background summarization plus summary regeneration use the summary-upsert adapter, and whole-recording plus preserve-summary deletion callers use the coordinator bridge. Inbound whole-recording, transcript, summary and imported-audio CloudKit tombstones now use repository deletion transactions with idempotent missing-target handling; imported-audio file cleanup is storage-neutral and retry-safe. Archive metadata and verified archive-location persistence now have repository commands, archive export completion uses them with ordered local cleanup, and provider archive restore uses guarded repository metadata plus a version-6 durable journal, bookmark lease and bounded startup retry through the existing Documents path. The normal recorder completion, interruption/unprocessed recovery, segment merge, live-transcription, native-Mac finalization, Watch intake and recording-combine callers now use `AppDataCoordinator.createRecordingUsingRepository`; the synchronous `addRecording` helper remains only for test fixtures and legacy compatibility. Startup subscription, file-owning commands, and the remaining `AppDataCoordinator`, `RecordingWorkflowManager`, imports/archive services, UI, cloud store access, fixtures and previews remain. | Core Data backend passes unchanged behavior plus shared repository contract tests. Managed objects/contexts confined to adapters and the legacy importer; all callers/targets audited. |
-| 4: SQLite backend | **Started:** the isolated SQLite adapter now has a durable v3 change log for the first rename/settings/processing-job writes, cursor/reopen tests, schema-v4 source-transfer identity, schema-v6 provider archive-restore phases including owner revision, schema-v8 generic media metadata acknowledgement plus bounded caller descriptors, root-relative media and archive-restore journals/workers with checksum validation, idempotent import-receipt/retention boundaries, candidate application roots, bookmark-scoped archive planning, serialized background reconcilers and guarded source-retention execution. Extend it into the complete repository implementation, final production root selection, OS background scheduling and metrics using the pinned GRDB product. Watch and Share/Inbox audio callers are now journaled pre-cutover with Documents publication and activation retry. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; all transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
+| 4: SQLite backend | **Started:** the isolated SQLite adapter now has a durable v3 change log for the first rename/settings/processing-job writes, cursor/reopen tests, schema-v4 source-transfer identity, schema-v6 provider archive-restore phases including owner revision, schema-v8 generic media metadata acknowledgement plus bounded caller descriptors, root-relative media and archive-restore journals/workers with checksum validation, idempotent import-receipt/retention boundaries, candidate application roots, bookmark-scoped archive planning, serialized background reconcilers and guarded source-retention execution. Extend it into the complete repository implementation, final production root selection, signed-device scheduling validation and retry metrics using the pinned GRDB product. Watch and Share/Inbox audio callers are now journaled pre-cutover with Documents publication, activation retry and an iOS processing-task request. Add dependency/project configuration for iOS/native macOS only unless another target truly needs it. | Shared contract suite passes on both disk-backed backends; all transactions/constraints/observation/fault tests pass; measured performance gate met. No user cutover. |
 | 5: Import / verifier | The model-aware read-only Core Data source reader, explicit Core Data-plus-settings input boundary, lossless row map, importer, validation, recovery reports, resumable metadata/settings coordinator and disposable source-backed gate harness are now isolated foundations; production source/settings acquisition and the production state machine remain open. | Both source models plus skipped-version legacy fixtures migrate; every transition survives process kill; anomalies block safely; no cloud side effects. |
 | 6: Shadow qualification | Read-only SQLite comparisons from a frozen source snapshot; retain Core Data as sole authority. Store per-field mismatch reports without content leakage. | Zero unexplained mismatches across representative fixtures/libraries. If legacy writes resume, candidate invalidated/rebuilt; do not pretend it remains current. |
-| 7: Guarded activation | Bootstrap generation selection, first-boot migration presentation state/view model/screen and error/progress recovery, stale-worker rejection, fresh-install SQLite path, mixed-version cloud testing and background media reconciliation. The provider archive journal has a dedicated iOS processing-task registration plus activation retry, but signed-device delivery/expiration validation and generic media scheduling remain. | Full automated matrix plus signed hardware/device-backup/upgrade/CloudKit gates pass; forward-fix and platform restore drill performed. Opt-in internal cohort first. |
+| 7: Guarded activation | Bootstrap generation selection, first-boot migration presentation state/view model/screen and error/progress recovery, stale-worker rejection, fresh-install SQLite path, mixed-version cloud testing and background media reconciliation. The provider archive and generic media journals have dedicated iOS processing-task registrations plus activation retry, but signed-device delivery/expiration validation and retry metrics remain. | Full automated matrix plus signed hardware/device-backup/upgrade/CloudKit gates pass; forward-fix and platform restore drill performed. Opt-in internal cohort first. |
 | 8: Rollout / retention | Internal → opt-in beta → small release cohort → wider release, with evidence at each expansion. Retain legacy recovery copies/models and backends as required. | Any unexplained loss, corruption, privacy regression, resurrection or divergence stops expansion. A rollout flag only prevents new migrations; it never flips active users to stale Core Data. |
 | 9: Later simplification | Remove runtime Core Data only after imports from supported historical releases still work; separately consider sync protocol enhancements and notes/attachment sync. | No unresolved ledger/test gaps. Keep model-reader compatibility and platform-backup compatibility for supported users; removal is not a prerequisite for migration success. |
 
