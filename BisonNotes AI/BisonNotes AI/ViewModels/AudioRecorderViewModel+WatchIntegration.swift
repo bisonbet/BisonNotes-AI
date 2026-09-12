@@ -47,6 +47,7 @@ extension AudioRecorderViewModel {
 		AppLog.shared.watchConnectivity("Received synchronized recording from watch: \(syncRequest.recordingId)")
 
 		Task {
+			var permanentURL: URL?
 			do {
 				// Create a permanent file in Documents directory with iPhone app naming pattern
 				guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -56,12 +57,13 @@ extension AudioRecorderViewModel {
 				// Generate iPhone-style filename but keep original filename for display name
 				let timestamp = syncRequest.createdAt.timeIntervalSince1970
 				let iPhoneStyleFilename = "apprecording-\(Int(timestamp)).m4a"
-				let permanentURL = documentsURL.appendingPathComponent(iPhoneStyleFilename)
+				let destinationURL = documentsURL.appendingPathComponent(iPhoneStyleFilename)
+				permanentURL = destinationURL
 
-				try audioData.write(to: permanentURL)
-				AppFileProtection.apply(to: permanentURL)
+				try audioData.write(to: destinationURL)
+				AppFileProtection.apply(to: destinationURL)
 
-				// Create Core Data entry
+				// Create the repository metadata entry
 				guard let appCoordinator = appCoordinator else {
 					throw NSError(domain: "AudioRecorderViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "App coordinator not available"])
 				}
@@ -72,8 +74,8 @@ extension AudioRecorderViewModel {
 					.replacingOccurrences(of: ".m4a", with: "")
 				let cleanDisplayName = "Audio Recording \(displayName)"
 
-					let recordingId = appCoordinator.addWatchRecording(
-					url: permanentURL,
+				let recordingID = try await appCoordinator.createRecordingUsingRepository(
+					url: destinationURL,
 					name: cleanDisplayName,
 					date: syncRequest.createdAt,
 					fileSize: syncRequest.fileSize,
@@ -82,7 +84,7 @@ extension AudioRecorderViewModel {
 					locationData: syncRequest.locationData?.toLocationData()
 				)
 
-				AppLog.shared.watchConnectivity("Created Core Data entry for watch recording: \(recordingId)")
+				AppLog.shared.watchConnectivity("Created repository entry for watch recording: \(recordingID)")
 
 				// Notify UI to refresh recordings list
 				NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
@@ -96,7 +98,10 @@ extension AudioRecorderViewModel {
 				}
 
 			} catch {
-				AppLog.shared.watchConnectivity("Failed to create Core Data entry for watch recording: \(error)", level: .error)
+				if let permanentURL, FileManager.default.fileExists(atPath: permanentURL.path) {
+					try? FileManager.default.removeItem(at: permanentURL)
+				}
+				AppLog.shared.watchConnectivity("Failed to persist repository entry for watch recording; destination was removed for retry: \(error)", level: .error)
 
 				// Recording sync failed - notify the completion callback
 				await MainActor.run {

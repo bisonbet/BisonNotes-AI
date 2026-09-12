@@ -177,23 +177,15 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 				// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
 				AppLog.shared.recording("Recording saved in Whisper-optimized format")
 
-				// Add recording using workflow manager for proper UUID consistency
-				if let workflowManager = workflowManager {
-					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-					// Create recording
-					let recordingId = workflowManager.createRecording(
-						url: resolvedRecordingURL,
-						name: capturedName,
-						date: capturedDate,
-						fileSize: fileSize,
-						duration: duration,
-						quality: quality,
-						locationData: capturedLocation
-					)
-
-					AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
-
+				if let recordingID = await persistRecordingUsingRepository(
+					url: resolvedRecordingURL,
+					name: capturedName,
+					date: capturedDate,
+					fileSize: fileSize,
+					duration: duration,
+					quality: AudioRecorderViewModel.getCurrentAudioQuality(),
+					locationData: capturedLocation
+				) {
 					// The row exists; only now may a trail parking this file go.
 					#if os(iOS)
 					clearDeferredRecoverySnapshotEntries(containing: resolvedRecordingURL)
@@ -209,8 +201,9 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 							errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
 						}
 					}
-				} else {
-					AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
+					AppLog.shared.recording("Recording metadata committed through repository, ID: \(recordingID)")
+				} else if stillCurrent {
+					errorMessage = "Recording metadata could not be saved. The audio was preserved for retry."
 				}
 			}
 

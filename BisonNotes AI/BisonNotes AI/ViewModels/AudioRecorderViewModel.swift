@@ -51,7 +51,6 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	// Reference to the app coordinator for adding recordings to registry
 	var appCoordinator: AppDataCoordinator?
-	var workflowManager: RecordingWorkflowManager?
 	var cancellables = Set<AnyCancellable>()
 
 	var audioRecorder: AVAudioRecorder?
@@ -311,13 +310,76 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	/// Set the app coordinator reference
 	func setAppCoordinator(_ coordinator: AppDataCoordinator) {
 		self.appCoordinator = coordinator
-		Task { @MainActor in
-			let workflowManager = RecordingWorkflowManager()
-			workflowManager.setAppCoordinator(coordinator)
-			self.workflowManager = workflowManager
 
-			// Set up watch sync handler now that we have app coordinator
-			setupWatchSyncHandler()
+		// Set up watch sync handler now that we have app coordinator
+		setupWatchSyncHandler()
+	}
+
+	/// Persist finalized audio metadata through the storage-neutral repository.
+	///
+	/// The file is already owned by the caller when this method runs. A failed
+	/// repository command therefore returns `nil` and leaves the file and any
+	/// recovery trail in place for a later retry; it never falls back to a
+	/// second, direct Core Data write.
+	@discardableResult
+	func persistRecordingUsingRepository(
+		url: URL,
+		name: String,
+		date: Date,
+		fileSize: Int64,
+		duration: TimeInterval,
+		quality: AudioQuality,
+		locationData: LocationData? = nil
+	) async -> UUID? {
+		guard let appCoordinator else {
+			#if os(iOS)
+			// The file can outlive this in-memory coordinator, including when a
+			// launch races initialization. Keep a relocatable retry pointer rather
+			// than leaving a superseded finalized file discoverable only by chance.
+			persistRecoverySnapshot(
+				segments: [url],
+				mainRecordingURL: url,
+				currentSegmentIndex: 0
+			)
+			#endif
+			AppLog.shared.recording(
+				"App coordinator not set; finalized recording metadata was not persisted",
+				level: .error
+			)
+			return nil
+		}
+
+		do {
+			let recordingID = try await appCoordinator.createRecordingUsingRepository(
+				url: url,
+				name: name,
+				date: date,
+				fileSize: fileSize,
+				duration: duration,
+				quality: quality,
+				locationData: locationData
+			)
+			AppLog.shared.recording(
+				"Finalized recording metadata persisted through repository, ID: \(recordingID)",
+				level: .debug
+			)
+			return recordingID
+		} catch {
+			#if os(iOS)
+			// Keep a relocatable pointer to the finished file so a process kill or
+			// later launch can retry the metadata commit instead of treating audio
+			// with no row as an orphan.
+			persistRecoverySnapshot(
+				segments: [url],
+				mainRecordingURL: url,
+				currentSegmentIndex: 0
+			)
+			#endif
+			AppLog.shared.recording(
+				"Failed to persist finalized recording metadata; audio was preserved for retry: \(error)",
+				level: .error
+			)
+			return nil
 		}
 	}
 
@@ -1178,15 +1240,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			saveLocationData(for: url)
 		}
 
-		guard let workflowManager = workflowManager else {
-			AppLog.shared.recording("WorkflowManager not set - live transcription recording not saved", level: .error)
-			if isCurrentSession() { endBackgroundTask() }
-			return
-		}
-
 		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-		let recordingId = workflowManager.createRecording(
+		guard let recordingID = await persistRecordingUsingRepository(
 			url: url,
 			name: capturedName,
 			date: capturedDate,
@@ -1194,9 +1249,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 			duration: duration,
 			quality: quality,
 			locationData: capturedLocation
-		)
+		) else {
+			AppLog.shared.recording(
+				"Live transcription metadata was not persisted; preserving audio for retry",
+				level: .error
+			)
+			if isCurrentSession() {
+				errorMessage = "Live recording metadata could not be saved. Its audio was preserved for retry."
+			}
+			return
+		}
 
-		AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
+		AppLog.shared.recording("Live transcription recording saved through repository, ID: \(recordingID)")
 
 		// Save the live transcript if we have content
 		if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1208,14 +1272,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 				endTime: duration
 			)
 				_ = await coordinator.addTranscriptUsingRepository(
-					for: recordingId,
-				segments: [segment],
-				speakerMappings: [:],
-				engine: .fluidAudio,
-				processingTime: duration,
-				confidence: 0.9
-			)
-			AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
+					for: recordingID,
+					segments: [segment],
+					speakerMappings: [:],
+					engine: .fluidAudio,
+					processingTime: duration,
+					confidence: 0.9
+				)
+			AppLog.shared.recording("Live transcript saved for recording \(recordingID)")
 		}
 
 		guard isCurrentSession() else { return }

@@ -416,15 +416,18 @@ struct CombineRecordingsView: View {
         isCombining = true
         errorMessage = nil
 
+        var outputURLForCleanup: URL?
+        var combinedURLForCleanup: URL?
         do {
             // Create output URL
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let timestamp = Date().timeIntervalSince1970
             let outputFilename = "combined_\(Int(timestamp)).m4a"
             let outputURL = documentsPath.appendingPathComponent(outputFilename)
+            outputURLForCleanup = outputURL
 
-            // The export lands in Documents well before `addRecording` below
-            // gives it a Core Data row, and until then nothing references it.
+            // The export lands in Documents well before the repository commit
+            // gives it a metadata row, and until then nothing references it.
             // Claim the path so reviewed-audio cleanup cannot treat a combine
             // that is still running as an unreferenced leftover.
             ActiveAudioWorkRegistry.shared.beginWriting(outputURL)
@@ -437,6 +440,7 @@ struct CombineRecordingsView: View {
                 secondURL: selectedSecond.url,
                 outputURL: outputURL
             )
+            combinedURLForCleanup = combinedURL
             if combinedURL != outputURL {
                 ActiveAudioWorkRegistry.shared.beginWriting(combinedURL)
             }
@@ -543,6 +547,16 @@ struct CombineRecordingsView: View {
                 AppLog.shared.recording("Combine: Neither recording has location", level: .debug)
             }
 
+            let recordingID = try await appCoordinator.createRecordingUsingRepository(
+                url: combinedURL,
+                name: combinedName,
+                date: combinedDate,
+                fileSize: fileSize,
+                duration: combinedDuration,
+                quality: quality,
+                locationData: combinedLocation
+            )
+
             // Store values for confirmation dialog
             await MainActor.run {
                 combinedRecordingURL = combinedURL
@@ -554,21 +568,10 @@ struct CombineRecordingsView: View {
                 secondRecordingId = secondEntry?.id
 
                 // Log location data before adding
-                AppLog.shared.recording("Combine: hasLocation=\(combinedLocation != nil) for addRecording", level: .debug)
-
-                // Add to Core Data first
-                let recordingId = appCoordinator.addRecording(
-                    url: combinedURL,
-                    name: combinedName,
-                    date: combinedDate,
-                    fileSize: fileSize,
-                    duration: combinedDuration,
-                    quality: quality,
-                    locationData: combinedLocation
-                )
+                AppLog.shared.recording("Combine: hasLocation=\(combinedLocation != nil) for repository recording create", level: .debug)
 
                 // Verify location was saved
-                if let savedRecording = appCoordinator.getRecording(id: recordingId) {
+                if let savedRecording = appCoordinator.getRecording(id: recordingID) {
                     let savedLocation = appCoordinator.coreDataManager.getLocationData(for: savedRecording)
                     if savedLocation != nil {
                         AppLog.shared.recording("Combine: Location verified in saved recording", level: .debug)
@@ -585,6 +588,11 @@ struct CombineRecordingsView: View {
                 isCombining = false
             }
         } catch {
+            for cleanupURL in Set([outputURLForCleanup, combinedURLForCleanup].compactMap { $0 }) {
+                if FileManager.default.fileExists(atPath: cleanupURL.path) {
+                    try? FileManager.default.removeItem(at: cleanupURL)
+                }
+            }
             await MainActor.run {
                 errorMessage = error.localizedDescription
                 showingError = true

@@ -192,6 +192,10 @@ class AppDataCoordinator: ObservableObject {
 
     // MARK: - Public Interface
 
+    /// Synchronous Core Data-only compatibility entry point for UI-test
+    /// fixtures and legacy callers. Production recording creation uses
+    /// `createRecordingUsingRepository` so a failed metadata commit remains
+    /// visible to the caller and no second source of truth is introduced.
     func addRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
         let id = workflowManager.createRecording(
             url: url,
@@ -251,20 +255,6 @@ class AppDataCoordinator: ObservableObject {
         scheduleAutoBackupIfEnabled()
         objectWillChange.send()
         return recordingID
-    }
-
-    func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        let id = workflowManager.createRecording(
-            url: url,
-            name: name,
-            date: date,
-            fileSize: fileSize,
-            duration: duration,
-            quality: quality,
-            locationData: locationData
-        )
-        scheduleAutoBackupIfEnabled()
-        return id
     }
 
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {

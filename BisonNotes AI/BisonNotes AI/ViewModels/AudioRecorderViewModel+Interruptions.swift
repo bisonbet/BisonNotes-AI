@@ -553,13 +553,6 @@ extension AudioRecorderViewModel {
 			saveLocationData(for: url)
 		}
 
-		guard let workflowManager = workflowManager else {
-			AppLog.shared.audioSession("WorkflowManager not set - interrupted recording not saved to database", level: .error)
-			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
-			releaseProcessingFlag()
-			return
-		}
-
 		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
 		// Use original filename for recording name to maintain consistency
@@ -570,31 +563,42 @@ extension AudioRecorderViewModel {
 		// the unprocessed-recording check can both reach the same finalized file.
 		// Either way the row exists once this block is done, which is the only
 		// point at which a trail parking this file can safely be retired.
+		var recordingPersisted = false
 		defer {
 			#if os(iOS)
-			clearDeferredRecoverySnapshotEntries(containing: url)
+			if recordingPersisted {
+				clearDeferredRecoverySnapshotEntries(containing: url)
+			}
 			#endif
 		}
 		if let appCoordinator, appCoordinator.getRecording(url: url) != nil {
+			recordingPersisted = true
 			AppLog.shared.audioSession(
 				"Interrupted recording is already in the database; not creating a second row",
 				level: .debug
 			)
-		} else {
-			let recordingId = workflowManager.createRecording(
-				url: url,
-				name: displayName,
-				date: currentRecordingDate(for: url),
-				fileSize: fileSize,
-				duration: duration,
-				quality: quality,
-				locationData: capturedLocation
-			)
-
-			AppLog.shared.audioSession("Interrupted recording recovered with workflow manager, ID: \(recordingId)")
+		} else if let recordingID = await persistRecordingUsingRepository(
+			url: url,
+			name: displayName,
+			date: currentRecordingDate(for: url),
+			fileSize: fileSize,
+			duration: duration,
+			quality: quality,
+			locationData: capturedLocation
+		) {
+			recordingPersisted = true
+			AppLog.shared.audioSession("Interrupted recording recovered through repository, ID: \(recordingID)")
 
 			// Post notification to refresh UI
 			NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+		} else {
+			AppLog.shared.audioSession(
+				"Interrupted recording metadata was not persisted; preserving audio for retry",
+				level: .error
+			)
+			await sendInterruptionNotification(success: false, reason: reason, filename: url.lastPathComponent)
+			releaseProcessingFlag()
+			return
 		}
 
 		// Don't send additional notification - already sent immediate notification
@@ -757,48 +761,45 @@ extension AudioRecorderViewModel {
 		// Save location data if available
 		saveLocationData(for: url)
 
-		// Add the recording using workflow manager
-		if let workflowManager = workflowManager {
-			let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-			// Use original filename for recording name
-			let originalFilename = url.deletingPathExtension().lastPathComponent
-			let displayName = "\(originalFilename) (recovered)"
-
-			// Core Data operations should happen on main thread
-			await MainActor.run {
-				let recordingId = workflowManager.createRecording(
-					url: url,
-					name: displayName,
-					date: currentRecordingDate(for: url),
-					fileSize: fileSize,
-					duration: duration,
-					quality: quality,
-					locationData: recordingLocationSnapshot()
-				)
-
-					AppLog.shared.audioSession("Unprocessed recording recovered with workflow manager, ID: \(recordingId)")
-
-					// Post notification to refresh UI
-					NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-
-					// Clear the recording URL since it's now processed, along with
-					// any deferred-recovery trail this file was parked under.
-					#if os(iOS)
-					self.clearDeferredRecoverySnapshotEntries(containing: url)
-					#endif
-					self.recordingURL = nil
-					self.recordingBeingProcessed = false
-					self.resetRecordingLocation()
-					self.recordingStartedAt = nil
-					self.resetRecordingAttemptArtifacts()
-				}
-
-			// Send notification to user about recovery (with slight delay to improve visibility)
-			await sendRecoveryNotification(filename: displayName)
-		} else {
-			AppLog.shared.audioSession("WorkflowManager not set - cannot recover unprocessed recording", level: .error)
+		// Use original filename for recording name
+		let originalFilename = url.deletingPathExtension().lastPathComponent
+		let displayName = "\(originalFilename) (recovered)"
+		guard let recordingID = await persistRecordingUsingRepository(
+			url: url,
+			name: displayName,
+			date: currentRecordingDate(for: url),
+			fileSize: fileSize,
+			duration: duration,
+			quality: AudioRecorderViewModel.getCurrentAudioQuality(),
+			locationData: recordingLocationSnapshot()
+		) else {
+			AppLog.shared.audioSession(
+				"Unprocessed recording metadata was not persisted; preserving audio for retry",
+				level: .error
+			)
+			errorMessage = "Recovered recording could not be saved. Its audio was preserved for retry."
+			recordingBeingProcessed = false
+			return
 		}
+
+		AppLog.shared.audioSession("Unprocessed recording recovered through repository, ID: \(recordingID)")
+
+		// Post notification to refresh UI
+		NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+
+		// Clear the recording URL since it's now processed, along with any
+		// deferred-recovery trail this file was parked under.
+		#if os(iOS)
+		clearDeferredRecoverySnapshotEntries(containing: url)
+		#endif
+		recordingURL = nil
+		recordingBeingProcessed = false
+		resetRecordingLocation()
+		recordingStartedAt = nil
+		resetRecordingAttemptArtifacts()
+
+		// Send notification to user about recovery (with slight delay to improve visibility)
+		await sendRecoveryNotification(filename: displayName)
 	}
 
 	// MARK: - Notification Helpers

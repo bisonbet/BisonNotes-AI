@@ -307,37 +307,35 @@ extension AudioRecorderViewModel {
 
 			AppLog.shared.recording("Merged recording saved in Whisper-optimized format")
 
-			// Add recording using workflow manager
-			if let workflowManager = workflowManager {
-				let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-				// Create recording
-				let recordingId = workflowManager.createRecording(
-					url: mainURL,
-					name: capturedName,
-					date: capturedDate,
-					fileSize: fileSize,
-					duration: duration,
-					quality: quality,
-					locationData: capturedLocation
-				)
-
-				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
-
-				// The row exists, so any trail parking these segments has done its
-				// job. Retiring it earlier is what strands audio when an export
-				// fails or the app dies mid-save.
-				#if os(iOS)
-				clearDeferredRecoverySnapshotEntries(containing: mainURL)
-				#endif
-
-				if stillCurrent {
-					self.resetRecordingLocation()
-					self.recordingStartedAt = nil
-					self.resetRecordingAttemptArtifacts()
+			guard let recordingID = await persistRecordingUsingRepository(
+				url: mainURL,
+				name: capturedName,
+				date: capturedDate,
+				fileSize: fileSize,
+				duration: duration,
+				quality: AudioRecorderViewModel.getCurrentAudioQuality(),
+				locationData: capturedLocation
+			) else {
+				preserveFailedMergeSegments(segments, mainURL: mainURL)
+				if ownsLiveRecordingState {
+					errorMessage = "The recording metadata could not be saved. Its audio was preserved for retry."
 				}
-			} else {
-				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
+				return
+			}
+
+			AppLog.shared.recording("Merged recording metadata committed through repository, ID: \(recordingID)")
+
+			// The row exists, so any trail parking these segments has done its job.
+			// Retiring it earlier is what strands audio when an export fails or the
+			// app dies mid-save.
+			#if os(iOS)
+			clearDeferredRecoverySnapshotEntries(containing: mainURL)
+			#endif
+
+			if stillCurrent {
+				self.resetRecordingLocation()
+				self.recordingStartedAt = nil
+				self.resetRecordingAttemptArtifacts()
 			}
 
 		} catch {

@@ -55,7 +55,7 @@ extension AudioRecorderViewModel {
             if let systemAudioURL = macSystemAudioURL {
                 try? FileManager.default.removeItem(at: systemAudioURL)
             }
-            saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
+            await saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
             return
         } catch {
             handleMacFinalizationFailure(error, scratchURLs: scratchURLs, finalURL: url)
@@ -140,7 +140,7 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func saveFinalizedMacRecording(at url: URL, fileSize: Int64, duration: TimeInterval) {
+    private func saveFinalizedMacRecording(at url: URL, fileSize: Int64, duration: TimeInterval) async {
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.recording(
                 "Mac finalize: recording file is missing at \(url.lastPathComponent)",
@@ -151,12 +151,7 @@ extension AudioRecorderViewModel {
         }
 
         saveLocationData(for: url)
-        guard let workflowManager else {
-            AppLog.shared.recording("WorkflowManager not set - Mac recording not saved", level: .error)
-            return
-        }
-
-        let recordingId = workflowManager.createRecording(
+        guard let recordingID = await persistRecordingUsingRepository(
             url: url,
             name: generateAppRecordingDisplayName(),
             date: currentRecordingDate(for: url),
@@ -164,8 +159,16 @@ extension AudioRecorderViewModel {
             duration: duration,
             quality: AudioRecorderViewModel.getCurrentAudioQuality(),
             locationData: recordingLocationSnapshot()
-        )
-        AppLog.shared.recording("Mac recording created with workflow manager, ID: \(recordingId)")
+        ) else {
+            AppLog.shared.recording(
+                "Mac recording metadata was not persisted; preserving audio for retry",
+                level: .error
+            )
+            errorMessage = "Mac recording metadata could not be saved. Its audio was preserved for retry."
+            resetMacFinalizationState()
+            return
+        }
+        AppLog.shared.recording("Mac recording metadata committed through repository, ID: \(recordingID)")
 
         // A meeting recording (system-audio capture) suppresses the live mic-only
         // transcription path at start. If Live Transcription is enabled, honor that
@@ -175,7 +178,7 @@ extension AudioRecorderViewModel {
         // path and never finalize here.
         if UserDefaults.standard.bool(forKey: "enableLiveTranscription"),
            let coordinator = appCoordinator,
-           let entry = coordinator.getRecording(id: recordingId) {
+           let entry = coordinator.getRecording(id: recordingID) {
             TranscriptionStarter.shared.startTranscription(
                 for: entry,
                 cleanFirst: false,
