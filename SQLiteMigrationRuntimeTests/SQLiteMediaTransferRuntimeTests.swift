@@ -18,9 +18,15 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
 
         let result = try await coordinator.reconcile(
             fixture.transfer,
-            at: Date(timeIntervalSinceReferenceDate: 100)
+            at: Date(timeIntervalSinceReferenceDate: 100),
+            metadataCommit: { _ in }
         )
         XCTAssertEqual(result.operation.state, "completed")
+        XCTAssertEqual(result.operation.metadataState, SQLiteMediaMetadataState.committed)
+        XCTAssertEqual(
+            result.operation.metadataAcknowledgedAt,
+            Date(timeIntervalSinceReferenceDate: 100)
+        )
         XCTAssertEqual(result.receipt.outcome, .committed)
         XCTAssertEqual(result.receipt.destinationStorageID, "asset-1")
         XCTAssertEqual(result.sourceRetention, .eligibleForRemoval)
@@ -29,10 +35,71 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
 
         let retry = try await coordinator.reconcile(
             fixture.transfer,
-            at: Date(timeIntervalSinceReferenceDate: 200)
+            at: Date(timeIntervalSinceReferenceDate: 200),
+            metadataCommit: { _ in }
         )
         XCTAssertEqual(retry.receipt, result.receipt)
         XCTAssertEqual(retry.sourceRetention, .eligibleForRemoval)
+    }
+
+    func testMetadataFailureRetainsPublishedSourceWithoutReceiptAndCanRetry() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        let coordinator = SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: fixture.registry
+        )
+        let recorder = SQLiteMediaMetadataCommitRecorder()
+
+        do {
+            _ = try await coordinator.reconcile(
+                fixture.transfer,
+                metadataCommit: { operation in
+                    recorder.append(operation)
+                    throw SQLiteMediaMetadataCommitTestError.rejected
+                }
+            )
+            XCTFail("Expected metadata acknowledgement failure")
+        } catch let error as SQLiteMediaMetadataCommitTestError {
+            XCTAssertEqual(error, .rejected)
+        }
+
+        let persistedFailedOperation = try await store.mediaFileOperation(
+            id: fixture.transfer.copyPlan.operationID
+        )
+        let failedOperation = try XCTUnwrap(persistedFailedOperation)
+        XCTAssertEqual(failedOperation.state, "completed")
+        XCTAssertEqual(failedOperation.metadataState, SQLiteMediaMetadataState.failed)
+        XCTAssertNil(failedOperation.metadataAcknowledgedAt)
+        let failedReceipt = try await store.importReceipt(
+            sourceTransferID: fixture.transfer.sourceTransferID
+        )
+        XCTAssertNil(failedReceipt)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.destinationURL.path))
+
+        let result = try await coordinator.reconcile(
+            fixture.transfer,
+            at: Date(timeIntervalSinceReferenceDate: 200),
+            metadataCommit: { operation in
+                recorder.append(operation)
+            }
+        )
+        XCTAssertEqual(result.operation.metadataState, SQLiteMediaMetadataState.committed)
+        XCTAssertEqual(
+            result.operation.metadataAcknowledgedAt,
+            Date(timeIntervalSinceReferenceDate: 200)
+        )
+        XCTAssertEqual(result.receipt.outcome, .committed)
+        XCTAssertEqual(recorder.states, [
+            SQLiteMediaMetadataState.committing,
+            SQLiteMediaMetadataState.committing
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
     }
 
     func testFailedCopyRetainsSourceAndDoesNotCreateReceipt() async throws {
@@ -50,7 +117,10 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         )
 
         do {
-            _ = try await coordinator.reconcile(fixture.transfer)
+            _ = try await coordinator.reconcile(
+                fixture.transfer,
+                metadataCommit: { _ in }
+            )
             XCTFail("Expected checksum mismatch")
         } catch let error as SQLiteMediaFileOperationError {
             XCTAssertEqual(error, .integrityMismatch)
@@ -85,7 +155,10 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         )
 
         do {
-            _ = try await coordinator.reconcile(fixture.transfer)
+            _ = try await coordinator.reconcile(
+                fixture.transfer,
+                metadataCommit: { _ in }
+            )
             XCTFail("Expected receipt conflict")
         } catch let error as SQLiteImportReceiptError {
             XCTAssertEqual(error, .receiptConflict)
@@ -117,7 +190,10 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         _ = try await SQLiteMediaTransferCoordinator(
             store: store,
             rootRegistry: fixture.registry
-        ).reconcile(fixture.transfer)
+        ).reconcile(
+            fixture.transfer,
+            metadataCommit: { _ in }
+        )
 
         let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
         let persistedOperation = try await reopenedStore.mediaFileOperation(
@@ -158,9 +234,13 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         let report = try await SQLiteMediaBackgroundReconciler(
             store: store,
             rootRegistry: fixture.registry
-        ).run(at: Date(timeIntervalSinceReferenceDate: 500)) { update in
-            progressRecorder.append(update)
-        }
+        ).run(
+            at: Date(timeIntervalSinceReferenceDate: 500),
+            metadataCommit: { _ in },
+            progress: { update in
+                progressRecorder.append(update)
+            }
+        )
 
         XCTAssertEqual(report.recoveredOperationCount, 0)
         XCTAssertEqual(report.selectedOperationCount, 1)
@@ -198,7 +278,10 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         let report = try await SQLiteMediaBackgroundReconciler(
             store: reopenedStore,
             rootRegistry: fixture.registry
-        ).run(at: Date(timeIntervalSinceReferenceDate: 601))
+        ).run(
+            at: Date(timeIntervalSinceReferenceDate: 601),
+            metadataCommit: { _ in }
+        )
 
         XCTAssertEqual(report.selectedOperationCount, 1)
         XCTAssertEqual(report.completedOperationCount, 1)
@@ -208,6 +291,105 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         )
         XCTAssertEqual(receipt?.outcome, .committed)
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+    }
+
+    func testBackgroundReconcilerRecoversMetadataClaimAfterReopen() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let databaseURL = fixture.directory.appendingPathComponent("library.sqlite")
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        _ = try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: fixture.registry
+        ).enqueue(fixture.transfer)
+        _ = try await SQLiteMediaFileOperationWorker(store: store).run(
+            operationID: fixture.transfer.copyPlan.operationID,
+            rootRegistry: fixture.registry,
+            at: Date(timeIntervalSinceReferenceDate: 800)
+        )
+        let claimed = try await store.claimMediaMetadataAcknowledgement(
+            id: fixture.transfer.copyPlan.operationID,
+            at: Date(timeIntervalSinceReferenceDate: 801)
+        )
+        XCTAssertEqual(claimed.metadataState, SQLiteMediaMetadataState.committing)
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let recorder = SQLiteMediaMetadataCommitRecorder()
+        let report = try await SQLiteMediaBackgroundReconciler(
+            store: reopenedStore,
+            rootRegistry: fixture.registry
+        ).run(
+            at: Date(timeIntervalSinceReferenceDate: 802),
+            metadataCommit: { operation in
+                recorder.append(operation)
+            }
+        )
+
+        XCTAssertEqual(report.recoveredOperationCount, 1)
+        XCTAssertEqual(report.selectedOperationCount, 1)
+        XCTAssertEqual(report.completedOperationCount, 1)
+        XCTAssertEqual(report.failedOperationCount, 0)
+        XCTAssertEqual(recorder.states, [SQLiteMediaMetadataState.committing])
+        let persistedOperation = try await reopenedStore.mediaFileOperation(
+            id: fixture.transfer.copyPlan.operationID
+        )
+        let operation = try XCTUnwrap(persistedOperation)
+        XCTAssertEqual(operation.metadataState, SQLiteMediaMetadataState.committed)
+        XCTAssertEqual(
+            operation.metadataAcknowledgedAt,
+            Date(timeIntervalSinceReferenceDate: 802)
+        )
+        let recoveredReceipt = try await reopenedStore.importReceipt(
+            sourceTransferID: fixture.transfer.sourceTransferID
+        )
+        XCTAssertNotNil(recoveredReceipt)
+    }
+
+    func testBackgroundReconcilerRecordsReceiptAfterMetadataAcknowledgementWasPersisted() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let databaseURL = fixture.directory.appendingPathComponent("library.sqlite")
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        _ = try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: fixture.registry
+        ).enqueue(fixture.transfer)
+        _ = try await SQLiteMediaFileOperationWorker(store: store).run(
+            operationID: fixture.transfer.copyPlan.operationID,
+            rootRegistry: fixture.registry,
+            at: Date(timeIntervalSinceReferenceDate: 900)
+        )
+        _ = try await store.claimMediaMetadataAcknowledgement(
+            id: fixture.transfer.copyPlan.operationID,
+            at: Date(timeIntervalSinceReferenceDate: 901)
+        )
+        _ = try await store.completeMediaMetadataAcknowledgement(
+            id: fixture.transfer.copyPlan.operationID,
+            at: Date(timeIntervalSinceReferenceDate: 902)
+        )
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let recorder = SQLiteMediaMetadataCommitRecorder()
+        let report = try await SQLiteMediaBackgroundReconciler(
+            store: reopenedStore,
+            rootRegistry: fixture.registry
+        ).run(
+            at: Date(timeIntervalSinceReferenceDate: 903),
+            metadataCommit: { operation in
+                recorder.append(operation)
+            }
+        )
+
+        XCTAssertEqual(report.selectedOperationCount, 1)
+        XCTAssertEqual(report.completedOperationCount, 1)
+        XCTAssertEqual(report.failedOperationCount, 0)
+        XCTAssertEqual(recorder.states, [])
+        let receipt = try await reopenedStore.importReceipt(
+            sourceTransferID: fixture.transfer.sourceTransferID
+        )
+        XCTAssertNotNil(receipt)
     }
 
     func testBackgroundReconcilerDoesNotReceiptChangedPublishedDestination() async throws {
@@ -230,7 +412,10 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
         let report = try await SQLiteMediaBackgroundReconciler(
             store: store,
             rootRegistry: fixture.registry
-        ).run(at: Date(timeIntervalSinceReferenceDate: 701))
+        ).run(
+            at: Date(timeIntervalSinceReferenceDate: 701),
+            metadataCommit: { _ in }
+        )
 
         XCTAssertEqual(report.selectedOperationCount, 1)
         XCTAssertEqual(report.completedOperationCount, 0)
@@ -356,6 +541,27 @@ private final class SQLiteMediaProgressRecorder: @unchecked Sendable {
     func append(_ value: SQLiteMediaReconciliationProgress) {
         lock.lock()
         storedValues.append(value)
+        lock.unlock()
+    }
+}
+
+private enum SQLiteMediaMetadataCommitTestError: Error, Equatable {
+    case rejected
+}
+
+private final class SQLiteMediaMetadataCommitRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storedStates: [String] = []
+
+    var states: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedStates
+    }
+
+    func append(_ operation: SQLiteMediaFileOperation) {
+        lock.lock()
+        storedStates.append(operation.metadataState)
         lock.unlock()
     }
 }

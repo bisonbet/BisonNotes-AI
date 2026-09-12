@@ -10,6 +10,7 @@ extension SQLiteLibraryStore {
         registerMediaTransferSchemaMigration(on: &migrator)
         registerArchiveRestoreSchemaMigration(on: &migrator)
         registerArchiveRestoreRevisionSchemaMigration(on: &migrator)
+        registerMediaMetadataAcknowledgementSchemaMigration(on: &migrator)
         return migrator
     }
 
@@ -121,6 +122,25 @@ extension SQLiteLibraryStore {
                 arguments: [
                     SQLiteLibraryStoreSchema.archiveRestoreRevisionSchemaVersion,
                     Self.archiveRestoreRevisionSchemaMigrationIdentifier,
+                    Date().timeIntervalSinceReferenceDate
+                ]
+            )
+        }
+    }
+
+    private static func registerMediaMetadataAcknowledgementSchemaMigration(
+        on migrator: inout DatabaseMigrator
+    ) {
+        migrator.registerMigration(Self.mediaMetadataAcknowledgementSchemaMigrationIdentifier) { database in
+            try SQLiteLibraryStoreSchema.addMediaMetadataAcknowledgement(in: database)
+            try database.execute(
+                sql: """
+                INSERT INTO schema_migrations (version, identifier, appliedAt)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [
+                    SQLiteLibraryStoreSchema.mediaMetadataAcknowledgementSchemaVersion,
+                    Self.mediaMetadataAcknowledgementSchemaMigrationIdentifier,
                     Date().timeIntervalSinceReferenceDate
                 ]
             )

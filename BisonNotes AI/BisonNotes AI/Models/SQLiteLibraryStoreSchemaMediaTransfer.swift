@@ -107,4 +107,48 @@ extension SQLiteLibraryStoreSchema {
             ]
         )
     }
+
+    static func addMediaMetadataAcknowledgement(in database: Database) throws {
+        try database.execute(
+            sql: """
+            ALTER TABLE file_operations
+            ADD COLUMN metadataState TEXT NOT NULL DEFAULT 'pending'
+            CHECK (metadataState IN (
+                'pending', 'committing', 'failed', 'committed', 'legacy'
+            ))
+            """
+        )
+        try database.execute(
+            sql: """
+            ALTER TABLE file_operations
+            ADD COLUMN metadataAcknowledgedAt REAL
+            """
+        )
+
+        // Existing v6 rows were governed by the copy/receipt boundary. Keep
+        // that behavior explicit without fabricating a metadata timestamp;
+        // newly enqueued rows use `pending` and must receive a real callback.
+        try database.execute(
+            sql: """
+            UPDATE file_operations
+            SET metadataState = CASE
+                    WHEN state = 'completed' THEN 'legacy'
+                    ELSE 'pending'
+                END,
+                metadataAcknowledgedAt = NULL
+            """
+        )
+
+        try database.execute(
+            sql: """
+            UPDATE library_metadata
+            SET schemaVersion = ?, updatedAt = ?
+            WHERE id = 1
+            """,
+            arguments: [
+                mediaMetadataAcknowledgementSchemaVersion,
+                Date().timeIntervalSinceReferenceDate
+            ]
+        )
+    }
 }

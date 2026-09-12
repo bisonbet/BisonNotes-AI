@@ -15,7 +15,8 @@ struct SQLiteMediaReconciliationReport: Equatable, Sendable {
 
 /// Serializes bounded background reconciliation for durable media operations.
 ///
-/// The reconciler only copies media and records committed receipts. Source
+/// The reconciler copies media, invokes the idempotent metadata callback, and
+/// records a committed receipt only after both durable halves succeed. Source
 /// retention remains an explicit follow-up through
 /// `SQLiteMediaSourceRetentionExecutor`, so a retry or process termination
 /// cannot turn an incomplete acknowledgement into data loss.
@@ -34,6 +35,7 @@ actor SQLiteMediaBackgroundReconciler {
     func run(
         maxOperations: Int = 8,
         at date: Date = Date(),
+        metadataCommit: @escaping SQLiteMediaMetadataCommit,
         progress: (@Sendable (SQLiteMediaReconciliationProgress) -> Void)? = nil
     ) async throws -> SQLiteMediaReconciliationReport {
         try SQLiteMediaFileOperationValidation.batchLimit(maxOperations)
@@ -50,13 +52,19 @@ actor SQLiteMediaBackgroundReconciler {
         ))
 
         let worker = SQLiteMediaFileOperationWorker(store: store)
+        let acknowledger = SQLiteMediaMetadataAcknowledger(store: store)
         for operation in operations {
             try Task.checkCancellation()
             do {
-                let completedOperation = try await worker.run(
+                let publishedOperation = try await worker.run(
                     operationID: operation.id,
                     rootRegistry: rootRegistry,
                     at: date
+                )
+                let completedOperation = try await acknowledger.run(
+                    for: publishedOperation,
+                    at: date,
+                    metadataCommit: metadataCommit
                 )
                 guard let sourceTransferID = completedOperation.sourceTransferID,
                       let assetID = completedOperation.assetID else {

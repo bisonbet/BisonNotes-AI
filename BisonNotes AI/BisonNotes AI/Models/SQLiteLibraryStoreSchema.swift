@@ -8,6 +8,7 @@ enum SQLiteLibraryStoreSchema {
     static let mediaTransferSchemaVersion = 4
     static let archiveRestoreSchemaVersion = 5
     static let archiveRestoreRevisionSchemaVersion = 6
+    static let mediaMetadataAcknowledgementSchemaVersion = 7
 
     static func createInitial(in database: Database) throws {
         try createMetadata(in: database)

@@ -38,6 +38,8 @@ struct SQLiteMediaFileOperation: Equatable, Sendable {
     let sourceTransferID: String?
     let operation: String
     let state: String
+    let metadataState: String
+    let metadataAcknowledgedAt: Date?
     let ownerStorageID: String?
     let ownerRevision: Int?
     let sourceRoot: String?
@@ -50,6 +52,26 @@ struct SQLiteMediaFileOperation: Equatable, Sendable {
     let lastError: String?
     let createdAt: Date
     let updatedAt: Date
+}
+
+enum SQLiteMediaMetadataState {
+    static let pending = "pending"
+    static let committing = "committing"
+    static let failed = "failed"
+    static let committed = "committed"
+
+    /// Rows created before the metadata acknowledgement boundary retain their
+    /// historical copy/receipt semantics after the schema upgrade. They are
+    /// never assigned a synthetic acknowledgement timestamp.
+    static let legacy = "legacy"
+
+    static let all: Set<String> = [
+        pending,
+        committing,
+        failed,
+        committed,
+        legacy
+    ]
 }
 
 enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
@@ -66,6 +88,7 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
     case destinationConflict
     case integrityMismatch
     case copyFailed
+    case metadataAcknowledgementRequired
 
     var errorDescription: String? {
         switch self {
@@ -95,6 +118,8 @@ enum SQLiteMediaFileOperationError: LocalizedError, Equatable {
             return "The copied media failed integrity verification."
         case .copyFailed:
             return "The media copy could not be completed."
+        case .metadataAcknowledgementRequired:
+            return "The media metadata acknowledgement is required before the transfer can complete."
         }
     }
 }

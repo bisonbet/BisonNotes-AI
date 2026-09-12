@@ -59,7 +59,10 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
             store: store,
             rootRegistry: fixture.registry
         )
-        _ = try await coordinator.reconcile(fixture.transfer)
+        _ = try await coordinator.reconcile(
+            fixture.transfer,
+            metadataCommit: { _ in }
+        )
         let executor = SQLiteMediaSourceRetentionExecutor(
             store: store,
             rootRegistry: fixture.registry
@@ -109,6 +112,43 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
     }
 
+    func testRetentionExecutorRefusesReceiptBeforeMetadataAcknowledgement() async throws {
+        let fixture = try makeMediaTransferFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: fixture.directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMediaTransferCoordinator(
+            store: store,
+            rootRegistry: fixture.registry
+        ).enqueue(fixture.transfer)
+        _ = try await SQLiteMediaFileOperationWorker(store: store).run(
+            operationID: fixture.transfer.copyPlan.operationID,
+            rootRegistry: fixture.registry
+        )
+        _ = try await store.recordImportReceipt(
+            sourceTransferID: fixture.transfer.sourceTransferID,
+            destinationStorageID: fixture.transfer.copyPlan.assetID,
+            outcome: .committed
+        )
+
+        let executor = SQLiteMediaSourceRetentionExecutor(
+            store: store,
+            rootRegistry: fixture.registry
+        )
+        do {
+            _ = try await executor.removeSourceIfEligible(
+                sourceTransferID: fixture.transfer.sourceTransferID,
+                operationID: fixture.transfer.copyPlan.operationID
+            )
+            XCTFail("Expected a receipt without metadata acknowledgement to retain the source")
+        } catch let error as SQLiteMediaSourceRetentionError {
+            XCTAssertEqual(error, .sourceNotEligible)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.sourceURL.path))
+    }
+
     func testRetentionExecutorRefusesSourceDestinationAlias() async throws {
         let fixture = try makeMediaTransferFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -142,7 +182,10 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
         _ = try await SQLiteMediaTransferCoordinator(
             store: store,
             rootRegistry: aliasRegistry
-        ).reconcile(transfer)
+        ).reconcile(
+            transfer,
+            metadataCommit: { _ in }
+        )
         let executor = SQLiteMediaSourceRetentionExecutor(
             store: store,
             rootRegistry: aliasRegistry
@@ -170,7 +213,10 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
         _ = try await SQLiteMediaTransferCoordinator(
             store: store,
             rootRegistry: fixture.registry
-        ).reconcile(fixture.transfer)
+        ).reconcile(
+            fixture.transfer,
+            metadataCommit: { _ in }
+        )
         try Data("changed-destination".utf8).write(to: fixture.destinationURL)
         let executor = SQLiteMediaSourceRetentionExecutor(
             store: store,

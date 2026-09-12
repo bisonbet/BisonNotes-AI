@@ -85,7 +85,8 @@ extension SQLiteLibraryStore {
 
     /// Returns self-describing operations that can be resumed by a background
     /// worker. Completed operations without a receipt are included so a
-    /// process kill between publication and receipt recording is recoverable.
+    /// process kill between publication, metadata acknowledgement and receipt
+    /// recording is recoverable.
     func mediaOperationsNeedingReconciliation(
         limit: Int = 8
     ) throws -> [SQLiteMediaFileOperation] {
@@ -116,9 +117,9 @@ extension SQLiteLibraryStore {
         }
     }
 
-    /// Converts operations left in `running` state by a terminated process
-    /// back to retryable work. The operation and asset updates happen together
-    /// so a later worker cannot observe a stale in-flight state.
+    /// Converts copy or metadata operations left in-flight by a terminated
+    /// process back to retryable work. The operation and asset updates happen
+    /// together so a later worker cannot observe a stale in-flight state.
     func recoverInterruptedMediaOperations(
         at date: Date = Date()
     ) throws -> Int {
@@ -127,10 +128,17 @@ extension SQLiteLibraryStore {
             try database.execute(
                 sql: """
                 UPDATE file_operations
-                SET state = 'pending',
+                SET state = CASE
+                        WHEN state = 'running' THEN 'pending'
+                        ELSE state
+                    END,
+                    metadataState = CASE
+                        WHEN metadataState = 'committing' THEN 'pending'
+                        ELSE metadataState
+                    END,
                     lastError = NULL,
                     updatedAt = ?
-                WHERE state = 'running'
+                WHERE state = 'running' OR metadataState = 'committing'
                 """,
                 arguments: [timestamp]
             )
@@ -193,6 +201,198 @@ extension SQLiteLibraryStore {
                 timestamp: timestamp,
                 in: database
             )
+        }
+    }
+
+    /// Claims the metadata half after the destination file has been verified.
+    /// A process kill after this claim is normalized back to `pending` by
+    /// `recoverInterruptedMediaOperations`, so the caller's idempotent
+    /// metadata callback can be retried.
+    func claimMediaMetadataAcknowledgement(
+        id: String,
+        at date: Date = Date()
+    ) throws -> SQLiteMediaFileOperation {
+        try SQLiteMediaFileOperationValidation.identifier(id)
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            guard let operation = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                throw SQLiteMediaFileOperationError.operationNotFound
+            }
+            guard operation.operation == "copy",
+                  operation.state == "completed" else {
+                throw SQLiteMediaFileOperationError.metadataAcknowledgementRequired
+            }
+            switch operation.metadataState {
+            case SQLiteMediaMetadataState.pending,
+                 SQLiteMediaMetadataState.failed:
+                try database.execute(
+                    sql: """
+                    UPDATE file_operations
+                    SET metadataState = ?,
+                        lastError = NULL,
+                        updatedAt = ?
+                    WHERE id = ?
+                    """,
+                    arguments: [
+                        SQLiteMediaMetadataState.committing,
+                        timestamp,
+                        id
+                    ]
+                )
+                guard let claimed = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                    throw SQLiteLibraryStoreError.invalidMetadata
+                }
+                return claimed
+            case SQLiteMediaMetadataState.committing:
+                throw SQLiteMediaFileOperationError.operationConflict
+            case SQLiteMediaMetadataState.committed,
+                 SQLiteMediaMetadataState.legacy:
+                return operation
+            default:
+                throw SQLiteMediaFileOperationError.operationConflict
+            }
+        }
+    }
+
+    /// Durably records that the caller's metadata transaction succeeded.
+    /// This does not create the source-transfer receipt; that separate write
+    /// remains the final acknowledgement after this state is durable.
+    func completeMediaMetadataAcknowledgement(
+        id: String,
+        at date: Date = Date()
+    ) throws -> SQLiteMediaFileOperation {
+        try SQLiteMediaFileOperationValidation.identifier(id)
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            guard let operation = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                throw SQLiteMediaFileOperationError.operationNotFound
+            }
+            guard operation.operation == "copy",
+                  operation.state == "completed" else {
+                throw SQLiteMediaFileOperationError.metadataAcknowledgementRequired
+            }
+            switch operation.metadataState {
+            case SQLiteMediaMetadataState.committing:
+                try database.execute(
+                    sql: """
+                    UPDATE file_operations
+                    SET metadataState = ?,
+                        metadataAcknowledgedAt = ?,
+                        lastError = NULL,
+                        updatedAt = ?
+                    WHERE id = ?
+                    """,
+                    arguments: [
+                        SQLiteMediaMetadataState.committed,
+                        timestamp,
+                        timestamp,
+                        id
+                    ]
+                )
+                guard let completed = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                    throw SQLiteLibraryStoreError.invalidMetadata
+                }
+                return completed
+            case SQLiteMediaMetadataState.committed,
+                 SQLiteMediaMetadataState.legacy:
+                return operation
+            default:
+                throw SQLiteMediaFileOperationError.operationConflict
+            }
+        }
+    }
+
+    /// Records a retryable metadata failure without retaining source-specific
+    /// error text or making the source eligible for removal.
+    func failMediaMetadataAcknowledgement(
+        id: String,
+        at date: Date = Date()
+    ) throws -> SQLiteMediaFileOperation {
+        try SQLiteMediaFileOperationValidation.identifier(id)
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            guard let operation = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                throw SQLiteMediaFileOperationError.operationNotFound
+            }
+            guard operation.operation == "copy",
+                  operation.state == "completed" else {
+                throw SQLiteMediaFileOperationError.metadataAcknowledgementRequired
+            }
+            switch operation.metadataState {
+            case SQLiteMediaMetadataState.pending,
+                 SQLiteMediaMetadataState.committing,
+                 SQLiteMediaMetadataState.failed:
+                try database.execute(
+                    sql: """
+                    UPDATE file_operations
+                    SET metadataState = ?,
+                        metadataAcknowledgedAt = NULL,
+                        lastError = ?,
+                        updatedAt = ?
+                    WHERE id = ?
+                    """,
+                    arguments: [
+                        SQLiteMediaMetadataState.failed,
+                        "media metadata acknowledgement failed; retry required",
+                        timestamp,
+                        id
+                    ]
+                )
+                guard let failed = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                    throw SQLiteLibraryStoreError.invalidMetadata
+                }
+                return failed
+            case SQLiteMediaMetadataState.committed,
+                 SQLiteMediaMetadataState.legacy:
+                return operation
+            default:
+                throw SQLiteMediaFileOperationError.operationConflict
+            }
+        }
+    }
+
+    /// Requeues a metadata acknowledgement after cancellation without
+    /// changing the already-verified copy state.
+    func requeueMediaMetadataAcknowledgement(
+        id: String,
+        at date: Date = Date()
+    ) throws -> SQLiteMediaFileOperation {
+        try SQLiteMediaFileOperationValidation.identifier(id)
+        let timestamp = date.timeIntervalSinceReferenceDate
+        return try databaseQueue.write { database in
+            guard let operation = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                throw SQLiteMediaFileOperationError.operationNotFound
+            }
+            guard operation.operation == "copy",
+                  operation.state == "completed" else {
+                throw SQLiteMediaFileOperationError.metadataAcknowledgementRequired
+            }
+            guard [
+                SQLiteMediaMetadataState.pending,
+                SQLiteMediaMetadataState.committing,
+                SQLiteMediaMetadataState.failed
+            ].contains(operation.metadataState) else {
+                return operation
+            }
+            try database.execute(
+                sql: """
+                UPDATE file_operations
+                SET metadataState = ?,
+                    metadataAcknowledgedAt = NULL,
+                    lastError = NULL,
+                    updatedAt = ?
+                WHERE id = ?
+                """,
+                arguments: [
+                    SQLiteMediaMetadataState.pending,
+                    timestamp,
+                    id
+                ]
+            )
+            guard let requeued = try Self.fetchMediaFileOperation(id: id, from: database) else {
+                throw SQLiteLibraryStoreError.invalidMetadata
+            }
+            return requeued
         }
     }
 

@@ -160,9 +160,9 @@ extension SQLiteLibraryStore {
                 id, assetID, operation, state, ownerStorageID, ownerRevision,
                 sourceRoot, sourceRelativePath, destinationRoot,
                 destinationRelativePath, expectedByteLength, expectedSHA256,
-                attemptCount, lastError, createdAt, updatedAt
+                attemptCount, lastError, createdAt, updatedAt, metadataState
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 plan.operationID,
@@ -180,7 +180,8 @@ extension SQLiteLibraryStore {
                 0,
                 nil,
                 timestamp,
-                timestamp
+                timestamp,
+                SQLiteMediaMetadataState.pending
             ]
         )
     }
@@ -194,6 +195,8 @@ extension SQLiteLibraryStore {
             sql: """
             SELECT file_operations.id, file_operations.assetID,
                    file_operations.operation, file_operations.state,
+                   file_operations.metadataState,
+                   file_operations.metadataAcknowledgedAt,
                    file_operations.ownerStorageID, file_operations.ownerRevision,
                    file_operations.sourceRoot, file_operations.sourceRelativePath,
                    file_operations.destinationRoot, file_operations.destinationRelativePath,
@@ -214,9 +217,11 @@ extension SQLiteLibraryStore {
         guard let operationID: String = row["id"],
               let operation: String = row["operation"],
               let state: String = row["state"],
+              let metadataState: String = row["metadataState"],
               let attemptCount: Int = row["attemptCount"],
               let createdAt: Double = row["createdAt"],
-              let updatedAt: Double = row["updatedAt"] else {
+              let updatedAt: Double = row["updatedAt"],
+              SQLiteMediaMetadataState.all.contains(metadataState) else {
             throw SQLiteLibraryStoreError.invalidMetadata
         }
         return SQLiteMediaFileOperation(
@@ -225,6 +230,9 @@ extension SQLiteLibraryStore {
             sourceTransferID: row["sourceTransferID"],
             operation: operation,
             state: state,
+            metadataState: metadataState,
+            metadataAcknowledgedAt: (row["metadataAcknowledgedAt"] as Double?)
+                .map(Date.init(timeIntervalSinceReferenceDate:)),
             ownerStorageID: row["ownerStorageID"],
             ownerRevision: row["ownerRevision"],
             sourceRoot: row["sourceRoot"],
