@@ -214,6 +214,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func upsertCloudSummary(
+        _ command: LibrarySummaryCloudRestoreCommand
+    ) async throws -> LibrarySummarySnapshot {
+        try await withNormalAccess { [store] in
+            try await store.upsertCloudSummary(command)
+        }
+    }
+
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot {
@@ -2238,6 +2246,175 @@ extension SQLiteLibraryStore {
             )
             return try Self.fetchUpdatedTranscript(
                 storageID: transcriptStorageID,
+                in: database
+            )
+        }
+    }
+
+    func upsertCloudSummary(
+        _ command: LibrarySummaryCloudRestoreCommand
+    ) throws -> LibrarySummarySnapshot {
+        try command.validate()
+        let requestedID = command.id.uuidString.lowercased()
+        let stableStorageID = Self.summaryStorageID(for: command.id)
+        let summaryColumns = """
+            storageID, aiMethod, compressionRatio, confidence, contentType,
+            generatedAt, id, originalLength, processingTime,
+            recordingStorageID, recordingId, reminders, summary, tasks, titles,
+            transcriptStorageID, transcriptId, version, wordCount
+            """
+
+        return try databaseQueue.write { database in
+            let rows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(summaryColumns)
+                FROM summaries
+                WHERE storageID = ? OR lower(id) = lower(?)
+                ORDER BY storageID
+                LIMIT 2
+                """,
+                arguments: [stableStorageID, requestedID]
+            )
+            guard rows.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousSummary(reference: requestedID)
+            }
+
+            let summaryStorageID: String
+            let operation: LibraryChangeOperation
+            if let existingRow = rows.first {
+                let current = try SQLiteLibraryRepositoryMapper.summary(from: existingRow)
+                guard let existingID = current.legacyID,
+                      !existingID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "summaries",
+                        field: "id"
+                    )
+                }
+                guard Self.normalizedID(existingID) == requestedID else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: requestedID
+                    )
+                }
+                guard command.expectedGeneratedAt == nil
+                        || command.expectedGeneratedAt == current.generatedAt else {
+                    throw LibraryRepositoryError.staleSummary(
+                        reference: requestedID,
+                        expected: command.expectedGeneratedAt,
+                        actual: current.generatedAt
+                    )
+                }
+
+                if let incomingRecordingID = command.recordingID?.uuidString,
+                   let existingRecordingID = current.recordingLegacyID,
+                   Self.normalizedID(existingRecordingID) != Self.normalizedID(incomingRecordingID) {
+                    throw LibraryRepositoryError.invalidCommand(
+                        "cloud summary recording identity conflicts with the existing row"
+                    )
+                }
+                if let incomingTranscriptID = command.transcriptID?.uuidString,
+                   let existingTranscriptID = current.transcriptLegacyID,
+                   Self.normalizedID(existingTranscriptID) != Self.normalizedID(incomingTranscriptID) {
+                    throw LibraryRepositoryError.invalidCommand(
+                        "cloud summary transcript identity conflicts with the existing row"
+                    )
+                }
+
+                summaryStorageID = current.storageID
+                operation = .updated
+            } else {
+                summaryStorageID = stableStorageID
+                operation = .inserted
+            }
+
+            if operation == .inserted {
+                try database.execute(
+                    sql: """
+                    INSERT INTO summaries (
+                        storageID, aiMethod, compressionRatio, confidence, contentType,
+                        generatedAt, id, originalLength, processingTime,
+                        recordingStorageID, recordingId, reminders, summary, tasks,
+                        titles, transcriptStorageID, transcriptId, version, wordCount
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        summaryStorageID,
+                        command.aiMethod,
+                        command.compressionRatio,
+                        command.confidence,
+                        command.contentType,
+                        command.generatedAt?.timeIntervalSinceReferenceDate,
+                        requestedID,
+                        command.originalLength,
+                        command.processingTime,
+                        nil,
+                        command.recordingID?.uuidString.lowercased(),
+                        command.reminders,
+                        command.summary,
+                        command.tasks,
+                        command.titles,
+                        nil,
+                        command.transcriptID?.uuidString.lowercased(),
+                        command.version,
+                        command.wordCount
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud summary",
+                        reason: "the summary row was not inserted"
+                    )
+                }
+            } else {
+                try database.execute(
+                    sql: """
+                    UPDATE summaries
+                    SET aiMethod = ?, compressionRatio = ?, confidence = ?,
+                        contentType = ?, generatedAt = ?, originalLength = ?,
+                        processingTime = ?, recordingId = COALESCE(?, recordingId),
+                        reminders = ?, summary = ?, tasks = ?, titles = ?,
+                        transcriptId = COALESCE(?, transcriptId), version = ?,
+                        wordCount = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.aiMethod,
+                        command.compressionRatio,
+                        command.confidence,
+                        command.contentType,
+                        command.generatedAt?.timeIntervalSinceReferenceDate,
+                        command.originalLength,
+                        command.processingTime,
+                        command.recordingID?.uuidString.lowercased(),
+                        command.reminders,
+                        command.summary,
+                        command.tasks,
+                        command.titles,
+                        command.transcriptID?.uuidString.lowercased(),
+                        command.version,
+                        command.wordCount,
+                        summaryStorageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud summary",
+                        reason: "the summary row was not updated"
+                    )
+                }
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .summary,
+                storageID: summaryStorageID,
+                operation: operation,
+                at: command.observedAt
+            )
+
+            return try Self.fetchUpdatedSummary(
+                storageID: summaryStorageID,
                 in: database
             )
         }

@@ -281,6 +281,18 @@ class AppDataCoordinator: ObservableObject {
         return snapshot
     }
 
+    /// Applies CloudKit summary scalar metadata without mutating either side
+    /// of the summary relationships. Restore repairs those links only after
+    /// timestamp arbitration against the recording's pre-restore pointers.
+    @discardableResult
+    func upsertCloudSummaryUsingRepository(
+        _ command: LibrarySummaryCloudRestoreCommand
+    ) async throws -> LibrarySummarySnapshot {
+        let snapshot = try await libraryRepository.upsertCloudSummary(command)
+        objectWillChange.send()
+        return snapshot
+    }
+
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         let result = workflowManager.createTranscript(
             for: recordingId,

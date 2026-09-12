@@ -538,6 +538,106 @@ extension LibraryTranscriptCloudRestoreCommand {
     }
 }
 
+/// Applies the scalar metadata carried by a CloudKit summary backup record.
+///
+/// CloudKit backup records from older app versions can omit individual summary
+/// fields, so the command keeps the content values optional and does not apply
+/// the normal generated-summary length rule. The repository owns identity and
+/// generated-date revision checks, but deliberately leaves Core Data/SQLite
+/// relationships for the restore relationship phase.
+struct LibrarySummaryCloudRestoreCommand: Equatable, Sendable {
+    let id: UUID
+    let recordingID: UUID?
+    let transcriptID: UUID?
+    let summary: String?
+    let tasks: String?
+    let reminders: String?
+    let titles: String?
+    let contentType: String?
+    let aiMethod: String?
+    let generatedAt: Date?
+    let version: Int64
+    let wordCount: Int64
+    let originalLength: Int64
+    let compressionRatio: Double
+    let confidence: Double
+    let processingTime: Double
+    let expectedGeneratedAt: Date?
+    let observedAt: Date
+
+    init(
+        id: UUID,
+        recordingID: UUID?,
+        transcriptID: UUID?,
+        summary: String?,
+        tasks: String?,
+        reminders: String?,
+        titles: String?,
+        contentType: String?,
+        aiMethod: String?,
+        generatedAt: Date?,
+        version: Int64 = 1,
+        wordCount: Int64 = 0,
+        originalLength: Int64 = 0,
+        compressionRatio: Double = 0,
+        confidence: Double = 0.5,
+        processingTime: Double = 0,
+        expectedGeneratedAt: Date? = nil,
+        observedAt: Date = Date()
+    ) {
+        self.id = id
+        self.recordingID = recordingID
+        self.transcriptID = transcriptID
+        self.summary = summary
+        self.tasks = tasks
+        self.reminders = reminders
+        self.titles = titles
+        self.contentType = contentType
+        self.aiMethod = aiMethod
+        self.generatedAt = generatedAt
+        self.version = version
+        self.wordCount = wordCount
+        self.originalLength = originalLength
+        self.compressionRatio = compressionRatio
+        self.confidence = confidence
+        self.processingTime = processingTime
+        self.expectedGeneratedAt = expectedGeneratedAt
+        self.observedAt = observedAt
+    }
+}
+
+extension LibrarySummaryCloudRestoreCommand {
+    func validate() throws {
+        guard version >= 0, wordCount >= 0, originalLength >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud summary integer metadata must be non-negative"
+            )
+        }
+        guard compressionRatio.isFinite, compressionRatio >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud summary compression ratio must be finite and non-negative"
+            )
+        }
+        guard confidence.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud summary confidence must be finite"
+            )
+        }
+        guard processingTime.isFinite, processingTime >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud summary processing time must be finite and non-negative"
+            )
+        }
+
+        let dates = [generatedAt, expectedGeneratedAt, observedAt].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud summary dates must be finite"
+            )
+        }
+    }
+}
+
 /// Removes a newly-created recording when a multi-step import cannot finish.
 ///
 /// This is intentionally narrower than user deletion: it refuses to remove a
@@ -1793,6 +1893,9 @@ protocol LibraryRepository: Sendable {
     func upsertCloudTranscript(
         _ command: LibraryTranscriptCloudRestoreCommand
     ) async throws -> LibraryTranscriptSnapshot
+    func upsertCloudSummary(
+        _ command: LibrarySummaryCloudRestoreCommand
+    ) async throws -> LibrarySummarySnapshot
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
     ) async throws -> LibrarySummarySnapshot
@@ -1830,6 +1933,7 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
     case staleTranscript(reference: String, expected: Date?, actual: Date?)
     case summaryAlreadyExists(reference: String)
     case ambiguousSummary(reference: String)
+    case staleSummary(reference: String, expected: Date?, actual: Date?)
     case transcriptNotFound(reference: String)
     case archiveLocationAlreadyExists(reference: String)
     case ambiguousArchiveLocation(reference: String)
@@ -1871,6 +1975,10 @@ enum LibraryRepositoryError: LocalizedError, Equatable {
             return "The summary already exists: \(reference)"
         case .ambiguousSummary(let reference):
             return "The summary identity is ambiguous: \(reference)"
+        case .staleSummary(let reference, let expected, let actual):
+            return "The summary changed before it could be updated (\(reference)); "
+                + "expected generated date \(String(describing: expected)), "
+                + "found \(String(describing: actual))."
         case .transcriptNotFound(let reference):
             return "The transcript could not be found: \(reference)"
         case .archiveLocationAlreadyExists(let reference):

@@ -419,6 +419,115 @@ final class LibraryRepositoryContractTests: XCTestCase {
         }
     }
 
+    func testCoreDataRepositoryUpsertsCloudSummaryWithoutReplacingRelationshipState() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-cloud-summary.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000002")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000003")
+        )
+        let initial = try XCTUnwrap(
+            (try await repository.fetchSummarySnapshots()).first {
+                $0.legacyID == summaryID.uuidString.lowercased()
+            }
+        )
+        let cloudTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+
+        let restored = try await repository.upsertCloudSummary(
+            LibrarySummaryCloudRestoreCommand(
+                id: summaryID,
+                recordingID: nil,
+                transcriptID: nil,
+                summary: nil,
+                tasks: nil,
+                reminders: nil,
+                titles: nil,
+                contentType: nil,
+                aiMethod: "cloud-engine",
+                generatedAt: cloudTimestamp,
+                expectedGeneratedAt: initial.generatedAt,
+                observedAt: cloudTimestamp
+            )
+        )
+
+        XCTAssertEqual(restored.recordingLegacyID, initial.recordingLegacyID)
+        XCTAssertEqual(restored.recordingStorageID, initial.recordingStorageID)
+        XCTAssertEqual(restored.transcriptLegacyID, initial.transcriptLegacyID)
+        XCTAssertEqual(restored.transcriptStorageID, initial.transcriptStorageID)
+        XCTAssertNil(restored.summary)
+        XCTAssertEqual(restored.aiMethod, "cloud-engine")
+        XCTAssertEqual(restored.generatedAt, cloudTimestamp)
+
+        let recordingRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+        recordingRequest.predicate = NSPredicate(
+            format: "id == %@",
+            recordingID as CVarArg
+        )
+        let recording = try XCTUnwrap(
+            try fixture.container.viewContext.fetch(recordingRequest).first
+        )
+        let transcriptRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        transcriptRequest.predicate = NSPredicate(
+            format: "id == %@",
+            transcriptID as CVarArg
+        )
+        let transcript = try XCTUnwrap(
+            try fixture.container.viewContext.fetch(transcriptRequest).first
+        )
+        let summaryRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        summaryRequest.predicate = NSPredicate(
+            format: "id == %@",
+            summaryID as CVarArg
+        )
+        let summary = try XCTUnwrap(
+            try fixture.container.viewContext.fetch(summaryRequest).first
+        )
+        XCTAssertIdentical(summary.recording, recording)
+        XCTAssertIdentical(summary.transcript, transcript)
+
+        do {
+            _ = try await repository.upsertCloudSummary(
+                LibrarySummaryCloudRestoreCommand(
+                    id: summaryID,
+                    recordingID: recordingID,
+                    transcriptID: transcriptID,
+                    summary: "A stale cloud summary must not replace the newer row.",
+                    generatedAt: Date(timeIntervalSinceReferenceDate: 201),
+                    expectedGeneratedAt: initial.generatedAt,
+                    observedAt: Date(timeIntervalSinceReferenceDate: 201)
+                )
+            )
+            XCTFail("Expected stale cloud summary restore to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleSummary(
+                    reference: summaryID.uuidString.lowercased(),
+                    expected: initial.generatedAt,
+                    actual: restored.generatedAt
+                )
+            )
+        }
+    }
+
     func testCoreDataRepositoryDiscardsOnlyMetadataOrphanAndRetainsDependents() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

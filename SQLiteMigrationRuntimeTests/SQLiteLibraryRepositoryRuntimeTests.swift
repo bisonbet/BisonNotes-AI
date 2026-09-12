@@ -397,6 +397,115 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         }
     }
 
+    func testRepositoryUpsertsCloudSummaryWithoutMutatingRelationshipState() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000016")
+        )
+        _ = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "local-recording.m4a",
+                name: "Summary owner",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 3,
+                fileSize: 20,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "20000000-0000-0000-0000-000000000016")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000016")
+        )
+        let firstTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+        let inserted = try await repository.upsertCloudSummary(
+            LibrarySummaryCloudRestoreCommand(
+                id: summaryID,
+                recordingID: recordingID,
+                transcriptID: transcriptID,
+                summary: nil,
+                tasks: nil,
+                reminders: nil,
+                titles: nil,
+                contentType: nil,
+                aiMethod: "cloud-engine",
+                generatedAt: firstTimestamp,
+                observedAt: firstTimestamp
+            )
+        )
+
+        XCTAssertEqual(
+            inserted.storageID,
+            "sqlite-summary-\(summaryID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(inserted.recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertNil(inserted.recordingStorageID)
+        XCTAssertEqual(inserted.transcriptLegacyID, transcriptID.uuidString.lowercased())
+        XCTAssertNil(inserted.transcriptStorageID)
+        XCTAssertNil(inserted.summary)
+        XCTAssertEqual(inserted.generatedAt, firstTimestamp)
+
+        let secondTimestamp = Date(timeIntervalSinceReferenceDate: 201)
+        let updated = try await repository.upsertCloudSummary(
+            LibrarySummaryCloudRestoreCommand(
+                id: summaryID,
+                recordingID: nil,
+                transcriptID: nil,
+                summary: "The updated cloud summary is retained without replacing links.",
+                tasks: "[]",
+                reminders: "[]",
+                titles: "[]",
+                contentType: "meeting",
+                aiMethod: "updated-engine",
+                generatedAt: secondTimestamp,
+                expectedGeneratedAt: inserted.generatedAt,
+                observedAt: secondTimestamp
+            )
+        )
+        XCTAssertEqual(updated.recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(updated.transcriptLegacyID, transcriptID.uuidString.lowercased())
+        XCTAssertEqual(updated.summary, "The updated cloud summary is retained without replacing links.")
+        XCTAssertEqual(updated.generatedAt, secondTimestamp)
+
+        do {
+            _ = try await repository.upsertCloudSummary(
+                LibrarySummaryCloudRestoreCommand(
+                    id: summaryID,
+                    recordingID: recordingID,
+                    transcriptID: transcriptID,
+                    summary: "Stale cloud summary should not replace the newer row.",
+                    tasks: "[]",
+                    reminders: "[]",
+                    titles: "[]",
+                    contentType: "meeting",
+                    aiMethod: "stale-engine",
+                    generatedAt: Date(timeIntervalSinceReferenceDate: 202),
+                    expectedGeneratedAt: inserted.generatedAt,
+                    observedAt: Date(timeIntervalSinceReferenceDate: 202)
+                )
+            )
+            XCTFail("Expected stale cloud summary to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleSummary(
+                    reference: summaryID.uuidString.lowercased(),
+                    expected: inserted.generatedAt,
+                    actual: updated.generatedAt
+                )
+            )
+        }
+    }
+
     func testRepositoryUpdatesRecordingDateAndLocationWithRevisionGuards() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

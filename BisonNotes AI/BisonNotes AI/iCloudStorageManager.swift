@@ -4908,6 +4908,9 @@ extension iCloudStorageManager {
             var transcriptIDsBeforeRestore = [UUID: UUID]()
             var transcriptTimestampsBeforeRestore = [UUID: Date]()
             var transcriptionStatusesBeforeRestore = [UUID: String]()
+            var summaryIDsBeforeRestore = [UUID: UUID]()
+            var summaryTimestampsBeforeRestore = [UUID: Date]()
+            var summaryStatusesBeforeRestore = [UUID: String]()
             for recording in appCoordinator.coreDataManager.getAllRecordings() {
                 if let id = recording.id {
                     recordingsById[id] = recording
@@ -4920,6 +4923,16 @@ extension iCloudStorageManager {
                     }
                     if let status = recording.transcriptionStatus {
                         transcriptionStatusesBeforeRestore[id] = status
+                    }
+                    if let summaryID = recording.summaryId ?? recording.summary?.id {
+                        summaryIDsBeforeRestore[id] = summaryID
+                    }
+                    if let summary = recording.summary,
+                       let timestamp = localSummaryContentTimestamp(summary) {
+                        summaryTimestampsBeforeRestore[id] = timestamp
+                    }
+                    if let status = recording.summaryStatus {
+                        summaryStatusesBeforeRestore[id] = status
                     }
                 }
             }
@@ -5221,59 +5234,92 @@ extension iCloudStorageManager {
                         continue
                     }
                 }
-                let entry = existing ?? SummaryEntry(context: context)
-
-                if existing == nil {
-                    entry.id = summaryId
-                    result.summariesRestored += 1
-                }
-
                 let transcriptId = (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) }
+                let cloudTimestamp = backupRecordContentTimestamp(
+                    record,
+                    keys: Self.summaryContentTimestampKeys
+                )
 
                 let applyCloudSummary = existing.map { local in
                     Self.shouldApplyCloudVersion(
-                        cloudTimestamp: backupRecordContentTimestamp(
-                            record,
-                            keys: Self.summaryContentTimestampKeys
-                        ),
+                        cloudTimestamp: cloudTimestamp,
                         localTimestamp: localSummaryContentTimestamp(local)
                     )
                 } ?? true
 
-                if applyCloudSummary {
-                    entry.recordingId = recordingId
-                    entry.transcriptId = transcriptId
-                    entry.summary = record[Self.fieldSummaryText] as? String
-                    entry.tasks = record[Self.fieldTasks] as? String
-                    entry.reminders = record[Self.fieldReminders] as? String
-                    entry.titles = record[Self.fieldTitles] as? String
-                    entry.contentType = record[Self.fieldContentType] as? String
-                    entry.aiMethod = record[Self.fieldAIMethod] as? String
-                    entry.generatedAt = record[Self.fieldGeneratedAt] as? Date
-                    entry.version = Int32(intValue(from: record[Self.fieldVersion], defaultValue: 1))
-                    entry.wordCount = Int32(intValue(from: record[Self.fieldWordCount]))
-                    entry.originalLength = Int32(intValue(from: record[Self.fieldOriginalLength]))
-                    entry.compressionRatio = doubleValue(from: record[Self.fieldCompressionRatio])
-                    entry.confidence = doubleValue(from: record[Self.fieldConfidence])
-                    entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
-                } else {
+                guard applyCloudSummary else {
                     result.localItemsKeptAsNewer += 1
+                    // A newer local summary owns both its scalar content and
+                    // relationships. Do not let an older cloud row repair a
+                    // transcript or recording link as a side effect.
+                    if let existing {
+                        summariesById[summaryId] = existing
+                    }
+                    continue
+                }
+
+                let restoredSummary: LibrarySummarySnapshot
+                do {
+                    restoredSummary = try await appCoordinator.upsertCloudSummaryUsingRepository(
+                        LibrarySummaryCloudRestoreCommand(
+                            id: summaryId,
+                            recordingID: recordingId,
+                            transcriptID: transcriptId,
+                            summary: record[Self.fieldSummaryText] as? String,
+                            tasks: record[Self.fieldTasks] as? String,
+                            reminders: record[Self.fieldReminders] as? String,
+                            titles: record[Self.fieldTitles] as? String,
+                            contentType: record[Self.fieldContentType] as? String,
+                            aiMethod: record[Self.fieldAIMethod] as? String,
+                            generatedAt: record[Self.fieldGeneratedAt] as? Date,
+                            version: Int64(intValue(from: record[Self.fieldVersion], defaultValue: 1)),
+                            wordCount: Int64(intValue(from: record[Self.fieldWordCount])),
+                            originalLength: Int64(intValue(from: record[Self.fieldOriginalLength])),
+                            compressionRatio: doubleValue(from: record[Self.fieldCompressionRatio]),
+                            confidence: doubleValue(from: record[Self.fieldConfidence], defaultValue: 0.5),
+                            processingTime: doubleValue(from: record[Self.fieldProcessingTime]),
+                            expectedGeneratedAt: existing?.generatedAt,
+                            observedAt: cloudTimestamp ?? Date()
+                        )
+                    )
+                } catch let error as LibraryRepositoryError {
+                    if case .staleSummary = error {
+                        // A local edit won the race after the timestamp
+                        // arbitration above. Leave its row and relationships
+                        // intact, including a pre-existing recording link.
+                        result.localItemsKeptAsNewer += 1
+                        if let existing {
+                            summariesById[summaryId] = existing
+                        }
+                        continue
+                    }
+                    throw error
+                }
+
+                if existing == nil {
+                    result.summariesRestored += 1
+                }
+                guard let entry = appCoordinator.coreDataManager.getSummary(id: summaryId) else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "SummaryEntry",
+                        field: "id"
+                    )
                 }
 
                 if let recordingId, let recording = recordingsById[recordingId] {
-                    entry.recording = recording
+                    let priorSummaryID = summaryIDsBeforeRestore[recordingId]
+                    let priorSummaryTimestamp = summaryTimestampsBeforeRestore[recordingId]
+                    let priorSummaryStatus = summaryStatusesBeforeRestore[recordingId]
 
-                    // Same rule as transcripts: `existing` is matched on summary
-                    // id, so a cloud row from delete-and-regenerate arrives with
-                    // nothing to compare against and would steal the recording's
-                    // pointer. Arbitrate against whatever the recording currently
-                    // points at before repointing it.
                     if Self.shouldRelinkRestoredRow(
                         candidateId: summaryId,
-                        candidateTimestamp: localSummaryContentTimestamp(entry),
-                        linkedId: recording.summaryId ?? recording.summary?.id,
-                        linkedTimestamp: recording.summary.map(localSummaryContentTimestamp) ?? nil
+                        candidateTimestamp: cloudTimestamp
+                            ?? restoredSummary.generatedAt
+                            ?? localSummaryContentTimestamp(entry),
+                        linkedId: priorSummaryID,
+                        linkedTimestamp: priorSummaryTimestamp
                     ) {
+                        entry.recording = recording
                         recording.summary = entry
                         recording.summaryId = summaryId
                         // A linked summary is authoritative even when a stale "Not Started"
@@ -5281,6 +5327,14 @@ extension iCloudStorageManager {
                         recording.summaryStatus = ProcessingStatus.completed.rawValue
                     } else {
                         result.localItemsKeptAsNewer += 1
+                        // The cloud recording row was allowed to restore scalar
+                        // metadata before this child was arbitrated. Restore the
+                        // prior pointer/status when the local child remains the
+                        // winner so a rejected child cannot leave a dangling
+                        // denormalized link.
+                        recording.summaryId = priorSummaryID
+                        recording.summary = priorSummaryID.flatMap { summariesById[$0] }
+                        recording.summaryStatus = priorSummaryStatus
                     }
                 }
 

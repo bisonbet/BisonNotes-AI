@@ -160,7 +160,7 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             recordingLegacyID: relatedLegacyID(
                 from: object,
                 relationship: "recording"
-            ),
+            ) ?? identifier(from: object.value(forKey: "recordingId")),
             reminders: object.value(forKey: "reminders") as? String,
             summary: object.value(forKey: "summary") as? String,
             tasks: object.value(forKey: "tasks") as? String,
@@ -172,7 +172,7 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             transcriptLegacyID: relatedLegacyID(
                 from: object,
                 relationship: "transcript"
-            ),
+            ) ?? identifier(from: object.value(forKey: "transcriptId")),
             version: number(from: object, key: "version")?.int64Value,
             wordCount: number(from: object, key: "wordCount")?.int64Value
         )
@@ -550,6 +550,105 @@ extension CoreDataLibraryRepository {
                 }
 
                 return try Self.transcriptSnapshot(from: transcript)
+            }
+        }
+    }
+
+    func upsertCloudSummary(
+        _ command: LibrarySummaryCloudRestoreCommand
+    ) async throws -> LibrarySummarySnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "SummaryEntry")
+                request.fetchLimit = 2
+                request.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let matches = try context.fetch(request)
+                guard matches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousSummary(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                let summary: NSManagedObject
+                let isNewSummary: Bool
+                if let existing = matches.first {
+                    let current = try Self.summarySnapshot(from: existing)
+                    guard command.expectedGeneratedAt == nil
+                            || command.expectedGeneratedAt == current.generatedAt else {
+                        throw LibraryRepositoryError.staleSummary(
+                            reference: command.id.uuidString.lowercased(),
+                            expected: command.expectedGeneratedAt,
+                            actual: current.generatedAt
+                        )
+                    }
+
+                    if let recordingID = command.recordingID {
+                        let existingRecordingID = (existing.value(forKey: "recordingId") as? UUID)
+                            ?? (existing.value(forKey: "recording") as? NSManagedObject)?
+                                .value(forKey: "id") as? UUID
+                        if let existingRecordingID, existingRecordingID != recordingID {
+                            throw LibraryRepositoryError.invalidCommand(
+                                "cloud summary recording identity conflicts with the existing row"
+                            )
+                        }
+                    }
+                    if let transcriptID = command.transcriptID {
+                        let existingTranscriptID = (existing.value(forKey: "transcriptId") as? UUID)
+                            ?? (existing.value(forKey: "transcript") as? NSManagedObject)?
+                                .value(forKey: "id") as? UUID
+                        if let existingTranscriptID, existingTranscriptID != transcriptID {
+                            throw LibraryRepositoryError.invalidCommand(
+                                "cloud summary transcript identity conflicts with the existing row"
+                            )
+                        }
+                    }
+
+                    summary = existing
+                    isNewSummary = false
+                } else {
+                    summary = SummaryEntry(context: context)
+                    summary.setValue(command.id, forKey: "id")
+                    isNewSummary = true
+                }
+
+                if let recordingID = command.recordingID {
+                    summary.setValue(recordingID, forKey: "recordingId")
+                }
+                if let transcriptID = command.transcriptID {
+                    summary.setValue(transcriptID, forKey: "transcriptId")
+                }
+                summary.setValue(command.summary, forKey: "summary")
+                summary.setValue(command.tasks, forKey: "tasks")
+                summary.setValue(command.reminders, forKey: "reminders")
+                summary.setValue(command.titles, forKey: "titles")
+                summary.setValue(command.contentType, forKey: "contentType")
+                summary.setValue(command.aiMethod, forKey: "aiMethod")
+                summary.setValue(command.generatedAt, forKey: "generatedAt")
+                summary.setValue(command.version, forKey: "version")
+                summary.setValue(command.wordCount, forKey: "wordCount")
+                summary.setValue(command.originalLength, forKey: "originalLength")
+                summary.setValue(command.compressionRatio, forKey: "compressionRatio")
+                summary.setValue(command.confidence, forKey: "confidence")
+                summary.setValue(command.processingTime, forKey: "processingTime")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewSummary {
+                        context.delete(summary)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud summary",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.summarySnapshot(from: summary)
             }
         }
     }
