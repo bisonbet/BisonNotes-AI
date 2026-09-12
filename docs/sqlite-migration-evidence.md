@@ -11,12 +11,12 @@ can be updated without rewriting the design.
 | Item | Value |
 | --- | --- |
 | Runtime source baseline | `v2.5` at `d64660ba85dc04e6bc2f1fa88263427cb76b37aa` |
-| Planning/implementation branch | `v3.0` |
-| Planning revision | `275ec590c17fd01d010a0e584e334ddc3760c5b4` before implementation changes |
-| Last implementation commit | `e612ebdcbbabb9522cdb4e9b15489324af1476a4` |
-| GRDB dependency commit | `d4e143b47ec3fcbe737e36a228150c32b0b33a96` |
-| Safety commit | `76949b18f88c8084ed62f21bfeafd6bad6be2469` |
-| Reviewed date | 2026-09-07 |
+| Planning/implementation branch | `v3.0-sqlitemigration` (clean PR target: `v3.0`) |
+| Planning revision | Current implementation checkpoint `cb3f9fd6` |
+| Last implementation commit | `cb3f9fd6` |
+| GRDB dependency commit | `b83108d10f42680d78f23fe4d4d80fc88dab3212` |
+| Safety commit | `cb3f9fd6` (persistent web-staging cleanup boundary) |
+| Reviewed date | 2026-09-12 |
 | Production store/CloudKit inspection | Not performed |
 | SQLite backend | GRDB 7.11.1 pinned for an isolated spike; no user-store cutover |
 
@@ -26,28 +26,21 @@ commit requires this ledger and the model hashes in
 
 ## Handoff state
 
-Core Data remains the only authoritative user store. An isolated
-`SQLiteLibraryStore` actor and v1 schema now exist, with typed durable
-migration-run begin/read/checkpoint operations, but no SQLite importer,
-repository, production checkpoint coordinator, migration screen or media-copy
-worker is enabled. The store is not connected to startup or user data. Its
-focused tests are compiled into the existing app-hosted XCTest target; a runtime
-attempt on the iPhone 17 Pro simulator exited before XCTest bootstrapping, so no
-assertion has been counted as passing.
+Core Data remains the only authoritative user store and SQLite is not connected
+to startup or user data. The current branch contains the isolated repository,
+source-fixture/verifier, migration checkpoint, observation, provider-restore,
+generic media-journal, production Watch/Share/web/document-picker audio
+boundaries and the persistent web-staging orphan sweep. A separate root SwiftPM
+package now executes 134 host-independent macOS tests against the canonical
+SQLite sources with the exact GRDB 7.11.1 resolution. This is disposable runtime
+evidence, not live-data evidence.
 
-A separate root SwiftPM package now executes five host-independent macOS tests
-against the canonical SQLite sources. It uses the same exact GRDB 7.11.1
-resolution and passed all five tests after exposing and fixing the
-non-transactional synchronous-pragma requirement and the processing-job index
-column error. This is disposable runtime evidence, not live-data evidence.
-
-The next evidence-producing steps are to add closed-Core-Data source fixtures and
-an independent verifier contract, finish the runtime/defaults ledger and
-Watch/share/background gates, measure metadata first-boot cost and background
-media reconciliation, then build the typed repository, Core Data importer and
-production coordinator around the checkpoint contract. No live user database,
-CloudKit record, app export/restore package or app-managed encryption key is in
-scope.
+The remaining evidence-producing work is final caller/maintenance-gate coverage,
+metadata first-boot duration and peak disk/RSS measurements, signed-device
+background delivery/expiration and file-provider validation, Apple backup/iCloud
+restore drills, and the complete production source/importer/startup cutover
+boundary. No live user database, CloudKit record, app export/restore package or
+app-managed encryption key is in scope.
 
 ## Confirmed product and backend decisions
 
@@ -77,7 +70,7 @@ complete.
 | Phone Watch staging | `tmp/WatchTransferStaging` and phone Documents handoff in `WatchConnectivityManager.swift` and `AudioRecorderViewModel+WatchIntegration.swift` | Journal source ID, staging, asset commit, database commit and acknowledgement independently | Restart between every transition; failed transfer retention |
 | Share imports | App Group `group.bisonnotesai.shared/ShareInbox` and `.share-import-token` in `ShareExtensionProcessor.swift`; fallback `Documents/Inbox` cleanup in `BisonNotesAIApp.swift` | Preserve token/file/commit order and retry state; cleanup only after durable receipt | Token replay, unauthenticated fallback, duplicate and interrupted import fixtures |
 | Defaults and suites | Five pending queues plus `SavedEnhancedSummaries`; iCloud routine/backoff/signature/manifest/quarantine keys; setup/location/sync/backup flags; App Group action-button key and `processedWatchRecordingIds` | Classify authoritative, derived and device-specific values; migrate exact keys only; keep Keychain out of the SQLite schema and do not export it | Defaults-domain inventory and malformed/unknown queue fixtures |
-| Temporary import/cloud roots | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, and other file-operation staging | Keep until receipt/checksum proves the durable destination; unknown files enter recovery inventory; bound staging so it cannot become a full audio duplicate | Interrupted copy, checksum mismatch, low-space and restart tests |
+| Import/cloud roots | `tmp/iCloudAudioStaging`, transient `tmp/BisonNotesWebImports`, persistent `Application Support/BisonNotesWebImports`, macOS scratch/export paths, and other file-operation staging | Keep sources until receipt/checksum proves the durable destination; journal-referenced web sources are never swept; unreferenced generated web-audio files require a 24-hour age floor and an unreadable journal fails closed | Interrupted copy, checksum mismatch, low-space, restart and persistent-orphan tests |
 | Caches and models | FluidAudio models, map snapshots and Hugging Face/model caches under Application Support/Library/Caches | Keep outside the blocking metadata migration; preserve preferences and never delete unknown files; platform backup behavior is not app-controlled | Rebuild-after-migration and unknown-file retention tests |
 | Keychain and external dependencies | Credentials, security-scoped bookmarks, external archives and cloud-only assets | Preserve same-device access; do not export secrets or manage keys; report dependencies to migration health | Sign-out/account switch, unavailable external provider and incomplete-reconciliation tests |
 
@@ -162,6 +155,20 @@ The following checks were run against the Phase 0/1 working tree on `v3.0`:
   ended with a cache permission warning. A five-file diagnostic run reported
   98 violations in the five changed files (18 serious) with SourceKit-dependent
   rules disabled; no baseline-clean claim is made.
+- `git diff --check` passed.
+
+## Working-tree validation on 2026-09-12
+
+- `swift test --scratch-path /private/tmp/bisonnotes-sqlitemigration-orphan-scratch`
+  passed all 134 host-independent tests with 0 failures, including the
+  journal-aware persistent web-staging cleanup and source-reference query.
+- The focused media suites passed 25/25 tests with 0 failures.
+- The native macOS app-hosted `build-for-testing` check passed after integrating
+  the cleanup service; existing compiler warnings remain in the migration
+  progress view model.
+- The full iOS scheme remains blocked before app/test compilation by the
+  pre-existing Watch Widget `accessoryCorner` availability error. No simulator,
+  signed-device or live-data validation was performed.
 - `git diff --check` passed.
 
 ## Open evidence gates before backend selection/cutover

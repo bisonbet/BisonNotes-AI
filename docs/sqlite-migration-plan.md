@@ -543,19 +543,21 @@ macOS app-hosted build-for-testing check passes; the iOS scheme remains blocked
 by the pre-existing Watch Widget `accessoryCorner` availability error. No
 SQLite cutover or live user data was used.
 
-The current web-audio checkpoint is `6a51367b` (`fix: persist completed web
-audio staging`), following the journal integration in `daf1ee9a`. A completed
-web download whose resolved extension is supported audio now uses the same
-schema-v8 generic media journal when the Core Data store is durable: the source
-is classified under the registered `BisonNotesWebImports` staging root, which
-now lives in Application Support rather than the OS-purgeable temporary root.
-It receives a stable source-derived identity and bounded metadata descriptor,
-publishes into Documents, commits Core Data metadata idempotently, records the
-receipt and removes the source only after the retention check. Only in-progress
-download files remain temporary; orphan cleanup for persistent completed
-downloads and signed-device qualification remain open. Video extraction,
-transcript downloads and in-memory/test imports retain their direct paths. This
-adds no live-data or SQLite-cutover behavior.
+The current web-audio checkpoint is `cb3f9fd6` (`fix: clean abandoned web audio
+staging`), following `6a51367b` and the journal integration in `daf1ee9a`. A
+completed web download whose resolved extension is supported audio now uses the
+same schema-v8 generic media journal when the Core Data store is durable: the
+source is classified under the registered `BisonNotesWebImports` staging root,
+which now lives in Application Support rather than the OS-purgeable temporary
+root. It receives a stable source-derived identity and bounded metadata
+descriptor, publishes into Documents, commits Core Data metadata idempotently,
+records the receipt and removes the source only after the retention check. Only
+in-progress download files remain temporary. A journal-aware orphan sweep now
+reclaims only generated audio names older than a 24-hour floor and never removes
+a path referenced by any media operation; an unreadable journal fails closed.
+Signed-device qualification remains open. Video extraction, transcript
+downloads and in-memory/test imports retain their direct paths. This adds no
+live-data or SQLite-cutover behavior.
 
 The current document-picker audio checkpoint is `a54e7078` (`feat: journal
 document picker audio imports`). The Recordings view now opts audio selections
@@ -1882,9 +1884,10 @@ inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
 adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
 but does not change a user store or write CloudKit records. The
-current host-independent suite passes 133 tests with 0 failures, including the
+current host-independent suite passes 134 tests with 0 failures, including the
 durable provider archive-restore journal, generic media descriptor, production
-Watch-transfer boundary and web-audio root planning. Focused media and
+Watch-transfer boundary, web-audio root planning and persistent web-staging
+orphan cleanup. Focused media and
 migration-version tests pass within that suite. The native macOS app
 build-for-testing check also passes for the document-picker audio caller; the
 full iOS build remains blocked before
