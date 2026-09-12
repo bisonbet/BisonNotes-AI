@@ -40,6 +40,7 @@ Current CloudKit summary-restore checkpoint: `8d63a010`.
 Current CloudKit recording-restore checkpoint: `91406ea2`.
 Current CloudKit transcript-restore checkpoint: `961a5837`.
 Current CloudKit summary-metadata restore checkpoint: `96e49c91`.
+Current production Watch media-intake checkpoint: `d80fa3bc`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
 
@@ -393,7 +394,7 @@ platform/product mechanisms in scope:
 | Recording sidecars and recovery | `.location`, `.recordingmeta`, segment/merge files, and `deferred-recovery.json` in the `AudioRecorderViewModel` persistence extensions |
 | Legacy relationship state | `Documents/file_relationships.json` in `EnhancedFileManager`; top-level `.transcript`, `.summary`, `.location` and audio files in `DataMigrationManager` |
 | Recovery/archive staging | `Application Support/Recording Recovery`, `ArchiveStaging` and `AudioExportStaging` |
-| Watch source and receipts | Watch `Documents/WatchRecordings/metadata.json`, `recordings/*.m4a`, and `Documents/reliable_transfers.json`; phone `tmp/WatchTransferStaging` |
+| Watch source and receipts | Watch `Documents/WatchRecordings/metadata.json`, `recordings/*.m4a`, and `Documents/reliable_transfers.json`; phone `Application Support/WatchTransferStaging` is the persistent pre-cutover source root, with journaled cleanup after metadata acknowledgement |
 | Share imports | App Group `group.bisonnotesai.shared/ShareInbox`, `.share-import-token`, and the `Documents/Inbox` fallback |
 | Additional defaults | App Group action-button key `actionButtonShouldStartRecording`; `.standard` dedupe key `processedWatchRecordingIds`; sync timestamps, absence markers, throttles and backup flags |
 | Temporary roots and caches | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, FluidAudio models, map snapshots and model caches |
@@ -410,7 +411,7 @@ full-library duplicate.
 
 This inventory describes the source boundary and the intended first SQLite
 schema; it is not evidence that user data has migrated. Core Data remains
-authoritative. The isolated `SQLiteLibraryStore` foundation now runs schema v7;
+authoritative. The isolated `SQLiteLibraryStore` foundation now runs schema v8;
 its initial v1 schema mirrored all six
 model entities and adds the operational tables, seeded library/generation
 metadata, independent storage IDs, restrictive resolved-link foreign keys,
@@ -444,8 +445,10 @@ Production source/settings acquisition and coordinator wiring beyond the
 disposable source-backed harness, adoption of the gate by every Core Data,
 settings, Watch, share and background caller, the migration screen, historical
 release fixtures,
-final production media-root selection and Watch/share/background caller
-integration still need implementation against disposable fixtures. The isolated
+final production media-root selection and Share/background generic caller
+integration still need implementation against disposable fixtures. The Watch
+caller now exercises the generic transfer boundary in the pre-cutover Core
+Data-authoritative path. The isolated
 media worker, candidate application-root mapping, checksum-bound planner,
 restartable background reconciler and guarded retention executor now exist as
 background-safe foundations, but they are not app callers or a migration gate.
@@ -701,9 +704,27 @@ are labeled `legacy` without a fabricated acknowledgement timestamp. The
 focused media suite covers callback ordering, failure/retry, metadata-claim
 recovery, lost receipt recovery and retention refusal before acknowledgement;
 the full standalone suite passes 129/129 and the macOS app-hosted
-build-for-testing check passes. Watch/share production callback wiring, final
-root selection, scheduling and signed-device validation remain open; no live
-user store or CloudKit account was used.
+build-for-testing check passes. This is the generic v7 acknowledgement layer;
+the v8 descriptor extension and the production Watch caller are recorded
+below. No live user store or CloudKit account was used.
+
+The production Watch media-intake checkpoint `d80fa3bc` adds a capped,
+caller-owned metadata descriptor to the generic file-operation journal and
+connects `AudioRecorderViewModel` to a persistent
+`Application Support/WatchTransferStaging` source root. A Watch delivery is
+given stable recording-derived transfer/operation/asset identities, copied
+and verified into the pre-cutover Documents root, acknowledged through an
+idempotent Core Data recording-create bridge, and retained at the source until
+the committed receipt and verified cleanup are both complete. Startup/handler
+setup and app activation run bounded retry passes; failed steps leave the
+staged source available. Share/Inbox cleanup now removes only importer-reported
+successful sources and retains failed or unsupported inputs, but generic Share
+media has not yet adopted the journal. The v8 migration, metadata-payload
+conflict/size tests, restart cleanup test and Watch integration compile in the
+macOS target; the full standalone suite passes 132/132. The iOS scheme still
+stops before app/test compilation at the pre-existing Watch Widget
+`accessoryCorner` availability error; no signed-device or live-data validation
+was performed.
 
 The CloudKit summary-restore checkpoint `8d63a010` routes linked summary
 application through `AppDataCoordinator` and `LibrarySummaryUpsertCommand`,
@@ -804,9 +825,9 @@ resolved.
 | Resumable metadata/settings coordinator | `SQLiteMigrationCoordinator` validates a closed snapshot and blocking settings snapshot, finds the newest matching pending/running/paused run after reopen, emits progress after committed batches and settings commit, persists cancellation as paused, records definitive conflicts as failed with a generic durable message, applies/read-backs the allowlisted settings, and verifies the destination before completion. | Six host tests cover progress, metadata/settings reopen-resume, durable cancellation pause, allowlisted settings application and conflict failure. It is not wired to production source acquisition, settings acquisition, media, startup or an active user generation. |
 | Durable media operation journal/worker | `SQLiteMediaCopyPlan`, `SQLiteLibraryStore` media-operation transactions and `SQLiteMediaFileOperationWorker` persist root-relative audio copy intent, claim/recovery state, streaming SHA-256/length verification and atomic partial-file publication. Exact destinations are idempotently accepted; conflicting destinations fail without overwrite and durable errors are generic. | Five host tests cover successful copy, idempotent enqueue, destination-before-checkpoint recovery, conflict protection and traversal rejection. Final production root selection, scheduling, progress UI and startup wiring remain open. |
 | Durable import receipts | `SQLiteImportReceipt` and `SQLiteLibraryStore.recordImportReceipt` persist a unique source transfer ID, optional destination storage ID and typed committed/rejected/failed outcome. Duplicate source retries return the original result; changed retries and receipt-ID collisions fail closed. | Three host tests cover reopen/duplicate acknowledgement, conflicting duplicate outcome/destination and receipt-ID collision. Not connected to Watch/share callers or source-retention cleanup yet. |
-| Media transfer and retention boundary | `SQLiteMediaRootRegistry`, `SQLiteMediaTransferCoordinator` and `SQLiteMediaSourceRetentionPolicy` validate logical source/destination roots, run the existing verified worker, require a durable generic metadata acknowledgement before recording a committed receipt, and report source-removal eligibility only for a matching committed receipt plus acknowledged metadata. `SQLiteApplicationMediaRootMapping` classifies observed app roots without creating directories; `SQLiteMediaSourceRetentionExecutor` re-verifies the destination before idempotent source removal and refuses aliases, drift or a receipt that precedes metadata acknowledgement. | The media runtime tests cover successful retry and receipt persistence, checksum failure, receipt conflict, broad/unregistered root rejection, application-root classification, committed cleanup, pending-operation refusal, alias refusal, destination drift and the pre-acknowledgement retention guard. Final production root selection, Watch/share caller integration, scheduling and signed-device validation remain open. |
-| Application media transfer planning | `SQLiteApplicationMediaTransferPlanner` resolves an existing file to the most-specific registered application root and accepts an explicit destination root, while `SQLiteApplicationArchiveRestorePlanner` resolves a bookmark-scoped provider source under a caller-supplied logical root; both validate root-relative paths and compute streaming SHA-256/byte-length fingerprints without creating directories, copying bytes or deleting the source. `SQLiteApplicationMediaRootMapping` can add the resolved provider root to a process-local registry without persisting its URL. The generic transfer request keeps the candidate SQLite-media root as its default for compatibility, while production callers can deliberately choose Documents before cutover. | Eight host tests cover Documents/Inbox specificity, explicit Documents destination selection, Watch staging, unmanaged sources, directory refusal, bookmark-root planning, source-outside-root refusal and alias protection. No Watch/share production caller is wired; the schema-v7 metadata-acknowledgement callback boundary is implemented but not yet adopted by those callers. |
-| Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset and schema v7 persists `metadataState` plus `metadataAcknowledgedAt` with each generic file operation. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations, invokes the idempotent metadata callback only after publication, records committed receipts only after acknowledgement and emits progress. Source retention remains an explicit follow-up. Pre-v7 completed rows are labeled `legacy` during upgrade. | Focused media tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen, changed-destination refusal, metadata failure/retry, interrupted metadata-claim recovery, lost-receipt recovery and pre-acknowledgement retention refusal. Production Watch/share callback wiring, scheduling and caller validation remain open. |
+| Media transfer and retention boundary | `SQLiteMediaRootRegistry`, `SQLiteMediaTransferCoordinator` and `SQLiteMediaSourceRetentionPolicy` validate logical source/destination roots, run the existing verified worker, require a durable generic metadata acknowledgement before recording a committed receipt, and report source-removal eligibility only for a matching committed receipt plus acknowledged metadata. `SQLiteApplicationMediaRootMapping` classifies observed app roots without creating directories; `SQLiteMediaSourceRetentionExecutor` re-verifies the destination before idempotent source removal and refuses aliases, drift or a receipt that precedes metadata acknowledgement. `SQLiteApplicationMediaTransferCoordinator` adds application-root transfer, bounded retry cleanup and source-root filtering. | The media runtime tests cover successful retry and receipt persistence, checksum failure, receipt conflict, broad/unregistered root rejection, application-root classification, committed cleanup, pending-operation refusal, alias refusal, destination drift, the pre-acknowledgement retention guard and restart cleanup selection. Watch now uses this boundary pre-cutover; final post-cutover root selection, generic Share caller integration, broader scheduling and signed-device validation remain open. |
+| Application media transfer planning | `SQLiteApplicationMediaTransferPlanner` resolves an existing file to the most-specific registered application root and accepts an explicit destination root, while `SQLiteApplicationArchiveRestorePlanner` resolves a bookmark-scoped provider source under a caller-supplied logical root; both validate root-relative paths and compute streaming SHA-256/byte-length fingerprints without creating directories, copying bytes or deleting the source. `SQLiteApplicationMediaRootMapping` can add the resolved provider root to a process-local registry without persisting its URL. The generic transfer request keeps the candidate SQLite-media root as its default for compatibility, while the production Watch caller deliberately chooses Documents before cutover. v8 persists a capped caller-owned metadata descriptor for restartable metadata acknowledgement. | Host tests cover Documents/Inbox specificity, explicit Documents destination selection, Watch staging, unmanaged sources, directory refusal, bookmark-root planning, source-outside-root refusal, alias protection, descriptor persistence/conflict and descriptor-size rejection. Watch production wiring is in place with activation retry; generic Share journal adoption remains open. |
+| Restartable background media reconciliation | Schema v4 persists `sourceTransferID` with each transfer asset, schema v7 persists `metadataState` plus `metadataAcknowledgedAt`, and schema v8 persists an optional bounded `metadataPayload` descriptor with each generic file operation. `SQLiteMediaBackgroundReconciler` serializes a bounded pass over pending/failed operations and completed operations without receipts, verifies already-published destinations, invokes the idempotent metadata callback only after publication, records committed receipts only after acknowledgement and emits progress. `SQLiteApplicationMediaTransferRuntime` serializes direct transfer, retry reconciliation and source cleanup; source-root-filtered cleanup can finish a receipt-gated removal after relaunch. Pre-v7 completed rows are labeled `legacy` during upgrade. | Focused media tests cover source identity across reopen, queued background copying with progress, receipt completion after reopen, changed-destination refusal, metadata failure/retry, interrupted metadata-claim recovery, lost-receipt recovery, pre-acknowledgement retention refusal, descriptor persistence/conflict, payload size rejection and restart cleanup selection. Watch setup and activation retry use the runtime; generic Share scheduling and caller validation remain open. |
 | Durable provider archive-restore journal/reconciliation | Schema v6 persists `archive_restore_operations` through copy, metadata-acknowledgement and source-deletion phases with generic errors, attempt counts, reopen recovery and the owning recording's `ownerLastModified` revision. `SQLiteArchiveRestoreReconciler` bounds work, runs copy/source deletion in detached utility tasks, re-verifies changed destinations before metadata retry and deletes the provider source only after metadata acknowledgement. `SQLiteArchiveRestoreCoordinator` and its actor runtime now connect this journal to `RecordingArchiveService`; the production caller publishes into the existing Documents-relative path until SQLite cutover, retains the resolved bookmark lease for each operation, and retries only through an existing journal beside durable Core Data. | The full standalone suite passes 129/129, including focused archive/migration-version coverage at 3/3; the macOS app-hosted build-for-testing check passes. The full iOS build remains blocked before app/test compilation by the pre-existing `withSecurityScope` availability error, and direct simulator XCTest execution remains unavailable. A dedicated iOS processing-task request and activation retry now exist; signed-device delivery/expiration validation, final SQLite media-root selection, generic Watch/share transfer wiring and live-data validation remain open. |
 | SQLite read adapter | `SQLiteLibraryRepository` reads all six isolated tables through `SQLiteLibraryStore` and maps database dates, booleans, blobs and links into the same value types. | Imports the closed synthetic snapshot into a temporary file, verifies all six projections, and separately verifies an empty pre-import database. |
 | Typed settings boundary | `LibrarySettingValue` and `LibrarySettingsSnapshot` allow only string, integer, finite real, bool, data and date values. `UserDefaultsLibrarySettingsStore` reads/writes an explicit allowlist; `LibrarySettingsCatalog.readMigratableSettings` now requires the app-owned source-key inventory and fails closed on unclassified keys; `SQLiteLibrarySettingsStore` applies the same allowlist over schema-v2 `library_settings` and records its committed insert/update in the v3 change log. `LibrarySettingsSourceInventory` explicitly records the reviewed main-defaults keys, the separate Action Button app-group key, dynamic legacy-key prefixes and CloudKit omissions. `LibrarySettingsNormalizer` provides pure target-platform normalization before final catalog validation, while `SQLiteMigrationStartupBoundary` captures that result without source writes. The catalog exposes only the blocking-metadata subset to a future reader and validates finite values, reviewed ranges/enums and endpoint credentials. | Host tests round-trip all six value kinds, verify six durable inserts and six durable updates, reject out-of-catalog/non-migratable/type-mismatched/invalid values, reject an unclassified source key and source-list drift, require the exact source inventory/catalog match, exercise normalization and prove unrelated defaults are untouched. The app-hosted source-drift/no-write boundary tests are compile-checked. |
@@ -847,12 +868,15 @@ presentation seams, but none selects a production store or starts a live
 migration. The version-6 archive-restore journal is now connected to the
 production provider-restore caller through the existing Documents path, with
 per-location bookmark retry and bounded startup reconciliation; this does not
-constitute SQLite activation or OS-managed background scheduling. Schema v7
-now adds the generic transfer metadata-acknowledgement state, so a copied
-Watch/share asset cannot receive a committed receipt or become retention-
-eligible until its caller's metadata transaction succeeds. The next inventory
-update must expand command/error coverage, finish final media-root selection
-and generic transfer/receipt/source-retention scheduling, convert or explicitly
-exclude every remaining direct source mutation caller from the maintenance-gate
-boundary, and add Watch/share integration before production services can depend
-on the complete repository.
+constitute SQLite activation or OS-managed background scheduling. Schema v8
+now adds the bounded generic transfer metadata descriptor on top of the v7
+acknowledgement state, so a copied asset can reconstruct its caller metadata
+commit after reopen without storing audio bytes in the journal. Watch is now
+connected to the pre-cutover Documents destination with persistent staging,
+activation retry and receipt-gated source removal. Share/Inbox cleanup retains
+failed and unsupported inputs, but generic Share media has not adopted the
+journal. The next inventory update must expand command/error coverage, finish
+final media-root selection and generic Share/background scheduling, and convert
+or explicitly exclude every remaining direct source mutation caller from the
+maintenance-gate boundary before production services can depend on the
+complete repository.
