@@ -1235,6 +1235,123 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         ])
     }
 
+    func testRepositoryCreatesOrphanedSummaryAnchorAtomicallyAndRetries() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000001")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000002")
+        )
+        let transcriptID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000003")
+        )
+        let command = LibrarySummaryAnchorUpsertCommand(
+            recordingID: recordingID,
+            recordingName: "Cloud-only summary",
+            recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+            id: summaryID,
+            transcriptID: transcriptID,
+            summary: "This cloud-only summary is long enough for the anchor contract.",
+            tasks: "[]",
+            reminders: "[]",
+            titles: "[]",
+            contentType: "meeting",
+            aiMethod: "{\"engine\":\"fixture\"}",
+            generatedAt: Date(timeIntervalSinceReferenceDate: 101),
+            wordCount: 10,
+            originalLength: 48
+        )
+
+        let created = try await repository.upsertOrphanedSummary(command)
+        let retried = try await repository.upsertOrphanedSummary(command)
+
+        XCTAssertEqual(created, retried)
+        XCTAssertEqual(
+            created.storageID,
+            "sqlite-summary-\(summaryID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(created.legacyID, summaryID.uuidString.lowercased())
+        XCTAssertEqual(
+            created.recordingStorageID,
+            "sqlite-recording-\(recordingID.uuidString.lowercased())"
+        )
+        XCTAssertEqual(created.recordingLegacyID, recordingID.uuidString.lowercased())
+        XCTAssertEqual(created.transcriptLegacyID, transcriptID.uuidString.lowercased())
+        XCTAssertNil(created.transcriptStorageID)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].name, "Cloud-only summary")
+        XCTAssertEqual(recordings[0].recordingDate, Date(timeIntervalSinceReferenceDate: 100))
+        XCTAssertNil(recordings[0].recordingURL)
+        XCTAssertEqual(recordings[0].duration, 0)
+        XCTAssertEqual(recordings[0].fileSize, 0)
+        XCTAssertEqual(recordings[0].lastModified, Date(timeIntervalSinceReferenceDate: 101))
+
+        let summaries = try await repository.fetchSummarySnapshots()
+        XCTAssertEqual(summaries.count, 1)
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [
+            .summary, .recording, .summary, .recording
+        ])
+        XCTAssertEqual(changes.map(\.operation), [
+            .inserted, .inserted, .updated, .updated
+        ])
+    }
+
+    func testRepositoryIncomingSummaryIdentityReplacesExistingRowIdentity() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let incomingID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000004")
+        )
+
+        let updated = try await repository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: incomingID,
+                recordingReference: LibraryRecordingReference(
+                    storageID: "recording-storage"
+                ),
+                identityPolicy: .incomingSummary,
+                transcriptID: nil,
+                summary: "The incoming cloud summary identity replaces the local row safely.",
+                aiMethod: "cloud-model",
+                generatedAt: Date(timeIntervalSinceReferenceDate: 301),
+                wordCount: 9,
+                originalLength: 40
+            )
+        )
+
+        XCTAssertEqual(updated.storageID, "summary-storage")
+        XCTAssertEqual(updated.legacyID, incomingID.uuidString.lowercased())
+        XCTAssertNil(updated.transcriptStorageID)
+        XCTAssertNil(updated.transcriptLegacyID)
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(
+            recordings.first?.lastModified,
+            Date(timeIntervalSinceReferenceDate: 301)
+        )
+    }
+
     func testRepositoryRenamesRecordingWithExpectedRevision() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

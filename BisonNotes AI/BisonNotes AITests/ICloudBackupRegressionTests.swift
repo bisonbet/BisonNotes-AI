@@ -553,7 +553,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(statistics.totalSummaries, 1)
     }
 
-    func testOrphanedSummaryUpsertIsIdempotent() throws {
+    func testOrphanedSummaryUpsertIsIdempotent() async throws {
         let summary = EnhancedSummaryData(
             recordingURL: tempDirectory.appendingPathComponent("cloud-only.m4a"),
             recordingName: "Cloud-only summary",
@@ -564,7 +564,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             originalLength: 80
         )
 
-        let firstID = try appCoordinator.coreDataManager.upsertOrphanedSummary(summary)
+        let firstID = try await appCoordinator.upsertOrphanedSummaryUsingRepository(summary)
         let updatedSummary = EnhancedSummaryData(
             id: summary.id,
             recordingId: summary.recordingId,
@@ -577,7 +577,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             originalLength: 90,
             generatedAt: summary.generatedAt.addingTimeInterval(60)
         )
-        let secondID = try appCoordinator.coreDataManager.upsertOrphanedSummary(updatedSummary)
+        let secondID = try await appCoordinator.upsertOrphanedSummaryUsingRepository(updatedSummary)
 
         XCTAssertEqual(firstID, summary.id)
         XCTAssertEqual(secondID, summary.id)

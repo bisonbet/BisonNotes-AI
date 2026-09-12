@@ -198,6 +198,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func upsertOrphanedSummary(
+        _ command: LibrarySummaryAnchorUpsertCommand
+    ) async throws -> LibrarySummarySnapshot {
+        try await withNormalAccess { [store] in
+            try await store.upsertOrphanedSummary(command)
+        }
+    }
+
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand
     ) async throws -> LibraryProcessingJobSnapshot {
@@ -1920,10 +1928,38 @@ extension SQLiteLibraryStore {
                 )
             }
 
+            let summaryByIDRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(summaryColumns)
+                FROM summaries
+                WHERE LOWER(id) = ?
+                LIMIT 2
+                """,
+                arguments: [requestedLegacyID]
+            )
+            guard summaryByIDRows.count <= 1 else {
+                throw LibraryRepositoryError.summaryAlreadyExists(
+                    reference: requestedLegacyID
+                )
+            }
+            if let summaryByID = summaryByIDRows.first {
+                let summaryRecordingStorageID: String? = summaryByID["recordingStorageID"]
+                let summaryRecordingID: String? = summaryByID["recordingId"]
+                guard summaryRecordingStorageID == recording.storageID
+                    || summaryRecordingID == recording.legacyID else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: requestedLegacyID
+                    )
+                }
+            }
+
+            let existingSummaryRow = summaryByIDRows.first ?? summaries.first
+
             let summaryStorageID: String
             let summaryID: String
             let operation: LibraryChangeOperation
-            if let existingRow = summaries.first {
+            if let existingRow = existingSummaryRow {
                 let existing = try SQLiteLibraryRepositoryMapper.summary(
                     from: existingRow
                 )
@@ -1935,12 +1971,14 @@ extension SQLiteLibraryStore {
                     )
                 }
                 summaryStorageID = existing.storageID
-                summaryID = existingID
+                summaryID = command.identityPolicy == .incomingSummary
+                    ? requestedLegacyID
+                    : existingID
                 operation = .updated
             } else {
                 let duplicateCount = try Int.fetchOne(
                     database,
-                    sql: "SELECT COUNT(*) FROM summaries WHERE id = ?",
+                    sql: "SELECT COUNT(*) FROM summaries WHERE LOWER(id) = ?",
                     arguments: [requestedLegacyID]
                 ) ?? 0
                 guard duplicateCount == 0 else {
@@ -1951,6 +1989,26 @@ extension SQLiteLibraryStore {
                 summaryStorageID = Self.summaryStorageID(for: command.id)
                 summaryID = requestedLegacyID
                 operation = .inserted
+            }
+
+            if command.identityPolicy == .incomingSummary,
+               let existingSummaryRow,
+               let existingID: String = existingSummaryRow["id"],
+               existingID.lowercased() != requestedLegacyID {
+                let duplicateCount = try Int.fetchOne(
+                    database,
+                    sql: """
+                    SELECT COUNT(*)
+                    FROM summaries
+                    WHERE LOWER(id) = ? AND storageID <> ?
+                    """,
+                    arguments: [requestedLegacyID, summaryStorageID]
+                ) ?? 0
+                guard duplicateCount == 0 else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: requestedLegacyID
+                    )
+                }
             }
 
             var transcriptStorageID: String?
@@ -1991,7 +2049,8 @@ extension SQLiteLibraryStore {
                 }
                 transcriptStorageID = resolvedStorageID
                 transcriptID = resolvedID
-            } else if let existingRow = summaries.first {
+            } else if command.identityPolicy == .preserveExisting,
+                      let existingRow = existingSummaryRow {
                 transcriptStorageID = existingRow["transcriptStorageID"]
                 transcriptID = existingRow["transcriptId"]
             }
@@ -2042,7 +2101,7 @@ extension SQLiteLibraryStore {
                     SET aiMethod = ?, compressionRatio = ?, confidence = ?,
                         contentType = ?, generatedAt = ?, originalLength = ?,
                         processingTime = ?, recordingStorageID = ?, recordingId = ?,
-                        reminders = ?, summary = ?, tasks = ?, titles = ?,
+                        reminders = ?, summary = ?, tasks = ?, titles = ?, id = ?,
                         transcriptStorageID = ?, transcriptId = ?, version = ?,
                         wordCount = ?
                     WHERE storageID = ?
@@ -2061,6 +2120,7 @@ extension SQLiteLibraryStore {
                         command.summary,
                         command.tasks,
                         command.titles,
+                        summaryID,
                         transcriptStorageID,
                         transcriptID,
                         command.version,
@@ -2110,6 +2170,356 @@ extension SQLiteLibraryStore {
                 operation: .updated,
                 at: command.generatedAt
             )
+
+            return try Self.fetchUpdatedSummary(
+                storageID: summaryStorageID,
+                in: database
+            )
+        }
+    }
+
+    func upsertOrphanedSummary(
+        _ command: LibrarySummaryAnchorUpsertCommand
+    ) throws -> LibrarySummarySnapshot {
+        try command.validate()
+        let summaryCommand = command.summary
+        let summaryID = summaryCommand.id.uuidString.lowercased()
+        let requestedRecordingID = command.recordingID.uuidString.lowercased()
+        let generatedAt = summaryCommand.generatedAt.timeIntervalSinceReferenceDate
+        let recordingDate = command.recordingDate.timeIntervalSinceReferenceDate
+
+        return try databaseQueue.write { database in
+            let summaryColumns = """
+                storageID, aiMethod, compressionRatio, confidence, contentType,
+                generatedAt, id, originalLength, processingTime,
+                recordingStorageID, recordingId, reminders, summary, tasks,
+                titles, transcriptStorageID, transcriptId, version, wordCount
+                """
+            let summaryByIDRows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT \(summaryColumns)
+                FROM summaries
+                WHERE LOWER(id) = ?
+                LIMIT 2
+                """,
+                arguments: [summaryID]
+            )
+            guard summaryByIDRows.count <= 1 else {
+                throw LibraryRepositoryError.summaryAlreadyExists(reference: summaryID)
+            }
+
+            let recordingColumns = """
+                storageID, id, recordingName, recordingDate, duration,
+                locationAccuracy, locationAddress, locationLatitude,
+                locationLongitude, locationTimestamp, fileSize, recordingURL,
+                isArchived, archivedAt, archiveNote, isCloudSyncDisabled,
+                lastModified, summaryId, transcriptId
+                """
+            let summaryByID = summaryByIDRows.first
+            let recording: Row
+            let recordingStorageID: String
+            let isNewRecording: Bool
+            let summaryStorageID: String
+            let summaryOperation: LibraryChangeOperation
+
+            if let summaryByID {
+                let existingRecordingStorageID: String? = summaryByID["recordingStorageID"]
+                let existingRecordingID: String? = summaryByID["recordingId"]
+                let recordingRows: [Row]
+                if let existingRecordingStorageID, !existingRecordingStorageID.isEmpty {
+                    recordingRows = try Row.fetchAll(
+                        database,
+                        sql: "SELECT \(recordingColumns) FROM recordings WHERE storageID = ? LIMIT 2",
+                        arguments: [existingRecordingStorageID]
+                    )
+                } else if let existingRecordingID, !existingRecordingID.isEmpty {
+                    recordingRows = try Row.fetchAll(
+                        database,
+                        sql: "SELECT \(recordingColumns) FROM recordings WHERE LOWER(id) = ? LIMIT 2",
+                        arguments: [existingRecordingID.lowercased()]
+                    )
+                } else {
+                    recordingRows = []
+                }
+                guard recordingRows.count == 1 else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "summaries",
+                        field: "recordingStorageID"
+                    )
+                }
+                recording = recordingRows[0]
+                guard let resolvedRecordingStorageID: String = recording["storageID"],
+                      !resolvedRecordingStorageID.isEmpty else {
+                    throw LibraryRepositoryError.invalidRecord(
+                        entity: "recordings",
+                        field: "storageID"
+                    )
+                }
+                recordingStorageID = resolvedRecordingStorageID
+                isNewRecording = false
+                summaryStorageID = try SQLiteLibraryRepositoryMapper.summary(
+                    from: summaryByID
+                ).storageID
+                summaryOperation = .updated
+            } else {
+                let existingRecordingRows = try Row.fetchAll(
+                    database,
+                    sql: """
+                    SELECT \(recordingColumns)
+                    FROM recordings
+                    WHERE storageID = ? OR LOWER(id) = ?
+                    LIMIT 2
+                    """,
+                    arguments: [
+                        Self.recordingStorageID(for: command.recordingID),
+                        requestedRecordingID
+                    ]
+                )
+                guard existingRecordingRows.isEmpty else {
+                    throw LibraryRepositoryError.recordingAlreadyExists(
+                        reference: requestedRecordingID
+                    )
+                }
+
+                recordingStorageID = Self.recordingStorageID(for: command.recordingID)
+                try database.execute(
+                    sql: """
+                    INSERT INTO recordings (
+                        storageID, audioQuality, createdAt, duration, fileSize, id,
+                        isCloudSyncDisabled, lastModified, locationAccuracy,
+                        locationAddress, locationLatitude, locationLongitude,
+                        locationTimestamp, recordingDate, recordingName, recordingURL,
+                        summaryId, summaryStatus, transcriptId, transcriptionStatus,
+                        isArchived, archivedAt, archiveNote
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        recordingStorageID,
+                        nil,
+                        recordingDate,
+                        0,
+                        0,
+                        requestedRecordingID,
+                        0,
+                        generatedAt,
+                        nil,
+                        nil,
+                        nil,
+                        nil,
+                        nil,
+                        recordingDate,
+                        command.recordingName,
+                        nil,
+                        summaryID,
+                        "Completed",
+                        nil,
+                        "Not Started",
+                        0,
+                        nil,
+                        nil
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
+                        reason: "the summary anchor row was not inserted"
+                    )
+                }
+                guard let insertedRecording = try Row.fetchOne(
+                    database,
+                    sql: "SELECT \(recordingColumns) FROM recordings WHERE storageID = ?",
+                    arguments: [recordingStorageID]
+                ) else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
+                        reason: "the inserted summary anchor could not be read"
+                    )
+                }
+                recording = insertedRecording
+                isNewRecording = true
+                summaryStorageID = Self.summaryStorageID(for: summaryCommand.id)
+                summaryOperation = .inserted
+            }
+
+            let existingAnchorSummaryCount = try Int.fetchOne(
+                database,
+                sql: """
+                SELECT COUNT(*)
+                FROM summaries
+                WHERE recordingStorageID = ? AND storageID <> ?
+                """,
+                arguments: [recordingStorageID, summaryStorageID]
+            ) ?? 0
+            guard existingAnchorSummaryCount == 0 else {
+                throw LibraryRepositoryError.ambiguousSummary(
+                    reference: recordingStorageID
+                )
+            }
+
+            var transcriptStorageID: String?
+            var transcriptID: String?
+            if let requestedTranscriptID = summaryCommand.transcriptID {
+                let requestedTranscriptLegacyID = requestedTranscriptID.uuidString.lowercased()
+                let transcriptRows = try Row.fetchAll(
+                    database,
+                    sql: """
+                    SELECT storageID, id
+                    FROM transcripts
+                    WHERE storageID = ? OR LOWER(id) = ?
+                    LIMIT 2
+                    """,
+                    arguments: [
+                        Self.transcriptStorageID(for: requestedTranscriptID),
+                        requestedTranscriptLegacyID
+                    ]
+                )
+                guard transcriptRows.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousTranscript(
+                        reference: requestedTranscriptLegacyID
+                    )
+                }
+                if let transcriptRow = transcriptRows.first {
+                    transcriptStorageID = transcriptRow["storageID"]
+                    transcriptID = transcriptRow["id"]
+                } else {
+                    // Cloud summaries can arrive before their transcript. Keep
+                    // the public UUID so a later transcript restore can attach it.
+                    transcriptID = requestedTranscriptLegacyID
+                }
+            }
+
+            if summaryOperation == .inserted {
+                try database.execute(
+                    sql: """
+                    INSERT INTO summaries (
+                        storageID, aiMethod, compressionRatio, confidence, contentType,
+                        generatedAt, id, originalLength, processingTime,
+                        recordingStorageID, recordingId, reminders, summary, tasks,
+                        titles, transcriptStorageID, transcriptId, version, wordCount
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        summaryStorageID,
+                        summaryCommand.aiMethod,
+                        summaryCommand.compressionRatio,
+                        summaryCommand.confidence,
+                        summaryCommand.contentType,
+                        generatedAt,
+                        summaryID,
+                        summaryCommand.originalLength,
+                        summaryCommand.processingTime,
+                        recordingStorageID,
+                        requestedRecordingID,
+                        summaryCommand.reminders,
+                        summaryCommand.summary,
+                        summaryCommand.tasks,
+                        summaryCommand.titles,
+                        transcriptStorageID,
+                        transcriptID,
+                        summaryCommand.version,
+                        summaryCommand.wordCount
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
+                        reason: "the summary row was not inserted"
+                    )
+                }
+            } else {
+                try database.execute(
+                    sql: """
+                    UPDATE summaries
+                    SET aiMethod = ?, compressionRatio = ?, confidence = ?,
+                        contentType = ?, generatedAt = ?, originalLength = ?,
+                        processingTime = ?, recordingStorageID = ?, recordingId = ?,
+                        reminders = ?, summary = ?, tasks = ?, titles = ?, id = ?,
+                        transcriptStorageID = ?, transcriptId = ?, version = ?,
+                        wordCount = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        summaryCommand.aiMethod,
+                        summaryCommand.compressionRatio,
+                        summaryCommand.confidence,
+                        summaryCommand.contentType,
+                        generatedAt,
+                        summaryCommand.originalLength,
+                        summaryCommand.processingTime,
+                        recordingStorageID,
+                        recording["id"],
+                        summaryCommand.reminders,
+                        summaryCommand.summary,
+                        summaryCommand.tasks,
+                        summaryCommand.titles,
+                        summaryID,
+                        transcriptStorageID,
+                        transcriptID,
+                        summaryCommand.version,
+                        summaryCommand.wordCount,
+                        summaryStorageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
+                        reason: "the summary row was not updated"
+                    )
+                }
+            }
+
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .summary,
+                storageID: summaryStorageID,
+                operation: summaryOperation,
+                at: summaryCommand.generatedAt
+            )
+
+            if isNewRecording {
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .recording,
+                    storageID: recordingStorageID,
+                    operation: .inserted,
+                    at: summaryCommand.generatedAt
+                )
+            } else {
+                let existingLastModified: Double? = recording["lastModified"]
+                let lastModified = max(existingLastModified ?? generatedAt, generatedAt)
+                try database.execute(
+                    sql: """
+                    UPDATE recordings
+                    SET recordingName = ?, recordingDate = ?, summaryId = ?,
+                        summaryStatus = ?, lastModified = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.recordingName,
+                        recordingDate,
+                        summaryID,
+                        "Completed",
+                        lastModified,
+                        recordingStorageID
+                    ]
+                )
+                guard database.changesCount == 1 else {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
+                        reason: "the summary anchor row was not updated"
+                    )
+                }
+                _ = try SQLiteLibraryStore.recordChange(
+                    in: database,
+                    entity: .recording,
+                    storageID: recordingStorageID,
+                    operation: .updated,
+                    at: summaryCommand.generatedAt
+                )
+            }
 
             return try Self.fetchUpdatedSummary(
                 storageID: summaryStorageID,

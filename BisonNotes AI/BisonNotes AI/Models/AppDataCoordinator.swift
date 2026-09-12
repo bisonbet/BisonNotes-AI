@@ -372,7 +372,8 @@ class AppDataCoordinator: ObservableObject {
     func upsertSummaryUsingRepository(
         _ summary: EnhancedSummaryData,
         for recordingId: UUID,
-        transcriptId: UUID? = nil
+        transcriptId: UUID? = nil,
+        identityPolicy: LibrarySummaryUpsertIdentityPolicy = .preserveExisting
     ) async throws -> UUID {
         let encoder = JSONEncoder()
         guard let tasksData = try? encoder.encode(summary.tasks),
@@ -386,12 +387,35 @@ class AppDataCoordinator: ObservableObject {
             )
         }
 
+        let previousSummaryID: UUID?
+        if identityPolicy == .incomingSummary {
+            let existingSummaries = try await libraryRepository.fetchSummarySnapshots()
+            let incomingSummaryID = summary.id.uuidString.lowercased()
+            let incomingSummaryAlreadyExists = existingSummaries.contains {
+                $0.legacyID?.lowercased() == incomingSummaryID
+            }
+            previousSummaryID = incomingSummaryAlreadyExists
+                ? nil
+                : existingSummaries
+                    .filter {
+                        $0.recordingLegacyID?.lowercased() == recordingId.uuidString.lowercased()
+                    }
+                    .sorted {
+                        ($0.generatedAt ?? .distantPast) > ($1.generatedAt ?? .distantPast)
+                    }
+                    .compactMap { $0.legacyID.flatMap(UUID.init(uuidString:)) }
+                    .first
+        } else {
+            previousSummaryID = nil
+        }
+
         let snapshot = try await libraryRepository.upsertSummary(
             LibrarySummaryUpsertCommand(
                 id: summary.id,
                 recordingReference: LibraryRecordingReference(
                     legacyID: recordingId.uuidString
                 ),
+                identityPolicy: identityPolicy,
                 transcriptID: transcriptId ?? summary.transcriptId,
                 summary: summary.summary,
                 tasks: tasks,
@@ -419,11 +443,82 @@ class AppDataCoordinator: ObservableObject {
                 field: "id"
             )
         }
+        if let previousSummaryID, previousSummaryID != persistedID {
+            do {
+                try SummaryAttachmentStore.shared.migrate(
+                    from: previousSummaryID,
+                    to: persistedID
+                )
+            } catch {
+                AppLog.shared.coreData(
+                    "Cloud summary identity updated, but supplemental data migration failed: \(error)",
+                    level: .error
+                )
+            }
+        }
         if shouldBackUpToiCloud(recordingId: recordingId) {
             scheduleAutoBackupIfEnabled()
         }
         objectWillChange.send()
         return persistedID
+    }
+
+    /// Persists a cloud summary that has no local recording through the
+    /// storage-neutral repository. The repository creates the zero-audio
+    /// summary anchor and summary in one transaction; a later audio restore is
+    /// a separate file/media operation.
+    @discardableResult
+    func upsertOrphanedSummaryUsingRepository(
+        _ summary: EnhancedSummaryData
+    ) async throws -> UUID {
+        let encoder = JSONEncoder()
+        guard let tasksData = try? encoder.encode(summary.tasks),
+              let tasks = String(data: tasksData, encoding: .utf8),
+              let remindersData = try? encoder.encode(summary.reminders),
+              let reminders = String(data: remindersData, encoding: .utf8),
+              let titlesData = try? encoder.encode(summary.titles),
+              let titles = String(data: titlesData, encoding: .utf8) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary structured payloads could not be encoded"
+            )
+        }
+
+        let recordingID = summary.recordingId ?? UUID()
+        let snapshot = try await libraryRepository.upsertOrphanedSummary(
+            LibrarySummaryAnchorUpsertCommand(
+                recordingID: recordingID,
+                recordingName: summary.recordingName,
+                recordingDate: summary.recordingDate,
+                id: summary.id,
+                transcriptID: summary.transcriptId,
+                summary: summary.summary,
+                tasks: tasks,
+                reminders: reminders,
+                titles: titles,
+                contentType: summary.contentType.rawValue,
+                aiMethod: SummaryMetadataCodec.encode(
+                    aiEngine: summary.aiEngine,
+                    aiModel: summary.aiModel
+                ),
+                generatedAt: summary.generatedAt,
+                version: Int64(summary.version),
+                wordCount: Int64(summary.wordCount),
+                originalLength: Int64(summary.originalLength),
+                compressionRatio: summary.compressionRatio,
+                confidence: summary.confidence,
+                processingTime: summary.processingTime
+            )
+        )
+
+        guard let persistedID = snapshot.legacyID,
+              let summaryID = UUID(uuidString: persistedID) else {
+            throw LibraryRepositoryError.invalidRecord(
+                entity: "summaries",
+                field: "id"
+            )
+        }
+        objectWillChange.send()
+        return summaryID
     }
 
     func getRecording(id: UUID) -> RecordingEntry? {

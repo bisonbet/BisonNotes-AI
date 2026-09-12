@@ -1083,6 +1083,128 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings.first?.lastModified, Date(timeIntervalSinceReferenceDate: 301))
     }
 
+    func testCoreDataRepositoryAcceptsIncomingSummaryIdentityForExistingRecording() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-incoming-summary.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let incomingID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000004")
+        )
+        let existingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000003")
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+
+        let updated = try await repository.upsertSummary(
+            LibrarySummaryUpsertCommand(
+                id: incomingID,
+                recordingReference: LibraryRecordingReference(
+                    legacyID: recordingID.uuidString
+                ),
+                identityPolicy: .incomingSummary,
+                transcriptID: nil,
+                summary: "The incoming cloud identity replaces the local summary safely.",
+                aiMethod: "{\"engine\":\"cloud\"}",
+                generatedAt: Date(timeIntervalSinceReferenceDate: 302),
+                wordCount: 8,
+                originalLength: 39
+            )
+        )
+
+        XCTAssertEqual(updated.storageID, "core-data-summary-10000000-0000-0000-0000-000000000003")
+        XCTAssertEqual(updated.legacyID, incomingID.uuidString.lowercased())
+        XCTAssertNil(updated.transcriptStorageID)
+        XCTAssertNil(
+            try await repository.fetchSummarySnapshots().first {
+                $0.legacyID == existingID.uuidString.lowercased()
+            }
+        )
+        XCTAssertEqual(
+            try await repository.fetchSummarySnapshots().filter {
+                $0.recordingLegacyID == recordingID.uuidString.lowercased()
+            }.count,
+            1
+        )
+    }
+
+    func testCoreDataRepositoryCreatesOrphanedSummaryAnchorAtomicallyAndRetries() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-orphaned-summary.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000001")
+        )
+        let summaryID = try XCTUnwrap(
+            UUID(uuidString: "30000000-0000-0000-0000-000000000002")
+        )
+        let command = LibrarySummaryAnchorUpsertCommand(
+            recordingID: recordingID,
+            recordingName: "Cloud-only summary",
+            recordingDate: Date(timeIntervalSinceReferenceDate: 200),
+            id: summaryID,
+            summary: "This cloud-only summary is long enough for the anchor contract.",
+            contentType: "meeting",
+            aiMethod: "{\"engine\":\"fixture\"}",
+            generatedAt: Date(timeIntervalSinceReferenceDate: 201),
+            wordCount: 10,
+            originalLength: 48
+        )
+
+        let created = try await repository.upsertOrphanedSummary(command)
+        let retried = try await repository.upsertOrphanedSummary(command)
+
+        XCTAssertEqual(created, retried)
+        XCTAssertEqual(created.legacyID, summaryID.uuidString.lowercased())
+        XCTAssertEqual(
+            created.recordingLegacyID,
+            recordingID.uuidString.lowercased()
+        )
+        XCTAssertEqual(created.summary, command.summary.summary)
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        let anchor = try XCTUnwrap(
+            recordings.first { $0.legacyID == recordingID.uuidString.lowercased() }
+        )
+        XCTAssertEqual(anchor.name, "Cloud-only summary")
+        XCTAssertEqual(anchor.recordingDate, Date(timeIntervalSinceReferenceDate: 200))
+        XCTAssertNil(anchor.recordingURL)
+        XCTAssertEqual(anchor.duration, 0)
+        XCTAssertEqual(anchor.fileSize, 0)
+        XCTAssertEqual(anchor.lastModified, Date(timeIntervalSinceReferenceDate: 201))
+        XCTAssertEqual(
+            try await repository.fetchSummarySnapshots().filter {
+                $0.legacyID == summaryID.uuidString.lowercased()
+            }.count,
+            1
+        )
+    }
+
     func testCoreDataRepositoryUpdatesProcessingJobWithoutExposingManagedObject() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

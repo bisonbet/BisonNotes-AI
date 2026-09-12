@@ -921,15 +921,28 @@ extension LibraryImportedAudioRemovalCommand {
     }
 }
 
+/// Controls which summary identity wins when a summary is written.
+enum LibrarySummaryUpsertIdentityPolicy: Equatable, Sendable {
+    /// Keep the existing summary row identity when the recording already has
+    /// a summary. This is the normal local-generation/edit behavior.
+    case preserveExisting
+
+    /// Treat the incoming summary ID as authoritative. Cloud restore uses
+    /// this when another device's summary must replace a local row while
+    /// retaining the existing row's storage identity where possible.
+    case incomingSummary
+}
+
 /// Creates or replaces the summary attached to one recording.
 ///
 /// Structured task/reminder/title values are carried in their encoded form so
 /// the repository boundary stays independent of the app's richer summary
 /// models. The existing summary identity is preserved when the recording has
-/// one; `id` is the requested identity only for a new row.
+/// one unless `identityPolicy` explicitly accepts the incoming identity.
 struct LibrarySummaryUpsertCommand: Equatable, Sendable {
     let id: UUID
     let recordingReference: LibraryRecordingReference
+    let identityPolicy: LibrarySummaryUpsertIdentityPolicy
     let transcriptID: UUID?
     let summary: String
     let tasks: String
@@ -948,6 +961,7 @@ struct LibrarySummaryUpsertCommand: Equatable, Sendable {
     init(
         id: UUID,
         recordingReference: LibraryRecordingReference,
+        identityPolicy: LibrarySummaryUpsertIdentityPolicy = .preserveExisting,
         transcriptID: UUID? = nil,
         summary: String,
         tasks: String = "[]",
@@ -965,6 +979,7 @@ struct LibrarySummaryUpsertCommand: Equatable, Sendable {
     ) {
         self.id = id
         self.recordingReference = recordingReference
+        self.identityPolicy = identityPolicy
         self.transcriptID = transcriptID
         self.summary = summary
         self.tasks = tasks
@@ -979,6 +994,73 @@ struct LibrarySummaryUpsertCommand: Equatable, Sendable {
         self.compressionRatio = compressionRatio
         self.confidence = confidence
         self.processingTime = processingTime
+    }
+}
+
+/// Creates or replaces a cloud summary together with its summary-only
+/// recording anchor. The anchor intentionally has no audio URL; audio and any
+/// later file restore remain separate media operations.
+struct LibrarySummaryAnchorUpsertCommand: Equatable, Sendable {
+    let recordingID: UUID
+    let recordingName: String?
+    let recordingDate: Date
+    let summary: LibrarySummaryUpsertCommand
+
+    init(
+        recordingID: UUID,
+        recordingName: String?,
+        recordingDate: Date,
+        id: UUID,
+        transcriptID: UUID? = nil,
+        summary: String,
+        tasks: String = "[]",
+        reminders: String = "[]",
+        titles: String = "[]",
+        contentType: String = "general",
+        aiMethod: String,
+        generatedAt: Date = Date(),
+        version: Int64 = 1,
+        wordCount: Int64,
+        originalLength: Int64,
+        compressionRatio: Double = 0,
+        confidence: Double = 0.5,
+        processingTime: Double = 0
+    ) {
+        self.recordingID = recordingID
+        self.recordingName = recordingName
+        self.recordingDate = recordingDate
+        self.summary = LibrarySummaryUpsertCommand(
+            id: id,
+            recordingReference: LibraryRecordingReference(
+                legacyID: recordingID.uuidString
+            ),
+            identityPolicy: .incomingSummary,
+            transcriptID: transcriptID,
+            summary: summary,
+            tasks: tasks,
+            reminders: reminders,
+            titles: titles,
+            contentType: contentType,
+            aiMethod: aiMethod,
+            generatedAt: generatedAt,
+            version: version,
+            wordCount: wordCount,
+            originalLength: originalLength,
+            compressionRatio: compressionRatio,
+            confidence: confidence,
+            processingTime: processingTime
+        )
+    }
+}
+
+extension LibrarySummaryAnchorUpsertCommand {
+    func validate() throws {
+        try summary.validate()
+        guard recordingDate.timeIntervalSinceReferenceDate.isFinite else {
+            throw LibraryRepositoryError.invalidCommand(
+                "summary anchor recording date must be finite"
+            )
+        }
     }
 }
 
@@ -1464,6 +1546,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryTranscriptSnapshot
     func upsertSummary(
         _ command: LibrarySummaryUpsertCommand
+    ) async throws -> LibrarySummarySnapshot
+    func upsertOrphanedSummary(
+        _ command: LibrarySummaryAnchorUpsertCommand
     ) async throws -> LibrarySummarySnapshot
     func createProcessingJob(
         _ command: LibraryProcessingJobCreateCommand

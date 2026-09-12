@@ -1639,13 +1639,13 @@ class iCloudStorageManager: ObservableObject {
         if let recordingId = localRecordingId {
             // Upsert by the cloud summary UUID so restore is idempotent and does not create a
             // second summary for a recording that already has one.
-            try appCoordinator.upsertSummary(
+            _ = try await appCoordinator.upsertSummaryUsingRepository(
                 cloudSummary,
                 for: recordingId,
                 transcriptId: cloudSummary.transcriptId,
                 identityPolicy: .incomingSummary
             )
-            AppLog.shared.iCloudSync("Upserted linked Core Data entry for cloud summary")
+            AppLog.shared.iCloudSync("Upserted linked repository entry for cloud summary")
             return true
         } else {
             // Create orphaned summary entry (similar to "summary-only recordings")
@@ -1657,9 +1657,9 @@ class iCloudStorageManager: ObservableObject {
 
     /// Creates an orphaned summary entry in Core Data (without recording/transcript links)
     private func createOrphanedSummaryEntry(_ cloudSummary: EnhancedSummaryData, appCoordinator: AppDataCoordinator) async throws {
-        _ = try appCoordinator.coreDataManager.upsertOrphanedSummary(cloudSummary)
+        _ = try await appCoordinator.upsertOrphanedSummaryUsingRepository(cloudSummary)
 
-        AppLog.shared.iCloudSync("Created orphaned Core Data summary entry")
+        AppLog.shared.iCloudSync("Created orphaned repository summary entry")
     }
 
     // MARK: - Conflict Resolution Methods

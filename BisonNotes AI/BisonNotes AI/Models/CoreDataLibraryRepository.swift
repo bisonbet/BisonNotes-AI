@@ -1621,6 +1621,30 @@ extension CoreDataLibraryRepository {
                     )
                 }
 
+                let summaryByIDRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryByIDRequest.fetchLimit = 2
+                summaryByIDRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let summariesByID = try context.fetch(summaryByIDRequest)
+                guard summariesByID.count <= 1 else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+                if let summaryByID = summariesByID.first,
+                   !summaries.contains(where: { $0.objectID == summaryByID.objectID }) {
+                    let summaryRecordingID = (summaryByID.value(forKey: "recordingId") as? UUID)
+                        ?? (summaryByID.value(forKey: "recording") as? NSManagedObject)?
+                            .value(forKey: "id") as? UUID
+                    guard summaryRecordingID == recordingID else {
+                        throw LibraryRepositoryError.summaryAlreadyExists(
+                            reference: command.id.uuidString.lowercased()
+                        )
+                    }
+                }
+
                 let summary: NSManagedObject
                 let summaryID: UUID
                 let isNewSummary = summaries.isEmpty
@@ -1632,7 +1656,9 @@ extension CoreDataLibraryRepository {
                         )
                     }
                     summary = existingSummary
-                    summaryID = existingID
+                    summaryID = command.identityPolicy == .incomingSummary
+                        ? command.id
+                        : existingID
                 } else {
                     let collisionRequest = Self.fetchRequest(entityName: "SummaryEntry")
                     collisionRequest.fetchLimit = 2
@@ -1653,6 +1679,8 @@ extension CoreDataLibraryRepository {
                     summaryID = command.id
                     summary.setValue(command.id, forKey: "id")
                 }
+
+                summary.setValue(summaryID, forKey: "id")
 
                 let resolvedTranscript: NSManagedObject?
                 if let transcriptID = command.transcriptID {
@@ -1679,7 +1707,7 @@ extension CoreDataLibraryRepository {
                 }
 
                 summary.setValue(recordingID, forKey: "recordingId")
-                if isNewSummary {
+                if isNewSummary || command.identityPolicy == .incomingSummary {
                     summary.setValue(nil, forKey: "transcriptId")
                     summary.setValue(nil, forKey: "transcript")
                 }
@@ -1715,6 +1743,164 @@ extension CoreDataLibraryRepository {
                     }
                     throw LibraryRepositoryError.writeFailed(
                         operation: "upsert summary",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.summarySnapshot(from: summary)
+            }
+        }
+    }
+
+    func upsertOrphanedSummary(
+        _ command: LibrarySummaryAnchorUpsertCommand
+    ) async throws -> LibrarySummarySnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let summaryRequest = Self.fetchRequest(entityName: "SummaryEntry")
+                summaryRequest.fetchLimit = 2
+                summaryRequest.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.summary.id as CVarArg
+                )
+                let summaries = try context.fetch(summaryRequest)
+                guard summaries.count <= 1 else {
+                    throw LibraryRepositoryError.summaryAlreadyExists(
+                        reference: command.summary.id.uuidString.lowercased()
+                    )
+                }
+
+                let summary: NSManagedObject
+                let recording: NSManagedObject
+                let isNewSummary: Bool
+                let isNewRecording: Bool
+
+                if let existingSummary = summaries.first {
+                    guard let existingRecording = existingSummary.value(forKey: "recording") as? NSManagedObject else {
+                        throw LibraryRepositoryError.invalidRecord(
+                            entity: "SummaryEntry",
+                            field: "recording"
+                        )
+                    }
+                    guard existingSummary.value(forKey: "id") as? UUID != nil,
+                          existingRecording.value(forKey: "id") as? UUID != nil else {
+                        throw LibraryRepositoryError.invalidRecord(
+                            entity: "SummaryEntry",
+                            field: "id"
+                        )
+                    }
+                    summary = existingSummary
+                    recording = existingRecording
+                    isNewSummary = false
+                    isNewRecording = false
+                } else {
+                    let recordingRequest = Self.fetchRequest(entityName: "RecordingEntry")
+                    recordingRequest.fetchLimit = 2
+                    recordingRequest.predicate = NSPredicate(
+                        format: "id == %@",
+                        command.recordingID as CVarArg
+                    )
+                    let recordings = try context.fetch(recordingRequest)
+                    guard recordings.isEmpty else {
+                        throw LibraryRepositoryError.recordingAlreadyExists(
+                            reference: command.recordingID.uuidString.lowercased()
+                        )
+                    }
+
+                    recording = NSEntityDescription.insertNewObject(
+                        forEntityName: "RecordingEntry",
+                        into: context
+                    )
+                    recording.setValue(command.recordingID, forKey: "id")
+                    recording.setValue(command.recordingName, forKey: "recordingName")
+                    recording.setValue(command.recordingDate, forKey: "recordingDate")
+                    recording.setValue(nil, forKey: "recordingURL")
+                    recording.setValue(0, forKey: "duration")
+                    recording.setValue(0, forKey: "fileSize")
+                    recording.setValue(ProcessingStatus.notStarted.rawValue, forKey: "transcriptionStatus")
+                    recording.setValue(ProcessingStatus.completed.rawValue, forKey: "summaryStatus")
+                    recording.setValue(false, forKey: "isCloudSyncDisabled")
+                    recording.setValue(false, forKey: "isArchived")
+                    recording.setValue(nil, forKey: "archivedAt")
+                    recording.setValue(nil, forKey: "archiveNote")
+
+                    summary = NSEntityDescription.insertNewObject(
+                        forEntityName: "SummaryEntry",
+                        into: context
+                    )
+                    summary.setValue(command.summary.id, forKey: "id")
+                    isNewSummary = true
+                    isNewRecording = true
+                }
+
+                let resolvedTranscript: NSManagedObject?
+                if let transcriptID = command.summary.transcriptID {
+                    let transcriptRequest = Self.fetchRequest(entityName: "TranscriptEntry")
+                    transcriptRequest.fetchLimit = 2
+                    transcriptRequest.predicate = NSPredicate(
+                        format: "id == %@",
+                        transcriptID as CVarArg
+                    )
+                    let transcripts = try context.fetch(transcriptRequest)
+                    guard transcripts.count <= 1 else {
+                        throw LibraryRepositoryError.ambiguousTranscript(
+                            reference: transcriptID.uuidString.lowercased()
+                        )
+                    }
+                    resolvedTranscript = transcripts.first
+                } else {
+                    resolvedTranscript = nil
+                }
+
+                let summaryID = command.summary.id
+                summary.setValue(summaryID, forKey: "id")
+                summary.setValue(
+                    recording.value(forKey: "id"),
+                    forKey: "recordingId"
+                )
+                summary.setValue(command.summary.transcriptID, forKey: "transcriptId")
+                summary.setValue(resolvedTranscript, forKey: "transcript")
+                summary.setValue(command.summary.generatedAt, forKey: "generatedAt")
+                summary.setValue(command.summary.aiMethod, forKey: "aiMethod")
+                summary.setValue(command.summary.processingTime, forKey: "processingTime")
+                summary.setValue(command.summary.confidence, forKey: "confidence")
+                summary.setValue(command.summary.summary, forKey: "summary")
+                summary.setValue(command.summary.contentType, forKey: "contentType")
+                summary.setValue(command.summary.wordCount, forKey: "wordCount")
+                summary.setValue(command.summary.originalLength, forKey: "originalLength")
+                summary.setValue(command.summary.compressionRatio, forKey: "compressionRatio")
+                summary.setValue(command.summary.version, forKey: "version")
+                summary.setValue(command.summary.tasks, forKey: "tasks")
+                summary.setValue(command.summary.reminders, forKey: "reminders")
+                summary.setValue(command.summary.titles, forKey: "titles")
+                summary.setValue(recording, forKey: "recording")
+
+                recording.setValue(command.recordingName, forKey: "recordingName")
+                recording.setValue(command.recordingDate, forKey: "recordingDate")
+                recording.setValue(summary, forKey: "summary")
+                recording.setValue(summaryID, forKey: "summaryId")
+                recording.setValue(ProcessingStatus.completed.rawValue, forKey: "summaryStatus")
+
+                let generatedAt = command.summary.generatedAt
+                let existingLastModified = recording.value(forKey: "lastModified") as? Date
+                recording.setValue(
+                    max(existingLastModified ?? generatedAt, generatedAt),
+                    forKey: "lastModified"
+                )
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewSummary {
+                        context.delete(summary)
+                    }
+                    if isNewRecording {
+                        context.delete(recording)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert orphaned summary",
                         reason: error.localizedDescription
                     )
                 }
