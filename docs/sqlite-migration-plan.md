@@ -342,8 +342,9 @@ remains committed and the recording URL remains available for retry; a failed
 repository operation leaves local audio untouched. `RecordingsListView` awaits
 the operation and keeps the selection available when a partial operation
 reports an error. The production archive-export completion path no longer
-mutates Core Data directly, but archive-location reads, file-provider restore,
-source deletion and the full production media/file journal remain open.
+mutates Core Data directly. Archive-location reads and restore metadata now
+use repository-backed paths; provider copy, source deletion and the full
+production media/file journal remain open.
 The standalone suite passes 101/101 and the macOS app-hosted build-for-testing
 check passes. The current full iOS scheme build-for-testing is blocked by the
 pre-existing `BisonNotesComplications.swift:107` `accessoryCorner`-unavailable
@@ -367,13 +368,29 @@ the restored recording URL, optional file size, archive-flag clearing and
 `RecordingArchiveService` uses the command for imported-audio restores and
 archive-flag clearing; `FileImportManager` and `RecordingsListView` now await
 the repository-backed operations and surface failures. The file-provider
-restore workflow still has direct location reads/source deletion and remains
+restore workflow still has direct provider copy/source deletion and remains
 blocked on the durable media/file-operation boundary. The standalone suite
 passes 102/102 and the macOS app-hosted build-for-testing check passes. The
 full iOS scheme build-for-testing remains blocked by the pre-existing
 `BisonNotesComplications.swift:107` `accessoryCorner`-unavailable watch-widget
 error; direct simulator XCTest execution remains unavailable. No repository
 backend is selected for startup and no SQLite cutover is enabled.
+
+The current archive read/restore checkpoint is `f83cfbff` (`feat: route archive
+reads and restores through repository`). The recordings list now loads archive
+locations in one repository snapshot read and uses that cache for status and
+archive information. File-provider restore selects its location from repository
+snapshots, verifies or reuses a local copy, commits the recording relink and
+archive-state clearing before removing the external source, and records stale or
+missing location status through the repository. This ordering preserves the
+restored local audio if the process is killed after metadata commit. Provider
+copy/source deletion is still direct and has no durable archive-operation
+journal, so that portion remains a future media/file boundary. The standalone
+suite passes 102/102 and the macOS app-hosted build-for-testing check passes;
+the full iOS scheme build-for-testing remains blocked by the pre-existing
+watch-widget `accessoryCorner` availability error, and direct simulator XCTest
+execution remains unavailable. No repository backend is selected for startup
+and no SQLite cutover is enabled.
 
 The current cloud-sync preference checkpoint is `047c4a9a` (`feat: make cloud
 sync preference repository-backed`). `AppDataCoordinator.setCloudSyncDisabled`
@@ -672,7 +689,9 @@ Completed in this slice:
   use repository deletion transactions. Imported-audio file cleanup is
   storage-neutral and retry-safe, and archive re-import restore/clear-flag
   metadata now uses repository transactions. The file-provider restore/read and
-  remaining file-owning operations remain separate lifecycle work. Host and
+  remaining file-owning operations remain separate lifecycle work. Archive
+  location reads and restore metadata now use repository snapshots and commands;
+  provider copy/source deletion remains separate. Host and
   app-hosted contract coverage exercises both adapters.
 - The repository adapters now share a controller-owned, cancellation-safe
   maintenance gate in production construction paths. Repository-backed reads
@@ -697,8 +716,8 @@ Completed in this slice:
   advances only across validated contiguous batches. The pre-cutover startup
   boundary now anchors a durable Core Data subscription and polls it on remote
   store changes and activation; history-retention/purge policy, file-provider
-  archive restore/read/source deletion and file-owning repository write commands
-  are intentionally not implemented yet. Repository observation polling remains
+  archive copy/source deletion and file-owning repository write commands are
+  intentionally not implemented yet. Repository observation polling remains
   outside the normal-access gate so an exclusive source lease cannot deadlock
   while it validates the source revision.
 - The isolated migration coordinator now composes source validation, durable
@@ -749,8 +768,8 @@ Not yet implemented or closed:
 - Production coordinator/source/settings acquisition wiring beyond the
   pre-cutover boundary, installation of the gate around every remaining direct
   Core Data, settings, Watch, share and background caller, and broader read/write
-  repository contracts (including file-provider archive restore/read/source
-  deletion paths and file-owning operations) and
+  repository contracts (including durable provider archive copy/source-deletion
+  operations and remaining file-owning operations) and
   app-wired importer
   migration screen. The current metadata repository adapters, schema, snapshot
   importer, verifier and resumable coordinator are isolated foundations only
@@ -776,8 +795,8 @@ Not yet implemented or closed:
 - Historical source fixtures, performance measurements, shadow qualification,
   activation, signed device-backup testing and two-device CloudKit validation.
 
-The next safe work package is to finish the remaining file-provider archive
-restore/read/source-deletion paths and the production media/file journal, then expand
+The next safe work package is to finish the durable provider archive
+copy/source-deletion journal and its retry/recovery caller, then expand
 the remaining metadata commands and convert additional non-startup callers
 behind the Core Data adapter with shared behavior tests. After that, audit and
 install the maintenance gate around every remaining direct source mutation.
