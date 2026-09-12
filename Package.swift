@@ -94,6 +94,7 @@ let package = Package(
                 "SQLiteMediaFileOperationWorker.swift",
                 "SQLiteApplicationMediaRootMapping.swift",
                 "SQLiteApplicationMediaTransferPlanner.swift",
+                "SQLiteSecurityScopedBookmarkLease.swift",
                 "SQLiteMediaBackgroundReconciler.swift",
                 "SQLiteMediaRootRegistry.swift",
                 "SQLiteMediaTransferModels.swift",

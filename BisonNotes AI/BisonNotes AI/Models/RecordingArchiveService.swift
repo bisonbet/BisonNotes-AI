@@ -34,6 +34,11 @@ private struct ArchiveLocationCandidate {
     let command: LibraryArchiveLocationUpsertCommand
 }
 
+private struct ResolvedArchiveSource {
+    let url: URL
+    let securityScopedBookmarkLease: SQLiteSecurityScopedBookmarkLease?
+}
+
 enum RecordingArchiveError: LocalizedError, Sendable {
     case persistenceUnavailable
     case noArchiveLocation
@@ -321,17 +326,12 @@ class RecordingArchiveService: ObservableObject {
             recordingID: recordingID,
             locationID: locationId
         )
-        let sourceURL = try await resolvedArchiveURL(
+        let resolvedSource = try await resolvedArchiveSource(
             from: locationSnapshot,
             using: appCoordinator
         )
+        let sourceURL = resolvedSource.url
         let sourceName = sourceURL.lastPathComponent
-        let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
-        defer {
-            if startedAccessing {
-                sourceURL.stopAccessingSecurityScopedResource()
-            }
-        }
 
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             await updateArchiveLocationStatusUsingRepository(
@@ -633,12 +633,11 @@ class RecordingArchiveService: ObservableObject {
         }
     }
 
-    private func resolvedArchiveURL(
+    private func resolvedArchiveSource(
         from snapshot: LibraryArchiveLocationSnapshot,
         using appCoordinator: AppDataCoordinator
-    ) async throws -> URL {
+    ) async throws -> ResolvedArchiveSource {
         if let bookmarkData = snapshot.bookmarkData {
-            var isStale = false
             // Mac builds store security-scoped bookmarks; resolution must pass
             // the matching option so access can be restored after relaunch.
             let resolutionOptions: URL.BookmarkResolutionOptions = {
@@ -646,23 +645,24 @@ class RecordingArchiveService: ObservableObject {
                 return [.withoutUI, .withSecurityScope]
                 #else
                 return [.withoutUI]
-                #endif
+#endif
             }()
             do {
-                let url = try URL(
-                    resolvingBookmarkData: bookmarkData,
+                let lease = try SQLiteSecurityScopedBookmarkLease(
+                    bookmarkData: bookmarkData,
                     options: resolutionOptions,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
                 )
-                if isStale {
+                if lease.isStale {
                     await updateArchiveLocationStatusUsingRepository(
                         snapshot,
                         status: Self.statusStaleBookmark,
                         using: appCoordinator
                     )
                 }
-                return url
+                return ResolvedArchiveSource(
+                    url: lease.url,
+                    securityScopedBookmarkLease: lease
+                )
             } catch {
                 AppLog.shared.recording("Archive: failed to resolve bookmark: \(error.localizedDescription)", level: .error)
             }
@@ -670,7 +670,10 @@ class RecordingArchiveService: ObservableObject {
 
         if let urlString = snapshot.destinationURLString,
            let url = URL(string: urlString) {
-            return url
+            return ResolvedArchiveSource(
+                url: url,
+                securityScopedBookmarkLease: nil
+            )
         }
 
         throw RecordingArchiveError.unableToResolveLocation
