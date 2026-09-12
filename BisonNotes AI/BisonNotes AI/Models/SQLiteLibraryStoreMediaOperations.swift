@@ -83,6 +83,35 @@ extension SQLiteLibraryStore {
         }
     }
 
+    /// Returns every root-relative source path currently represented by the
+    /// media journal. A staging cleanup caller uses this set to avoid deleting
+    /// a source that is still pending, failed, or awaiting receipt cleanup.
+    func mediaSourceRelativePaths(sourceRoot: String) throws -> Set<String> {
+        try SQLiteMediaFileOperationValidation.root(sourceRoot)
+        return try databaseQueue.read { database in
+            let paths = try String.fetchAll(
+                database,
+                sql: """
+                SELECT DISTINCT sourceRelativePath
+                FROM file_operations
+                WHERE sourceRoot = ?
+                  AND sourceRelativePath IS NOT NULL
+                """,
+                arguments: [sourceRoot]
+            )
+            var validatedPaths = Set<String>(minimumCapacity: paths.count)
+            for path in paths {
+                do {
+                    try SQLiteMediaFileOperationValidation.relativePath(path)
+                } catch {
+                    throw SQLiteLibraryStoreError.invalidMetadata
+                }
+                validatedPaths.insert(path)
+            }
+            return validatedPaths
+        }
+    }
+
     /// Returns self-describing operations that can be resumed by a background
     /// worker. Completed operations without a receipt are included so a
     /// process kill between publication, metadata acknowledgement and receipt

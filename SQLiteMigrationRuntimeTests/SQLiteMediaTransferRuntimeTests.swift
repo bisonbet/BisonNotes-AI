@@ -151,6 +151,12 @@ final class SQLiteMediaTransferRuntimeTests: XCTestCase {
             metadataCommit: { _ in }
         )
 
+        let sourcePaths = try await store.mediaSourceRelativePaths(sourceRoot: "source")
+        XCTAssertEqual(
+            sourcePaths,
+            Set([fixture.transfer.copyPlan.sourceRelativePath])
+        )
+
         let eligible = try await store.mediaOperationsEligibleForSourceRemoval(
             sourceRoot: "source"
         )

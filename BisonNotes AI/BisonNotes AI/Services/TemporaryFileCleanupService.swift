@@ -16,6 +16,9 @@ final class TemporaryFileCleanupService {
     private let defaultMaxAge: TimeInterval = 6 * 60 * 60
     /// Floor for the iCloud audio staging directory. See `scheduleAudioStagingCleanup`.
     private static let audioStagingMinimumAge: TimeInterval = 6 * 60 * 60
+    /// Completed web audio is durable staging, not a user-facing library path.
+    /// Keep an abandoned pre-journal download for a full day before reclaiming it.
+    private static let webImportStagingMinimumAge: TimeInterval = 24 * 60 * 60
 
     private init() {}
 
@@ -50,6 +53,7 @@ final class TemporaryFileCleanupService {
             reclaimedBytes: &reclaimedBytes,
             errors: &errors
         )
+        schedulePersistentWebImportStagingCleanup(cutoff: cutoff)
         scheduleAudioStagingCleanup(cutoff: cutoff)
 
         if deletedCount > 0 {
@@ -135,6 +139,75 @@ final class TemporaryFileCleanupService {
         }
 
         removeDirectoryIfEmpty(importsRoot)
+    }
+
+    /// A completed supported-audio web download is moved out of the temporary
+    /// directory before the durable journal is enqueued. If the process dies in
+    /// that gap, the file has no journal row to make it eligible for the normal
+    /// receipt-gated cleanup. This sweep handles that one gap only: it leaves
+    /// every journal-referenced source untouched and refuses to sweep when an
+    /// existing journal cannot be read.
+    private func schedulePersistentWebImportStagingCleanup(cutoff: Date) {
+        guard let applicationSupportRoot = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            return
+        }
+
+        let stagingRoot = applicationSupportRoot.appendingPathComponent(
+            SQLiteApplicationMediaRootMapping.webImportStagingDirectoryName,
+            isDirectory: true
+        )
+        let journalURL = applicationSupportRoot
+            .appendingPathComponent("SQLiteMigration", isDirectory: true)
+            .appendingPathComponent("shared-media-transfer-journal.sqlite")
+        let persistentCutoff = min(
+            cutoff,
+            Date().addingTimeInterval(-Self.webImportStagingMinimumAge)
+        )
+
+        Task.detached(priority: .utility) {
+            let fileManager = FileManager()
+            let referencedPaths: Set<String>
+            if fileManager.fileExists(atPath: journalURL.path) {
+                do {
+                    let store = try SQLiteLibraryStore(
+                        databaseURL: journalURL,
+                        fileManager: fileManager
+                    )
+                    referencedPaths = try await store.mediaSourceRelativePaths(
+                        sourceRoot: SQLiteApplicationMediaRootID.webImportStaging.rawValue
+                    )
+                } catch {
+                    AppLog.shared.fileManagement(
+                        "Persistent web import cleanup skipped because the media journal could not be read: \(error.localizedDescription)",
+                        level: .error
+                    )
+                    return
+                }
+            } else {
+                referencedPaths = []
+            }
+
+            let result = SQLiteWebImportStagingCleaner(rootURL: stagingRoot).run(
+                referencedSourceRelativePaths: referencedPaths,
+                cutoff: persistentCutoff,
+                fileManager: fileManager
+            )
+            if result.deletedCount > 0 {
+                AppLog.shared.fileManagement(
+                    "Cleaned up \(result.deletedCount) orphaned persistent web import file(s), "
+                        + "reclaimed \(ByteCountFormatter.string(fromByteCount: result.reclaimedBytes, countStyle: .file))"
+                )
+            }
+            if result.failedCount > 0 {
+                AppLog.shared.fileManagement(
+                    "Persistent web import cleanup could not remove \(result.failedCount) orphaned file(s); they remain for retry",
+                    level: .error
+                )
+            }
+        }
     }
 
     /// `TemporaryDirectoryAssetStaging` removes its own run directory from a `defer`,

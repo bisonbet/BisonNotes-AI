@@ -48,6 +48,52 @@ final class SQLiteMediaRetentionRuntimeTests: XCTestCase {
         )
     }
 
+    func testWebImportStagingCleanerRemovesOnlyOldUnreferencedGeneratedAudio() throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let stagingRoot = directory.appendingPathComponent("BisonNotesWebImports")
+        try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: true)
+
+        let orphaned = stagingRoot.appendingPathComponent("meeting-\(UUID()).m4a")
+        let referenced = stagingRoot.appendingPathComponent("retained-\(UUID()).wav")
+        let recent = stagingRoot.appendingPathComponent("recent-\(UUID()).mp3")
+        let transcript = stagingRoot.appendingPathComponent("transcript-\(UUID()).txt")
+        let unrecognized = stagingRoot.appendingPathComponent("recording.m4a")
+        for url in [orphaned, referenced, recent, transcript, unrecognized] {
+            try Data("staging-fixture".utf8).write(to: url)
+        }
+
+        let staleDate = Date(timeIntervalSinceReferenceDate: 100)
+        let recentDate = Date(timeIntervalSinceReferenceDate: 300)
+        for url in [orphaned, referenced, transcript, unrecognized] {
+            try FileManager.default.setAttributes(
+                [.modificationDate: staleDate],
+                ofItemAtPath: url.path
+            )
+        }
+        try FileManager.default.setAttributes(
+            [.modificationDate: recentDate],
+            ofItemAtPath: recent.path
+        )
+
+        let result = SQLiteWebImportStagingCleaner(rootURL: stagingRoot).run(
+            referencedSourceRelativePaths: [referenced.lastPathComponent],
+            cutoff: Date(timeIntervalSinceReferenceDate: 200)
+        )
+
+        XCTAssertEqual(result.deletedCount, 1)
+        XCTAssertEqual(result.reclaimedBytes, Int64(Data("staging-fixture".utf8).count))
+        XCTAssertEqual(result.retainedReferencedCount, 1)
+        XCTAssertEqual(result.retainedRecentCount, 1)
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphaned.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: referenced.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: recent.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: transcript.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrecognized.path))
+    }
+
     func testRetentionExecutorRemovesSourceAfterCommittedReceipt() async throws {
         let fixture = try makeMediaTransferFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
