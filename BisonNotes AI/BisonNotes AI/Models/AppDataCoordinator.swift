@@ -797,6 +797,44 @@ class AppDataCoordinator: ObservableObject {
     }
 
     @discardableResult
+    func updateRecordingDateUsingRepository(
+        recordingId: UUID,
+        recordingDate: Date,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.updateRecordingDate(
+            LibraryRecordingDateUpdateCommand(
+                reference: LibraryRecordingReference(legacyID: recordingId.uuidString),
+                recordingDate: recordingDate,
+                expectedLastModified: expectedLastModified,
+                modifiedAt: modifiedAt
+            )
+        )
+        objectWillChange.send()
+        return snapshot
+    }
+
+    @discardableResult
+    func updateRecordingLocationUsingRepository(
+        recordingId: UUID,
+        location: LibraryRecordingLocationSnapshot?,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.updateRecordingLocation(
+            LibraryRecordingLocationUpdateCommand(
+                reference: LibraryRecordingReference(legacyID: recordingId.uuidString),
+                location: location,
+                expectedLastModified: expectedLastModified,
+                modifiedAt: modifiedAt
+            )
+        )
+        objectWillChange.send()
+        return snapshot
+    }
+
+    @discardableResult
     func setRecordingArchiveState(
         recordingId: UUID,
         archived: Bool,

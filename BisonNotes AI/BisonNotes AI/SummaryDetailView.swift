@@ -1583,8 +1583,12 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                // Update the recording date in Core Data
-                try await updateRecordingDateInCoreData(recordingId: recordingId, newDate: newDateTime)
+                // Update the recording date through the storage-neutral
+                // repository while Core Data remains the active adapter.
+                try await appCoordinator.updateRecordingDateUsingRepository(
+                    recordingId: recordingId,
+                    recordingDate: newDateTime
+                )
 
                 await MainActor.run {
                     // Update local state
@@ -1636,18 +1640,6 @@ struct SummaryDetailView: View {
         }
     }
 
-    private func updateRecordingDateInCoreData(recordingId: UUID, newDate: Date) async throws {
-        // For now, we'll use a simple approach - later we'll add the dateSource field
-        guard let recording = appCoordinator.getRecording(id: recordingId) else {
-            throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
-        }
-
-        recording.recordingDate = newDate
-        recording.lastModified = Date()
-
-        try appCoordinator.coreDataManager.saveContext()
-    }
-
     // MARK: - Location Management
 
     private func updateRecordingLocation(_ locationData: LocationData) {
@@ -1660,8 +1652,17 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                // Update the recording location in Core Data
-                try await updateRecordingLocationInCoreData(recordingId: recordingId, locationData: locationData)
+                // Update location fields atomically through the repository.
+                try await appCoordinator.updateRecordingLocationUsingRepository(
+                    recordingId: recordingId,
+                    location: LibraryRecordingLocationSnapshot(
+                        latitude: locationData.latitude,
+                        longitude: locationData.longitude,
+                        timestamp: locationData.timestamp,
+                        accuracy: locationData.accuracy,
+                        address: locationData.address
+                    )
+                )
 
                 await MainActor.run {
                     isUpdatingLocation = false
@@ -1686,22 +1687,6 @@ struct SummaryDetailView: View {
                 AppLog.shared.summarization("Failed to update recording location: \(error)", level: .error)
             }
         }
-    }
-
-    private func updateRecordingLocationInCoreData(recordingId: UUID, locationData: LocationData) async throws {
-        guard let recording = appCoordinator.getRecording(id: recordingId) else {
-            throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
-        }
-
-        // Update location fields
-        recording.locationLatitude = locationData.latitude
-        recording.locationLongitude = locationData.longitude
-        recording.locationTimestamp = locationData.timestamp
-        recording.locationAccuracy = locationData.accuracy ?? 0.0
-        recording.locationAddress = locationData.address
-        recording.lastModified = Date()
-
-        try appCoordinator.coreDataManager.saveContext()
     }
 
     // MARK: - Attachments / Notes

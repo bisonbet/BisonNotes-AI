@@ -70,12 +70,99 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings[0].legacyID, "10000000-0000-0000-0000-000000000001")
         XCTAssertEqual(recordings[0].name, "Fixture recording")
         XCTAssertEqual(recordings[0].recordingDate, Date(timeIntervalSinceReferenceDate: 100))
+        XCTAssertEqual(recordings[0].locationAccuracy, 7.0)
+        XCTAssertEqual(recordings[0].locationAddress, "Fixture address")
+        XCTAssertEqual(recordings[0].locationLatitude, 39.25)
+        XCTAssertEqual(recordings[0].locationLongitude, -76.71)
+        XCTAssertEqual(
+            recordings[0].locationTimestamp,
+            Date(timeIntervalSinceReferenceDate: 99)
+        )
         XCTAssertEqual(recordings[0].duration, 7.5)
         XCTAssertEqual(recordings[0].fileSize, 42)
         XCTAssertEqual(recordings[0].recordingURL, "recording.m4a")
         XCTAssertEqual(recordings[0].isArchived, false)
         XCTAssertEqual(recordings[0].isCloudSyncDisabled, false)
         XCTAssertEqual(recordings[0].lastModified, Date(timeIntervalSinceReferenceDate: 101))
+    }
+
+    func testCoreDataRepositoryUpdatesRecordingDateAndLocationWithRevisionGuards() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-recording-edit.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let recordings = try await repository.fetchRecordingSummaries()
+        let initial = try XCTUnwrap(
+            recordings.first {
+                $0.legacyID == recordingID.uuidString.lowercased()
+            }
+        )
+
+        let dated = try await repository.updateRecordingDate(
+            LibraryRecordingDateUpdateCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID.uuidString),
+                recordingDate: Date(timeIntervalSinceReferenceDate: 300),
+                expectedLastModified: initial.lastModified,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+        XCTAssertEqual(dated.recordingDate, Date(timeIntervalSinceReferenceDate: 300))
+
+        let location = LibraryRecordingLocationSnapshot(
+            latitude: 40,
+            longitude: -75,
+            timestamp: Date(timeIntervalSinceReferenceDate: 302),
+            accuracy: 5,
+            address: "Contract address"
+        )
+        let located = try await repository.updateRecordingLocation(
+            LibraryRecordingLocationUpdateCommand(
+                reference: LibraryRecordingReference(storageID: dated.storageID),
+                location: location,
+                expectedLastModified: dated.lastModified,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 303)
+            )
+        )
+        XCTAssertEqual(located.locationLatitude, location.latitude)
+        XCTAssertEqual(located.locationLongitude, location.longitude)
+        XCTAssertEqual(located.locationTimestamp, location.timestamp)
+        XCTAssertEqual(located.locationAccuracy, location.accuracy)
+        XCTAssertEqual(located.locationAddress, location.address)
+
+        do {
+            _ = try await repository.updateRecordingLocation(
+                LibraryRecordingLocationUpdateCommand(
+                    reference: LibraryRecordingReference(storageID: dated.storageID),
+                    location: location,
+                    expectedLastModified: dated.lastModified,
+                    modifiedAt: Date(timeIntervalSinceReferenceDate: 304)
+                )
+            )
+            XCTFail("Expected stale location update to fail")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleRecording(
+                    reference: dated.storageID,
+                    expected: dated.lastModified,
+                    actual: located.lastModified
+                )
+            )
+        }
     }
 
     func testCoreDataRepositoryCreatesRecordingWithStableIdentityAndDefaults() async throws {

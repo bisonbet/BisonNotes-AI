@@ -10,6 +10,11 @@ struct LibraryRecordingSnapshot: Equatable, Sendable {
     let legacyID: String?
     let name: String?
     let recordingDate: Date?
+    let locationAccuracy: Double?
+    let locationAddress: String?
+    let locationLatitude: Double?
+    let locationLongitude: Double?
+    let locationTimestamp: Date?
     let duration: Double?
     let fileSize: Int64?
     let recordingURL: String?
@@ -34,6 +39,18 @@ struct LibraryRecordingSnapshot: Equatable, Sendable {
             return lhs.storageID < rhs.storageID
         }
     }
+}
+
+/// Storage-neutral location values attached to a recording.
+///
+/// This mirrors the persisted Core Data/SQLite scalar fields instead of
+/// depending on `LocationData`, which is also used by the Watch wire format.
+struct LibraryRecordingLocationSnapshot: Equatable, Sendable {
+    let latitude: Double
+    let longitude: Double
+    let timestamp: Date
+    let accuracy: Double?
+    let address: String?
 }
 
 /// Stable identifiers used by repository commands.
@@ -421,6 +438,89 @@ struct LibraryRecordingRenameCommand: Equatable, Sendable {
     /// so both backends apply the same behavior.
     var normalizedName: String {
         name.replacingOccurrences(of: " [Watch]", with: "")
+    }
+}
+
+/// Changes only the user-visible recording date while retaining all other
+/// recording metadata. The optional revision guard prevents a delayed detail
+/// view from overwriting a newer CloudKit, Watch, or background update.
+struct LibraryRecordingDateUpdateCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let recordingDate: Date
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        recordingDate: Date,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.recordingDate = recordingDate
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryRecordingDateUpdateCommand {
+    func validate() throws {
+        let dates = [recordingDate, modifiedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording date update dates must be finite"
+            )
+        }
+    }
+}
+
+/// Sets or clears the location metadata for one recording. A nil location
+/// clears all five persisted location fields atomically.
+struct LibraryRecordingLocationUpdateCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let location: LibraryRecordingLocationSnapshot?
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        location: LibraryRecordingLocationSnapshot?,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.location = location
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryRecordingLocationUpdateCommand {
+    func validate() throws {
+        let dates = [location?.timestamp, modifiedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording location update dates must be finite"
+            )
+        }
+        guard let location else { return }
+        guard location.latitude.isFinite, (-90.0...90.0).contains(location.latitude) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording latitude must be finite and between -90 and 90"
+            )
+        }
+        guard location.longitude.isFinite, (-180.0...180.0).contains(location.longitude) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "recording longitude must be finite and between -180 and 180"
+            )
+        }
+        if let accuracy = location.accuracy {
+            guard accuracy.isFinite, accuracy >= 0 else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "recording location accuracy must be finite and nonnegative"
+                )
+            }
+        }
     }
 }
 
@@ -1341,6 +1441,12 @@ protocol LibraryRepository: Sendable {
         _ command: LibraryImportedAudioRemovalCommand
     ) async throws -> Bool
     func renameRecording(_ command: LibraryRecordingRenameCommand) async throws -> LibraryRecordingSnapshot
+    func updateRecordingDate(
+        _ command: LibraryRecordingDateUpdateCommand
+    ) async throws -> LibraryRecordingSnapshot
+    func updateRecordingLocation(
+        _ command: LibraryRecordingLocationUpdateCommand
+    ) async throws -> LibraryRecordingSnapshot
     func setCloudSyncDisabled(
         _ command: LibraryRecordingCloudSyncCommand
     ) async throws -> LibraryRecordingSnapshot

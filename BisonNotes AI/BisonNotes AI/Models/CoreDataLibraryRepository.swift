@@ -100,6 +100,11 @@ final class CoreDataLibraryRepository: LibraryRepository, @unchecked Sendable {
             legacyID: identifier(from: object.value(forKey: "id")),
             name: object.value(forKey: "recordingName") as? String,
             recordingDate: object.value(forKey: "recordingDate") as? Date,
+            locationAccuracy: (object.value(forKey: "locationAccuracy") as? NSNumber)?.doubleValue,
+            locationAddress: object.value(forKey: "locationAddress") as? String,
+            locationLatitude: (object.value(forKey: "locationLatitude") as? NSNumber)?.doubleValue,
+            locationLongitude: (object.value(forKey: "locationLongitude") as? NSNumber)?.doubleValue,
+            locationTimestamp: object.value(forKey: "locationTimestamp") as? Date,
             duration: (object.value(forKey: "duration") as? NSNumber)?.doubleValue,
             fileSize: (object.value(forKey: "fileSize") as? NSNumber)?.int64Value,
             recordingURL: object.value(forKey: "recordingURL") as? String,
@@ -1011,6 +1016,112 @@ extension CoreDataLibraryRepository {
                 } catch {
                     throw LibraryRepositoryError.writeFailed(
                         operation: "rename recording",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
+    func updateRecordingDate(
+        _ command: LibraryRecordingDateUpdateCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.recordingDate, forKey: "recordingDate")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "update recording date",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
+    func updateRecordingLocation(
+        _ command: LibraryRecordingLocationUpdateCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.location?.accuracy, forKey: "locationAccuracy")
+                recording.setValue(command.location?.address, forKey: "locationAddress")
+                recording.setValue(command.location?.latitude, forKey: "locationLatitude")
+                recording.setValue(command.location?.longitude, forKey: "locationLongitude")
+                recording.setValue(command.location?.timestamp, forKey: "locationTimestamp")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "update recording location",
                         reason: error.localizedDescription
                     )
                 }
