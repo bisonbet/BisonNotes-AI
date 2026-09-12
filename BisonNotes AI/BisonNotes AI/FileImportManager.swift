@@ -7,11 +7,146 @@
 
 import Foundation
 @preconcurrency import AVFoundation
+import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
 import SwiftUI
 import CoreData
+
+private struct SQLiteImportedAudioMetadata: Codable, Sendable {
+    static let currentSchemaVersion = 1
+
+    let schemaVersion: Int
+    let recordingID: UUID
+    let recordingName: String
+    let recordingDate: Date
+    let createdAt: Date
+    let duration: TimeInterval
+    let fileSize: Int64
+    let audioQuality: String
+    let transcriptionStatus: String
+    let summaryStatus: String
+}
+
+private enum SQLiteImportedAudioTransferError: LocalizedError {
+    case persistenceUnavailable
+    case sourceNotEligible
+    case invalidDescriptor
+    case destinationUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .persistenceUnavailable:
+            return "Durable storage is unavailable for the shared audio import."
+        case .sourceNotEligible:
+            return "The shared audio source is not in an approved import inbox."
+        case .invalidDescriptor:
+            return "The shared audio import metadata descriptor is invalid."
+        case .destinationUnavailable:
+            return "The shared audio import destination is unavailable."
+        }
+    }
+}
+
+private enum SQLiteImportedAudioTransferSupport {
+    static let allowedSourceRoots: Set<SQLiteApplicationMediaRootID> = [
+        .documentsInbox,
+        .shareInbox
+    ]
+
+    static func stableKey(
+        for sourceURL: URL,
+        fileSize: Int64,
+        metadataDate: Date
+    ) -> String {
+        let filenamePrefix = sourceURL.deletingPathExtension()
+            .lastPathComponent
+            .split(separator: "_", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+        if let filenamePrefix,
+           let uuid = UUID(uuidString: String(filenamePrefix)) {
+            return uuid.uuidString.lowercased()
+        }
+
+        let seed = [
+            sourceURL.standardizedFileURL.path,
+            String(fileSize),
+            String(metadataDate.timeIntervalSinceReferenceDate)
+        ].joined(separator: "|")
+        return SHA256.hash(data: Data(seed.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    static func stableUUID(for key: String) -> UUID {
+        let digest = SHA256.hash(data: Data(key.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        let characters = Array(hex)
+        let uuidString = [
+            String(characters[0..<8]),
+            String(characters[8..<12]),
+            String(characters[12..<16]),
+            String(characters[16..<20]),
+            String(characters[20..<32])
+        ].joined(separator: "-")
+        return UUID(uuidString: uuidString)!
+    }
+
+    static func sourceRoot(
+        for sourceURL: URL,
+        mapping: SQLiteApplicationMediaRootMapping
+    ) -> SQLiteApplicationMediaRootID? {
+        let candidate = sourceURL.standardizedFileURL
+        return allowedSourceRoots
+            .sorted { $0.rawValue < $1.rawValue }
+            .first { rootID in
+                guard let rootURL = mapping.sourceURLs[rootID] else { return false }
+                let rootPath = rootURL.standardizedFileURL.path
+                let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+                return candidate.path.hasPrefix(prefix)
+            }
+    }
+
+    static func documentsRelativePath(
+        for destinationURL: URL,
+        documentsRoot: URL
+    ) -> String? {
+        let root = documentsRoot.standardizedFileURL
+        let destination = destinationURL.standardizedFileURL
+        let prefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard destination.path.hasPrefix(prefix) else { return nil }
+        let relativePath = String(destination.path.dropFirst(prefix.count))
+        return relativePath.isEmpty ? nil : relativePath
+    }
+
+    static func datesMatch(_ lhs: Date?, _ rhs: Date) -> Bool {
+        guard let lhs else { return false }
+        return abs(lhs.timeIntervalSince1970 - rhs.timeIntervalSince1970) < 0.001
+    }
+
+    static func durationsMatch(_ lhs: Double?, _ rhs: Double) -> Bool {
+        guard let lhs else { return false }
+        return abs(lhs - rhs) < 0.001
+    }
+
+    static func validate(
+        _ existing: LibraryRecordingSnapshot,
+        command: LibraryRecordingCreateCommand
+    ) throws {
+        guard existing.legacyID?.caseInsensitiveCompare(command.id.uuidString) == .orderedSame,
+              existing.recordingURL == command.recordingURL,
+              existing.name == command.name,
+              datesMatch(existing.recordingDate, command.recordingDate),
+              datesMatch(existing.lastModified, command.modifiedAt),
+              existing.fileSize == command.fileSize,
+              durationsMatch(existing.duration, command.duration) else {
+            throw LibraryRepositoryError.recordingAlreadyExists(
+                reference: command.id.uuidString.lowercased()
+            )
+        }
+    }
+}
 
 // MARK: - File Import Manager
 
@@ -26,11 +161,16 @@ class FileImportManager: NSObject, ObservableObject {
 
     nonisolated static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
     nonisolated static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
+    private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
     private let libraryRepository: any LibraryRepository
+    private var mediaTransferRuntime: SQLiteApplicationMediaTransferRuntime?
+    private var mediaTransferMapping: SQLiteApplicationMediaRootMapping?
+    private var mediaTransferRetryTask: Task<Void, Never>?
 
     override init() {
         let persistenceController = PersistenceController.shared
+        self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
         self.libraryRepository = CoreDataLibraryRepository(
             context: persistenceController.container.viewContext,
@@ -40,6 +180,7 @@ class FileImportManager: NSObject, ObservableObject {
     }
 
     init(persistenceController: PersistenceController) {
+        self.persistenceController = persistenceController
         self.context = persistenceController.container.viewContext
         self.libraryRepository = CoreDataLibraryRepository(
             context: persistenceController.container.viewContext,
@@ -50,7 +191,10 @@ class FileImportManager: NSObject, ObservableObject {
 
     // MARK: - Import Methods
 
-    func importAudioFiles(from urls: [URL]) async {
+    func importAudioFiles(
+        from urls: [URL],
+        useDurableMediaJournal: Bool = false
+    ) async {
         guard !isImporting else { return }
 
         isImporting = true
@@ -73,7 +217,10 @@ class FileImportManager: NSObject, ObservableObject {
             importProgress = Double(index) / Double(totalCount)
 
             do {
-                try await importAudioFile(from: sourceURL)
+                try await importAudioFile(
+                    from: sourceURL,
+                    useDurableMediaJournal: useDurableMediaJournal
+                )
                 successful += 1
                 successfulSourcePaths.insert(sourceURL.standardizedFileURL.path)
             } catch {
@@ -99,7 +246,10 @@ class FileImportManager: NSObject, ObservableObject {
         completeImport(with: results)
     }
 
-    private func importAudioFile(from sourceURL: URL) async throws {
+    private func importAudioFile(
+        from sourceURL: URL,
+        useDurableMediaJournal: Bool
+    ) async throws {
         let fileExtension = sourceURL.pathExtension.lowercased()
 
         // Route video files through audio extraction
@@ -111,6 +261,17 @@ class FileImportManager: NSObject, ObservableObject {
         // Validate audio file extension
         guard Self.supportedExtensions.contains(fileExtension) else {
             throw ImportError.unsupportedFormat(fileExtension)
+        }
+
+        if useDurableMediaJournal {
+            do {
+                try await importAudioFileUsingMediaJournal(from: sourceURL)
+                return
+            } catch SQLiteImportedAudioTransferError.sourceNotEligible {
+                // Direct document-picker and web-import URLs can live outside
+                // the two inbox roots. Preserve their existing import path;
+                // only inbox-owned sources receive journal-driven cleanup.
+            }
         }
 
         // If the filename carries an archive token, try to restore onto the
@@ -164,6 +325,288 @@ class FileImportManager: NSObject, ObservableObject {
         importCompleted = true
 
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
+    }
+
+    /// Imports an audio file from one of the app's share/document inboxes
+    /// through the durable media journal. The source stays in its inbox until
+    /// the destination is verified, Core Data metadata is committed, the
+    /// receipt is recorded and the source-removal check succeeds.
+    private func importAudioFileUsingMediaJournal(from sourceURL: URL) async throws {
+        guard persistenceController.storageStatus.isDurable else {
+            throw SQLiteImportedAudioTransferError.persistenceUnavailable
+        }
+
+        guard let dependencies = try mediaTransferDependencies(createIfMissing: true),
+              SQLiteImportedAudioTransferSupport.sourceRoot(
+                  for: sourceURL,
+                  mapping: dependencies.mapping
+              ) != nil else {
+            throw SQLiteImportedAudioTransferError.sourceNotEligible
+        }
+
+        try validateAudioFile(at: sourceURL)
+        let resourceValues = try sourceURL.resourceValues(
+            forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey]
+        )
+        let metadataDate = resourceValues.contentModificationDate
+            ?? resourceValues.creationDate
+            ?? Date()
+        let fileSize = Int64(resourceValues.fileSize ?? 0)
+        let duration = await getAudioDuration(url: sourceURL)
+        let stableKey = SQLiteImportedAudioTransferSupport.stableKey(
+            for: sourceURL,
+            fileSize: fileSize,
+            metadataDate: metadataDate
+        )
+        let recordingID = SQLiteImportedAudioTransferSupport.stableUUID(for: stableKey)
+        let recordingName = AudioRecorderViewModel.generateImportedFileName(
+            originalName: sourceURL.deletingPathExtension().lastPathComponent
+        )
+        let fileExtension = sourceURL.pathExtension.lowercased()
+        let destinationRelativePath = "apprecording-import-\(stableKey).\(fileExtension)"
+        let metadata = SQLiteImportedAudioMetadata(
+            schemaVersion: SQLiteImportedAudioMetadata.currentSchemaVersion,
+            recordingID: recordingID,
+            recordingName: recordingName,
+            recordingDate: metadataDate,
+            createdAt: metadataDate,
+            duration: duration,
+            fileSize: fileSize,
+            audioQuality: "high",
+            transcriptionStatus: "Not Started",
+            summaryStatus: "Not Started"
+        )
+        let metadataPayload = try JSONEncoder().encode(metadata)
+        let request = SQLiteMediaTransferRequest(
+            sourceTransferID: "import-media-\(stableKey)",
+            operationID: "import-media-copy-\(stableKey)",
+            assetID: "import-media-asset-\(stableKey)",
+            ownerStorageID: "core-data-recording-\(recordingID.uuidString.lowercased())",
+            ownerRevision: nil,
+            sourceURL: sourceURL,
+            destinationRootID: SQLiteApplicationMediaRootID.documents.rawValue,
+            destinationRelativePath: destinationRelativePath,
+            metadataPayload: metadataPayload
+        )
+        let metadataCommit = makeImportedAudioMetadataCommit(
+            mapping: dependencies.mapping
+        )
+        let result = try await dependencies.runtime.transfer(
+            request,
+            metadataCommit: metadataCommit
+        )
+        guard result.sourceRetention == .eligibleForRemoval else {
+            throw SQLiteImportedAudioTransferError.destinationUnavailable
+        }
+        _ = try await dependencies.runtime.removeSourceIfEligible(
+            sourceTransferID: request.sourceTransferID,
+            operationID: request.operationID
+        )
+        AppLog.shared.fileManagement(
+            "Journaled shared audio import: \(sourceURL.lastPathComponent)"
+        )
+    }
+
+    /// Replays shared/inbox media operations left by a terminated process.
+    /// Only the two inbox roots are eligible for cleanup; generic Documents
+    /// media is never removed by this retry pass.
+    func retryPendingMediaTransfers() {
+        mediaTransferRetryTask?.cancel()
+        mediaTransferRetryTask = Task { @MainActor [weak self] in
+            await self?.reconcilePendingMediaTransfers()
+        }
+    }
+
+    private func reconcilePendingMediaTransfers() async {
+        guard persistenceController.storageStatus.isDurable else { return }
+
+        do {
+            guard let dependencies = try mediaTransferDependencies(createIfMissing: false) else {
+                return
+            }
+            let metadataCommit = makeImportedAudioMetadataCommit(
+                mapping: dependencies.mapping
+            )
+            let report = try await dependencies.runtime.reconcilePending(
+                maxOperations: 8,
+                metadataCommit: metadataCommit
+            )
+            let inboxRemoved = try await dependencies.runtime.removeEligibleSources(
+                sourceRoot: SQLiteApplicationMediaRootID.documentsInbox.rawValue,
+                maxOperations: 8
+            )
+            let shareRemoved = try await dependencies.runtime.removeEligibleSources(
+                sourceRoot: SQLiteApplicationMediaRootID.shareInbox.rawValue,
+                maxOperations: 8
+            )
+            if report.selectedOperationCount > 0 || inboxRemoved > 0 || shareRemoved > 0 {
+                AppLog.shared.fileManagement(
+                    "Shared media retry pass: selected=\(report.selectedOperationCount), "
+                        + "completed=\(report.completedOperationCount), "
+                        + "failed=\(report.failedOperationCount), "
+                        + "sourcesRemoved=\(inboxRemoved + shareRemoved)",
+                    level: .debug
+                )
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            AppLog.shared.fileManagement(
+                "Shared media retry pass failed; sources remain for retry: \(error)",
+                level: .error
+            )
+        }
+    }
+
+    private func mediaTransferDependencies(
+        createIfMissing: Bool
+    ) throws -> (
+        runtime: SQLiteApplicationMediaTransferRuntime,
+        mapping: SQLiteApplicationMediaRootMapping
+    )? {
+        if let mediaTransferRuntime,
+           let mediaTransferMapping {
+            return (
+                runtime: mediaTransferRuntime,
+                mapping: mediaTransferMapping
+            )
+        }
+
+        let fileManager = FileManager.default
+        guard let applicationSupportURL = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw SQLiteImportedAudioTransferError.persistenceUnavailable
+        }
+        let journalDirectory = applicationSupportURL.appendingPathComponent(
+            "SQLiteMigration",
+            isDirectory: true
+        )
+        let databaseURL = journalDirectory.appendingPathComponent(
+            "shared-media-transfer-journal.sqlite",
+            isDirectory: false
+        )
+        if !createIfMissing,
+           !fileManager.fileExists(atPath: databaseURL.path) {
+            return nil
+        }
+
+        try fileManager.createDirectory(
+            at: journalDirectory,
+            withIntermediateDirectories: true
+        )
+        AppFileProtection.apply(to: journalDirectory)
+        let mapping = try SQLiteApplicationMediaRootMapping(
+            fileManager: fileManager,
+            appGroupIdentifier: ShareExtensionContract.appGroupIdentifier
+        )
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        AppFileProtection.apply(to: databaseURL)
+        let runtime = SQLiteApplicationMediaTransferRuntime(
+            coordinator: SQLiteApplicationMediaTransferCoordinator(
+                store: store,
+                mapping: mapping
+            )
+        )
+        mediaTransferMapping = mapping
+        mediaTransferRuntime = runtime
+        return (runtime: runtime, mapping: mapping)
+    }
+
+    private func makeImportedAudioMetadataCommit(
+        mapping: SQLiteApplicationMediaRootMapping
+    ) -> SQLiteMediaMetadataCommit {
+        let libraryRepository = self.libraryRepository
+        return { operation in
+            guard let payload = operation.metadataPayload,
+                  let metadata = try? JSONDecoder().decode(
+                      SQLiteImportedAudioMetadata.self,
+                      from: payload
+                  ),
+                  metadata.schemaVersion == SQLiteImportedAudioMetadata.currentSchemaVersion,
+                  let destinationRoot = operation.destinationRoot,
+                  let destinationRelativePath = operation.destinationRelativePath,
+                  let documentsRoot = mapping.destinationURLs[
+                      SQLiteApplicationMediaRootID.documents
+                  ] else {
+                throw SQLiteImportedAudioTransferError.invalidDescriptor
+            }
+
+            let destinationURL: URL
+            do {
+                destinationURL = try mapping.registry.destinationURL(
+                    root: destinationRoot,
+                    relativePath: destinationRelativePath
+                )
+            } catch {
+                throw SQLiteImportedAudioTransferError.destinationUnavailable
+            }
+            let values = try destinationURL.resourceValues(
+                forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+            )
+            guard values.isRegularFile == true,
+                  values.isSymbolicLink != true,
+                  Int64(values.fileSize ?? 0) == metadata.fileSize,
+                  operation.expectedByteLength == metadata.fileSize,
+                  let recordingURL = SQLiteImportedAudioTransferSupport.documentsRelativePath(
+                      for: destinationURL,
+                      documentsRoot: documentsRoot
+                  ) else {
+                throw SQLiteImportedAudioTransferError.destinationUnavailable
+            }
+
+            AppFileProtection.apply(to: destinationURL)
+            let command = LibraryRecordingCreateCommand(
+                id: metadata.recordingID,
+                recordingURL: recordingURL,
+                name: metadata.recordingName,
+                recordingDate: metadata.recordingDate,
+                createdAt: metadata.createdAt,
+                duration: metadata.duration,
+                fileSize: metadata.fileSize,
+                audioQuality: metadata.audioQuality,
+                transcriptionStatus: metadata.transcriptionStatus,
+                summaryStatus: metadata.summaryStatus
+            )
+            let existingRecordings = try await libraryRepository.fetchRecordingSummaries()
+            if let existing = existingRecordings.first(where: { recording in
+                recording.legacyID?.caseInsensitiveCompare(
+                    metadata.recordingID.uuidString
+                ) == .orderedSame
+            }) {
+                try SQLiteImportedAudioTransferSupport.validate(
+                    existing,
+                    command: command
+                )
+            } else {
+                do {
+                    _ = try await libraryRepository.createRecording(command)
+                } catch let error as LibraryRepositoryError {
+                    guard case .recordingAlreadyExists = error else {
+                        throw error
+                    }
+                    let recordingsAfterRace = try await libraryRepository.fetchRecordingSummaries()
+                    guard let existing = recordingsAfterRace.first(where: { recording in
+                        recording.legacyID?.caseInsensitiveCompare(
+                            metadata.recordingID.uuidString
+                        ) == .orderedSame
+                    }) else {
+                        throw error
+                    }
+                    try SQLiteImportedAudioTransferSupport.validate(
+                        existing,
+                        command: command
+                    )
+                }
+            }
+            Task { @MainActor in
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("RecordingAdded"),
+                    object: nil
+                )
+            }
+        }
     }
 
     /// Decision about how to handle an incoming import URL based on the archive

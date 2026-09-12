@@ -856,6 +856,7 @@ struct BisonNotesAIApp: App {
                     AppLog.shared.markSessionActive()
                     appCoordinator.pollLibraryObservationIfNeeded()
                     recorderVM.retryPendingWatchTransfers()
+                    fileImportManager.retryPendingMediaTransfers()
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
                     // applicationDidBecomeActive) ensures this fires reliably in
@@ -1218,7 +1219,10 @@ struct BisonNotesAIApp: App {
 
             if !audioFiles.isEmpty {
                 NSLog("📎 Shared container: importing \(audioFiles.count) audio file(s)")
-                await fileImportManager.importAudioFiles(from: audioFiles)
+                await fileImportManager.importAudioFiles(
+                    from: audioFiles,
+                    useDurableMediaJournal: true
+                )
                 successfulSourcePaths.formUnion(
                     fileImportManager.importResults?.successfulSourcePaths ?? []
                 )
@@ -1310,7 +1314,10 @@ struct BisonNotesAIApp: App {
 
             if !audioFiles.isEmpty {
                 NSLog("📎 Inbox scan: importing \(audioFiles.count) audio file(s)")
-                await fileImportManager.importAudioFiles(from: audioFiles)
+                await fileImportManager.importAudioFiles(
+                    from: audioFiles,
+                    useDurableMediaJournal: true
+                )
                 successfulSourcePaths.formUnion(
                     fileImportManager.importResults?.successfulSourcePaths ?? []
                 )
@@ -1360,7 +1367,10 @@ struct BisonNotesAIApp: App {
         if audioExtensions.contains(ext) {
             NSLog("📎 Importing audio file (.\(ext))")
             guard !fileImportManager.isImporting else { return false }
-            await fileImportManager.importAudioFiles(from: [url])
+            await fileImportManager.importAudioFiles(
+                from: [url],
+                useDurableMediaJournal: true
+            )
             return fileImportManager.importResults?.successfulSourcePaths.contains(
                 url.standardizedFileURL.path
             ) == true
