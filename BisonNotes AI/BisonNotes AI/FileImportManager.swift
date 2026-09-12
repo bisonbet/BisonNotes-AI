@@ -52,7 +52,8 @@ private enum SQLiteImportedAudioTransferError: LocalizedError {
 private enum SQLiteImportedAudioTransferSupport {
     static let allowedSourceRoots: Set<SQLiteApplicationMediaRootID> = [
         .documentsInbox,
-        .shareInbox
+        .shareInbox,
+        .webImportStaging
     ]
 
     static func stableKey(
@@ -268,9 +269,9 @@ class FileImportManager: NSObject, ObservableObject {
                 try await importAudioFileUsingMediaJournal(from: sourceURL)
                 return
             } catch SQLiteImportedAudioTransferError.sourceNotEligible {
-                // Direct document-picker and web-import URLs can live outside
-                // the two inbox roots. Preserve their existing import path;
-                // only inbox-owned sources receive journal-driven cleanup.
+                // Direct document-picker URLs can live outside the managed
+                // roots. Preserve their existing import path; only
+                // inbox/web-owned sources receive journal-driven cleanup.
             }
         }
 
@@ -327,10 +328,11 @@ class FileImportManager: NSObject, ObservableObject {
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
     }
 
-    /// Imports an audio file from one of the app's share/document inboxes
-    /// through the durable media journal. The source stays in its inbox until
-    /// the destination is verified, Core Data metadata is committed, the
-    /// receipt is recorded and the source-removal check succeeds.
+    /// Imports an audio file from one of the app's share/document inboxes or
+    /// the web-import staging root through the durable media journal. The
+    /// source stays in its managed root until the destination is verified,
+    /// Core Data metadata is committed, the receipt is recorded and the
+    /// source-removal check succeeds.
     private func importAudioFileUsingMediaJournal(from sourceURL: URL) async throws {
         guard persistenceController.storageStatus.isDurable else {
             throw SQLiteImportedAudioTransferError.persistenceUnavailable
@@ -411,9 +413,8 @@ class FileImportManager: NSObject, ObservableObject {
         )
     }
 
-    /// Replays shared/inbox media operations left by a terminated process.
-    /// Only the two inbox roots are eligible for cleanup; generic Documents
-    /// media is never removed by this retry pass.
+    /// Replays journaled inbox/web media operations left by a terminated
+    /// process. Generic Documents media is never removed by this retry pass.
     func retryPendingMediaTransfers() {
         mediaTransferRetryTask?.cancel()
         mediaTransferRetryTask = Task { @MainActor [weak self] in
@@ -453,22 +454,30 @@ class FileImportManager: NSObject, ObservableObject {
                 sourceRoot: SQLiteApplicationMediaRootID.shareInbox.rawValue,
                 maxOperations: maxOperations
             )
+            let webRemoved = try await dependencies.runtime.removeEligibleSources(
+                sourceRoot: SQLiteApplicationMediaRootID.webImportStaging.rawValue,
+                maxOperations: maxOperations
+            )
             let shouldRetry = report.selectedOperationCount >= maxOperations
                 || report.failedOperationCount > 0
                 || inboxRemoved >= maxOperations
                 || shareRemoved >= maxOperations
+                || webRemoved >= maxOperations
             if shouldRetry && requestOSRetry {
                 NotificationCenter.default.post(
                     name: SQLiteApplicationMediaTransferLifecycle.retryRequested,
                     object: nil
                 )
             }
-            if report.selectedOperationCount > 0 || inboxRemoved > 0 || shareRemoved > 0 {
+            if report.selectedOperationCount > 0
+                || inboxRemoved > 0
+                || shareRemoved > 0
+                || webRemoved > 0 {
                 AppLog.shared.fileManagement(
-                    "Shared media retry pass: selected=\(report.selectedOperationCount), "
+                    "Managed media retry pass: selected=\(report.selectedOperationCount), "
                         + "completed=\(report.completedOperationCount), "
                         + "failed=\(report.failedOperationCount), "
-                        + "sourcesRemoved=\(inboxRemoved + shareRemoved)",
+                        + "sourcesRemoved=\(inboxRemoved + shareRemoved + webRemoved)",
                     level: .debug
                 )
             }
@@ -876,6 +885,13 @@ class FileImportManager: NSObject, ObservableObject {
 
     var canImport: Bool {
         return !isImporting
+    }
+
+    /// External web audio can use the durable media journal only when the
+    /// current Core Data generation is a real on-disk store. In-memory
+    /// previews/tests must retain their existing direct-import behavior.
+    var canUseDurableMediaJournal: Bool {
+        persistenceController.storageStatus.isDurable
     }
 
     // MARK: - Core Data Integration

@@ -6,6 +6,7 @@ enum SQLiteApplicationMediaRootID: String, CaseIterable, Hashable, Sendable {
     case watchTransferStaging = "watch-transfer-staging"
     case iCloudAudioStaging = "icloud-audio-staging"
     case shareInbox = "share-inbox"
+    case webImportStaging = "web-import-staging"
     case sqliteMedia = "sqlite-media"
 }
 
@@ -16,6 +17,7 @@ enum SQLiteApplicationMediaRootID: String, CaseIterable, Hashable, Sendable {
 /// tests can supply explicit roots without depending on a live sandbox.
 struct SQLiteApplicationMediaRootMapping: Sendable {
     static let watchTransferStagingDirectoryName = "WatchTransferStaging"
+    static let webImportStagingDirectoryName = "BisonNotesWebImports"
 
     let registry: SQLiteMediaRootRegistry
     let sourceURLs: [SQLiteApplicationMediaRootID: URL]
@@ -26,13 +28,15 @@ struct SQLiteApplicationMediaRootMapping: Sendable {
         applicationSupportRoot: URL,
         temporaryRoot: URL,
         shareContainerRoot: URL? = nil,
-        watchTransferStagingRoot: URL? = nil
+        watchTransferStagingRoot: URL? = nil,
+        webImportStagingRoot: URL? = nil
     ) throws {
         let sourceURLs = Self.makeSourceURLs(
             documentsRoot: documentsRoot,
             temporaryRoot: temporaryRoot,
             shareContainerRoot: shareContainerRoot,
-            watchTransferStagingRoot: watchTransferStagingRoot
+            watchTransferStagingRoot: watchTransferStagingRoot,
+            webImportStagingRoot: webImportStagingRoot
         )
         let destinationURLs = [
             // Core Data remains authoritative until cutover, so journaled
@@ -82,6 +86,10 @@ struct SQLiteApplicationMediaRootMapping: Sendable {
             watchTransferStagingRoot: applicationSupportRoot.appendingPathComponent(
                 Self.watchTransferStagingDirectoryName,
                 isDirectory: true
+            ),
+            webImportStagingRoot: fileManager.temporaryDirectory.appendingPathComponent(
+                Self.webImportStagingDirectoryName,
+                isDirectory: true
             )
         )
     }
@@ -119,7 +127,8 @@ private extension SQLiteApplicationMediaRootMapping {
         documentsRoot: URL,
         temporaryRoot: URL,
         shareContainerRoot: URL?,
-        watchTransferStagingRoot: URL?
+        watchTransferStagingRoot: URL?,
+        webImportStagingRoot: URL?
     ) -> [SQLiteApplicationMediaRootID: URL] {
         var sourceURLs: [SQLiteApplicationMediaRootID: URL] = [
             .documents: documentsRoot,
@@ -133,6 +142,10 @@ private extension SQLiteApplicationMediaRootMapping {
             ),
             .iCloudAudioStaging: temporaryRoot.appendingPathComponent(
                 "iCloudAudioStaging",
+                isDirectory: true
+            ),
+            .webImportStaging: webImportStagingRoot ?? temporaryRoot.appendingPathComponent(
+                webImportStagingDirectoryName,
                 isDirectory: true
             )
         ]

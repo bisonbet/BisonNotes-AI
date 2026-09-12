@@ -95,7 +95,21 @@ final class WebImportManager: ObservableObject {
             from: url,
             preferredKind: importKind
         )
-        defer { try? FileManager.default.removeItem(at: downloaded.localURL) }
+        let downloadedExtension = downloaded.localURL.pathExtension.lowercased()
+        let usesDurableMediaJournal: Bool
+        if case .audioOrVideo = downloaded.route {
+            usesDurableMediaJournal = FileImportManager.supportedExtensions.contains(
+                downloadedExtension
+            ) && fileImportManager.canUseDurableMediaJournal
+        } else {
+            usesDurableMediaJournal = false
+        }
+        var removeDownloadedSource = !usesDurableMediaJournal
+        defer {
+            if removeDownloadedSource {
+                try? FileManager.default.removeItem(at: downloaded.localURL)
+            }
+        }
 
         switch downloaded.route {
         case .audioOrVideo:
@@ -107,12 +121,23 @@ final class WebImportManager: ObservableObject {
                 throw WebImportError.importInProgress
             }
             currentlyImporting = "Importing audio..."
-            await fileImportManager.importAudioFiles(from: [downloaded.localURL])
+            await fileImportManager.importAudioFiles(
+                from: [downloaded.localURL],
+                useDurableMediaJournal: usesDurableMediaJournal
+            )
             let results = fileImportManager.importResults
             fileImportManager.showingImportAlert = false
             guard (results?.successful ?? 0) > 0 else {
                 throw WebImportError.importedFileRejected(
                     firstFailureReason(in: results?.errors) ?? "The audio file was rejected."
+                )
+            }
+            // A journaled import removes its source only after the metadata
+            // acknowledgement and committed receipt. If the durable method
+            // fell back to the direct path, keep the historical defer cleanup.
+            if usesDurableMediaJournal {
+                removeDownloadedSource = FileManager.default.fileExists(
+                    atPath: downloaded.localURL.path
                 )
             }
             lastImportSucceeded = true

@@ -127,6 +127,43 @@ final class SQLiteMediaPlanningRuntimeTests: XCTestCase {
         XCTAssertEqual(plan.copyPlan.sourceRelativePath, "watch-recording.m4a")
     }
 
+    func testPlannerResolvesWebImportStagingRoot() throws {
+        let fixture = try makePlannerFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let sourceURL = fixture.temporaryRoot
+            .appendingPathComponent(
+                SQLiteApplicationMediaRootMapping.webImportStagingDirectoryName,
+                isDirectory: true
+            )
+            .appendingPathComponent("downloaded-recording.wav")
+        try FileManager.default.createDirectory(
+            at: sourceURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("web-import-fixture".utf8).write(to: sourceURL)
+
+        let plan = try SQLiteApplicationMediaTransferPlanner(
+            mapping: fixture.mapping
+        ).makePlan(
+            SQLiteMediaTransferRequest(
+                sourceTransferID: "web-transfer-1",
+                operationID: "operation-web-1",
+                assetID: "asset-web-1",
+                ownerStorageID: nil,
+                ownerRevision: nil,
+                sourceURL: sourceURL,
+                destinationRelativePath: "assets/web-1.wav"
+            )
+        )
+
+        XCTAssertEqual(
+            plan.copyPlan.sourceRoot,
+            SQLiteApplicationMediaRootID.webImportStaging.rawValue
+        )
+        XCTAssertEqual(plan.copyPlan.sourceRelativePath, "downloaded-recording.wav")
+    }
+
     func testPlannerRejectsSourceOutsideManagedRoots() throws {
         let fixture = try makePlannerFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
