@@ -859,6 +859,56 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertEqual(changes.map(\.revision), [1, 2])
     }
 
+    func testRepositoryRestoresRecordingAudioAndArchiveStateAtomically() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceSnapshot = makeVerifierSnapshot(migrationRunID: nil)
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        _ = try await SQLiteMigrationMetadataImporter.importSnapshot(
+            sourceSnapshot,
+            into: store,
+            batchSize: sourceSnapshot.rows.count,
+            at: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+
+        _ = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 301),
+                archiveNote: "Exported to iCloud Drive",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        let restored = try await repository.restoreRecordingAudio(
+            LibraryRecordingAudioRestoreCommand(
+                reference: LibraryRecordingReference(storageID: "recording-storage"),
+                recordingURL: "restored-recording.m4a",
+                fileSize: 128,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+
+        XCTAssertEqual(restored.recordingURL, "restored-recording.m4a")
+        XCTAssertEqual(restored.fileSize, 128)
+        XCTAssertEqual(restored.isArchived, false)
+        XCTAssertNil(restored.archivedAt)
+        XCTAssertNil(restored.archiveNote)
+        XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
+
+        let changes = try await repository.changes(since: 0)
+        XCTAssertEqual(changes.map(\.entity), [.recording, .recording])
+        XCTAssertEqual(changes.map(\.operation), [.updated, .updated])
+        XCTAssertEqual(changes.map(\.revision), [1, 2])
+    }
+
     func testRepositoryCreatesArchiveLocationWithStableIdentityAndRetryDoesNotDuplicate() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

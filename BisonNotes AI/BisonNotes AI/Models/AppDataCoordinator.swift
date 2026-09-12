@@ -822,6 +822,29 @@ class AppDataCoordinator: ObservableObject {
     }
 
     @discardableResult
+    func restoreRecordingAudioUsingRepository(
+        recordingId: UUID,
+        recordingURL: String,
+        fileSize: Int64? = nil,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.restoreRecordingAudio(
+            LibraryRecordingAudioRestoreCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: recordingId.uuidString
+                ),
+                recordingURL: recordingURL,
+                fileSize: fileSize,
+                expectedLastModified: expectedLastModified,
+                modifiedAt: modifiedAt
+            )
+        )
+        objectWillChange.send()
+        return snapshot
+    }
+
+    @discardableResult
     func upsertArchiveLocationUsingRepository(
         _ command: LibraryArchiveLocationUpsertCommand
     ) async throws -> LibraryArchiveLocationSnapshot {

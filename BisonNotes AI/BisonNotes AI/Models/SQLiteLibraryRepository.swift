@@ -150,6 +150,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func restoreRecordingAudio(
+        _ command: LibraryRecordingAudioRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await withNormalAccess { [store] in
+            try await store.restoreRecordingAudio(command)
+        }
+    }
+
     func upsertArchiveLocation(
         _ command: LibraryArchiveLocationUpsertCommand
     ) async throws -> LibraryArchiveLocationSnapshot {
@@ -1304,6 +1312,68 @@ extension SQLiteLibraryStore {
             guard database.changesCount == 1 else {
                 throw LibraryRepositoryError.writeFailed(
                     operation: "set archive state",
+                    reason: "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.modifiedAt
+            )
+
+            return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    func restoreRecordingAudio(
+        _ command: LibraryRecordingAudioRestoreCommand
+    ) throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let reference = try Self.normalizedReference(command.reference)
+        let modifiedAt = command.modifiedAt.timeIntervalSinceReferenceDate
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+
+            let fileSizeExpression = command.fileSize == nil ? "fileSize" : "?"
+            let sql = """
+                UPDATE recordings
+                SET recordingURL = ?, fileSize = \(fileSizeExpression),
+                    isArchived = ?, archivedAt = ?, archiveNote = ?, lastModified = ?
+                WHERE storageID = ?
+                """
+            let arguments: StatementArguments
+            if let fileSize = command.fileSize {
+                arguments = [
+                    command.recordingURL,
+                    fileSize,
+                    0,
+                    nil,
+                    nil,
+                    modifiedAt,
+                    current.storageID
+                ]
+            } else {
+                arguments = [
+                    command.recordingURL,
+                    0,
+                    nil,
+                    nil,
+                    modifiedAt,
+                    current.storageID
+                ]
+            }
+            try database.execute(sql: sql, arguments: arguments)
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "restore recording audio",
                     reason: "the recording row was not updated"
                 )
             }

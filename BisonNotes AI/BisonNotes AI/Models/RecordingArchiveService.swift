@@ -214,6 +214,38 @@ class RecordingArchiveService: ObservableObject {
     // MARK: - Restore
 
     /// Clear archive flags when a user re-imports audio for an archived recording.
+    func restoreRecordingUsingRepository(
+        _ recording: RecordingEntry,
+        newAudioURL: URL
+    ) async throws {
+        guard let appCoordinator,
+              let recordingID = recording.id else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+
+        let recordingName = recording.recordingName ?? "unknown"
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let relativePath: String
+        if let docs = documentsPath, newAudioURL.path.hasPrefix(docs.path) {
+            relativePath = String(newAudioURL.path.dropFirst(docs.path.count + 1))
+        } else {
+            relativePath = newAudioURL.lastPathComponent
+        }
+
+        let fileSize = try? FileManager.default.attributesOfItem(atPath: newAudioURL.path)[.size] as? Int64
+        _ = try await appCoordinator.restoreRecordingAudioUsingRepository(
+            recordingId: recordingID,
+            recordingURL: relativePath,
+            fileSize: fileSize,
+            expectedLastModified: recording.lastModified
+        )
+        AppLog.shared.recording("Restored archived recording: \(recordingName)")
+    }
+
+    /// Legacy restore path used by the file-provider workflow. Its copy and
+    /// archive-location cleanup still need a durable file-operation boundary;
+    /// keep that larger workflow isolated while re-import restores use the
+    /// repository-backed method above.
     func restoreRecording(_ recording: RecordingEntry, newAudioURL: URL) {
         let context = viewContext
 
@@ -248,19 +280,19 @@ class RecordingArchiveService: ObservableObject {
     /// Clear archive flags on a recording whose local audio is already present.
     /// Used when the user archived without removing local audio, then re-imports
     /// the exported copy — no file copy needed, just flip the flags.
-    func clearArchiveFlags(for recording: RecordingEntry) {
-        let context = viewContext
-        recording.isArchived = false
-        recording.archivedAt = nil
-        recording.archiveNote = nil
-        recording.lastModified = Date()
-
-        do {
-            try context.save()
-            AppLog.shared.recording("Cleared archive flags (local audio intact): \(recording.recordingName ?? "unknown")")
-        } catch {
-            AppLog.shared.recording("Failed to clear archive flags: \(error.localizedDescription)", level: .error)
+    func clearArchiveFlags(for recording: RecordingEntry) async throws {
+        guard let appCoordinator,
+              let recordingID = recording.id else {
+            throw RecordingArchiveError.persistenceUnavailable
         }
+
+        let recordingName = recording.recordingName ?? "unknown"
+        _ = try await appCoordinator.setRecordingArchiveState(
+            recordingId: recordingID,
+            archived: false,
+            expectedLastModified: recording.lastModified
+        )
+        AppLog.shared.recording("Cleared archive flags (local audio intact): \(recordingName)")
     }
 
     // MARK: - Archive Locations

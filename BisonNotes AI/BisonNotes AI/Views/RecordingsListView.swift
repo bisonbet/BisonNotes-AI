@@ -1609,9 +1609,15 @@ struct RecordingsListView: View {
             return
         }
 
-        RecordingArchiveService.shared.clearArchiveFlags(for: recordingEntry)
-        loadRecordings()
-        refreshFileRelationships()
+        Task { @MainActor in
+            do {
+                try await RecordingArchiveService.shared.clearArchiveFlags(for: recordingEntry)
+                loadRecordings()
+                refreshFileRelationships()
+            } catch {
+                archiveRestoreError = error.localizedDescription
+            }
+        }
     }
 
     private func prepareArchiveFromSelection() {

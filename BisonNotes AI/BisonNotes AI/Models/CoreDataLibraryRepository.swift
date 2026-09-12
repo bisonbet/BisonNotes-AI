@@ -1147,6 +1147,63 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func restoreRecordingAudio(
+        _ command: LibraryRecordingAudioRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.recordingURL, forKey: "recordingURL")
+                if let fileSize = command.fileSize {
+                    recording.setValue(fileSize, forKey: "fileSize")
+                }
+                recording.setValue(false, forKey: "isArchived")
+                recording.setValue(nil, forKey: "archivedAt")
+                recording.setValue(nil, forKey: "archiveNote")
+                recording.setValue(command.modifiedAt, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "restore recording audio",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
     func upsertArchiveLocation(
         _ command: LibraryArchiveLocationUpsertCommand
     ) async throws -> LibraryArchiveLocationSnapshot {

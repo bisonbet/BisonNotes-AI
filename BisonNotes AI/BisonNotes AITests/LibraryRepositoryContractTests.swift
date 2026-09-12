@@ -826,6 +826,55 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
     }
 
+    func testCoreDataRepositoryRestoresRecordingAudioAndArchiveStateAtomically() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-archive-restore.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        _ = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 301),
+                archiveNote: "Exported to iCloud Drive",
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 101),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+
+        let restored = try await repository.restoreRecordingAudio(
+            LibraryRecordingAudioRestoreCommand(
+                reference: LibraryRecordingReference(
+                    legacyID: "10000000-0000-0000-0000-000000000001"
+                ),
+                recordingURL: "restored-recording.m4a",
+                fileSize: 128,
+                expectedLastModified: Date(timeIntervalSinceReferenceDate: 301),
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 302)
+            )
+        )
+
+        XCTAssertEqual(restored.recordingURL, "restored-recording.m4a")
+        XCTAssertEqual(restored.fileSize, 128)
+        XCTAssertEqual(restored.isArchived, false)
+        XCTAssertNil(restored.archivedAt)
+        XCTAssertNil(restored.archiveNote)
+        XCTAssertEqual(restored.lastModified, Date(timeIntervalSinceReferenceDate: 302))
+    }
+
     func testCoreDataRepositoryCreatesArchiveLocationWithStableIdentityAndRetryDoesNotDuplicate() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

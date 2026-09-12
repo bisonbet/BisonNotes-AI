@@ -237,7 +237,7 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.alreadyImported(name)
 
         case .clearFlagsOnly(let recording):
-            RecordingArchiveService.shared.clearArchiveFlags(for: recording)
+            try await RecordingArchiveService.shared.clearArchiveFlags(for: recording)
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Cleared archive flags for \(recording.recordingName ?? "unknown") (local audio still present)")
 
@@ -271,7 +271,10 @@ class FileImportManager: NSObject, ObservableObject {
 
             try validateAudioFile(at: destinationURL)
 
-            RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+            try await RecordingArchiveService.shared.restoreRecordingUsingRepository(
+                recording,
+                newAudioURL: destinationURL
+            )
             restoreCompleted = true
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")

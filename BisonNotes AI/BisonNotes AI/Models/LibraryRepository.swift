@@ -505,6 +505,53 @@ extension LibraryRecordingArchiveCommand {
     }
 }
 
+/// Relinks an archived recording to audio that has already been copied and
+/// validated by the caller. The URL, optional file size and archive flags are
+/// committed together so a retry cannot expose a restored file as archived or
+/// expose archive metadata with a stale local URL.
+struct LibraryRecordingAudioRestoreCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let recordingURL: String
+    let fileSize: Int64?
+    let expectedLastModified: Date?
+    let modifiedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        recordingURL: String,
+        fileSize: Int64? = nil,
+        expectedLastModified: Date? = nil,
+        modifiedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.recordingURL = recordingURL
+        self.fileSize = fileSize
+        self.expectedLastModified = expectedLastModified
+        self.modifiedAt = modifiedAt
+    }
+}
+
+extension LibraryRecordingAudioRestoreCommand {
+    func validate() throws {
+        guard !recordingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LibraryRepositoryError.invalidCommand(
+                "restored recording URL must not be empty"
+            )
+        }
+        if let fileSize, fileSize < 0 {
+            throw LibraryRepositoryError.invalidCommand(
+                "restored recording file size must not be negative"
+            )
+        }
+        let dates = [modifiedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "restore dates must be finite"
+            )
+        }
+    }
+}
+
 /// Records one already-verified external archive location without performing
 /// any file-provider work. A stable `id` makes a lost acknowledgement safe to
 /// retry; an existing row for the same recording and destination is also
@@ -1299,6 +1346,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryRecordingSnapshot
     func setArchiveState(
         _ command: LibraryRecordingArchiveCommand
+    ) async throws -> LibraryRecordingSnapshot
+    func restoreRecordingAudio(
+        _ command: LibraryRecordingAudioRestoreCommand
     ) async throws -> LibraryRecordingSnapshot
     func upsertArchiveLocation(
         _ command: LibraryArchiveLocationUpsertCommand
