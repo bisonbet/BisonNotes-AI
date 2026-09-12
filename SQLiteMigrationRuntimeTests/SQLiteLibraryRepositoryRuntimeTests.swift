@@ -98,6 +98,206 @@ final class SQLiteLibraryRepositoryRuntimeTests: XCTestCase {
         XCTAssertTrue(recordings.isEmpty)
     }
 
+    func testRepositoryUpsertsCloudRecordingAndSeparatelyLinksAudio() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000013")
+        )
+        let created = try await repository.createRecording(
+            LibraryRecordingCreateCommand(
+                id: recordingID,
+                recordingURL: "local-recording.m4a",
+                name: "Local recording",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 100),
+                createdAt: Date(timeIntervalSinceReferenceDate: 100),
+                duration: 2,
+                fileSize: 10,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 101)
+            )
+        )
+        let archived = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(storageID: created.storageID),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 102),
+                archiveNote: "Keep the local archive",
+                expectedLastModified: created.lastModified,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 103)
+            )
+        )
+
+        let cloudTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+        let restored = try await repository.upsertCloudRecording(
+            LibraryRecordingCloudRestoreCommand(
+                id: recordingID,
+                name: "Cloud recording",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 201),
+                createdAt: Date(timeIntervalSinceReferenceDate: 99),
+                duration: 20,
+                fileSize: 200,
+                audioQuality: "cloud-quality",
+                transcriptionStatus: "Completed",
+                summaryStatus: "Not Started",
+                transcriptID: nil,
+                summaryID: nil,
+                locationAccuracy: 4,
+                locationAddress: "Cloud address",
+                locationLatitude: 39.2,
+                locationLongitude: -76.7,
+                locationTimestamp: Date(timeIntervalSinceReferenceDate: 198),
+                lastModified: cloudTimestamp,
+                expectedLastModified: archived.lastModified,
+                observedAt: cloudTimestamp
+            )
+        )
+
+        XCTAssertEqual(restored.name, "Cloud recording")
+        XCTAssertEqual(restored.recordingURL, "local-recording.m4a")
+        XCTAssertEqual(restored.fileSize, 200)
+        XCTAssertEqual(restored.isArchived, true)
+        XCTAssertEqual(restored.archivedAt, archived.archivedAt)
+        XCTAssertEqual(restored.archiveNote, archived.archiveNote)
+        XCTAssertEqual(restored.lastModified, cloudTimestamp)
+
+        let linked = try await repository.updateRecordingAudioLink(
+            LibraryRecordingAudioLinkCommand(
+                reference: LibraryRecordingReference(storageID: restored.storageID),
+                recordingURL: "restored-recording.m4a",
+                expectedLastModified: restored.lastModified,
+                observedAt: Date(timeIntervalSinceReferenceDate: 202)
+            )
+        )
+        XCTAssertEqual(linked.recordingURL, "restored-recording.m4a")
+        XCTAssertEqual(linked.fileSize, restored.fileSize)
+        XCTAssertEqual(linked.isArchived, true)
+        XCTAssertEqual(linked.archiveNote, archived.archiveNote)
+        XCTAssertEqual(linked.lastModified, cloudTimestamp)
+
+        let cleared = try await repository.updateRecordingAudioLink(
+            LibraryRecordingAudioLinkCommand(
+                reference: LibraryRecordingReference(storageID: linked.storageID),
+                recordingURL: nil,
+                expectedLastModified: linked.lastModified,
+                observedAt: Date(timeIntervalSinceReferenceDate: 203)
+            )
+        )
+        XCTAssertNil(cleared.recordingURL)
+        XCTAssertEqual(cleared.isArchived, true)
+        XCTAssertEqual(cleared.lastModified, cloudTimestamp)
+    }
+
+    func testRepositoryCreatesCloudOnlyRecordingAndRejectsStaleRestore() async throws {
+        let directory = try makeVerifierTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = try SQLiteLibraryStore(
+            databaseURL: directory.appendingPathComponent("library.sqlite")
+        )
+        let repository = SQLiteLibraryRepository(store: store)
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000014")
+        )
+        let cloudTimestamp = Date(timeIntervalSinceReferenceDate: 300)
+        let command = LibraryRecordingCloudRestoreCommand(
+            id: recordingID,
+            name: "Cloud-only recording",
+            recordingDate: Date(timeIntervalSinceReferenceDate: 301),
+            createdAt: Date(timeIntervalSinceReferenceDate: 299),
+            duration: 0,
+            fileSize: 0,
+            audioQuality: nil,
+            transcriptionStatus: "Not Started",
+            summaryStatus: "Not Started",
+            transcriptID: nil,
+            summaryID: nil,
+            locationAccuracy: nil,
+            locationAddress: nil,
+            locationLatitude: nil,
+            locationLongitude: nil,
+            locationTimestamp: nil,
+            lastModified: cloudTimestamp,
+            observedAt: cloudTimestamp
+        )
+
+        let inserted = try await repository.upsertCloudRecording(command)
+        XCTAssertEqual(inserted.legacyID, recordingID.uuidString.lowercased())
+        XCTAssertNil(inserted.recordingURL)
+        XCTAssertEqual(inserted.isArchived, false)
+        XCTAssertEqual(inserted.lastModified, cloudTimestamp)
+
+        let retried = try await repository.upsertCloudRecording(
+            LibraryRecordingCloudRestoreCommand(
+                id: recordingID,
+                name: "Cloud-only retry",
+                recordingDate: command.recordingDate,
+                createdAt: command.createdAt,
+                duration: command.duration,
+                fileSize: command.fileSize,
+                audioQuality: command.audioQuality,
+                transcriptionStatus: command.transcriptionStatus,
+                summaryStatus: command.summaryStatus,
+                transcriptID: command.transcriptID,
+                summaryID: command.summaryID,
+                locationAccuracy: command.locationAccuracy,
+                locationAddress: command.locationAddress,
+                locationLatitude: command.locationLatitude,
+                locationLongitude: command.locationLongitude,
+                locationTimestamp: command.locationTimestamp,
+                lastModified: Date(timeIntervalSinceReferenceDate: 301),
+                expectedLastModified: inserted.lastModified,
+                observedAt: Date(timeIntervalSinceReferenceDate: 301)
+            )
+        )
+        XCTAssertEqual(retried.storageID, inserted.storageID)
+        XCTAssertEqual(retried.name, "Cloud-only retry")
+
+        do {
+            _ = try await repository.upsertCloudRecording(
+                LibraryRecordingCloudRestoreCommand(
+                    id: recordingID,
+                    name: "Stale cloud record",
+                    recordingDate: command.recordingDate,
+                    createdAt: command.createdAt,
+                    duration: command.duration,
+                    fileSize: command.fileSize,
+                    audioQuality: command.audioQuality,
+                    transcriptionStatus: command.transcriptionStatus,
+                    summaryStatus: command.summaryStatus,
+                    transcriptID: command.transcriptID,
+                    summaryID: command.summaryID,
+                    locationAccuracy: command.locationAccuracy,
+                    locationAddress: command.locationAddress,
+                    locationLatitude: command.locationLatitude,
+                    locationLongitude: command.locationLongitude,
+                    locationTimestamp: command.locationTimestamp,
+                    lastModified: Date(timeIntervalSinceReferenceDate: 302),
+                    expectedLastModified: inserted.lastModified,
+                    observedAt: Date(timeIntervalSinceReferenceDate: 302)
+                )
+            )
+            XCTFail("Expected stale cloud restore to be rejected")
+        } catch let error as LibraryRepositoryError {
+            XCTAssertEqual(
+                error,
+                .staleRecording(
+                    reference: inserted.storageID,
+                    expected: inserted.lastModified,
+                    actual: retried.lastModified
+                )
+            )
+        }
+
+        let recordings = try await repository.fetchRecordingSummaries()
+        XCTAssertEqual(recordings.count, 1)
+        XCTAssertEqual(recordings[0].name, "Cloud-only retry")
+    }
+
     func testRepositoryUpdatesRecordingDateAndLocationWithRevisionGuards() async throws {
         let directory = try makeVerifierTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

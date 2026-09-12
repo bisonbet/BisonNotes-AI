@@ -257,6 +257,18 @@ class AppDataCoordinator: ObservableObject {
         return recordingID
     }
 
+    /// Applies CloudKit recording metadata without taking ownership of the
+    /// audio file. Existing local audio and archive state are preserved until
+    /// a later, independently retryable media-link operation succeeds.
+    @discardableResult
+    func upsertCloudRecordingUsingRepository(
+        _ command: LibraryRecordingCloudRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.upsertCloudRecording(command)
+        objectWillChange.send()
+        return snapshot
+    }
+
     func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
         let result = workflowManager.createTranscript(
             for: recordingId,
@@ -961,6 +973,31 @@ class AppDataCoordinator: ObservableObject {
                 fileSize: fileSize,
                 expectedLastModified: expectedLastModified,
                 modifiedAt: modifiedAt
+            )
+        )
+        objectWillChange.send()
+        return snapshot
+    }
+
+    /// Commits a link to audio that has already been copied and validated.
+    /// This does not alter archive state or the recording's cloud-content
+    /// timestamp, so inbound CloudKit restore can apply metadata and media in
+    /// separate retryable phases.
+    @discardableResult
+    func updateRecordingAudioLinkUsingRepository(
+        recordingId: UUID,
+        recordingURL: String?,
+        fileSize: Int64? = nil,
+        expectedLastModified: Date? = nil,
+        observedAt: Date = Date()
+    ) async throws -> LibraryRecordingSnapshot {
+        let snapshot = try await libraryRepository.updateRecordingAudioLink(
+            LibraryRecordingAudioLinkCommand(
+                reference: LibraryRecordingReference(legacyID: recordingId.uuidString),
+                recordingURL: recordingURL,
+                fileSize: fileSize,
+                expectedLastModified: expectedLastModified,
+                observedAt: observedAt
             )
         )
         objectWillChange.send()

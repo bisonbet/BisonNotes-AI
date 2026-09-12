@@ -240,6 +240,89 @@ final class LibraryRepositoryContractTests: XCTestCase {
         XCTAssertEqual(recordings.count, 2)
     }
 
+    func testCoreDataRepositoryAppliesCloudMetadataWithoutReplacingLocalAudioOrArchiveState() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(
+            at: directory.appendingPathComponent("repository-cloud-recording.sqlite"),
+            version: .active
+        )
+        defer {
+            try? SQLiteMigrationCoreDataSourceFixtureFactory.close(
+                container: fixture.container
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let repository = CoreDataLibraryRepository(
+            context: fixture.container.viewContext
+        )
+        let recordingID = try XCTUnwrap(
+            UUID(uuidString: "10000000-0000-0000-0000-000000000001")
+        )
+        let initialRecordings = try await repository.fetchRecordingSummaries()
+        let initial = try XCTUnwrap(
+            initialRecordings.first {
+                $0.legacyID == recordingID.uuidString.lowercased()
+            }
+        )
+        let archived = try await repository.setArchiveState(
+            LibraryRecordingArchiveCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID.uuidString),
+                archived: true,
+                archivedAt: Date(timeIntervalSinceReferenceDate: 102),
+                archiveNote: "Preserve local archive",
+                expectedLastModified: initial.lastModified,
+                modifiedAt: Date(timeIntervalSinceReferenceDate: 103)
+            )
+        )
+        let cloudTimestamp = Date(timeIntervalSinceReferenceDate: 200)
+
+        let restored = try await repository.upsertCloudRecording(
+            LibraryRecordingCloudRestoreCommand(
+                id: recordingID,
+                name: "Cloud recording",
+                recordingDate: Date(timeIntervalSinceReferenceDate: 201),
+                createdAt: Date(timeIntervalSinceReferenceDate: 99),
+                duration: 20,
+                fileSize: 200,
+                audioQuality: "cloud-quality",
+                transcriptionStatus: "Completed",
+                summaryStatus: "Not Started",
+                transcriptID: nil,
+                summaryID: nil,
+                locationAccuracy: 4,
+                locationAddress: "Cloud address",
+                locationLatitude: 39.2,
+                locationLongitude: -76.7,
+                locationTimestamp: Date(timeIntervalSinceReferenceDate: 198),
+                lastModified: cloudTimestamp,
+                expectedLastModified: archived.lastModified,
+                observedAt: cloudTimestamp
+            )
+        )
+
+        XCTAssertEqual(restored.name, "Cloud recording")
+        XCTAssertEqual(restored.recordingURL, initial.recordingURL)
+        XCTAssertEqual(restored.fileSize, 200)
+        XCTAssertEqual(restored.isArchived, true)
+        XCTAssertEqual(restored.archivedAt, archived.archivedAt)
+        XCTAssertEqual(restored.archiveNote, archived.archiveNote)
+        XCTAssertEqual(restored.lastModified, cloudTimestamp)
+
+        let linked = try await repository.updateRecordingAudioLink(
+            LibraryRecordingAudioLinkCommand(
+                reference: LibraryRecordingReference(legacyID: recordingID.uuidString),
+                recordingURL: "restored-recording.m4a",
+                expectedLastModified: restored.lastModified,
+                observedAt: Date(timeIntervalSinceReferenceDate: 201)
+            )
+        )
+        XCTAssertEqual(linked.recordingURL, "restored-recording.m4a")
+        XCTAssertEqual(linked.isArchived, true)
+        XCTAssertEqual(linked.archiveNote, archived.archiveNote)
+        XCTAssertEqual(linked.lastModified, cloudTimestamp)
+    }
+
     func testCoreDataRepositoryDiscardsOnlyMetadataOrphanAndRetainsDependents() async throws {
         let directory = try TestHelpers.createTemporaryDirectory()
         let fixture = try SQLiteMigrationCoreDataSourceFixtureFactory.make(

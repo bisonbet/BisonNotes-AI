@@ -75,6 +75,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
         }
     }
 
+    func upsertCloudRecording(
+        _ command: LibraryRecordingCloudRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await withNormalAccess { [store] in
+            try await store.upsertCloudRecording(command)
+        }
+    }
+
     func discardRecording(
         _ command: LibraryRecordingDiscardCommand
     ) async throws {
@@ -171,6 +179,14 @@ struct SQLiteLibraryRepository: LibraryRepository, LibraryObservation, Sendable 
     ) async throws -> LibraryRecordingSnapshot {
         try await withNormalAccess { [store] in
             try await store.restoreRecordingAudio(command)
+        }
+    }
+
+    func updateRecordingAudioLink(
+        _ command: LibraryRecordingAudioLinkCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try await withNormalAccess { [store] in
+            try await store.updateRecordingAudioLink(command)
         }
     }
 
@@ -339,6 +355,150 @@ extension SQLiteLibraryStore {
                 storageID: storageID,
                 in: database,
                 operation: "create recording"
+            )
+        }
+    }
+
+    func upsertCloudRecording(
+        _ command: LibraryRecordingCloudRestoreCommand
+    ) throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let requestedID = command.id.uuidString.lowercased()
+        let stableStorageID = Self.recordingStorageID(for: command.id)
+
+        return try databaseQueue.write { database in
+            let rows = try Row.fetchAll(
+                database,
+                sql: """
+                SELECT storageID, id, recordingName, recordingDate, duration,
+                       locationAccuracy, locationAddress, locationLatitude,
+                       locationLongitude, locationTimestamp, fileSize, recordingURL,
+                       isArchived, archivedAt, archiveNote, isCloudSyncDisabled,
+                       lastModified, summaryId, transcriptId
+                FROM recordings
+                WHERE storageID = ? OR lower(id) = lower(?)
+                ORDER BY storageID
+                LIMIT 2
+                """,
+                arguments: [stableStorageID, requestedID]
+            )
+            guard rows.count <= 1 else {
+                throw LibraryRepositoryError.ambiguousRecording(reference: requestedID)
+            }
+
+            let recordingStorageID: String
+            let isInsert: Bool
+            if let row = rows.first {
+                recordingStorageID = try Self.requiredStorageID(
+                    from: row,
+                    entity: "recordings"
+                )
+                if let existingID: String = row["id"],
+                   Self.normalizedID(existingID) != requestedID {
+                    throw LibraryRepositoryError.recordingAlreadyExists(
+                        reference: requestedID
+                    )
+                }
+                let current = try Self.validateRecordingTarget(
+                    rows: [row],
+                    reference: LibraryRecordingReference(storageID: recordingStorageID),
+                    expectedLastModified: command.expectedLastModified
+                )
+                isInsert = false
+
+                try database.execute(
+                    sql: """
+                    UPDATE recordings
+                    SET audioQuality = ?, createdAt = ?, duration = ?, fileSize = ?,
+                        id = ?, lastModified = ?, locationAccuracy = ?, locationAddress = ?,
+                        locationLatitude = ?, locationLongitude = ?, locationTimestamp = ?,
+                        recordingDate = ?, recordingName = ?, summaryId = ?,
+                        summaryStatus = ?, transcriptId = ?, transcriptionStatus = ?
+                    WHERE storageID = ?
+                    """,
+                    arguments: [
+                        command.audioQuality,
+                        command.createdAt?.timeIntervalSinceReferenceDate,
+                        command.duration,
+                        command.fileSize,
+                        requestedID,
+                        command.lastModified?.timeIntervalSinceReferenceDate,
+                        command.locationAccuracy,
+                        command.locationAddress,
+                        command.locationLatitude,
+                        command.locationLongitude,
+                        command.locationTimestamp?.timeIntervalSinceReferenceDate,
+                        command.recordingDate?.timeIntervalSinceReferenceDate,
+                        command.name,
+                        command.summaryID?.uuidString.lowercased(),
+                        command.summaryStatus,
+                        command.transcriptID?.uuidString.lowercased(),
+                        command.transcriptionStatus,
+                        current.storageID
+                    ]
+                )
+            } else {
+                recordingStorageID = stableStorageID
+                isInsert = true
+                try database.execute(
+                    sql: """
+                    INSERT INTO recordings (
+                        storageID, audioQuality, createdAt, duration, fileSize, id,
+                        isCloudSyncDisabled, lastModified, locationAccuracy,
+                        locationAddress, locationLatitude, locationLongitude,
+                        locationTimestamp, recordingDate, recordingName, recordingURL,
+                        summaryId, summaryStatus, transcriptId, transcriptionStatus,
+                        isArchived, archivedAt, archiveNote
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        recordingStorageID,
+                        command.audioQuality,
+                        command.createdAt?.timeIntervalSinceReferenceDate,
+                        command.duration,
+                        command.fileSize,
+                        requestedID,
+                        0,
+                        command.lastModified?.timeIntervalSinceReferenceDate,
+                        command.locationAccuracy,
+                        command.locationAddress,
+                        command.locationLatitude,
+                        command.locationLongitude,
+                        command.locationTimestamp?.timeIntervalSinceReferenceDate,
+                        command.recordingDate?.timeIntervalSinceReferenceDate,
+                        command.name,
+                        nil,
+                        command.summaryID?.uuidString.lowercased(),
+                        command.summaryStatus,
+                        command.transcriptID?.uuidString.lowercased(),
+                        command.transcriptionStatus,
+                        0,
+                        nil,
+                        nil
+                    ]
+                )
+            }
+
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "upsert cloud recording",
+                    reason: isInsert
+                        ? "the recording row was not inserted"
+                        : "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: recordingStorageID,
+                operation: isInsert ? .inserted : .updated,
+                at: command.observedAt
+            )
+            return try Self.fetchUpdatedRecording(
+                storageID: recordingStorageID,
+                in: database,
+                operation: "upsert cloud recording"
             )
         }
     }
@@ -1511,6 +1671,54 @@ extension SQLiteLibraryStore {
             )
 
             return try Self.fetchUpdatedRecording(storageID: current.storageID, in: database)
+        }
+    }
+
+    func updateRecordingAudioLink(
+        _ command: LibraryRecordingAudioLinkCommand
+    ) throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        let reference = try Self.normalizedReference(command.reference)
+
+        return try databaseQueue.write { database in
+            let rows = try Self.fetchRecordingRows(for: reference, in: database)
+            let current = try Self.validateRecordingTarget(
+                rows: rows,
+                reference: reference,
+                expectedLastModified: command.expectedLastModified
+            )
+
+            let fileSizeExpression = command.fileSize == nil ? "fileSize" : "?"
+            let sql = """
+                UPDATE recordings
+                SET recordingURL = ?, fileSize = \(fileSizeExpression)
+                WHERE storageID = ?
+                """
+            let arguments: StatementArguments
+            if let fileSize = command.fileSize {
+                arguments = [command.recordingURL, fileSize, current.storageID]
+            } else {
+                arguments = [command.recordingURL, current.storageID]
+            }
+            try database.execute(sql: sql, arguments: arguments)
+            guard database.changesCount == 1 else {
+                throw LibraryRepositoryError.writeFailed(
+                    operation: "update recording audio link",
+                    reason: "the recording row was not updated"
+                )
+            }
+            _ = try SQLiteLibraryStore.recordChange(
+                in: database,
+                entity: .recording,
+                storageID: current.storageID,
+                operation: .updated,
+                at: command.observedAt
+            )
+            return try Self.fetchUpdatedRecording(
+                storageID: current.storageID,
+                in: database,
+                operation: "update recording audio link"
+            )
         }
     }
 

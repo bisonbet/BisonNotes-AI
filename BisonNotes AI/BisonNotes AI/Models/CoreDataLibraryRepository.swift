@@ -389,6 +389,86 @@ extension CoreDataLibraryRepository {
         }
     }
 
+    func upsertCloudRecording(
+        _ command: LibraryRecordingCloudRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = NSPredicate(
+                    format: "id == %@",
+                    command.id as CVarArg
+                )
+                let matches = try context.fetch(request)
+                guard matches.count <= 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.id.uuidString.lowercased()
+                    )
+                }
+
+                let recording: NSManagedObject
+                let isNewRecording: Bool
+                if let existing = matches.first {
+                    let current = try Self.snapshot(from: existing)
+                    guard command.expectedLastModified == nil
+                            || command.expectedLastModified == current.lastModified else {
+                        throw LibraryRepositoryError.staleRecording(
+                            reference: command.id.uuidString.lowercased(),
+                            expected: command.expectedLastModified,
+                            actual: current.lastModified
+                        )
+                    }
+                    recording = existing
+                    isNewRecording = false
+                } else {
+                    let newRecording = RecordingEntry(context: context)
+                    newRecording.setValue(command.id, forKey: "id")
+                    newRecording.setValue(nil, forKey: "recordingURL")
+                    newRecording.setValue(false, forKey: "isArchived")
+                    newRecording.setValue(nil, forKey: "archivedAt")
+                    newRecording.setValue(nil, forKey: "archiveNote")
+                    newRecording.setValue(false, forKey: "isCloudSyncDisabled")
+                    recording = newRecording
+                    isNewRecording = true
+                }
+
+                recording.setValue(command.name, forKey: "recordingName")
+                recording.setValue(command.recordingDate, forKey: "recordingDate")
+                recording.setValue(command.createdAt, forKey: "createdAt")
+                recording.setValue(command.duration, forKey: "duration")
+                recording.setValue(command.fileSize, forKey: "fileSize")
+                recording.setValue(command.audioQuality, forKey: "audioQuality")
+                recording.setValue(command.transcriptionStatus, forKey: "transcriptionStatus")
+                recording.setValue(command.summaryStatus, forKey: "summaryStatus")
+                recording.setValue(command.transcriptID, forKey: "transcriptId")
+                recording.setValue(command.summaryID, forKey: "summaryId")
+                recording.setValue(command.locationAccuracy, forKey: "locationAccuracy")
+                recording.setValue(command.locationAddress, forKey: "locationAddress")
+                recording.setValue(command.locationLatitude, forKey: "locationLatitude")
+                recording.setValue(command.locationLongitude, forKey: "locationLongitude")
+                recording.setValue(command.locationTimestamp, forKey: "locationTimestamp")
+                recording.setValue(command.lastModified, forKey: "lastModified")
+
+                do {
+                    try context.save()
+                } catch {
+                    if isNewRecording {
+                        context.delete(recording)
+                    }
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "upsert cloud recording",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
     func discardRecording(
         _ command: LibraryRecordingDiscardCommand
     ) async throws {
@@ -1306,6 +1386,59 @@ extension CoreDataLibraryRepository {
                 } catch {
                     throw LibraryRepositoryError.writeFailed(
                         operation: "restore recording audio",
+                        reason: error.localizedDescription
+                    )
+                }
+
+                return try Self.snapshot(from: recording)
+            }
+        }
+    }
+
+    func updateRecordingAudioLink(
+        _ command: LibraryRecordingAudioLinkCommand
+    ) async throws -> LibraryRecordingSnapshot {
+        try command.validate()
+        return try await withNormalAccess { [self] in
+            let context = context
+            return try context.performAndWait {
+                let request = Self.fetchRequest(entityName: "RecordingEntry")
+                request.fetchLimit = 2
+                request.predicate = try Self.recordingPredicate(for: command.reference)
+
+                let matches = try context.fetch(request)
+                guard !matches.isEmpty else {
+                    throw LibraryRepositoryError.recordingNotFound(
+                        reference: command.reference.displayValue
+                    )
+                }
+                guard matches.count == 1 else {
+                    throw LibraryRepositoryError.ambiguousRecording(
+                        reference: command.reference.displayValue
+                    )
+                }
+
+                let recording = matches[0]
+                let current = try Self.snapshot(from: recording)
+                guard command.expectedLastModified == nil
+                        || command.expectedLastModified == current.lastModified else {
+                    throw LibraryRepositoryError.staleRecording(
+                        reference: command.reference.displayValue,
+                        expected: command.expectedLastModified,
+                        actual: current.lastModified
+                    )
+                }
+
+                recording.setValue(command.recordingURL, forKey: "recordingURL")
+                if let fileSize = command.fileSize {
+                    recording.setValue(fileSize, forKey: "fileSize")
+                }
+
+                do {
+                    try context.save()
+                } catch {
+                    throw LibraryRepositoryError.writeFailed(
+                        operation: "update recording audio link",
                         reason: error.localizedDescription
                     )
                 }

@@ -4926,13 +4926,6 @@ extension iCloudStorageManager {
                         continue
                     }
                 }
-                let entry = existing ?? RecordingEntry(context: context)
-
-                if existing == nil {
-                    entry.id = recordingId
-                    result.recordingsRestored += 1
-                }
-
                 let applyCloudRecording = existing.map { local in
                     Self.shouldApplyCloudVersion(
                         cloudTimestamp: backupRecordContentTimestamp(
@@ -4943,30 +4936,57 @@ extension iCloudStorageManager {
                     )
                 } ?? true
 
+                var restoredRecording: LibraryRecordingSnapshot?
                 if applyCloudRecording {
-                    entry.recordingName = record[Self.fieldRecordingName] as? String
-                    entry.recordingDate = record[Self.fieldRecordingDate] as? Date
-                    entry.createdAt = record[Self.fieldCreatedAt] as? Date
-                    entry.lastModified = record[Self.fieldLastModified] as? Date
-                    entry.fileSize = int64Value(from: record[Self.fieldFileSize])
-                    entry.duration = doubleValue(from: record[Self.fieldDuration])
-                    entry.audioQuality = record[Self.fieldAudioQuality] as? String
-                    entry.transcriptionStatus = record[Self.fieldTranscriptionStatus] as? String
-                    entry.summaryStatus = record[Self.fieldSummaryStatus] as? String
-                    entry.transcriptId = (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) }
-                    entry.summaryId = (record[Self.fieldSummaryId] as? String).flatMap { UUID(uuidString: $0) }
-                    entry.locationLatitude = doubleValue(from: record[Self.fieldLocationLatitude])
-                    entry.locationLongitude = doubleValue(from: record[Self.fieldLocationLongitude])
-                    entry.locationAccuracy = doubleValue(from: record[Self.fieldLocationAccuracy])
-                    entry.locationTimestamp = record[Self.fieldLocationTimestamp] as? Date
-                    entry.locationAddress = record[Self.fieldLocationAddress] as? String
+                    do {
+                        restoredRecording = try await appCoordinator.upsertCloudRecordingUsingRepository(
+                            LibraryRecordingCloudRestoreCommand(
+                                id: recordingId,
+                                name: record[Self.fieldRecordingName] as? String,
+                                recordingDate: record[Self.fieldRecordingDate] as? Date,
+                                createdAt: record[Self.fieldCreatedAt] as? Date,
+                                duration: doubleValue(from: record[Self.fieldDuration]),
+                                fileSize: int64Value(from: record[Self.fieldFileSize]),
+                                audioQuality: record[Self.fieldAudioQuality] as? String,
+                                transcriptionStatus: record[Self.fieldTranscriptionStatus] as? String,
+                                summaryStatus: record[Self.fieldSummaryStatus] as? String,
+                                transcriptID: (record[Self.fieldTranscriptId] as? String)
+                                    .flatMap { UUID(uuidString: $0) },
+                                summaryID: (record[Self.fieldSummaryId] as? String)
+                                    .flatMap { UUID(uuidString: $0) },
+                                locationAccuracy: doubleValue(from: record[Self.fieldLocationAccuracy]),
+                                locationAddress: record[Self.fieldLocationAddress] as? String,
+                                locationLatitude: doubleValue(from: record[Self.fieldLocationLatitude]),
+                                locationLongitude: doubleValue(from: record[Self.fieldLocationLongitude]),
+                                locationTimestamp: record[Self.fieldLocationTimestamp] as? Date,
+                                lastModified: record[Self.fieldLastModified] as? Date,
+                                expectedLastModified: existing?.lastModified,
+                                observedAt: backupRecordContentTimestamp(
+                                    record,
+                                    keys: Self.recordingContentTimestampKeys
+                                ) ?? Date()
+                            )
+                        )
+                        if existing == nil {
+                            result.recordingsRestored += 1
+                        }
+                    } catch let error as LibraryRepositoryError {
+                        if case .staleRecording = error {
+                            // A local edit won the race after the timestamp
+                            // arbitration above. Do not copy audio or clear a
+                            // local URL for the now-newer row.
+                            result.localItemsKeptAsNewer += 1
+                        } else {
+                            throw error
+                        }
+                    }
                 } else {
                     // This device has the newer edit; the backup leg already declined to
                     // overwrite the cloud copy, so leave the local row untouched.
                     result.localItemsKeptAsNewer += 1
                 }
 
-                if applyCloudRecording,
+                if let restoredRecording,
                    includeAudioFiles,
                    let asset = record[Self.fieldAudioAsset] as? CKAsset,
                    let assetURL = asset.fileURL,
@@ -4989,7 +5009,13 @@ extension iCloudStorageManager {
                         try RestoredAudioFileInstaller.install(
                             from: assetURL, to: destinationURL, fileManager: fileManager
                         )
-                        entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
+                        let relativeURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
+                        _ = try await appCoordinator.updateRecordingAudioLinkUsingRepository(
+                            recordingId: recordingId,
+                            recordingURL: relativeURL,
+                            expectedLastModified: restoredRecording.lastModified,
+                            observedAt: restoredRecording.lastModified ?? Date()
+                        )
                         result.audioFilesRestored += 1
                     } catch {
                         result.audioFilesFailedToRestore += 1
@@ -4998,10 +5024,9 @@ extension iCloudStorageManager {
                             level: .error
                         )
                     }
-                } else if existing == nil {
+                } else if restoredRecording != nil, existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
-                    entry.recordingURL = nil
-                } else if applyCloudRecording,
+                } else if restoredRecording != nil,
                           deletionTargets.importedAudioRecordings.contains(recordingId),
                           !importedAudioRemovalFailures.contains(recordingId),
                           record[Self.fieldRecordingURL] == nil,
@@ -5017,10 +5042,24 @@ extension iCloudStorageManager {
                     // record is not by itself proof that this device's healthy
                     // local audio was deleted. The failure guard also keeps a
                     // failed local file removal eligible for retry.
-                    entry.recordingURL = nil
+                    _ = try await appCoordinator.updateRecordingAudioLinkUsingRepository(
+                        recordingId: recordingId,
+                        recordingURL: nil,
+                        expectedLastModified: restoredRecording?.lastModified,
+                        observedAt: restoredRecording?.lastModified ?? Date()
+                    )
                 }
+            }
 
-                recordingsById[recordingId] = entry
+            // Repository writes may have inserted cloud-only recordings or
+            // refreshed existing managed objects. Rebuild this compatibility
+            // map before the remaining legacy transcript/summary relationship
+            // phase so it sees the committed recording rows.
+            recordingsById.removeAll(keepingCapacity: true)
+            for recording in appCoordinator.coreDataManager.getAllRecordings() {
+                if let id = recording.id {
+                    recordingsById[id] = recording
+                }
             }
 
             var transcriptsById = [UUID: TranscriptEntry]()

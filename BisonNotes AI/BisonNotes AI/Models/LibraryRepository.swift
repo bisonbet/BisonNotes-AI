@@ -298,6 +298,177 @@ extension LibraryRecordingCreateCommand {
     }
 }
 
+/// Applies the scalar metadata carried by a CloudKit recording backup record.
+///
+/// This is deliberately separate from `LibraryRecordingCreateCommand`: a cloud
+/// restore may create a metadata-only row before its audio asset is copied, and
+/// an existing row must retain device-local audio and archive state. The
+/// repository owns the upsert and its revision check; relationship repair and
+/// audio-file movement remain separate restore phases.
+struct LibraryRecordingCloudRestoreCommand: Equatable, Sendable {
+    let id: UUID
+    let name: String?
+    let recordingDate: Date?
+    let createdAt: Date?
+    let duration: Double
+    let fileSize: Int64
+    let audioQuality: String?
+    let transcriptionStatus: String?
+    let summaryStatus: String?
+    let transcriptID: UUID?
+    let summaryID: UUID?
+    let locationAccuracy: Double?
+    let locationAddress: String?
+    let locationLatitude: Double?
+    let locationLongitude: Double?
+    let locationTimestamp: Date?
+    let lastModified: Date?
+    let expectedLastModified: Date?
+    let observedAt: Date
+
+    init(
+        id: UUID,
+        name: String?,
+        recordingDate: Date?,
+        createdAt: Date?,
+        duration: Double,
+        fileSize: Int64,
+        audioQuality: String?,
+        transcriptionStatus: String?,
+        summaryStatus: String?,
+        transcriptID: UUID?,
+        summaryID: UUID?,
+        locationAccuracy: Double?,
+        locationAddress: String?,
+        locationLatitude: Double?,
+        locationLongitude: Double?,
+        locationTimestamp: Date?,
+        lastModified: Date?,
+        expectedLastModified: Date? = nil,
+        observedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.recordingDate = recordingDate
+        self.createdAt = createdAt
+        self.duration = duration
+        self.fileSize = fileSize
+        self.audioQuality = audioQuality
+        self.transcriptionStatus = transcriptionStatus
+        self.summaryStatus = summaryStatus
+        self.transcriptID = transcriptID
+        self.summaryID = summaryID
+        self.locationAccuracy = locationAccuracy
+        self.locationAddress = locationAddress
+        self.locationLatitude = locationLatitude
+        self.locationLongitude = locationLongitude
+        self.locationTimestamp = locationTimestamp
+        self.lastModified = lastModified
+        self.expectedLastModified = expectedLastModified
+        self.observedAt = observedAt
+    }
+}
+
+extension LibraryRecordingCloudRestoreCommand {
+    func validate() throws {
+        guard duration.isFinite, duration >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud recording duration must be finite and nonnegative"
+            )
+        }
+        guard fileSize >= 0 else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud recording file size must be nonnegative"
+            )
+        }
+
+        let dates = [
+            recordingDate,
+            createdAt,
+            locationTimestamp,
+            lastModified,
+            expectedLastModified,
+            observedAt
+        ].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "cloud recording dates must be finite"
+            )
+        }
+
+        if let locationAccuracy {
+            guard locationAccuracy.isFinite, locationAccuracy >= 0 else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "cloud recording location accuracy must be finite and nonnegative"
+                )
+            }
+        }
+        if let locationLatitude {
+            guard locationLatitude.isFinite, (-90.0...90.0).contains(locationLatitude) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "cloud recording latitude must be finite and between -90 and 90"
+                )
+            }
+        }
+        if let locationLongitude {
+            guard locationLongitude.isFinite, (-180.0...180.0).contains(locationLongitude) else {
+                throw LibraryRepositoryError.invalidCommand(
+                    "cloud recording longitude must be finite and between -180 and 180"
+                )
+            }
+        }
+    }
+}
+
+/// Links a recording to audio that a caller has already copied and validated.
+///
+/// This operation changes only the local audio pointer and optional file size.
+/// It preserves archive flags and `lastModified`, which is required when an
+/// inbound CloudKit restore installs media after committing cloud metadata.
+struct LibraryRecordingAudioLinkCommand: Equatable, Sendable {
+    let reference: LibraryRecordingReference
+    let recordingURL: String?
+    let fileSize: Int64?
+    let expectedLastModified: Date?
+    let observedAt: Date
+
+    init(
+        reference: LibraryRecordingReference,
+        recordingURL: String?,
+        fileSize: Int64? = nil,
+        expectedLastModified: Date? = nil,
+        observedAt: Date = Date()
+    ) {
+        self.reference = reference
+        self.recordingURL = recordingURL
+        self.fileSize = fileSize
+        self.expectedLastModified = expectedLastModified
+        self.observedAt = observedAt
+    }
+}
+
+extension LibraryRecordingAudioLinkCommand {
+    func validate() throws {
+        if let recordingURL,
+           recordingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw LibraryRepositoryError.invalidCommand(
+                "linked recording URL must not be empty"
+            )
+        }
+        if let fileSize, fileSize < 0 {
+            throw LibraryRepositoryError.invalidCommand(
+                "linked recording file size must not be negative"
+            )
+        }
+        let dates = [observedAt, expectedLastModified].compactMap { $0 }
+        guard dates.allSatisfy({ $0.timeIntervalSinceReferenceDate.isFinite }) else {
+            throw LibraryRepositoryError.invalidCommand(
+                "linked recording dates must be finite"
+            )
+        }
+    }
+}
+
 /// Removes a newly-created recording when a multi-step import cannot finish.
 ///
 /// This is intentionally narrower than user deletion: it refuses to remove a
@@ -1501,6 +1672,9 @@ protocol LibraryRepository: Sendable {
     func createRecording(
         _ command: LibraryRecordingCreateCommand
     ) async throws -> LibraryRecordingSnapshot
+    func upsertCloudRecording(
+        _ command: LibraryRecordingCloudRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot
     func discardRecording(
         _ command: LibraryRecordingDiscardCommand
     ) async throws
@@ -1537,6 +1711,9 @@ protocol LibraryRepository: Sendable {
     ) async throws -> LibraryRecordingSnapshot
     func restoreRecordingAudio(
         _ command: LibraryRecordingAudioRestoreCommand
+    ) async throws -> LibraryRecordingSnapshot
+    func updateRecordingAudioLink(
+        _ command: LibraryRecordingAudioLinkCommand
     ) async throws -> LibraryRecordingSnapshot
     func upsertArchiveLocation(
         _ command: LibraryArchiveLocationUpsertCommand
