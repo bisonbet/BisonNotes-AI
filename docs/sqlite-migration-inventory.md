@@ -43,7 +43,8 @@ Current CloudKit recording-restore checkpoint: `91406ea2`.
 Current CloudKit transcript-restore checkpoint: `961a5837`.
 Current CloudKit summary-metadata restore checkpoint: `96e49c91`.
 Current production Watch media-intake checkpoint: `d80fa3bc`.
-Current production web-audio import checkpoint: `daf1ee9a`.
+Current production web-audio import checkpoint: `6a51367b` (journal integration:
+`daf1ee9a`).
 Current production document-picker audio checkpoint: `a54e7078`.
 
 Generated from checked-in model XML and Swift symbol searches. This inventories schema, not production row contents. Add runtime paths, defaults domains, file formats, indirect callers and source-version fixtures in Phase 0 of [the plan](sqlite-migration-plan.md).
@@ -401,7 +402,8 @@ platform/product mechanisms in scope:
 | Watch source and receipts | Watch `Documents/WatchRecordings/metadata.json`, `recordings/*.m4a`, and `Documents/reliable_transfers.json`; phone `Application Support/WatchTransferStaging` is the persistent pre-cutover source root, with journaled cleanup after metadata acknowledgement |
 | Share imports | App Group `group.bisonnotesai.shared/ShareInbox`, `.share-import-token`, and the `Documents/Inbox` fallback |
 | Additional defaults | App Group action-button key `actionButtonShouldStartRecording`; `.standard` dedupe key `processedWatchRecordingIds`; sync timestamps, absence markers, throttles and backup flags |
-| Temporary roots and caches | `tmp/iCloudAudioStaging`, `tmp/BisonNotesWebImports`, macOS scratch/export paths, FluidAudio models, map snapshots and model caches |
+| Temporary roots and caches | `tmp/iCloudAudioStaging`, transient `tmp/BisonNotesWebImports` downloads, macOS scratch/export paths, FluidAudio models, map snapshots and model caches |
+| Persistent import staging | `Application Support/BisonNotesWebImports` for completed supported web-audio downloads awaiting the durable media journal |
 | Omitted direct I/O callers | `EnhancedFileManager`, `ActionButtonLaunchManager`, `ShareExtensionProcessor`, Watch storage/connectivity, `CloudAudioAssetStaging`, `TemporaryFileCleanupService`, `WebImportDownloader`, `RestoredAudioFileInstaller`, and `AudioRecorderViewModel` persistence extensions |
 
 See [the evidence ledger](sqlite-migration-evidence.md) for initial treatment
@@ -458,9 +460,10 @@ descriptor, Documents publication, idempotent Core Data metadata commit,
 receipt-gated source removal and activation retry; failed or unsupported inbox
 sources remain available. Supported web audio now uses the same boundary and
 the registered `BisonNotesWebImports` staging root when the Core Data store is
-durable. The existing web staging directory remains under the app temporary
-root, so OS purge/orphan qualification and signed-device validation are still
-open. Document-picker audio now stages external security-scoped selections into
+durable. Completed supported-audio downloads now live in
+`Application Support/BisonNotesWebImports`; only in-progress downloads remain
+under the temporary root. Safe cleanup for orphaned persistent downloads and
+signed-device validation are still open. Document-picker audio now stages external security-scoped selections into
 the existing Documents/Inbox root before using the journal, leaving the
 original selected file untouched across retries. Video and text imports,
 archive-token restores and other direct file-owning paths remain on their
@@ -769,18 +772,20 @@ app-hosted build-for-testing check passes; the iOS scheme remains blocked by
 the pre-existing Watch Widget `accessoryCorner` availability error. No
 signed-device or live-data validation was performed.
 
-The production web-audio import checkpoint `daf1ee9a` connects completed
-supported-audio downloads to the schema-v8 generic media journal when the Core
-Data store is durable. `WebImportManager` passes the downloaded source through
-the registered `BisonNotesWebImports` root, stable source-derived identity,
-bounded metadata descriptor, Documents publication, idempotent Core Data
-metadata commit, receipt recording and receipt-gated source removal. Web video
-continues through audio extraction, while transcript downloads and in-memory
-or test imports retain their direct paths. The web staging directory remains
-under the app temporary root, so OS purge/orphan behavior and signed-device
-qualification remain open. The standalone suite passes 133/133, including the
-web-root planning fixture; the macOS app-hosted build-for-testing check passes,
-and no SQLite cutover or live user data was used.
+The production web-audio checkpoint `6a51367b` (journal integration:
+`daf1ee9a`) connects completed supported-audio downloads to the schema-v8
+generic media journal when the Core Data store is durable. `WebImportManager`
+passes the downloaded source through the registered
+`Application Support/BisonNotesWebImports` root, stable source-derived
+identity, bounded metadata descriptor, Documents publication, idempotent Core
+Data metadata commit, receipt recording and receipt-gated source removal. Only
+in-progress downloads remain under the temporary root; safe cleanup for
+orphaned persistent downloads and signed-device qualification remain open. Web
+video continues through audio extraction, while transcript downloads and
+in-memory or test imports retain their direct paths. The standalone suite
+passes 133/133, including the web-root planning fixture; the macOS app-hosted
+build-for-testing check passes, and no SQLite cutover or live user data was
+used.
 
 The production document-picker audio checkpoint `a54e7078` changes the
 Recordings view to request the durable audio-import path. When a selected
@@ -945,8 +950,9 @@ activation retry and receipt-gated source removal. Share/Inbox audio now uses
 the same journal, metadata descriptor, Documents destination and bounded
 activation retry; failed and unsupported inputs remain available for retry.
 Supported web audio now uses the same journal and receipt-gated cleanup through
-the temporary `BisonNotesWebImports` root; OS purge/orphan behavior remains an
-explicit qualification item. External document-picker imports and other direct
+the persistent `Application Support/BisonNotesWebImports` root; safe orphan
+cleanup and signed-device behavior remain explicit qualification items. External
+non-audio document-picker imports and other direct
 file-owning paths remain explicit follow-up boundaries. Document-picker audio
 now stages external selections into `Documents/Inbox` before using the journal;
 video, transcript and archive-token paths remain direct. The next inventory update must expand

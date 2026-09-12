@@ -543,17 +543,19 @@ macOS app-hosted build-for-testing check passes; the iOS scheme remains blocked
 by the pre-existing Watch Widget `accessoryCorner` availability error. No
 SQLite cutover or live user data was used.
 
-The current web-audio checkpoint is `daf1ee9a` (`feat: journal web audio
-imports`). A completed web download whose resolved extension is supported audio
-now uses the same schema-v8 generic media journal when the Core Data store is
-durable: the source is classified under the registered `BisonNotesWebImports`
-staging root, receives a stable source-derived identity and bounded metadata
-descriptor, publishes into Documents, commits Core Data metadata idempotently,
-records the receipt and removes the source only after the retention check. The
-existing web staging directory is still under the app temporary root, so OS
-purge behavior, orphaned completed downloads and signed-device qualification
-remain open; video extraction, transcript downloads and in-memory/test imports
-retain their direct paths. This adds no live-data or SQLite-cutover behavior.
+The current web-audio checkpoint is `6a51367b` (`fix: persist completed web
+audio staging`), following the journal integration in `daf1ee9a`. A completed
+web download whose resolved extension is supported audio now uses the same
+schema-v8 generic media journal when the Core Data store is durable: the source
+is classified under the registered `BisonNotesWebImports` staging root, which
+now lives in Application Support rather than the OS-purgeable temporary root.
+It receives a stable source-derived identity and bounded metadata descriptor,
+publishes into Documents, commits Core Data metadata idempotently, records the
+receipt and removes the source only after the retention check. Only in-progress
+download files remain temporary; orphan cleanup for persistent completed
+downloads and signed-device qualification remain open. Video extraction,
+transcript downloads and in-memory/test imports retain their direct paths. This
+adds no live-data or SQLite-cutover behavior.
 
 The current document-picker audio checkpoint is `a54e7078` (`feat: journal
 document picker audio imports`). The Recordings view now opts audio selections
