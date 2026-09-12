@@ -9,6 +9,7 @@ extension SQLiteLibraryStore {
         registerChangesSchemaMigration(on: &migrator)
         registerMediaTransferSchemaMigration(on: &migrator)
         registerArchiveRestoreSchemaMigration(on: &migrator)
+        registerArchiveRestoreRevisionSchemaMigration(on: &migrator)
         return migrator
     }
 
@@ -101,6 +102,25 @@ extension SQLiteLibraryStore {
                 arguments: [
                     SQLiteLibraryStoreSchema.archiveRestoreSchemaVersion,
                     Self.archiveRestoreSchemaMigrationIdentifier,
+                    Date().timeIntervalSinceReferenceDate
+                ]
+            )
+        }
+    }
+
+    private static func registerArchiveRestoreRevisionSchemaMigration(
+        on migrator: inout DatabaseMigrator
+    ) {
+        migrator.registerMigration(Self.archiveRestoreRevisionSchemaMigrationIdentifier) { database in
+            try SQLiteLibraryStoreSchema.addArchiveRestoreOwnerLastModified(in: database)
+            try database.execute(
+                sql: """
+                INSERT INTO schema_migrations (version, identifier, appliedAt)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [
+                    SQLiteLibraryStoreSchema.archiveRestoreRevisionSchemaVersion,
+                    Self.archiveRestoreRevisionSchemaMigrationIdentifier,
                     Date().timeIntervalSinceReferenceDate
                 ]
             )

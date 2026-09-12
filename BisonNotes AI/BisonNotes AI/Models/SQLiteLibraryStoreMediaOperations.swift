@@ -307,17 +307,19 @@ extension SQLiteLibraryStore {
                 sql: """
                 INSERT INTO archive_restore_operations (
                     id, archiveLocationID, ownerStorageID, ownerRevision,
+                    ownerLastModified,
                     sourceRoot, sourceRelativePath, destinationRoot,
                     destinationRelativePath, expectedByteLength, expectedSHA256,
                     phase, attemptCount, lastError, createdAt, updatedAt
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     plan.operationID,
                     plan.archiveLocationID,
                     plan.ownerStorageID,
                     plan.ownerRevision,
+                    plan.ownerLastModified?.timeIntervalSinceReferenceDate,
                     plan.sourceRoot,
                     plan.sourceRelativePath,
                     plan.destinationRoot,

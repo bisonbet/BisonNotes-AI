@@ -227,7 +227,8 @@ private extension SQLiteArchiveRestoreCopyWorker {
                 destinationURL: urls.destination,
                 partialURL: urls.partial,
                 expectedByteLength: operation.expectedByteLength,
-                expectedSHA256: operation.expectedSHA256
+                expectedSHA256: operation.expectedSHA256,
+                coordinateSourceRead: true
             ).run()
         }.value
     }
@@ -310,6 +311,23 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
     let partialURL: URL
     let expectedByteLength: Int64?
     let expectedSHA256: String?
+    let coordinateSourceRead: Bool
+
+    init(
+        sourceURL: URL,
+        destinationURL: URL,
+        partialURL: URL,
+        expectedByteLength: Int64?,
+        expectedSHA256: String?,
+        coordinateSourceRead: Bool = false
+    ) {
+        self.sourceURL = sourceURL
+        self.destinationURL = destinationURL
+        self.partialURL = partialURL
+        self.expectedByteLength = expectedByteLength
+        self.expectedSHA256 = expectedSHA256
+        self.coordinateSourceRead = coordinateSourceRead
+    }
 
     func run() throws -> SQLiteMediaFileCopyResult {
         let fileManager = FileManager.default
@@ -345,7 +363,12 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
                 withIntermediateDirectories: true
             )
             try Self.removeIfPresent(partialURL, using: fileManager)
-            try fileManager.copyItem(at: sourceURL, to: partialURL)
+            try Self.copySource(
+                from: sourceURL,
+                to: partialURL,
+                coordinateRead: coordinateSourceRead,
+                using: fileManager
+            )
 
             try Self.verify(
                 partialURL,
@@ -504,6 +527,42 @@ private struct SQLiteMediaFileCopyExecutor: Sendable {
     ) throws {
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
+    }
+
+    private static func copySource(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        coordinateRead: Bool,
+        using fileManager: FileManager
+    ) throws {
+        guard coordinateRead else {
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            return
+        }
+
+        var coordinatorError: NSError?
+        var operationError: Error?
+        var didCopy = false
+        let coordinator = NSFileCoordinator(filePresenter: nil)
+        coordinator.coordinate(
+            readingItemAt: sourceURL,
+            options: [],
+            error: &coordinatorError
+        ) { coordinatedURL in
+            do {
+                try fileManager.copyItem(at: coordinatedURL, to: destinationURL)
+                didCopy = true
+            } catch {
+                operationError = error
+            }
+        }
+
+        if let operationError {
+            throw operationError
+        }
+        if coordinatorError != nil || !didCopy {
+            throw SQLiteMediaFileOperationError.copyFailed
+        }
     }
 
     private static func matches(

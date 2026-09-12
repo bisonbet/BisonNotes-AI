@@ -98,6 +98,7 @@ let package = Package(
                 "SQLiteApplicationMediaTransferPlanner.swift",
                 "SQLiteSecurityScopedBookmarkLease.swift",
                 "SQLiteMediaBackgroundReconciler.swift",
+                "SQLiteApplicationArchiveRestoreCoordinator.swift",
                 "SQLiteMediaRootRegistry.swift",
                 "SQLiteMediaTransferModels.swift",
                 "SQLiteMediaTransferCoordinator.swift",

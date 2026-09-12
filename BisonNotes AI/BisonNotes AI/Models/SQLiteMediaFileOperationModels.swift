@@ -153,12 +153,42 @@ struct SQLiteArchiveRestorePlan: Equatable, Sendable {
     let archiveLocationID: String
     let ownerStorageID: String?
     let ownerRevision: Int?
+    /// The source recording's optimistic date at enqueue time. Unlike the
+    /// integer owner revision used by generic media plans, this value can be
+    /// compared by the Core Data metadata acknowledgement after a restart.
+    let ownerLastModified: Date?
     let sourceRoot: String
     let sourceRelativePath: String
     let destinationRoot: String
     let destinationRelativePath: String
     let expectedByteLength: Int64
     let expectedSHA256: String
+
+    init(
+        operationID: String,
+        archiveLocationID: String,
+        ownerStorageID: String?,
+        ownerRevision: Int?,
+        ownerLastModified: Date? = nil,
+        sourceRoot: String,
+        sourceRelativePath: String,
+        destinationRoot: String,
+        destinationRelativePath: String,
+        expectedByteLength: Int64,
+        expectedSHA256: String
+    ) {
+        self.operationID = operationID
+        self.archiveLocationID = archiveLocationID
+        self.ownerStorageID = ownerStorageID
+        self.ownerRevision = ownerRevision
+        self.ownerLastModified = ownerLastModified
+        self.sourceRoot = sourceRoot
+        self.sourceRelativePath = sourceRelativePath
+        self.destinationRoot = destinationRoot
+        self.destinationRelativePath = destinationRelativePath
+        self.expectedByteLength = expectedByteLength
+        self.expectedSHA256 = expectedSHA256
+    }
 
     func validate() throws {
         try SQLiteMediaFileOperationValidation.identifier(operationID)
@@ -168,6 +198,11 @@ struct SQLiteArchiveRestorePlan: Equatable, Sendable {
         }
         if let ownerRevision {
             guard ownerRevision >= 0 else {
+                throw SQLiteArchiveRestoreError.invalidOwnerRevision
+            }
+        }
+        if let ownerLastModified {
+            guard ownerLastModified.timeIntervalSinceReferenceDate.isFinite else {
                 throw SQLiteArchiveRestoreError.invalidOwnerRevision
             }
         }
@@ -193,6 +228,7 @@ struct SQLiteArchiveRestoreOperation: Equatable, Sendable {
     let archiveLocationID: String
     let ownerStorageID: String?
     let ownerRevision: Int?
+    let ownerLastModified: Date?
     let sourceRoot: String
     let sourceRelativePath: String
     let destinationRoot: String

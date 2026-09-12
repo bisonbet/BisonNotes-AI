@@ -93,9 +93,96 @@ class RecordingArchiveService: ObservableObject {
     /// weak so the singleton service does not extend the app coordinator's
     /// lifetime or create a retain cycle during previews and teardown.
     private weak var appCoordinator: AppDataCoordinator?
+    private var archiveRestoreRuntime: SQLiteApplicationArchiveRestoreRuntime?
+    private var archiveRestoreMapping: SQLiteApplicationMediaRootMapping?
+    private var archiveRestoreRetryTask: Task<Void, Never>?
 
     func setCoordinator(_ coordinator: AppDataCoordinator) {
+        if let currentCoordinator = appCoordinator,
+           currentCoordinator === coordinator {
+            return
+        }
+        archiveRestoreRetryTask?.cancel()
         appCoordinator = coordinator
+        archiveRestoreRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            _ = await self.reconcilePendingArchiveRestoresUsingRepository()
+        }
+    }
+
+    /// Retries bounded archive-restore journal work after a relaunch. The
+    /// journal is opened only when it already exists, so ordinary installs do
+    /// not create a second SQLite library merely by starting the app.
+    @discardableResult
+    func reconcilePendingArchiveRestoresUsingRepository(
+        maxOperations: Int = 8
+    ) async -> SQLiteArchiveRestoreReport? {
+        guard let appCoordinator,
+              appCoordinator.storageStatus.isDurable else {
+            return nil
+        }
+
+        do {
+            guard let dependencies = try archiveRestoreRuntimeDependencies(
+                createIfMissing: false
+            ) else {
+                return nil
+            }
+            let snapshots = try await appCoordinator.fetchArchiveLocationSnapshotsUsingRepository()
+            var snapshotsByID: [String: LibraryArchiveLocationSnapshot] = [:]
+            for snapshot in snapshots {
+                guard let locationID = snapshot.legacyID else { continue }
+                let key = locationID.lowercased()
+                guard snapshotsByID[key] == nil else {
+                    AppLog.shared.recording(
+                        "Archive restore retry skipped duplicate location \(locationID)",
+                        level: .error
+                    )
+                    continue
+                }
+                snapshotsByID[key] = snapshot
+            }
+
+            let coordinator = appCoordinator
+            let mapping = dependencies.mapping
+            let snapshotMap = snapshotsByID
+            return try await dependencies.runtime.reconcilePending(
+                maxOperations: maxOperations,
+                rootAccessForOperation: { operation in
+                    guard let snapshot = snapshotMap[operation.archiveLocationID.lowercased()] else {
+                        throw SQLiteArchiveRestoreError.operationNotFound
+                    }
+                    let resolvedSource = try await self.resolvedArchiveSource(
+                        from: snapshot,
+                        using: coordinator
+                    )
+                    let sourceRegistry = try mapping.registry(
+                        addingSourceRootID: operation.sourceRoot,
+                        url: resolvedSource.url.deletingLastPathComponent()
+                    )
+                    return SQLiteArchiveRestoreRootAccess(
+                        rootRegistry: sourceRegistry,
+                        securityScopedBookmarkLease: resolvedSource.securityScopedBookmarkLease
+                    )
+                },
+                metadataCommit: { operation, destinationURL in
+                    try await Self.commitArchiveRestoreMetadata(
+                        operation,
+                        destinationURL: destinationURL,
+                        documentsRoot: try Self.documentsRoot(from: mapping),
+                        using: coordinator
+                    )
+                }
+            )
+        } catch is CancellationError {
+            return nil
+        } catch {
+            AppLog.shared.recording(
+                "Archive restore retry pass failed: \(error.localizedDescription)",
+                level: .error
+            )
+            return nil
+        }
     }
 
     // MARK: - Archive Recordings
@@ -352,126 +439,60 @@ class RecordingArchiveService: ObservableObject {
             )
         }
 
-        let fileManager = FileManager.default
-        let destinationAlreadyPresent = fileManager.fileExists(atPath: destinationURL.path)
-        try await copyAndValidateArchiveAudio(
-            from: sourceURL,
-            to: destinationURL
-        )
-
-        do {
-            _ = try await restoreRecordingUsingRepository(
-                recording,
-                newAudioURL: destinationURL
-            )
-        } catch {
-            if !destinationAlreadyPresent {
-                try? fileManager.removeItem(at: destinationURL)
-            }
-            throw error
+        guard let dependencies = try archiveRestoreRuntimeDependencies(
+            createIfMissing: true
+        ) else {
+            throw RecordingArchiveError.persistenceUnavailable
         }
-
-        // Metadata is committed before source removal. A source-delete failure
-        // must not roll back or remove the successfully restored local audio.
-        try await deleteArchivedSource(at: sourceURL)
-        return destinationURL
-    }
-
-    private func copyAndValidateArchiveAudio(
-        from sourceURL: URL,
-        to destinationURL: URL
-    ) async throws {
-        try await Task.detached(priority: .utility) {
-            try Self.copyAndValidateArchiveAudioSynchronously(
-                from: sourceURL,
-                to: destinationURL
-            )
-        }.value
-    }
-
-    private nonisolated static func copyAndValidateArchiveAudioSynchronously(
-        from sourceURL: URL,
-        to destinationURL: URL
-    ) throws {
-        let fileManager = FileManager.default
-        let destinationAlreadyPresent = fileManager.fileExists(atPath: destinationURL.path)
-        if !destinationAlreadyPresent {
-            var coordinatorError: NSError?
-            var operationError: Error?
-            var didCopy = false
-            let coordinator = NSFileCoordinator(filePresenter: nil)
-            coordinator.coordinate(
-                readingItemAt: sourceURL,
-                options: [],
-                error: &coordinatorError
-            ) { coordinatedURL in
-                do {
-                    try fileManager.copyItem(at: coordinatedURL, to: destinationURL)
-                    AppFileProtection.apply(to: destinationURL)
-                    didCopy = true
-                } catch {
-                    operationError = error
-                }
-            }
-
-            if let operationError {
-                try? fileManager.removeItem(at: destinationURL)
-                throw RecordingArchiveError.copyFailed(operationError.localizedDescription)
-            }
-            if let coordinatorError {
-                try? fileManager.removeItem(at: destinationURL)
-                throw RecordingArchiveError.copyFailed(coordinatorError.localizedDescription)
-            }
-            guard didCopy else {
-                try? fileManager.removeItem(at: destinationURL)
-                throw RecordingArchiveError.copyFailed(
-                    "The file provider did not return a readable file."
+        guard let locationID = locationSnapshot.legacyID.flatMap(UUID.init(uuidString:)) else {
+            throw RecordingArchiveError.locationNotFound
+        }
+        let sourceRootURL = sourceURL.deletingLastPathComponent()
+        let sourceRootID = Self.archiveRestoreSourceRootID(for: locationID)
+        let destinationRelativePath = try Self.documentsRelativePath(
+            for: destinationURL,
+            under: try Self.documentsRoot(from: dependencies.mapping)
+        )
+        let sourceRegistry = try dependencies.mapping.registry(
+            addingSourceRootID: sourceRootID,
+            url: sourceRootURL
+        )
+        let request = SQLiteArchiveRestoreRequest(
+            operationID: Self.archiveRestoreOperationID(
+                recordingID: recordingID,
+                locationID: locationID
+            ),
+            archiveLocationID: locationID.uuidString.lowercased(),
+            ownerStorageID: recordingID.uuidString.lowercased(),
+            ownerRevision: nil,
+            ownerLastModified: recording.lastModified,
+            sourceRootID: sourceRootID,
+            sourceRootURL: sourceRootURL,
+            sourceURL: sourceURL,
+            destinationRootID: SQLiteApplicationMediaRootID.documents.rawValue,
+            destinationRelativePath: destinationRelativePath
+        )
+        let coordinator = appCoordinator
+        let completed = try await dependencies.runtime.restore(
+            request,
+            rootAccess: SQLiteArchiveRestoreRootAccess(
+                rootRegistry: sourceRegistry,
+                securityScopedBookmarkLease: resolvedSource.securityScopedBookmarkLease
+            ),
+            metadataCommit: { operation, localURL in
+                try await Self.commitArchiveRestoreMetadata(
+                    operation,
+                    destinationURL: localURL,
+                    documentsRoot: try Self.documentsRoot(from: dependencies.mapping),
+                    using: coordinator
                 )
             }
-        }
+        )
 
-        do {
-            try validateAudioFile(at: destinationURL)
-        } catch {
-            if !destinationAlreadyPresent {
-                try? fileManager.removeItem(at: destinationURL)
-            }
-            throw error
-        }
-    }
-
-    private func deleteArchivedSource(at sourceURL: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try Self.deleteArchivedSourceSynchronously(at: sourceURL)
-        }.value
-    }
-
-    private nonisolated static func deleteArchivedSourceSynchronously(
-        at sourceURL: URL
-    ) throws {
-        var coordinatorError: NSError?
-        var operationError: Error?
-        var didDelete = false
-        let coordinator = NSFileCoordinator(filePresenter: nil)
-
-        coordinator.coordinate(writingItemAt: sourceURL, options: .forDeleting, error: &coordinatorError) { coordinatedURL in
-            do {
-                try FileManager.default.removeItem(at: coordinatedURL)
-                didDelete = true
-            } catch {
-                operationError = error
-            }
-        }
-
-        if let operationError {
-            throw RecordingArchiveError.deleteFailed(operationError.localizedDescription)
-        }
-        if let coordinatorError {
-            throw RecordingArchiveError.deleteFailed(coordinatorError.localizedDescription)
-        }
-        if !didDelete && FileManager.default.fileExists(atPath: sourceURL.path) {
-            throw RecordingArchiveError.deleteFailed("The file provider did not confirm deletion.")
-        }
+        return try dependencies.mapping.registry.destinationURL(
+            root: completed.destinationRoot,
+            relativePath: completed.destinationRelativePath
+        )
     }
 
     private func recordArchiveLocationCandidates(
@@ -717,6 +738,169 @@ class RecordingArchiveService: ObservableObject {
                 level: .error
             )
         }
+    }
+
+    private struct ArchiveRestoreRuntimeDependencies {
+        let runtime: SQLiteApplicationArchiveRestoreRuntime
+        let mapping: SQLiteApplicationMediaRootMapping
+    }
+
+    private func archiveRestoreRuntimeDependencies(
+        createIfMissing: Bool
+    ) throws -> ArchiveRestoreRuntimeDependencies? {
+        if let archiveRestoreRuntime,
+           let archiveRestoreMapping {
+            return ArchiveRestoreRuntimeDependencies(
+                runtime: archiveRestoreRuntime,
+                mapping: archiveRestoreMapping
+            )
+        }
+
+        guard let appCoordinator,
+              appCoordinator.storageStatus.isDurable else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+        let fileManager = FileManager.default
+        guard let documentsRoot = fileManager.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first,
+        let applicationSupportRoot = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+
+        let journalDirectory = applicationSupportRoot.appendingPathComponent(
+            "SQLiteMigration",
+            isDirectory: true
+        )
+        let databaseURL = journalDirectory.appendingPathComponent(
+            "archive-restore-journal.sqlite",
+            isDirectory: false
+        )
+        if !createIfMissing,
+           !fileManager.fileExists(atPath: databaseURL.path) {
+            return nil
+        }
+
+        try fileManager.createDirectory(
+            at: journalDirectory,
+            withIntermediateDirectories: true
+        )
+        // This is the same device-protection policy used by the existing app
+        // files. No app-managed encryption or key material is introduced.
+        AppFileProtection.apply(to: journalDirectory)
+        let mapping = try SQLiteApplicationMediaRootMapping(
+            documentsRoot: documentsRoot,
+            applicationSupportRoot: applicationSupportRoot,
+            temporaryRoot: fileManager.temporaryDirectory
+        )
+        let store = try SQLiteLibraryStore(databaseURL: databaseURL)
+        AppFileProtection.apply(to: databaseURL)
+        let runtime = SQLiteApplicationArchiveRestoreRuntime(
+            coordinator: SQLiteArchiveRestoreCoordinator(
+                store: store,
+                mapping: mapping
+            )
+        )
+        archiveRestoreMapping = mapping
+        archiveRestoreRuntime = runtime
+        return ArchiveRestoreRuntimeDependencies(
+            runtime: runtime,
+            mapping: mapping
+        )
+    }
+
+    private static func documentsRoot(
+        from mapping: SQLiteApplicationMediaRootMapping
+    ) throws -> URL {
+        guard let documentsRoot = mapping.destinationURLs[
+            SQLiteApplicationMediaRootID.documents
+        ] else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+        return documentsRoot.standardizedFileURL
+    }
+
+    private static func documentsRelativePath(
+        for url: URL,
+        under documentsRoot: URL
+    ) throws -> String {
+        guard url.isFileURL else {
+            throw RecordingArchiveError.copyFailed(
+                "The local restore destination is not a file URL."
+            )
+        }
+
+        let root = documentsRoot.standardizedFileURL
+        let candidate = url.standardizedFileURL
+        let rootPath = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        guard candidate.path.hasPrefix(rootPath) else {
+            throw RecordingArchiveError.copyFailed(
+                "The local restore destination is outside Documents."
+            )
+        }
+
+        let relativePath = String(candidate.path.dropFirst(rootPath.count))
+        do {
+            let resolved = try SQLiteMediaRootPathResolver.resolve(
+                relativePath: relativePath,
+                under: root
+            )
+            guard resolved.standardizedFileURL == candidate else {
+                throw RecordingArchiveError.copyFailed(
+                    "The local restore destination could not be safely resolved."
+                )
+            }
+        } catch let error as RecordingArchiveError {
+            throw error
+        } catch {
+            throw RecordingArchiveError.copyFailed(
+                "The local restore destination path is invalid."
+            )
+        }
+        return relativePath
+    }
+
+    private static func commitArchiveRestoreMetadata(
+        _ operation: SQLiteArchiveRestoreOperation,
+        destinationURL: URL,
+        documentsRoot: URL,
+        using appCoordinator: AppDataCoordinator
+    ) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.validateAudioFile(at: destinationURL)
+        }.value
+        AppFileProtection.apply(to: destinationURL)
+
+        guard let ownerStorageID = operation.ownerStorageID,
+              let recordingID = UUID(uuidString: ownerStorageID) else {
+            throw RecordingArchiveError.persistenceUnavailable
+        }
+        let relativePath = try documentsRelativePath(
+            for: destinationURL,
+            under: documentsRoot
+        )
+        _ = try await appCoordinator.restoreRecordingAudioUsingRepository(
+            recordingId: recordingID,
+            recordingURL: relativePath,
+            fileSize: operation.expectedByteLength,
+            expectedLastModified: operation.ownerLastModified
+        )
+    }
+
+    private static func archiveRestoreOperationID(
+        recordingID: UUID,
+        locationID: UUID
+    ) -> String {
+        "archive-restore-\(recordingID.uuidString.lowercased())-"
+            + locationID.uuidString.lowercased()
+    }
+
+    private static func archiveRestoreSourceRootID(for locationID: UUID) -> String {
+        "archive-\(locationID.uuidString.lowercased())"
     }
 
     private func localRestoreDestination(for recording: RecordingEntry, sourceURL: URL) throws -> URL {

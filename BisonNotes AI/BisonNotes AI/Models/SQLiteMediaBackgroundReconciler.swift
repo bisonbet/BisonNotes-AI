@@ -103,6 +103,23 @@ struct SQLiteArchiveRestoreReport: Equatable, Sendable {
     let failedOperationCount: Int
 }
 
+/// Holds the logical roots and any process-local security scope needed while
+/// one archive restore is copied and, after metadata acknowledgement, cleaned
+/// up. The lease must stay alive for the whole operation; returning only a URL
+/// would silently drop provider access before the detached worker runs.
+struct SQLiteArchiveRestoreRootAccess: Sendable {
+    let rootRegistry: SQLiteMediaRootRegistry
+    let securityScopedBookmarkLease: SQLiteSecurityScopedBookmarkLease?
+
+    init(
+        rootRegistry: SQLiteMediaRootRegistry,
+        securityScopedBookmarkLease: SQLiteSecurityScopedBookmarkLease? = nil
+    ) {
+        self.rootRegistry = rootRegistry
+        self.securityScopedBookmarkLease = securityScopedBookmarkLease
+    }
+}
+
 /// Reconciles provider archive restores in bounded, durable phases.
 ///
 /// The metadata callback is supplied by the eventual app integration because
@@ -128,14 +145,48 @@ actor SQLiteArchiveRestoreReconciler {
         metadataCommit: @escaping @Sendable (SQLiteArchiveRestoreOperation) async throws -> Void,
         progress: (@Sendable (SQLiteArchiveRestoreProgress) -> Void)? = nil
     ) async throws -> SQLiteArchiveRestoreReport {
+        try await run(
+            maxOperations: maxOperations,
+            at: date,
+            operationID: nil,
+            rootAccessForOperation: { _ in
+                SQLiteArchiveRestoreRootAccess(rootRegistry: self.rootRegistry)
+            },
+            metadataCommit: metadataCommit,
+            progress: progress
+        )
+    }
+
+    /// Runs the same durable state machine when each archive location resolves
+    /// to its own security-scoped root. The resolver is called once per selected
+    /// operation and its returned lease remains alive through source deletion.
+    func run(
+        maxOperations: Int = 8,
+        at date: Date = Date(),
+        operationID: String? = nil,
+        rootAccessForOperation: @escaping @Sendable (SQLiteArchiveRestoreOperation) async throws -> SQLiteArchiveRestoreRootAccess,
+        metadataCommit: @escaping @Sendable (SQLiteArchiveRestoreOperation) async throws -> Void,
+        progress: (@Sendable (SQLiteArchiveRestoreProgress) -> Void)? = nil
+    ) async throws -> SQLiteArchiveRestoreReport {
         guard (1...100).contains(maxOperations) else {
             throw SQLiteArchiveRestoreError.invalidBatchLimit
         }
 
         let recoveredCount = try await store.recoverInterruptedArchiveRestores(at: date)
-        let operations = try await store.archiveRestoreOperationsNeedingReconciliation(
-            limit: maxOperations
-        )
+        let operations: [SQLiteArchiveRestoreOperation]
+        if let operationID {
+            try SQLiteMediaFileOperationValidation.identifier(operationID)
+            guard let operation = try await store.archiveRestoreOperation(id: operationID) else {
+                throw SQLiteArchiveRestoreError.operationNotFound
+            }
+            operations = SQLiteArchiveRestorePhase.retryable.contains(operation.phase)
+                ? [operation]
+                : []
+        } else {
+            operations = try await store.archiveRestoreOperationsNeedingReconciliation(
+                limit: maxOperations
+            )
+        }
         var completedCount = 0
         var failedCount = 0
         progress?(SQLiteArchiveRestoreProgress(
@@ -150,9 +201,12 @@ actor SQLiteArchiveRestoreReconciler {
         for operation in operations {
             try Task.checkCancellation()
             do {
+                let rootAccess = try await rootAccessForOperation(operation)
+                let securityScopedBookmarkLease = rootAccess.securityScopedBookmarkLease
+                defer { securityScopedBookmarkLease?.stopAccessing() }
                 let afterCopy = try await copyWorker.run(
                     operationID: operation.id,
-                    rootRegistry: rootRegistry,
+                    rootRegistry: rootAccess.rootRegistry,
                     at: date
                 )
                 let afterMetadata = try await commitMetadataIfNeeded(
@@ -162,7 +216,7 @@ actor SQLiteArchiveRestoreReconciler {
                 )
                 let finalOperation = try await sourceDeletionWorker.run(
                     operationID: afterMetadata.id,
-                    rootRegistry: rootRegistry,
+                    rootRegistry: rootAccess.rootRegistry,
                     at: date
                 )
                 if finalOperation.phase == SQLiteArchiveRestorePhase.completed {

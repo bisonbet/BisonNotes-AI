@@ -4,7 +4,7 @@ import XCTest
 @testable import BisonNotesSQLiteRuntime
 
 final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
-    func testExistingV2StoreMigratesToV5ArchiveRestoreSchema() async throws {
+    func testExistingV2StoreMigratesToV6ArchiveRestoreSchema() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -36,7 +36,7 @@ final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
         let store = try SQLiteLibraryStore(databaseURL: databaseURL)
         let diagnostics = try await store.diagnostics()
         let tables = Set(try await store.tableNames())
-        XCTAssertEqual(diagnostics.schemaVersion, 5)
+        XCTAssertEqual(diagnostics.schemaVersion, 6)
         XCTAssertEqual(diagnostics.revision, 0)
         XCTAssertTrue(tables.contains("library_settings"))
         XCTAssertTrue(tables.contains("library_changes"))
@@ -59,6 +59,29 @@ final class SQLiteLibraryStoreMigrationVersionTests: XCTestCase {
         )
         let operation = try await store.enqueueMediaCopy(transfer)
         XCTAssertEqual(operation.sourceTransferID, transfer.sourceTransferID)
+
+        let ownerLastModified = Date(timeIntervalSinceReferenceDate: 1234)
+        let archivePlan = SQLiteArchiveRestorePlan(
+            operationID: "migrated-archive-restore",
+            archiveLocationID: "migrated-archive-location",
+            ownerStorageID: "recording-1",
+            ownerRevision: nil,
+            ownerLastModified: ownerLastModified,
+            sourceRoot: "archive-source",
+            sourceRelativePath: "recording.m4a",
+            destinationRoot: "documents",
+            destinationRelativePath: "recording.m4a",
+            expectedByteLength: 0,
+            expectedSHA256: String(repeating: "0", count: 64)
+        )
+        let archiveOperation = try await store.enqueueArchiveRestore(archivePlan)
+        XCTAssertEqual(archiveOperation.ownerLastModified, ownerLastModified)
+
+        let reopenedStore = try SQLiteLibraryStore(databaseURL: databaseURL)
+        let reopenedArchiveOperation = try await reopenedStore.archiveRestoreOperation(
+            id: archivePlan.operationID
+        )
+        XCTAssertEqual(reopenedArchiveOperation?.ownerLastModified, ownerLastModified)
     }
 
     private func makeTemporaryDirectory() throws -> URL {

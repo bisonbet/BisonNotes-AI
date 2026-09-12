@@ -89,4 +89,22 @@ extension SQLiteLibraryStoreSchema {
             ]
         )
     }
+
+    static func addArchiveRestoreOwnerLastModified(in database: Database) throws {
+        try database.execute(
+            sql: "ALTER TABLE archive_restore_operations ADD COLUMN ownerLastModified REAL"
+        )
+
+        try database.execute(
+            sql: """
+            UPDATE library_metadata
+            SET schemaVersion = ?, updatedAt = ?
+            WHERE id = 1
+            """,
+            arguments: [
+                archiveRestoreRevisionSchemaVersion,
+                Date().timeIntervalSinceReferenceDate
+            ]
+        )
+    }
 }

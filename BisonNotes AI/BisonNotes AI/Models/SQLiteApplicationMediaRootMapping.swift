@@ -31,6 +31,12 @@ struct SQLiteApplicationMediaRootMapping: Sendable {
             shareContainerRoot: shareContainerRoot
         )
         let destinationURLs = [
+            // Core Data remains authoritative until cutover, so journaled
+            // provider restores must be able to publish into the existing
+            // Documents-relative recording path without inventing a second
+            // user-visible audio location.
+            SQLiteApplicationMediaRootID.documents:
+                documentsRoot,
             SQLiteApplicationMediaRootID.sqliteMedia:
                 applicationSupportRoot.appendingPathComponent(
                     "SQLiteMedia",

@@ -267,6 +267,7 @@ extension SQLiteLibraryStore {
             database,
             sql: """
             SELECT id, archiveLocationID, ownerStorageID, ownerRevision,
+                   ownerLastModified,
                    sourceRoot, sourceRelativePath, destinationRoot,
                    destinationRelativePath, expectedByteLength, expectedSHA256,
                    phase, attemptCount, lastError, createdAt, updatedAt
@@ -297,6 +298,8 @@ extension SQLiteLibraryStore {
             archiveLocationID: archiveLocationID,
             ownerStorageID: row["ownerStorageID"],
             ownerRevision: row["ownerRevision"],
+            ownerLastModified: (row["ownerLastModified"] as Double?)
+                .map(Date.init(timeIntervalSinceReferenceDate:)),
             sourceRoot: sourceRoot,
             sourceRelativePath: sourceRelativePath,
             destinationRoot: destinationRoot,
@@ -319,6 +322,7 @@ extension SQLiteLibraryStore {
             operation.archiveLocationID == plan.archiveLocationID &&
             operation.ownerStorageID == plan.ownerStorageID &&
             operation.ownerRevision == plan.ownerRevision &&
+            operation.ownerLastModified == plan.ownerLastModified &&
             operation.sourceRoot == plan.sourceRoot &&
             operation.sourceRelativePath == plan.sourceRelativePath &&
             operation.destinationRoot == plan.destinationRoot &&

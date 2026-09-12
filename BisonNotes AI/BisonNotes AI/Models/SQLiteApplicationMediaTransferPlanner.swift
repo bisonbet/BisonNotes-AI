@@ -93,10 +93,36 @@ struct SQLiteArchiveRestoreRequest: Sendable {
     let archiveLocationID: String
     let ownerStorageID: String?
     let ownerRevision: Int?
+    let ownerLastModified: Date?
     let sourceRootID: String
     let sourceRootURL: URL
     let sourceURL: URL
+    let destinationRootID: String
     let destinationRelativePath: String
+
+    init(
+        operationID: String,
+        archiveLocationID: String,
+        ownerStorageID: String?,
+        ownerRevision: Int?,
+        ownerLastModified: Date? = nil,
+        sourceRootID: String,
+        sourceRootURL: URL,
+        sourceURL: URL,
+        destinationRootID: String = SQLiteApplicationMediaRootID.sqliteMedia.rawValue,
+        destinationRelativePath: String
+    ) {
+        self.operationID = operationID
+        self.archiveLocationID = archiveLocationID
+        self.ownerStorageID = ownerStorageID
+        self.ownerRevision = ownerRevision
+        self.ownerLastModified = ownerLastModified
+        self.sourceRootID = sourceRootID
+        self.sourceRootURL = sourceRootURL
+        self.sourceURL = sourceURL
+        self.destinationRootID = destinationRootID
+        self.destinationRelativePath = destinationRelativePath
+    }
 }
 
 /// Builds a root-relative, checksum-bound archive restore plan without
@@ -113,6 +139,12 @@ struct SQLiteApplicationArchiveRestorePlanner: Sendable {
         try SQLiteMediaFileOperationValidation.identifier(request.operationID)
         try SQLiteMediaFileOperationValidation.identifier(request.archiveLocationID)
         try SQLiteMediaFileOperationValidation.root(request.sourceRootID)
+        try SQLiteMediaFileOperationValidation.root(request.destinationRootID)
+        if let ownerLastModified = request.ownerLastModified {
+            guard ownerLastModified.timeIntervalSinceReferenceDate.isFinite else {
+                throw SQLiteArchiveRestoreError.invalidOwnerRevision
+            }
+        }
 
         let sourceRoot = try Self.validateSourceRoot(
             request.sourceRootURL,
@@ -146,7 +178,7 @@ struct SQLiteApplicationArchiveRestorePlanner: Sendable {
             throw SQLiteMediaPlanningError.sourceNotRegularFile
         }
 
-        let destinationRoot = SQLiteApplicationMediaRootID.sqliteMedia.rawValue
+        let destinationRoot = request.destinationRootID
         let destinationURL = try mapping.registry.destinationURL(
             root: destinationRoot,
             relativePath: request.destinationRelativePath
@@ -165,6 +197,7 @@ struct SQLiteApplicationArchiveRestorePlanner: Sendable {
             archiveLocationID: request.archiveLocationID,
             ownerStorageID: request.ownerStorageID,
             ownerRevision: request.ownerRevision,
+            ownerLastModified: request.ownerLastModified,
             sourceRoot: request.sourceRootID,
             sourceRelativePath: sourceRelativePath,
             destinationRoot: destinationRoot,
