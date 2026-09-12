@@ -543,6 +543,18 @@ macOS app-hosted build-for-testing check passes; the iOS scheme remains blocked
 by the pre-existing Watch Widget `accessoryCorner` availability error. No
 SQLite cutover or live user data was used.
 
+The current web-audio checkpoint is `daf1ee9a` (`feat: journal web audio
+imports`). A completed web download whose resolved extension is supported audio
+now uses the same schema-v8 generic media journal when the Core Data store is
+durable: the source is classified under the registered `BisonNotesWebImports`
+staging root, receives a stable source-derived identity and bounded metadata
+descriptor, publishes into Documents, commits Core Data metadata idempotently,
+records the receipt and removes the source only after the retention check. The
+existing web staging directory is still under the app temporary root, so OS
+purge behavior, orphaned completed downloads and signed-device qualification
+remain open; video extraction, transcript downloads and in-memory/test imports
+retain their direct paths. This adds no live-data or SQLite-cutover behavior.
+
 The current recording metadata-edit checkpoint is `ed898703` (`feat: route
 recording metadata edits through repository`). `LibraryRecordingDateUpdateCommand`
 and `LibraryRecordingLocationUpdateCommand` validate finite dates, coordinates
@@ -1070,10 +1082,11 @@ Not yet implemented or closed:
   signed-device background delivery/expiration validation, retry observability,
   and startup progress-screen wiring. Watch intake and Share/Inbox audio imports now use
   the generic media transfer/receipt/retention boundary; failed or unsupported
-  inbox sources remain available for retry. External document-picker/web
-  imports, video extraction, archive-token restores and other file-owning paths
-  still need explicit journal or exclusion decisions. Provider archive restore
-  is journaled in production through the existing Documents path with bounded
+  inbox sources remain available for retry. Supported web audio now uses the
+  same boundary, while external document-picker imports, video extraction,
+  archive-token restores and other file-owning paths still need explicit journal
+  or exclusion decisions. Provider archive restore is journaled in production
+  through the existing Documents path with bounded
   startup/activation retry and a dedicated iOS processing-task request.
   Signed-device scheduling delivery/expiration validation, retry metrics,
   and final SQLite media-root selection remain open.
@@ -1081,7 +1094,8 @@ Not yet implemented or closed:
   activation, signed device-backup testing and two-device CloudKit validation.
 
 The next safe work package is to finish the production media lifecycle around
-the now-journaled provider restore, Watch intake and Share/Inbox audio path:
+the now-journaled provider restore, Watch intake, Share/Inbox audio and web-audio
+paths:
 qualify signed-device background delivery and expiration behavior, add retry
 observability, define the final app-owned media roots, and decide the remaining
 direct file-owning callers. The provider restore and generic media retry passes
@@ -1095,9 +1109,9 @@ out of production. CloudKit summary restore now shares the repository boundary
 as well; its zero-audio anchor deliberately leaves audio/media work to a later
 operation. The recording metadata and post-copy audio-link legs of CloudKit
 restore now share guarded repository boundaries as well; transcript/summary
-relationship repair remains explicit, while provider archive restore and
-Share/Inbox audio now have durable production paths. Remaining direct media
-callers still need an explicit journal or safe exclusion. After that, audit and
+relationship repair remains explicit, while provider archive restore, Share/Inbox
+audio and supported web audio now have durable pre-cutover paths. Remaining
+direct media callers still need an explicit journal or safe exclusion. After that, audit and
 install the maintenance gate around every remaining direct source mutation.
 The repository-backed production paths now share the gate; direct managed-
 object, settings, remaining file-owning and sync callers still need conversion
@@ -1853,11 +1867,12 @@ inspection was performed. The initial Phase 1 safety slice changes app startup
 and persistent-store failure handling. The current Phase 0 slice pins GRDB and
 adds an isolated file-backed smoke test, and verifies closed synthetic snapshots,
 but does not change a user store or write CloudKit records. The
-current host-independent suite passes 132 tests with 0 failures, including the
-durable provider archive-restore journal, generic media descriptor and
-production Watch-transfer boundary. Focused media and migration-version tests
-pass within that suite. The native macOS app build-for-testing check also
-passes. The full iOS build remains blocked before app/test compilation by the
+current host-independent suite passes 133 tests with 0 failures, including the
+durable provider archive-restore journal, generic media descriptor, production
+Watch-transfer boundary and web-audio root planning. Focused media and
+migration-version tests pass within that suite. The native macOS app
+build-for-testing check also passes. The full iOS build remains blocked before
+app/test compilation by the
 pre-existing Watch Widget `accessoryCorner` availability error, and direct
 simulator XCTest execution remains unavailable. No production upgrade, Apple
 device-backup restore or physical two-device validation was performed for this
