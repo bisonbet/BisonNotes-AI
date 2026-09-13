@@ -44,6 +44,99 @@ enum CoreDataDeletionError: Error, Equatable {
     case recordingNotFound(UUID)
 }
 
+/// A collection fetch failed. This stays distinct from an empty collection so
+/// callers cannot accidentally authorize cleanup, reconciliation, or a
+/// successful empty-library state after a store read failure.
+struct CoreDataCollectionReadError: Error, Equatable, LocalizedError {
+    let operation: String
+    let failure: PersistenceStoreFailure
+
+    init(operation: String, failure: PersistenceStoreFailure) {
+        self.operation = operation
+        self.failure = failure
+    }
+
+    var errorDescription: String? {
+        "The local \(operation) could not be read."
+    }
+
+    var diagnosticDescription: String {
+        "\(operation):\(failure.diagnosticDescription)"
+    }
+}
+
+/// A local save failed after a mutation was prepared. Keep the diagnostic
+/// sanitized for the same reason as `CoreDataCollectionReadError`.
+struct CoreDataSaveError: Error, Equatable, LocalizedError {
+    let operation: String
+    let failure: PersistenceStoreFailure
+
+    init(operation: String, failure: PersistenceStoreFailure) {
+        self.operation = operation
+        self.failure = failure
+    }
+
+    var errorDescription: String? {
+        "The local \(operation) could not be saved."
+    }
+
+    var diagnosticDescription: String {
+        "\(operation):\(failure.diagnosticDescription)"
+    }
+}
+
+enum CoreDataProcessingJobError: Error, Equatable, LocalizedError {
+    case missingIdentity
+    case jobNotFound(UUID)
+    case temporaryObjectID
+    case contextUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .missingIdentity:
+            return "The processing job is missing its identifier."
+        case .jobNotFound(let id):
+            return "Processing job not found: \(id.uuidString)"
+        case .temporaryObjectID:
+            return "The processing job is not yet persisted."
+        case .contextUnavailable:
+            return "A storage-isolated processing context is unavailable."
+        }
+    }
+}
+
+enum CoreDataMutationError: Error, Equatable, LocalizedError {
+    case contextUnavailable
+
+    var errorDescription: String? {
+        "A storage-isolated mutation context is unavailable."
+    }
+}
+
+/// Identifies failures at the local persistence boundary. Processing callers
+/// may retain a recoverable source for retry, but must not bypass a failed job
+/// or metadata save with direct work.
+func isPersistenceBoundaryFailure(_ error: Error) -> Bool {
+    if error is CoreDataCollectionReadError ||
+        error is CoreDataSaveError ||
+        error is CoreDataProcessingJobError ||
+        error is CoreDataMutationError {
+        return true
+    }
+
+    if let backgroundError = error as? BackgroundProcessingError {
+        switch backgroundError {
+        case .persistenceUnavailable,
+             .recordingIdentityUnavailable,
+             .recordingDeletedDuringProcessing:
+            return true
+        default:
+            break
+        }
+    }
+    return false
+}
+
 /// Side effects of a delete that must be committed with the Core Data change.
 ///
 /// Cloud mutations are inserted into the same persistent store transaction as
@@ -213,6 +306,15 @@ class CoreDataManager: ObservableObject {
     private let context: NSManagedObjectContext
 
     #if DEBUG
+    /// Deterministic collection-read fault seam for focused failure tests. It
+    /// is never set by production code and does not touch the user's library.
+    static var injectedCollectionReadFailure: PersistenceStoreFailure?
+    static var injectedCollectionReadOperation: String?
+    /// Deterministic save fault seam for focused failure tests. It is never
+    /// set by production code and can be scoped to one operation.
+    static var injectedSaveFailure: PersistenceStoreFailure?
+    static var injectedSaveOperation: String?
+
     var contextForTesting: NSManagedObjectContext {
         context
     }
@@ -224,11 +326,17 @@ class CoreDataManager: ObservableObject {
         context
     }
 
+    var persistenceState: PersistenceStoreState {
+        persistenceController.storeState
+    }
+
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
         self.persistenceController = resolvedPersistenceController
         self.context = resolvedPersistenceController.container.viewContext
-        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+        if resolvedPersistenceController.storeState.isOperational {
+            _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+        }
     }
 
     // MARK: - Context Management
@@ -240,16 +348,44 @@ class CoreDataManager: ObservableObject {
 
     // MARK: - Recording Operations
 
-    func getAllRecordings() -> [RecordingEntry] {
+    private func fetchCollection<Object: NSManagedObject>(
+        _ request: NSFetchRequest<Object>,
+        operation: String,
+        in fetchContext: NSManagedObjectContext? = nil
+    ) throws -> [Object] {
+        let fetchContext = fetchContext ?? context
+        do {
+            #if DEBUG
+            if let injectedFailure = Self.injectedCollectionReadFailure,
+               Self.injectedCollectionReadOperation == nil ||
+                    Self.injectedCollectionReadOperation == operation {
+                throw CoreDataCollectionReadError(operation: operation, failure: injectedFailure)
+            }
+            #endif
+            return try fetchContext.fetch(request)
+        } catch let error as CoreDataCollectionReadError {
+            AppLog.shared.coreData(
+                "durable_read_failed operation=\(operation) cause=\(error.failure.diagnosticDescription)",
+                level: .error
+            )
+            throw error
+        } catch {
+            let wrappedError = CoreDataCollectionReadError(
+                operation: operation,
+                failure: PersistenceStoreFailure(error: error)
+            )
+            AppLog.shared.coreData(
+                "durable_read_failed operation=\(operation) cause=\(wrappedError.failure.diagnosticDescription)",
+                level: .error
+            )
+            throw wrappedError
+        }
+    }
+
+    func getAllRecordings() throws -> [RecordingEntry] {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
-
-        do {
-            return try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.coreData("Error fetching recordings: \(error)", level: .error)
-            return []
-        }
+        return try fetchCollection(fetchRequest, operation: "recordings")
     }
 
     /// Fetches recording rows for a diagnostic snapshot without converting a
@@ -258,14 +394,14 @@ class CoreDataManager: ObservableObject {
     func fetchRecordingsForDiagnostics() throws -> [RecordingEntry] {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \RecordingEntry.recordingDate, ascending: false)]
-        return try context.fetch(fetchRequest)
+        return try fetchCollection(fetchRequest, operation: "recordings")
     }
 
     // MARK: - URL Management Helpers
 
     /// Migrates all existing absolute URL paths to relative paths for resilience
-    func migrateURLsToRelativePaths() {
-        let allRecordings = getAllRecordings()
+    func migrateURLsToRelativePaths() throws {
+        let allRecordings = try getAllRecordings()
         var updatedCount = 0
 
         // Only show migration progress if there's work to do
@@ -298,6 +434,8 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Migrated \(updatedCount) URLs to relative paths")
             } catch {
                 AppLog.shared.coreData("Failed to save URL migrations: \(error)", level: .error)
+                context.rollback()
+                throw error
             }
         } else if needsMigration {
             AppLog.shared.coreData("No URLs needed migration")
@@ -394,14 +532,13 @@ class CoreDataManager: ObservableObject {
         }
 
         // The remaining candidate is the Documents-relative filename fallback used
-        // when the app's container path changed. Rewriting the row to it keeps the
-        // next lookup on the primary path.
+        // when the app's container path changed. URL resolution is intentionally
+        // read-only here: a caller must not receive a usable URL while a hidden
+        // path-repair save is still pending or has failed.
         AppLog.shared.coreData("File not found at stored path, trying filename search", level: .debug)
         for fallbackURL in candidates.dropFirst()
         where FileManager.default.fileExists(atPath: fallbackURL.path) {
-            AppLog.shared.coreData("File found by filename, updating stored path")
-            recording.recordingURL = urlToRelativePath(fallbackURL)
-            try? context.save()
+            AppLog.shared.coreData("File found by filename; retaining stored path until an explicit repair save")
             return fallbackURL
         }
 
@@ -469,47 +606,55 @@ class CoreDataManager: ObservableObject {
     }
 
     func getRecording(id: UUID) -> RecordingEntry? {
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
         do {
-            return try context.fetch(fetchRequest).first
+            return try fetchRecording(id: id)
         } catch {
-            AppLog.shared.coreData("Error fetching recording: \(error)", level: .error)
             return nil
         }
     }
 
-    func getRecording(url: URL) -> RecordingEntry? {
-        let filename = url.lastPathComponent
-        let normalizedTargetPath = normalizedURLPath(url)
-
-        if let exactMatch = getAllRecordings().first(where: { recording in
-            guard let recordingURL = getAbsoluteURL(for: recording) else {
-                return false
-            }
-            return normalizedURLPath(recordingURL) == normalizedTargetPath
-        }) {
-            return exactMatch
-        }
-
-        // If no match found, try legacy URL matching for migration cases
+    /// Throwing identity lookup for mutations. The optional result means only
+    /// "not found"; a store read failure remains an error.
+    func fetchRecording(id: UUID) throws -> RecordingEntry? {
         let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingURL ENDSWITH %@", filename)
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        return try fetchCollection(fetchRequest, operation: "recording").first
+    }
 
+    /// Compatibility entry point for existing optional-lookup callers. New
+    /// read-dependent operations use fetchRecording(url:) and propagate failure.
+    func getRecording(url: URL) -> RecordingEntry? {
         do {
-            let results = try context.fetch(fetchRequest)
-            if let recording = results.first {
-                // Update to relative path format
-                recording.recordingURL = urlToRelativePath(url)
-                try? context.save()
+            return try fetchRecording(url: url)
+        } catch {
+            // fetchCollection already records the sanitized failure.
+            return nil
+        }
+    }
+
+    /// Resolves legacy encoded paths and moved containers without rewriting rows.
+    func fetchRecording(url: URL) throws -> RecordingEntry? {
+        let recordings = try getAllRecordings()
+        let targetPath = normalizedURLPath(url)
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CoreDataCollectionReadError(
+                operation: "recording URL resolution",
+                failure: PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 3)
+            )
+        }
+        for recording in recordings {
+            guard let storedURL = recording.recordingURL else { continue }
+            let candidates = Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
+            if candidates.contains(where: { normalizedURLPath($0) == targetPath }) {
                 return recording
             }
-        } catch {
-            AppLog.shared.coreData("Error fetching recording by URL: \(error)", level: .error)
         }
-
-        return nil
+        // Preserve the legacy filename fallback, including percent-encoded names.
+        return recordings.first { recording in
+            guard let storedURL = recording.recordingURL else { return false }
+            return Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
+                .contains { $0.lastPathComponent == url.lastPathComponent }
+        }
     }
 
     private func normalizedURLPath(_ url: URL) -> String {
@@ -531,65 +676,73 @@ class CoreDataManager: ObservableObject {
     // MARK: - Transcript Operations
 
     func getTranscript(for recordingId: UUID) -> TranscriptEntry? {
+        do {
+            return try fetchTranscript(for: recordingId)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Throwing recording-scoped transcript lookup for mutation decisions.
+    func fetchTranscript(for recordingId: UUID) throws -> TranscriptEntry? {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         // Older and partially restored rows may have the Core Data relationship
-        // populated while the denormalized recordingId field is absent. Treat
-        // either representation as the same transcript for UI and deletion paths.
+        // populated while the denormalized recordingId field is absent.
         fetchRequest.predicate = NSPredicate(
             format: "recordingId == %@ OR recording.id == %@",
             recordingId as CVarArg,
             recordingId as CVarArg
         )
-        // Sort by lastModified to get the most recent transcript
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.lastModified, ascending: false)]
-
-        do {
-            let results = try context.fetch(fetchRequest)
-            return results.first
-        } catch {
-            AppLog.shared.coreData("Error fetching transcript: \(error)", level: .error)
-            return nil
-        }
+        return try fetchCollection(fetchRequest, operation: "transcript").first
     }
 
     func getTranscript(id: UUID) -> TranscriptEntry? {
-        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
         do {
-            return try context.fetch(fetchRequest).first
+            return try fetchTranscript(id: id)
         } catch {
-            AppLog.shared.coreData("Error fetching transcript \(id): \(error)", level: .error)
             return nil
         }
     }
 
+    /// Throwing identity lookup for mutations. The optional result means only
+    /// "not found"; a store read failure remains an error.
+    func fetchTranscript(id: UUID) throws -> TranscriptEntry? {
+        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        return try fetchCollection(fetchRequest, operation: "transcript").first
+    }
+
     func getTranscriptData(for recordingId: UUID) -> TranscriptData? {
-        guard let transcriptEntry = getTranscript(for: recordingId),
-              let recordingEntry = getRecording(id: recordingId) else {
+        do {
+            return try fetchTranscriptData(for: recordingId)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Throwing value conversion used before a transcript mutation or cleanup
+    /// decision. A failed lookup cannot masquerade as "no prior transcript".
+    func fetchTranscriptData(for recordingId: UUID) throws -> TranscriptData? {
+        guard let transcriptEntry = try fetchTranscript(for: recordingId),
+              let recordingEntry = try fetchRecording(id: recordingId) else {
             return nil
         }
 
         return convertToTranscriptData(transcriptEntry: transcriptEntry, recordingEntry: recordingEntry)
     }
 
-    func getAllTranscripts() -> [TranscriptEntry] {
+    func getAllTranscripts() throws -> [TranscriptEntry] {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
-
-        do {
-            return try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.coreData("Error fetching transcripts: \(error)", level: .error)
-            return []
-        }
+        return try fetchCollection(fetchRequest, operation: "transcripts")
     }
 
     /// Throwing counterpart used by read-only troubleshooting snapshots.
     func fetchTranscriptsForDiagnostics() throws -> [TranscriptEntry] {
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
-        return try context.fetch(fetchRequest)
+        return try fetchCollection(fetchRequest, operation: "transcripts")
     }
 
     /// Deletes a transcript and, once the save has landed, tells iCloud.
@@ -599,8 +752,25 @@ class CoreDataManager: ObservableObject {
     func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
         do {
             var effects = DeferredDeletionEffects()
-            guard try stageTranscriptDeletion(id: id, effects: &effects) else { return }
-            try save(committing: effects, localOnly: !enqueueCloudDeletion)
+            let didDelete = try performIsolatedMutation(operation: "transcript deletion") { isolatedContext in
+                guard try stageTranscriptDeletion(
+                    id: id,
+                    effects: &effects,
+                    in: isolatedContext
+                ) else {
+                    return false
+                }
+                if enqueueCloudDeletion {
+                    try effects.stageCloudMutations(in: isolatedContext)
+                }
+                return true
+            }
+            guard didDelete else { return }
+            if enqueueCloudDeletion {
+                effects.commit()
+            } else {
+                effects.commitLocalOnly()
+            }
             AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
@@ -615,13 +785,19 @@ class CoreDataManager: ObservableObject {
     func stageTranscriptDeletion(
         id: UUID?,
         effects: inout DeferredDeletionEffects,
-        requestedAt: Date = Date()
+        requestedAt: Date = Date(),
+        in mutationContext: NSManagedObjectContext? = nil
     ) throws -> Bool {
         guard let id else { return false }
+        let mutationContext = mutationContext ?? context
 
         let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-        let transcripts = try context.fetch(fetchRequest)
+        let transcripts = try fetchCollection(
+            fetchRequest,
+            operation: "transcripts",
+            in: mutationContext
+        )
         guard !transcripts.isEmpty else {
             AppLog.shared.coreData("No transcript found with ID: \(id)", level: .debug)
             return false
@@ -631,8 +807,13 @@ class CoreDataManager: ObservableObject {
         // recording instead would clear the link on a recording that has since
         // moved to a newer transcript, which is exactly the id an iCloud
         // deletion marker for a superseded duplicate carries.
-        let recordings = fetchRecordings(
-            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
+        let recordings = try fetchRecordings(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg),
+            in: mutationContext
+        )
+        let summaryEntries = try fetchSummaries(
+            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg),
+            in: mutationContext
         )
         for recording in recordings {
             recording.transcript = nil
@@ -641,9 +822,6 @@ class CoreDataManager: ObservableObject {
             recording.lastModified = requestedAt
         }
 
-        let summaryEntries = fetchSummaries(
-            matching: NSPredicate(format: "transcriptId == %@ OR transcript.id == %@", id as CVarArg, id as CVarArg)
-        )
         for summary in summaryEntries {
             summary.transcript = nil
             summary.transcriptId = nil
@@ -651,9 +829,75 @@ class CoreDataManager: ObservableObject {
 
         for transcript in transcripts {
             effects.stage(transcript: transcript, requestedAt: requestedAt)
-            context.delete(transcript)
+            mutationContext.delete(transcript)
         }
         return true
+    }
+
+    /// Removes an imported transcript placeholder while retaining its recording
+    /// anchor and summary. The complete local mutation, including cloud intent,
+    /// runs in an isolated context so a failed save cannot roll back unrelated
+    /// edits staged in the view context.
+    func deleteImportedTranscriptPreservingSummary(
+        recordingId: UUID,
+        transcriptId: UUID? = nil
+    ) throws {
+        guard let initialRecording = try fetchRecording(id: recordingId) else {
+            throw CoreDataDeletionError.recordingNotFound(recordingId)
+        }
+
+        _ = try performIsolatedMutation(operation: "imported transcript deletion") { isolatedContext in
+            guard let recording = try isolatedContext.existingObject(with: initialRecording.objectID) as? RecordingEntry else {
+                throw CoreDataDeletionError.recordingNotFound(recordingId)
+            }
+
+            let summary = try fetchSummary(for: recordingId, in: isolatedContext) ?? recording.summary
+            let transcriptIds = Set([
+                transcriptId,
+                recording.transcriptId,
+                recording.transcript?.id,
+                summary?.transcriptId,
+                summary?.transcript?.id
+            ].compactMap { $0 })
+            let deletionDate = Date()
+            var effects = DeferredDeletionEffects()
+
+            for transcriptId in transcriptIds {
+                let removedLocalRow = try stageTranscriptDeletion(
+                    id: transcriptId,
+                    effects: &effects,
+                    requestedAt: deletionDate,
+                    in: isolatedContext
+                )
+                if !removedLocalRow {
+                    effects.stageTranscript(
+                        id: transcriptId,
+                        recordingId: recordingId,
+                        requestedAt: deletionDate
+                    )
+                }
+            }
+
+            let currentTranscriptId = recording.transcriptId ?? recording.transcript?.id
+            if currentTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                recording.transcript = nil
+                recording.transcriptId = nil
+                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            }
+
+            if let summary {
+                let currentSummaryTranscriptId = summary.transcriptId ?? summary.transcript?.id
+                if currentSummaryTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
+                    summary.transcript = nil
+                    summary.transcriptId = nil
+                }
+            }
+
+            recording.recordingURL = nil
+            recording.lastModified = deletionDate
+            effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
+            try effects.stageCloudMutations(in: isolatedContext)
+        }
     }
 
     /// Applies another device's imported-audio tombstone: unlinks the recording from
@@ -664,15 +908,30 @@ class CoreDataManager: ObservableObject {
     /// travels as its own tombstone, and clearing `transcriptId` here would strand a
     /// real transcript row on any device whose markers arrive in the other order.
     ///
-    /// Removes the file before saving the unlink. A failed filesystem operation or
-    /// save leaves the URL in Core Data, so the marker remains eligible for retry.
+    /// Saves a durable preparation before removing the file, then saves the unlink.
+    /// A failed filesystem operation or final save leaves the URL in Core Data, so
+    /// the marker remains eligible for retry. The two isolated saves also keep a
+    /// failed inbound marker from rolling back unrelated pending UI edits.
     /// Saves local-only: this is someone else's marker being applied, and raising a
     /// tombstone of our own would re-create one a revive had withdrawn.
     @discardableResult
     func applyImportedAudioRemoval(recordingId: UUID, requestedAt: Date) throws -> Bool {
-        guard let recording = getRecording(id: recordingId),
+        guard let recording = try fetchRecording(id: recordingId),
               let storedURL = recording.recordingURL else {
             return false
+        }
+
+        // Establish the marker's timestamp durably before touching the owned
+        // source. If this save fails, no file operation is attempted.
+        _ = try performIsolatedMutation(operation: "imported audio removal preparation") { isolatedContext in
+            guard let isolatedRecording = try isolatedContext.existingObject(with: recording.objectID) as? RecordingEntry else {
+                throw CoreDataDeletionError.recordingNotFound(recordingId)
+            }
+            if let existing = isolatedRecording.lastModified, existing > requestedAt {
+                isolatedRecording.lastModified = existing
+            } else {
+                isolatedRecording.lastModified = requestedAt
+            }
         }
 
         guard let documentsURL = FileManager.default.urls(
@@ -728,20 +987,19 @@ class CoreDataManager: ObservableObject {
             }
         }
 
-        recording.recordingURL = nil
-        // Only ever forward. A rename made on this device after the delete is still
-        // the newer edit, and moving the stamp back would hand it to the cloud copy.
-        if let existing = recording.lastModified, existing > requestedAt {
-            recording.lastModified = existing
-        } else {
-            recording.lastModified = requestedAt
-        }
-
-        do {
-            try context.save()
-        } catch {
-            context.rollback()
-            throw error
+        // The source is now gone. Save only the operation-owned unlink in a
+        // sibling context; if this save fails the durable URL still identifies
+        // the already-retained operation for retry/reconciliation.
+        _ = try performIsolatedMutation(operation: "imported audio removal") { isolatedContext in
+            guard let isolatedRecording = try isolatedContext.existingObject(with: recording.objectID) as? RecordingEntry else {
+                throw CoreDataDeletionError.recordingNotFound(recordingId)
+            }
+            isolatedRecording.recordingURL = nil
+            if let existing = isolatedRecording.lastModified, existing > requestedAt {
+                isolatedRecording.lastModified = existing
+            } else {
+                isolatedRecording.lastModified = requestedAt
+            }
         }
 
         AppLog.shared.coreData(
@@ -754,8 +1012,8 @@ class CoreDataManager: ObservableObject {
     // MARK: - Repair Operations
 
     /// Repairs orphaned summaries by creating missing recording entries
-    func repairOrphanedSummaries() -> Int {
-        let allSummaries = getAllSummaries()
+    func repairOrphanedSummaries() throws -> Int {
+        let allSummaries = try getAllSummaries()
         var repairedCount = 0
 
         AppLog.shared.coreData("Starting repair of \(allSummaries.count) summaries...", level: .debug)
@@ -793,14 +1051,10 @@ class CoreDataManager: ObservableObject {
             do {
                 try context.save()
                 AppLog.shared.coreData("Successfully repaired \(repairedCount) orphaned summaries in Core Data")
-
-                // Verify the repair worked
-                let newRecordingCount = getAllRecordings().count
-                let newSummaryCount = getAllSummaries().count
-                AppLog.shared.coreData("After repair: \(newRecordingCount) recordings, \(newSummaryCount) summaries", level: .debug)
             } catch {
                 AppLog.shared.coreData("Failed to save repaired summaries: \(error)", level: .error)
-                return 0
+                context.rollback()
+                throw error
             }
         } else {
             AppLog.shared.coreData("No orphaned summaries found to repair")
@@ -824,23 +1078,40 @@ class CoreDataManager: ObservableObject {
     func deleteSupersededDuplicates(
         transcriptIds: [UUID],
         summaryIds: [UUID]
-    ) -> (transcripts: Int, summaries: Int) {
+    ) throws -> (transcripts: Int, summaries: Int) {
         guard !transcriptIds.isEmpty || !summaryIds.isEmpty else { return (0, 0) }
+
+        // Read every collection before deleting anything. A failed fetch must
+        // leave the local rows and the reconcile transaction untouched.
+        let recordings = try getAllRecordings()
+        let transcripts = try getAllTranscripts()
+        let summaries = try getAllSummaries()
+        var recordingsByID: [UUID: [RecordingEntry]] = [:]
+        for recording in recordings {
+            if let id = recording.id { recordingsByID[id, default: []].append(recording) }
+        }
+        let ambiguousIDs = Set(recordingsByID.filter { $0.value.count > 1 }.keys)
 
         var transcriptsDeleted = 0
         var summariesDeleted = 0
 
         for transcriptId in transcriptIds {
-            guard let transcript = getTranscript(id: transcriptId) else { continue }
-            guard isUnreferencedDuplicate(transcript) else { continue }
+            guard let transcript = transcripts.first(where: { $0.id == transcriptId }) else { continue }
+            guard ![transcript.recordingId, transcript.recording?.id].compactMap({ $0 })
+                .contains(where: ambiguousIDs.contains) else { continue }
+            let recording = transcript.recording ?? transcript.recordingId.flatMap { recordingsByID[$0]?.first }
+            guard isUnreferencedDuplicate(transcript, recording: recording) else { continue }
             context.delete(transcript)
             transcriptsDeleted += 1
         }
 
         var effects = DeferredDeletionEffects()
         for summaryId in summaryIds {
-            guard let summary = getSummary(id: summaryId) else { continue }
-            guard isUnreferencedDuplicate(summary) else { continue }
+            guard let summary = summaries.first(where: { $0.id == summaryId }) else { continue }
+            guard ![summary.recordingId, summary.recording?.id].compactMap({ $0 })
+                .contains(where: ambiguousIDs.contains) else { continue }
+            let recording = summary.recording ?? summary.recordingId.flatMap { recordingsByID[$0]?.first }
+            guard isUnreferencedDuplicate(summary, recording: recording) else { continue }
             effects.stage(summary: summary)
             context.delete(summary)
             summariesDeleted += 1
@@ -857,32 +1128,30 @@ class CoreDataManager: ObservableObject {
             )
         } catch {
             AppLog.shared.coreData("Failed to remove superseded duplicates: \(error)", level: .error)
-            return (0, 0)
+            throw error
         }
 
         return (transcriptsDeleted, summariesDeleted)
     }
 
-    private func isUnreferencedDuplicate(_ transcript: TranscriptEntry) -> Bool {
+    private func isUnreferencedDuplicate(_ transcript: TranscriptEntry, recording: RecordingEntry?) -> Bool {
         guard let transcriptId = transcript.id else { return false }
-        guard let recording = transcript.recording
-            ?? transcript.recordingId.flatMap({ getRecording(id: $0) }) else {
+        guard let recording else {
             // An orphaned row has no recording to supersede it; leave it to cleanupDuplicates.
             return false
         }
         return recording.transcriptId != transcriptId && recording.transcript?.id != transcriptId
     }
 
-    private func isUnreferencedDuplicate(_ summary: SummaryEntry) -> Bool {
+    private func isUnreferencedDuplicate(_ summary: SummaryEntry, recording: RecordingEntry?) -> Bool {
         guard let summaryId = summary.id else { return false }
-        guard let recording = summary.recording
-            ?? summary.recordingId.flatMap({ getRecording(id: $0) }) else {
+        guard let recording else {
             return false
         }
         return recording.summaryId != summaryId && recording.summary?.id != summaryId
     }
 
-    func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
+    func cleanupDuplicates() throws -> (summaries: Int, transcripts: Int) {
         var summariesDeleted = 0
         var transcriptsDeleted = 0
 
@@ -890,19 +1159,40 @@ class CoreDataManager: ObservableObject {
 
         AppLog.shared.coreData("Starting duplicate cleanup...")
 
-        // Get all recordings
-        let recordings = getAllRecordings()
+        // Complete all reads before mutating any row. An unavailable collection
+        // is not evidence that there are no duplicates or orphans.
+        let recordings = try getAllRecordings()
+        let allSummaries = try getAllSummaries()
+        let allTranscripts = try getAllTranscripts()
         AppLog.shared.coreData("Checking \(recordings.count) recordings for duplicates", level: .debug)
+
+        var summariesByRecordingID: [UUID: [SummaryEntry]] = [:]
+        for summary in allSummaries {
+            if let recordingId = summary.recordingId ?? summary.recording?.id {
+                summariesByRecordingID[recordingId, default: []].append(summary)
+            }
+        }
+
+        var transcriptsByRecordingID: [UUID: [TranscriptEntry]] = [:]
+        for transcript in allTranscripts {
+            if let recordingId = transcript.recordingId ?? transcript.recording?.id {
+                transcriptsByRecordingID[recordingId, default: []].append(transcript)
+            }
+        }
 
         for recording in recordings {
             guard let recordingId = recording.id else { continue }
 
             // Check for duplicate summaries
-            let summaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-            summaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-            summaryFetch.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
-
-            if let summaries = try? context.fetch(summaryFetch), summaries.count > 1 {
+            let summaries = (summariesByRecordingID[recordingId] ?? []).sorted { lhs, rhs in
+                Self.summaryIsConvergentlyEarlier(
+                    lhsTimestamp: rhs.generatedAt ?? rhs.recording?.recordingDate,
+                    lhsId: rhs.id,
+                    rhsTimestamp: lhs.generatedAt ?? lhs.recording?.recordingDate,
+                    rhsId: lhs.id
+                )
+            }
+            if summaries.count > 1 {
                 AppLog.shared.coreData("Found \(summaries.count) summaries for recording ID: \(recordingId)", level: .debug)
                 // Keep the first (most recent), delete the rest
                 for (index, summary) in summaries.enumerated() {
@@ -920,11 +1210,11 @@ class CoreDataManager: ObservableObject {
             }
 
             // Check for duplicate transcripts
-            let transcriptFetch: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-            transcriptFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-            transcriptFetch.sortDescriptors = [NSSortDescriptor(keyPath: \TranscriptEntry.createdAt, ascending: false)]
-
-            if let transcripts = try? context.fetch(transcriptFetch), transcripts.count > 1 {
+            let transcripts = (transcriptsByRecordingID[recordingId] ?? []).sorted { lhs, rhs in
+                (lhs.lastModified ?? lhs.createdAt ?? .distantPast)
+                    > (rhs.lastModified ?? rhs.createdAt ?? .distantPast)
+            }
+            if transcripts.count > 1 {
                 AppLog.shared.coreData("Found \(transcripts.count) transcripts for recording ID: \(recordingId)", level: .debug)
                 // Keep the first (most recent), delete the rest
                 for (index, transcript) in transcripts.enumerated() {
@@ -943,30 +1233,25 @@ class CoreDataManager: ObservableObject {
         }
 
         // Also check for orphaned summaries (no matching recording)
-        let orphanSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        if let allSummaries = try? context.fetch(orphanSummaryFetch) {
-            let recordingIds = Set(recordings.compactMap { $0.id })
-            for summary in allSummaries {
-                if let summaryRecordingId = summary.recordingId, !recordingIds.contains(summaryRecordingId) {
-                    AppLog.shared.coreData("Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")", level: .debug)
-                    effects.stage(summary: summary)
-                    context.delete(summary)
-                    summariesDeleted += 1
-                }
+        let recordingIds = Set(recordings.compactMap { $0.id })
+        for summary in allSummaries {
+            if let summaryRecordingId = summary.recordingId ?? summary.recording?.id,
+               !recordingIds.contains(summaryRecordingId) {
+                AppLog.shared.coreData("Deleting orphaned summary (no recording): ID \(summary.id?.uuidString ?? "nil")", level: .debug)
+                effects.stage(summary: summary)
+                context.delete(summary)
+                summariesDeleted += 1
             }
         }
 
         // Also check for orphaned transcripts (no matching recording)
-        let orphanTranscriptFetch: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        if let allTranscripts = try? context.fetch(orphanTranscriptFetch) {
-            let recordingIds = Set(recordings.compactMap { $0.id })
-            for transcript in allTranscripts {
-                if let transcriptRecordingId = transcript.recordingId, !recordingIds.contains(transcriptRecordingId) {
-                    AppLog.shared.coreData("Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")", level: .debug)
-                    effects.stage(transcript: transcript)
-                    context.delete(transcript)
-                    transcriptsDeleted += 1
-                }
+        for transcript in allTranscripts {
+            if let transcriptRecordingId = transcript.recordingId ?? transcript.recording?.id,
+               !recordingIds.contains(transcriptRecordingId) {
+                AppLog.shared.coreData("Deleting orphaned transcript (no recording): ID \(transcript.id?.uuidString ?? "nil")", level: .debug)
+                effects.stage(transcript: transcript)
+                context.delete(transcript)
+                transcriptsDeleted += 1
             }
         }
 
@@ -976,7 +1261,7 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Cleanup complete: deleted \(summariesDeleted) duplicate/orphaned summaries, \(transcriptsDeleted) duplicate/orphaned transcripts")
             } catch {
                 AppLog.shared.coreData("Failed to save cleanup changes: \(error)", level: .error)
-                return (0, 0)
+                throw error
             }
         } else {
             AppLog.shared.coreData("No duplicates or orphans found")
@@ -991,108 +1276,136 @@ class CoreDataManager: ObservableObject {
     /// The recording UUID is the authoritative identity; the recording URL is not accepted here
     /// as a substitute because callers must resolve it before writing.
     @discardableResult
+    private func summaryForUpsert(
+        in context: NSManagedObjectContext, objectID: NSManagedObjectID?, summaryID: UUID
+    ) throws -> SummaryEntry {
+        guard let objectID else { return SummaryEntry(context: context) }
+        guard let summary = try context.existingObject(with: objectID) as? SummaryEntry else {
+            throw SummaryUpsertError.summaryIDBelongsToAnotherRecording(summaryID)
+        }
+        return summary
+    }
+
+    private func applySummaryContent(_ summary: EnhancedSummaryData, to isolatedSummary: SummaryEntry) {
+            isolatedSummary.contentType = summary.contentType.rawValue
+            isolatedSummary.aiMethod = SummaryMetadataCodec.encode(
+                aiEngine: summary.aiEngine,
+                aiModel: summary.aiModel
+            )
+            isolatedSummary.generatedAt = summary.generatedAt
+            isolatedSummary.version = Int32(summary.version)
+            isolatedSummary.wordCount = Int32(summary.wordCount)
+            isolatedSummary.originalLength = Int32(summary.originalLength)
+            isolatedSummary.compressionRatio = summary.compressionRatio
+            isolatedSummary.confidence = summary.confidence
+            isolatedSummary.processingTime = summary.processingTime
+    }
+
     func upsertSummary(
         _ summary: EnhancedSummaryData,
         for recordingId: UUID,
         transcriptId: UUID? = nil,
         identityPolicy: SummaryUpsertIdentityPolicy = .preserveExisting
     ) throws -> UUID {
-        guard let recordingEntry = getRecording(id: recordingId) else {
+        guard let recordingEntry = try fetchRecording(id: recordingId) else {
             throw SummaryUpsertError.recordingNotFound(recordingId)
         }
+        let recordingObjectID = recordingEntry.objectID
 
         if let embeddedRecordingId = summary.recordingId, embeddedRecordingId != recordingId {
             throw SummaryUpsertError.summaryIDBelongsToAnotherRecording(summary.id)
         }
 
-        let summaryByIDRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        summaryByIDRequest.predicate = NSPredicate(format: "id == %@", summary.id as CVarArg)
-        let summaryByID = try context.fetch(summaryByIDRequest).first
+        let summaryByID = try fetchSummary(id: summary.id)
         if let summaryByID,
            let existingRecordingId = summaryByID.recordingId ?? summaryByID.recording?.id,
            existingRecordingId != recordingId {
             throw SummaryUpsertError.summaryIDBelongsToAnotherRecording(summary.id)
         }
 
-        let summariesForRecordingRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        summariesForRecordingRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        summariesForRecordingRequest.sortDescriptors = [NSSortDescriptor(key: "generatedAt", ascending: false)]
-        let summariesForRecording = try context.fetch(summariesForRecordingRequest)
-        let summaryEntry: SummaryEntry
+        let summariesForRecording = try fetchSummaries(forRecordingId: recordingId)
+        let existingSummaryObjectID = summaryByID?.objectID
+        let firstSummaryObjectID = summariesForRecording.first?.objectID
+        let summaryId: UUID
         let previousSummaryId: UUID?
         switch identityPolicy {
         case .preserveExisting:
-            summaryEntry = summaryByID ?? summariesForRecording.first ?? SummaryEntry(context: context)
+            summaryId = summaryByID?.id ?? summariesForRecording.first?.id ?? summary.id
             previousSummaryId = nil
         case .incomingSummary:
-            if let summaryByID {
-                summaryEntry = summaryByID
-                previousSummaryId = nil
-            } else if let existingSummary = summariesForRecording.first {
-                summaryEntry = existingSummary
-                previousSummaryId = existingSummary.id
-            } else {
-                summaryEntry = SummaryEntry(context: context)
-                previousSummaryId = nil
-            }
-        }
-
-        let summaryId: UUID
-        switch identityPolicy {
-        case .preserveExisting:
-            summaryId = summaryEntry.id ?? summary.id
-        case .incomingSummary:
             summaryId = summary.id
+            previousSummaryId = summaryByID == nil ? summariesForRecording.first?.id : nil
         }
-        summaryEntry.id = summaryId
 
-        guard let tasksData = try? JSONEncoder().encode(summary.tasks),
-              let tasksString = String(data: tasksData, encoding: .utf8),
-              let remindersData = try? JSONEncoder().encode(summary.reminders),
+        let tasksData = try JSONEncoder().encode(summary.tasks)
+        let remindersData = try JSONEncoder().encode(summary.reminders)
+        let titlesData = try JSONEncoder().encode(summary.titles)
+        guard let tasksString = String(data: tasksData, encoding: .utf8),
               let remindersString = String(data: remindersData, encoding: .utf8),
-              let titlesData = try? JSONEncoder().encode(summary.titles),
               let titlesString = String(data: titlesData, encoding: .utf8) else {
             throw SummaryUpsertError.encodingFailed
         }
 
-        summaryEntry.recordingId = recordingId
-        summaryEntry.summary = summary.summary
-        summaryEntry.tasks = tasksString
-        summaryEntry.reminders = remindersString
-        summaryEntry.titles = titlesString
-        summaryEntry.contentType = summary.contentType.rawValue
-        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
-        summaryEntry.generatedAt = summary.generatedAt
-        summaryEntry.version = Int32(summary.version)
-        summaryEntry.wordCount = Int32(summary.wordCount)
-        summaryEntry.originalLength = Int32(summary.originalLength)
-        summaryEntry.compressionRatio = summary.compressionRatio
-        summaryEntry.confidence = summary.confidence
-        summaryEntry.processingTime = summary.processingTime
-        summaryEntry.recording = recordingEntry
-        recordingEntry.summary = summaryEntry
-        recordingEntry.summaryId = summaryId
-        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
-        advanceLastModified(recordingEntry, to: summary.generatedAt)
+        // Resolve the optional transcript before mutating a sibling context.
+        // A failed read is not equivalent to a missing transcript for this
+        // operation; only a successful lookup can authorize the link decision.
+        let resolvedTranscriptId = transcriptId ?? summary.transcriptId
+        if let resolvedTranscriptId {
+            _ = try fetchTranscript(id: resolvedTranscriptId)
+        }
 
-        try linkTranscript(to: summaryEntry, id: transcriptId ?? summary.transcriptId, policy: identityPolicy)
+        try performIsolatedMutation(operation: "summary upsert") { isolatedContext in
+            guard let isolatedRecording = try isolatedContext.existingObject(with: recordingObjectID) as? RecordingEntry else {
+                throw SummaryUpsertError.recordingNotFound(recordingId)
+            }
 
-        do {
-            try context.save()
-        } catch {
-            context.rollback()
-            throw error
+            let isolatedSummary = try summaryForUpsert(
+                in: isolatedContext, objectID: existingSummaryObjectID ?? firstSummaryObjectID, summaryID: summary.id
+            )
+
+            isolatedSummary.id = summaryId
+            isolatedSummary.recordingId = recordingId
+            isolatedSummary.summary = summary.summary
+            isolatedSummary.tasks = tasksString
+            isolatedSummary.reminders = remindersString
+            isolatedSummary.titles = titlesString
+            applySummaryContent(summary, to: isolatedSummary)
+            isolatedSummary.recording = isolatedRecording
+            isolatedRecording.summary = isolatedSummary
+            isolatedRecording.summaryId = summaryId
+            isolatedRecording.summaryStatus = ProcessingStatus.completed.rawValue
+            advanceLastModified(isolatedRecording, to: summary.generatedAt)
+
+            if let resolvedTranscriptId {
+                let request: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
+                request.predicate = NSPredicate(format: "id == %@", resolvedTranscriptId as CVarArg)
+                let transcript = try fetchCollection(
+                    request,
+                    operation: "transcript",
+                    in: isolatedContext
+                ).first
+                if transcript != nil || identityPolicy == .incomingSummary {
+                    isolatedSummary.transcriptId = resolvedTranscriptId
+                    isolatedSummary.transcript = transcript
+                }
+            } else if identityPolicy == .incomingSummary {
+                isolatedSummary.transcriptId = nil
+                isolatedSummary.transcript = nil
+            }
         }
 
         // Keep one authoritative summary per recording after the save succeeds.
-        let duplicateSummaries = summariesForRecording.filter { $0.objectID != summaryEntry.objectID }
-        if !duplicateSummaries.isEmpty {
+        let duplicateSummaryIDs: [UUID] = summariesForRecording.compactMap { existing -> UUID? in
+            guard existing.objectID != existingSummaryObjectID,
+                  existing.id != summaryId else { return nil }
+            return existing.id
+        }
+        if !duplicateSummaryIDs.isEmpty {
             var effects = DeferredDeletionEffects()
-            duplicateSummaries.forEach {
-                effects.stage(summary: $0)
-                context.delete($0)
+            for duplicateSummary in summariesForRecording where duplicateSummaryIDs.contains(duplicateSummary.id ?? UUID()) {
+                effects.stage(summary: duplicateSummary)
             }
-            try save(committing: effects)
+            try deleteSummariesAfterSave(ids: duplicateSummaryIDs, effects: effects)
         }
 
         if let previousSummaryId, previousSummaryId != summaryId {
@@ -1109,48 +1422,33 @@ class CoreDataManager: ObservableObject {
         return summaryId
     }
 
-    private func linkTranscript(
-        to summaryEntry: SummaryEntry,
-        id transcriptId: UUID?,
-        policy identityPolicy: SummaryUpsertIdentityPolicy
-    ) throws {
-        guard let transcriptId else {
-            if identityPolicy == .incomingSummary {
-                summaryEntry.transcriptId = nil
-                summaryEntry.transcript = nil
-            }
-            return
-        }
-
-        let transcriptRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        transcriptRequest.predicate = NSPredicate(format: "id == %@", transcriptId as CVarArg)
-        let transcript = try context.fetch(transcriptRequest).first
-        if transcript != nil || identityPolicy == .incomingSummary {
-            summaryEntry.transcriptId = transcriptId
-            summaryEntry.transcript = transcript
-        }
-    }
-
     /// Persists a cloud summary that has no matching local recording by creating a stable
     /// summary-only recording anchor. Repeated restores return the existing summary instead
     /// of creating another anchor.
     @discardableResult
     func upsertOrphanedSummary(_ summary: EnhancedSummaryData) throws -> UUID {
-        if let existingSummary = getSummary(id: summary.id) {
+        if let existingSummary = try fetchSummary(id: summary.id) {
             guard let recordingEntry = existingSummary.recording,
                   let recordingId = recordingEntry.id else {
                 throw SummaryUpsertError.recordingIdentityUnavailable
             }
 
-            recordingEntry.recordingName = summary.recordingName
-            recordingEntry.recordingDate = summary.recordingDate
-            advanceLastModified(recordingEntry, to: summary.generatedAt)
-            return try upsertSummary(
+            let result = try upsertSummary(
                 summary,
                 for: recordingId,
                 transcriptId: summary.transcriptId,
                 identityPolicy: .incomingSummary
             )
+            let recordingObjectID = recordingEntry.objectID
+            try performIsolatedMutation(operation: "orphaned summary metadata") { isolatedContext in
+                guard let isolatedRecording = try isolatedContext.existingObject(with: recordingObjectID) as? RecordingEntry else {
+                    throw SummaryUpsertError.recordingNotFound(recordingId)
+                }
+                isolatedRecording.recordingName = summary.recordingName
+                isolatedRecording.recordingDate = summary.recordingDate
+                advanceLastModified(isolatedRecording, to: summary.generatedAt)
+            }
+            return result
         }
 
         let tasksData = try JSONEncoder().encode(summary.tasks)
@@ -1162,42 +1460,38 @@ class CoreDataManager: ObservableObject {
             throw SummaryUpsertError.encodingFailed
         }
 
-        let recordingEntry = RecordingEntry(context: context)
-        recordingEntry.id = summary.recordingId ?? UUID()
-        recordingEntry.recordingName = summary.recordingName
-        recordingEntry.recordingDate = summary.recordingDate
-        recordingEntry.recordingURL = nil
-        recordingEntry.duration = 0
-        recordingEntry.fileSize = 0
-        recordingEntry.summaryId = summary.id
-        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
-        advanceLastModified(recordingEntry, to: summary.generatedAt)
+        let recordingId = summary.recordingId ?? UUID()
+        try performIsolatedMutation(operation: "orphaned summary creation") { isolatedContext in
+            let recordingEntry = RecordingEntry(context: isolatedContext)
+            recordingEntry.id = recordingId
+            recordingEntry.recordingName = summary.recordingName
+            recordingEntry.recordingDate = summary.recordingDate
+            recordingEntry.recordingURL = nil
+            recordingEntry.duration = 0
+            recordingEntry.fileSize = 0
+            recordingEntry.summaryId = summary.id
+            recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+            advanceLastModified(recordingEntry, to: summary.generatedAt)
 
-        let summaryEntry = SummaryEntry(context: context)
-        summaryEntry.id = summary.id
-        summaryEntry.recordingId = recordingEntry.id
-        summaryEntry.transcriptId = summary.transcriptId
-        summaryEntry.generatedAt = summary.generatedAt
-        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
-        summaryEntry.processingTime = summary.processingTime
-        summaryEntry.confidence = summary.confidence
-        summaryEntry.summary = summary.summary
-        summaryEntry.contentType = summary.contentType.rawValue
-        summaryEntry.wordCount = Int32(summary.wordCount)
-        summaryEntry.originalLength = Int32(summary.originalLength)
-        summaryEntry.compressionRatio = summary.compressionRatio
-        summaryEntry.version = Int32(summary.version)
-        summaryEntry.tasks = tasks
-        summaryEntry.reminders = reminders
-        summaryEntry.titles = titles
-        summaryEntry.recording = recordingEntry
-        recordingEntry.summary = summaryEntry
-
-        do {
-            try context.save()
-        } catch {
-            context.rollback()
-            throw error
+            let summaryEntry = SummaryEntry(context: isolatedContext)
+            summaryEntry.id = summary.id
+            summaryEntry.recordingId = recordingId
+            summaryEntry.transcriptId = summary.transcriptId
+            summaryEntry.generatedAt = summary.generatedAt
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
+            summaryEntry.processingTime = summary.processingTime
+            summaryEntry.confidence = summary.confidence
+            summaryEntry.summary = summary.summary
+            summaryEntry.contentType = summary.contentType.rawValue
+            summaryEntry.wordCount = Int32(summary.wordCount)
+            summaryEntry.originalLength = Int32(summary.originalLength)
+            summaryEntry.compressionRatio = summary.compressionRatio
+            summaryEntry.version = Int32(summary.version)
+            summaryEntry.tasks = tasks
+            summaryEntry.reminders = reminders
+            summaryEntry.titles = titles
+            summaryEntry.recording = recordingEntry
+            recordingEntry.summary = summaryEntry
         }
 
         return summary.id
@@ -1216,32 +1510,42 @@ class CoreDataManager: ObservableObject {
     /// them during reconcile, where every device derives the same winner from the
     /// same data and no tombstone is written.
     func getSummary(for recordingId: UUID) -> SummaryEntry? {
-        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-
         do {
-            let summaries = try context.fetch(fetchRequest)
-            guard summaries.count > 1 else {
-                return summaries.first
-            }
-
-            AppLog.shared.coreData(
-                "Found \(summaries.count) summaries for recording \(recordingId); "
-                    + "returning the row iCloud arbitration converges on",
-                level: .debug
-            )
-            return summaries.max { lhs, rhs in
-                Self.summaryIsConvergentlyEarlier(
-                    lhsTimestamp: lhs.generatedAt ?? lhs.recording?.recordingDate,
-                    lhsId: lhs.id,
-                    rhsTimestamp: rhs.generatedAt ?? rhs.recording?.recordingDate,
-                    rhsId: rhs.id
-                )
-            }
+            return try fetchSummary(for: recordingId)
         } catch {
-            AppLog.shared.coreData("Error fetching summary: \(error)", level: .error)
             return nil
         }
+    }
+
+    /// Throwing recording-scoped summary lookup for mutation decisions. A nil
+    /// result means only that no summary exists; a store read failure remains an
+    /// error and cannot authorize cleanup or an empty-success path.
+    func fetchSummary(
+        for recordingId: UUID,
+        in fetchContext: NSManagedObjectContext? = nil
+    ) throws -> SummaryEntry? {
+        let summaries = try fetchSummaries(forRecordingId: recordingId, in: fetchContext)
+        guard summaries.count > 1 else {
+            return summaries.first
+        }
+
+        AppLog.shared.coreData(
+            "Found \(summaries.count) summaries for recording \(recordingId); "
+                + "returning the row iCloud arbitration converges on",
+            level: .debug
+        )
+        return summaries.max { lhs, rhs in
+            Self.summaryIsConvergentlyEarlier(
+                lhsTimestamp: lhs.generatedAt ?? lhs.recording?.recordingDate,
+                lhsId: lhs.id,
+                rhsTimestamp: rhs.generatedAt ?? rhs.recording?.recordingDate,
+                rhsId: rhs.id
+            )
+        }
+    }
+
+    func fetchSummary(for recordingId: UUID) throws -> SummaryEntry? {
+        try fetchSummary(for: recordingId, in: nil)
     }
 
     /// Orders two summaries exactly as `iCloudStorageManager.latestPerRecording`
@@ -1270,32 +1574,71 @@ class CoreDataManager: ObservableObject {
         return convertToEnhancedSummaryData(summaryEntry: summaryEntry, recordingEntry: recordingEntry)
     }
 
-    func getAllSummaries() -> [SummaryEntry] {
+    /// Throwing counterpart for workflows that use the complete snapshot to
+    /// authorize a mutation. A failed recording, transcript, or summary read
+    /// must remain distinct from a legitimately missing relationship.
+    func fetchSummaryData(for recordingId: UUID) throws -> EnhancedSummaryData? {
+        guard let summaryEntry = try fetchSummary(for: recordingId),
+              let recordingEntry = try fetchRecording(id: recordingId) else {
+            return nil
+        }
+
+        return convertToEnhancedSummaryData(summaryEntry: summaryEntry, recordingEntry: recordingEntry)
+    }
+
+    func getAllSummaries() throws -> [SummaryEntry] {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
+        return try fetchCollection(fetchRequest, operation: "summaries")
+    }
 
-        do {
-            return try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.coreData("Error fetching summaries: \(error)", level: .error)
-            return []
-        }
+    /// Throwing identity lookup for mutations. The optional result means only
+    /// "not found"; a store read failure remains an error.
+    func fetchSummary(id: UUID) throws -> SummaryEntry? {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        return try fetchCollection(fetchRequest, operation: "summary").first
+    }
+
+    /// Fetches all summaries that belong to a recording, including older rows
+    /// whose inverse relationship is populated but whose denormalized ID is not.
+    func fetchSummaries(
+        forRecordingId recordingId: UUID,
+        in fetchContext: NSManagedObjectContext? = nil
+    ) throws -> [SummaryEntry] {
+        try fetchSummaries(
+            matching: NSPredicate(
+                format: "recordingId == %@ OR recording.id == %@",
+                recordingId as CVarArg,
+                recordingId as CVarArg
+            ),
+            in: fetchContext
+        )
     }
 
     /// Throwing counterpart used by read-only troubleshooting snapshots.
     func fetchSummariesForDiagnostics() throws -> [SummaryEntry] {
         let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \SummaryEntry.generatedAt, ascending: false)]
-        return try context.fetch(fetchRequest)
+        return try fetchCollection(fetchRequest, operation: "summaries")
     }
 
     /// Returns the complete summary value objects represented by the Core Data store.
     /// SummaryEntry is the authoritative source; this method is the only conversion path
     /// callers should use when they need all summaries for display or cloud backup.
-    func getAllSummaryData() -> [EnhancedSummaryData] {
-        getAllSummaries().compactMap { summaryEntry in
+    func getAllSummaryData() throws -> [EnhancedSummaryData] {
+        let summaries = try getAllSummaries()
+        let recordings = try getAllRecordings()
+        var recordingsByID: [UUID: RecordingEntry] = [:]
+        for recording in recordings {
+            if let recordingId = recording.id {
+                recordingsByID[recordingId] = recording
+            }
+        }
+
+        return summaries.compactMap { summaryEntry in
             guard let recordingId = summaryEntry.recordingId ?? summaryEntry.recording?.id,
-                  let recordingEntry = getRecording(id: recordingId) else {
+                  let recordingEntry = recordingsByID[recordingId] else {
                 AppLog.shared.coreData(
                     "Skipping summary \(summaryEntry.id?.uuidString ?? "nil") without a resolvable recording",
                     level: .error
@@ -1307,13 +1650,9 @@ class CoreDataManager: ObservableObject {
     }
 
     func getSummary(id: UUID) -> SummaryEntry? {
-        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
         do {
-            return try context.fetch(fetchRequest).first
+            return try fetchSummary(id: id)
         } catch {
-            AppLog.shared.coreData("Error fetching summary \(id): \(error)", level: .error)
             return nil
         }
     }
@@ -1334,37 +1673,47 @@ class CoreDataManager: ObservableObject {
         fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
 
         do {
-            let summaries = try context.fetch(fetchRequest)
-            if summaries.isEmpty {
-                AppLog.shared.coreData("No summary found with ID: \(id)", level: .debug)
-                return
-            }
-
-            // Only rows that point at *this* summary — see deleteTranscript.
-            let recordings = fetchRecordings(
-                matching: NSPredicate(format: "summaryId == %@ OR summary.id == %@", id as CVarArg, id as CVarArg)
-            )
-            for recording in recordings {
-                recording.summary = nil
-                recording.summaryId = nil
-                recording.summaryStatus = ProcessingStatus.notStarted.rawValue
-                recording.lastModified = Date()
-            }
-
             var effects = DeferredDeletionEffects()
-            for summary in summaries {
-                AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
-                effects.stage(summary: summary)
-                context.delete(summary)
-            }
+            let didDelete = try performIsolatedMutation(operation: "summary deletion") { isolatedContext in
+                let summaries = try fetchCollection(
+                    fetchRequest,
+                    operation: "summaries",
+                    in: isolatedContext
+                )
+                guard !summaries.isEmpty else {
+                    AppLog.shared.coreData("No summary found with ID: \(id)", level: .debug)
+                    return false
+                }
 
-            do {
-                try save(committing: effects, localOnly: !enqueueCloudDeletion)
-                AppLog.shared.coreData("Successfully deleted summary with ID: \(id)")
-            } catch {
-                AppLog.shared.coreData("Failed to save context after deleting summary: \(error)", level: .error)
-                throw error
+                // Only rows that point at *this* summary — see deleteTranscript.
+                let recordings = try fetchRecordings(
+                    matching: NSPredicate(format: "summaryId == %@ OR summary.id == %@", id as CVarArg, id as CVarArg),
+                    in: isolatedContext
+                )
+                for recording in recordings {
+                    recording.summary = nil
+                    recording.summaryId = nil
+                    recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+                    recording.lastModified = Date()
+                }
+
+                for summary in summaries {
+                    AppLog.shared.coreData("Deleting summary with ID: \(id)", level: .debug)
+                    effects.stage(summary: summary)
+                    isolatedContext.delete(summary)
+                }
+                if enqueueCloudDeletion {
+                    try effects.stageCloudMutations(in: isolatedContext)
+                }
+                return true
             }
+            guard didDelete else { return }
+            if enqueueCloudDeletion {
+                effects.commit()
+            } else {
+                effects.commitLocalOnly()
+            }
+            AppLog.shared.coreData("Successfully deleted summary with ID: \(id)")
         } catch {
             AppLog.shared.coreData("Error deleting summary: \(error)", level: .error)
             throw error
@@ -1384,12 +1733,61 @@ class CoreDataManager: ObservableObject {
         return (recording: recording, transcript: transcript, summary: summary)
     }
 
-    func getAllRecordingsWithData() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        let recordings = getAllRecordings()
+    /// Throwing complete snapshot used by mutation workflows. Optional values
+    /// here mean only that a relationship is absent; any store read failure is
+    /// propagated to the caller.
+    func fetchCompleteRecordingData(id: UUID) throws -> (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)? {
+        guard let recording = try fetchRecording(id: id) else {
+            return nil
+        }
+
+        let transcript = try fetchTranscriptData(for: id)
+        let summary = try fetchSummaryData(for: id)
+        return (recording: recording, transcript: transcript, summary: summary)
+    }
+
+    func getAllRecordingsWithData() throws -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
+        let recordings = try getAllRecordings()
+        let transcripts = try getAllTranscripts()
+        let summaries = try getAllSummaries()
+
+        var transcriptsByRecordingID: [UUID: [TranscriptEntry]] = [:]
+        for transcript in transcripts {
+            if let recordingId = transcript.recordingId ?? transcript.recording?.id {
+                transcriptsByRecordingID[recordingId, default: []].append(transcript)
+            }
+        }
+
+        var summariesByRecordingID: [UUID: [SummaryEntry]] = [:]
+        for summary in summaries {
+            if let recordingId = summary.recordingId ?? summary.recording?.id {
+                summariesByRecordingID[recordingId, default: []].append(summary)
+            }
+        }
 
         return recordings.map { recording in
-            let transcript = recording.id.flatMap { getTranscriptData(for: $0) }
-            let summary = recording.id.flatMap { getSummaryData(for: $0) }
+            let transcript = recording.id.flatMap { recordingId in
+                let transcriptEntry = transcriptsByRecordingID[recordingId]?.max { lhs, rhs in
+                    (lhs.lastModified ?? lhs.createdAt ?? .distantPast)
+                        < (rhs.lastModified ?? rhs.createdAt ?? .distantPast)
+                }
+                return transcriptEntry.flatMap {
+                    convertToTranscriptData(transcriptEntry: $0, recordingEntry: recording)
+                }
+            }
+            let summary = recording.id.flatMap { recordingId in
+                let summaryEntry = summariesByRecordingID[recordingId]?.max { lhs, rhs in
+                    Self.summaryIsConvergentlyEarlier(
+                        lhsTimestamp: lhs.generatedAt ?? lhs.recording?.recordingDate,
+                        lhsId: lhs.id,
+                        rhsTimestamp: rhs.generatedAt ?? rhs.recording?.recordingDate,
+                        rhsId: rhs.id
+                    )
+                }
+                return summaryEntry.flatMap {
+                    convertToEnhancedSummaryData(summaryEntry: $0, recordingEntry: recording)
+                }
+            }
             return (recording: recording, transcript: transcript, summary: summary)
         }
     }
@@ -1405,7 +1803,7 @@ class CoreDataManager: ObservableObject {
     /// third device revived the item by editing past the grace window, undoes
     /// that revival on the next pass.
     func deleteRecording(id: UUID, enqueueCloudDeletion: Bool = true) throws {
-        guard let recording = getRecording(id: id) else {
+        guard let recording = try fetchRecording(id: id) else {
             // Throwing rather than returning quietly: the caller may have queued a
             // deletion marker in advance, and a row we never saw is not something
             // to publish a tombstone for.
@@ -1419,14 +1817,16 @@ class CoreDataManager: ObservableObject {
         // recording from other devices.
         var effects = DeferredDeletionEffects()
         effects.stage(recording: recording)
-        for summary in summariesForRecording(recording) {
+        for summary in try summariesForRecording(recording) {
             effects.stage(summary: summary)
         }
 
-        context.delete(recording)
         do {
-            // Applying another device's marker still clears the local row and its
-            // attachment files, it just does not raise a tombstone of its own.
+            // Keep the recording row and its outbox rows in the same context
+            // transaction. This compound delete deliberately preserves the
+            // existing rollback guarantee for a validation failure in either
+            // half of the operation.
+            context.delete(recording)
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
             AppLog.shared.coreData("Recording deleted: \(id)")
         } catch {
@@ -1438,9 +1838,9 @@ class CoreDataManager: ObservableObject {
     /// Every summary row belonging to a recording, not just the linked one — the
     /// duplicates need their attachments removed and their cloud rows tombstoned
     /// too, or they survive as orphans a later restore pulls back down.
-    private func summariesForRecording(_ recording: RecordingEntry) -> [SummaryEntry] {
+    private func summariesForRecording(_ recording: RecordingEntry) throws -> [SummaryEntry] {
         guard let recordingId = recording.id else { return [] }
-        return fetchSummaries(
+        return try fetchSummaries(
             matching: NSPredicate(
                 format: "recordingId == %@ OR recording.id == %@",
                 recordingId as CVarArg,
@@ -1476,8 +1876,8 @@ class CoreDataManager: ObservableObject {
         SummaryAttachmentStore.shared.pruneOrphans(against: context)
     }
 
-    func getRecording(forSummaryId summaryId: UUID) -> RecordingEntry? {
-        fetchRecordings(
+    func getRecording(forSummaryId summaryId: UUID) throws -> RecordingEntry? {
+        try fetchRecordings(
             matching: NSPredicate(
                 format: "summaryId == %@ OR summary.id == %@",
                 summaryId as CVarArg,
@@ -1486,20 +1886,92 @@ class CoreDataManager: ObservableObject {
         ).first
     }
 
-    private func fetchRecordings(matching predicate: NSPredicate) -> [RecordingEntry] {
+    private func fetchRecordings(
+        matching predicate: NSPredicate,
+        in fetchContext: NSManagedObjectContext? = nil
+    ) throws -> [RecordingEntry] {
         let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
         request.predicate = predicate
-        return (try? context.fetch(request)) ?? []
+        return try fetchCollection(request, operation: "recordings", in: fetchContext)
     }
 
-    private func fetchSummaries(matching predicate: NSPredicate) -> [SummaryEntry] {
+    private func fetchSummaries(
+        matching predicate: NSPredicate,
+        in fetchContext: NSManagedObjectContext? = nil
+    ) throws -> [SummaryEntry] {
         let request: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
         request.predicate = predicate
-        return (try? context.fetch(request)) ?? []
+        request.sortDescriptors = [NSSortDescriptor(key: "generatedAt", ascending: false)]
+        return try fetchCollection(request, operation: "summaries", in: fetchContext)
     }
 
-    func saveContext() throws {
-        try context.save()
+    /// Saves a mutation while retaining the caller's pending changes when the
+    /// save fails. Operation names are sanitized and are used by focused
+    /// failure tests to exercise each persistence boundary deterministically.
+    func saveContext(operation: String = "Core Data mutation") throws {
+        try save(context, operation: operation)
+    }
+
+    private func save(_ saveContext: NSManagedObjectContext, operation: String) throws {
+        #if DEBUG
+        if let injectedFailure = Self.injectedSaveFailure,
+           (Self.injectedSaveOperation == nil || Self.injectedSaveOperation == operation) {
+            throw CoreDataSaveError(operation: operation, failure: injectedFailure)
+        }
+        #endif
+
+        do {
+            try saveContext.save()
+        } catch let error as CoreDataSaveError {
+            throw error
+        } catch {
+            let wrappedError = CoreDataSaveError(
+                operation: operation,
+                failure: PersistenceStoreFailure(error: error)
+            )
+            AppLog.shared.coreData(
+                "durable_save_failed operation=\(operation) cause=\(wrappedError.failure.diagnosticDescription)",
+                level: .error
+            )
+            throw wrappedError
+        }
+    }
+
+    /// Performs a mutation in a sibling context so a failed save cannot roll
+    /// back, or a successful save cannot accidentally commit, unrelated edits
+    /// staged in the UI context.
+    @discardableResult
+    func performIsolatedMutation<Result>(
+        operation: String,
+        _ mutation: (NSManagedObjectContext) throws -> Result
+    ) throws -> Result {
+        guard let isolatedContext = PendingCloudMutationStore.makeIsolatedContext(basedOn: context) else {
+            throw CoreDataMutationError.contextUnavailable
+        }
+
+        do {
+            let result = try mutation(isolatedContext)
+            let insertedObjects = Array(isolatedContext.insertedObjects)
+            if !insertedObjects.isEmpty {
+                try isolatedContext.obtainPermanentIDs(for: insertedObjects)
+            }
+
+            guard isolatedContext.hasChanges else {
+                return result
+            }
+
+            let changes: [AnyHashable: Any] = [
+                NSInsertedObjectsKey: insertedObjects.map(\.objectID),
+                NSUpdatedObjectsKey: Array(isolatedContext.updatedObjects).map(\.objectID),
+                NSDeletedObjectsKey: Array(isolatedContext.deletedObjects).map(\.objectID)
+            ]
+            try save(isolatedContext, operation: operation)
+            NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [context])
+            return result
+        } catch {
+            isolatedContext.rollback()
+            throw error
+        }
     }
 
     /// Discards every uncommitted change in the context.
@@ -1521,7 +1993,7 @@ class CoreDataManager: ObservableObject {
             if !localOnly {
                 try effects.stageCloudMutations(in: context)
             }
-            try context.save()
+            try save(context, operation: localOnly ? "local deletion" : "deletion")
         } catch {
             context.rollback()
             throw error
@@ -1532,6 +2004,29 @@ class CoreDataManager: ObservableObject {
         } else {
             effects.commit()
         }
+    }
+
+    /// Removes superseded summaries after a replacement has already committed.
+    /// The cleanup uses a sibling context so a failed secondary save cannot
+    /// undo the replacement or consume unrelated pending edits.
+    func deleteSummariesAfterSave(ids: [UUID], effects: DeferredDeletionEffects) throws {
+        guard !ids.isEmpty else { return }
+
+        let isolatedEffects = effects
+        _ = try performIsolatedMutation(operation: "summary cleanup") { isolatedContext in
+            let request: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+            request.predicate = NSPredicate(format: "id IN %@", ids)
+            let summaries = try fetchCollection(
+                request,
+                operation: "summary cleanup",
+                in: isolatedContext
+            )
+            for summary in summaries {
+                isolatedContext.delete(summary)
+            }
+            try isolatedEffects.stageCloudMutations(in: isolatedContext)
+        }
+        isolatedEffects.commit()
     }
 
     // MARK: - Conversion Helpers
@@ -1642,16 +2137,10 @@ class CoreDataManager: ObservableObject {
 
     // MARK: - Processing Job Operations
 
-    func getAllProcessingJobs() -> [ProcessingJobEntry] {
+    func getAllProcessingJobs() throws -> [ProcessingJobEntry] {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
-
-        do {
-            return try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.coreData("Error fetching processing jobs: \(error)", level: .error)
-            return []
-        }
+        return try fetchCollection(fetchRequest, operation: "processing jobs")
     }
 
     /// Throwing counterpart used to decide whether a reviewed audio file is
@@ -1660,21 +2149,24 @@ class CoreDataManager: ObservableObject {
     func fetchProcessingJobsForDiagnostics() throws -> [ProcessingJobEntry] {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.sortDescriptors = [NSSortDescriptor(keyPath: \ProcessingJobEntry.startTime, ascending: false)]
-        return try context.fetch(fetchRequest)
+        return try fetchCollection(fetchRequest, operation: "processing jobs")
     }
 
     func getProcessingJob(id: UUID) -> ProcessingJobEntry? {
-        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
         do {
-            return try context.fetch(fetchRequest).first
+            return try fetchProcessingJob(id: id)
         } catch {
-            AppLog.shared.coreData("Error fetching processing job: \(error)", level: .error)
             return nil
         }
     }
 
+    /// Throwing identity lookup for job mutations. A nil result means only
+    /// that the row does not exist; a store read failure remains an error.
+    func fetchProcessingJob(id: UUID) throws -> ProcessingJobEntry? {
+        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        return try fetchCollection(fetchRequest, operation: "processing job").first
+    }
 
     func createProcessingJob(
         id: UUID,
@@ -1683,66 +2175,116 @@ class CoreDataManager: ObservableObject {
         recordingURL: URL,
         recordingName: String,
         modelName: String? = nil
-    ) -> ProcessingJobEntry {
-        let job = ProcessingJobEntry(context: context)
-        job.id = id
-        job.jobType = jobType
-        job.engine = engine
-        job.recordingURL = recordingURL.lastPathComponent
-        job.recordingName = recordingName
-        job.modelName = modelName
-        job.status = "queued"
-        job.progress = 0.0
-        job.startTime = Date()
-        job.completionTime = nil
-        job.error = nil
-
-        // Link to recording if it exists
-        if let recording = getRecording(url: recordingURL) {
-            job.recording = recording
+    ) throws -> ProcessingJobEntry {
+        // The optional URL lookup cannot distinguish a missing recording from
+        // an unavailable store. Resolve it before creating a job so a failed
+        // read cannot authorize processing of a different or empty library.
+        let recording = try fetchRecording(url: recordingURL)
+        if recording?.objectID.isTemporaryID == true {
+            throw CoreDataProcessingJobError.temporaryObjectID
         }
 
-        do {
-            try saveContext()
-            AppLog.shared.coreData("Created processing job: \(id)")
-        } catch {
-            AppLog.shared.coreData("Error saving processing job: \(error)", level: .error)
+        _ = try performIsolatedMutation(operation: "processing job creation") { isolatedContext in
+            let job = ProcessingJobEntry(context: isolatedContext)
+            job.id = id
+            job.jobType = jobType
+            job.engine = engine
+            job.recordingURL = recordingURL.lastPathComponent
+            job.recordingName = recordingName
+            job.modelName = modelName
+            job.status = "queued"
+            job.progress = 0.0
+            job.startTime = Date()
+            job.completionTime = nil
+            job.error = nil
+
+            if let recording {
+                guard let isolatedRecording = try isolatedContext.existingObject(with: recording.objectID) as? RecordingEntry else {
+                    throw CoreDataProcessingJobError.jobNotFound(id)
+                }
+                job.recording = isolatedRecording
+            }
         }
+
+        guard let job = try fetchProcessingJob(id: id) else {
+            throw CoreDataProcessingJobError.jobNotFound(id)
+        }
+        AppLog.shared.coreData("Created processing job: \(id)")
         return job
     }
 
-    func updateProcessingJob(_ job: ProcessingJobEntry) {
-        job.lastModified = Date()
-        try? saveContext()
+    func updateProcessingJob(_ job: ProcessingJobEntry) throws {
+        guard let id = job.id else {
+            throw CoreDataProcessingJobError.missingIdentity
+        }
+        guard !job.objectID.isTemporaryID else {
+            throw CoreDataProcessingJobError.temporaryObjectID
+        }
+
+        do {
+            _ = try performIsolatedMutation(operation: "processing job update") { isolatedContext in
+                guard let storedJob = try isolatedContext.existingObject(with: job.objectID) as? ProcessingJobEntry else {
+                    throw CoreDataProcessingJobError.jobNotFound(id)
+                }
+                storedJob.status = job.status
+                storedJob.progress = job.progress
+                storedJob.completionTime = job.completionTime
+                storedJob.error = job.error
+                storedJob.lastModified = Date()
+            }
+        } catch {
+            // The caller may have prepared the new state on the main-context
+            // object. Discard only that object's failed edits; unrelated
+            // pending edits remain staged for their owner.
+            if !job.isDeleted {
+                context.refresh(job, mergeChanges: false)
+            }
+            throw error
+        }
     }
 
-    func deleteProcessingJob(_ job: ProcessingJobEntry) {
-        context.delete(job)
-        try? saveContext()
-        AppLog.shared.coreData("Deleted processing job: \(job.id?.uuidString ?? "nil")")
+    func deleteProcessingJob(_ job: ProcessingJobEntry) throws {
+        guard let id = job.id else {
+            throw CoreDataProcessingJobError.missingIdentity
+        }
+        guard !job.objectID.isTemporaryID else {
+            throw CoreDataProcessingJobError.temporaryObjectID
+        }
+
+        _ = try performIsolatedMutation(operation: "processing job deletion") { isolatedContext in
+            guard let storedJob = try isolatedContext.existingObject(with: job.objectID) as? ProcessingJobEntry else {
+                throw CoreDataProcessingJobError.jobNotFound(id)
+            }
+            isolatedContext.delete(storedJob)
+        }
+        AppLog.shared.coreData("Deleted processing job: \(id.uuidString)")
     }
 
-    func deleteCompletedProcessingJobs() {
+    @discardableResult
+    func deleteCompletedProcessingJobs() throws -> Int {
         let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "status IN %@", ["completed", "failed"])
 
-        do {
-            let completedJobs = try context.fetch(fetchRequest)
+        let deletedCount = try performIsolatedMutation(operation: "completed processing job deletion") { isolatedContext in
+            let completedJobs = try fetchCollection(
+                fetchRequest,
+                operation: "completed processing jobs",
+                in: isolatedContext
+            )
             for job in completedJobs {
-                context.delete(job)
+                isolatedContext.delete(job)
             }
-            try? saveContext()
-            AppLog.shared.coreData("Deleted \(completedJobs.count) completed processing jobs")
-        } catch {
-            AppLog.shared.coreData("Error deleting completed processing jobs: \(error)", level: .error)
+            return completedJobs.count
         }
+        AppLog.shared.coreData("Deleted \(deletedCount) completed processing jobs")
+        return deletedCount
     }
 
     // MARK: - Cleanup Operations
 
     /// Cleans up orphaned recordings that have no audio file and no meaningful content
-    func cleanupOrphanedRecordings() -> Int {
-        let allRecordings = getAllRecordings()
+    func cleanupOrphanedRecordings() throws -> Int {
+        let allRecordings = try getAllRecordings()
         var cleanedCount = 0
 
         for recording in allRecordings {
@@ -1773,6 +2315,8 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Cleaned up \(cleanedCount) orphaned recordings")
             } catch {
                 AppLog.shared.coreData("Failed to save cleanup: \(error)", level: .error)
+                context.rollback()
+                throw error
             }
         }
 
@@ -1780,8 +2324,8 @@ class CoreDataManager: ObservableObject {
     }
 
     /// Fixes recordings that should have been deleted completely but still exist as orphans
-    func fixIncompletelyDeletedRecordings() -> Int {
-        let allRecordings = getAllRecordings()
+    func fixIncompletelyDeletedRecordings() throws -> Int {
+        let allRecordings = try getAllRecordings()
         var fixedCount = 0
 
         for recording in allRecordings {
@@ -1807,6 +2351,8 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Fixed \(fixedCount) incompletely deleted recordings")
             } catch {
                 AppLog.shared.coreData("Failed to save fixes: \(error)", level: .error)
+                context.rollback()
+                throw error
             }
         }
 
@@ -1814,8 +2360,8 @@ class CoreDataManager: ObservableObject {
     }
 
     /// Cleans up recordings that reference files that no longer exist
-    func cleanupRecordingsWithMissingFiles() -> Int {
-        let allRecordings = getAllRecordings()
+    func cleanupRecordingsWithMissingFiles() throws -> Int {
+        let allRecordings = try getAllRecordings()
         var cleanedCount = 0
 
         for recording in allRecordings {
@@ -1880,7 +2426,7 @@ class CoreDataManager: ObservableObject {
             } catch {
                 AppLog.shared.coreData("Failed to save missing file cleanup: \(error)", level: .error)
                 context.rollback()
-                return 0
+                throw error
             }
         }
 
@@ -1890,8 +2436,8 @@ class CoreDataManager: ObservableObject {
     // MARK: - URL Synchronization
 
     /// Syncs Core Data recording URLs with actual files on disk
-    func syncRecordingURLs() {
-        let allRecordings = getAllRecordings()
+    func syncRecordingURLs() throws {
+        let allRecordings = try getAllRecordings()
         var updatedCount = 0
 
         // Pre-check if any work is needed to avoid unnecessary logging
@@ -1971,6 +2517,7 @@ class CoreDataManager: ObservableObject {
                     }
                 } catch {
                     AppLog.shared.coreData("Error scanning documents directory: \(error)", level: .error)
+                    throw error
                 }
             }
         }
@@ -1982,6 +2529,8 @@ class CoreDataManager: ObservableObject {
                 AppLog.shared.coreData("Saved \(updatedCount) URL updates to Core Data")
             } catch {
                 AppLog.shared.coreData("Failed to save URL updates: \(error)", level: .error)
+                context.rollback()
+                throw error
             }
         } else if needsWork {
             AppLog.shared.coreData("No URL updates needed")
@@ -2003,50 +2552,59 @@ class CoreDataManager: ObservableObject {
     }
 
     func updateRecordingName(for recordingId: UUID, newName: String) throws {
-        guard let recording = getRecording(id: recordingId) else {
+        guard let recording = try fetchRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
         }
+        let recordingObjectID = recording.objectID
 
         // Clean any legacy [Watch] tags from the name
         let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")
 
-        recording.recordingName = finalName
-        recording.lastModified = Date()
-
-        do {
-            try context.save()
-            AppLog.shared.coreData("Updated recording name for ID: \(recordingId)")
-        } catch {
-            AppLog.shared.coreData("Failed to save recording name update: \(error)", level: .error)
-            throw error
+        _ = try performIsolatedMutation(operation: "recording name update") { isolatedContext in
+            guard let recording = try isolatedContext.existingObject(
+                with: recordingObjectID
+            ) as? RecordingEntry else {
+                throw NSError(
+                    domain: "CoreDataManager",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"]
+                )
+            }
+            recording.recordingName = finalName
+            recording.lastModified = Date()
         }
+        AppLog.shared.coreData("Updated recording name for ID: \(recordingId)")
     }
 
     func updateCloudSyncDisabled(for recordingId: UUID, disabled: Bool) throws {
-        guard let recording = getRecording(id: recordingId) else {
+        guard let recording = try fetchRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"])
         }
+        let recordingObjectID = recording.objectID
 
-        recording.isCloudSyncDisabled = disabled
-        recording.lastModified = Date()
-        var effects = DeferredDeletionEffects()
-        if disabled {
-            effects.stageLocalOnlyRemoval(recordingId: recordingId)
-        } else {
-            try PendingCloudMutationStore.remove(
-                kind: .localOnlyRemoval,
-                targetId: recordingId,
-                from: context
-            )
+        _ = try performIsolatedMutation(operation: "iCloud exclusion update") { isolatedContext in
+            guard let recording = try isolatedContext.existingObject(with: recordingObjectID) as? RecordingEntry else {
+                throw NSError(
+                    domain: "CoreDataManager",
+                    code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "Recording not found with ID: \(recordingId)"]
+                )
+            }
+            recording.isCloudSyncDisabled = disabled
+            recording.lastModified = Date()
+            if disabled {
+                var effects = DeferredDeletionEffects()
+                effects.stageLocalOnlyRemoval(recordingId: recordingId)
+                try effects.stageCloudMutations(in: isolatedContext)
+            } else {
+                try PendingCloudMutationStore.remove(
+                    kind: .localOnlyRemoval,
+                    targetId: recordingId,
+                    from: isolatedContext
+                )
+            }
         }
-
-        do {
-            try save(committing: effects)
-            AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
-        } catch {
-            AppLog.shared.coreData("Failed to save iCloud exclusion update: \(error)", level: .error)
-            throw error
-        }
+        AppLog.shared.coreData("Updated iCloud exclusion for recording ID: \(recordingId)")
     }
 
     // MARK: - Location File Helpers

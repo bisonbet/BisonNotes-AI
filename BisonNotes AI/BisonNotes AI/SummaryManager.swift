@@ -117,36 +117,12 @@ class SummaryManager: ObservableObject {
         appCoordinator = coordinator
     }
 
-    func getAuthoritativeSummaryData() -> [EnhancedSummaryData] {
-        authoritativeCoreDataManager.getAllSummaryData()
+    func getAuthoritativeSummaryData() throws -> [EnhancedSummaryData] {
+        try authoritativeCoreDataManager.getAllSummaryData()
     }
 
     private var authoritativeCoreDataManager: CoreDataManager {
         appCoordinator?.coreDataManager ?? fallbackCoreDataManager
-    }
-
-    @discardableResult
-    private func persistSummaryIfPossible(_ summary: EnhancedSummaryData) -> EnhancedSummaryData? {
-        let coreDataManager = authoritativeCoreDataManager
-        guard let recordingId = summary.recordingId ?? coreDataManager.getRecording(url: summary.recordingURL)?.id else {
-            AppLog.shared.summarization(
-                "Cannot persist summary \(summary.id): no matching Core Data recording",
-                level: .error
-            )
-            return nil
-        }
-
-        do {
-            try coreDataManager.upsertSummary(
-                summary,
-                for: recordingId,
-                transcriptId: summary.transcriptId
-            )
-            return coreDataManager.getSummaryData(for: recordingId)
-        } catch {
-            AppLog.shared.summarization("Failed to persist summary \(summary.id): \(error)", level: .error)
-            return nil
-        }
     }
 
     @discardableResult
@@ -1210,7 +1186,7 @@ class SummaryManager: ObservableObject {
         AppLog.shared.summarization("Starting file rename process: '\(oldName)' -> '\(newName)'", level: .debug)
 
         // Get the recording from Core Data using the coordinator
-        guard let recordingEntry = coordinator.getRecording(url: recordingURL),
+        guard let recordingEntry = try coordinator.coreDataManager.fetchRecording(url: recordingURL),
               let recordingId = recordingEntry.id else {
             AppLog.shared.summarization("Could not find recording in Core Data for file: \(recordingURL.lastPathComponent)", level: .error)
             return
@@ -1220,7 +1196,7 @@ class SummaryManager: ObservableObject {
 
         // Use the Core Data workflow manager to update the recording name
         // This will handle both the Core Data update and file renaming
-        coordinator.updateRecordingName(recordingId: recordingId, newName: newName)
+        try coordinator.updateRecordingName(recordingId: recordingId, newName: newName)
 
         AppLog.shared.summarization("Recording name updated using Core Data workflow", level: .debug)
 
@@ -1263,8 +1239,8 @@ class SummaryManager: ObservableObject {
         return issues
     }
 
-    func getSummaryStatistics() -> SummaryStatistics {
-        let summaries = getAuthoritativeSummaryData()
+    func getSummaryStatistics() throws -> SummaryStatistics {
+        let summaries = try getAuthoritativeSummaryData()
         let totalSummaries = summaries.count
         let averageConfidence = summaries.isEmpty ? 0.0 : summaries.map { $0.confidence }.reduce(0, +) / Double(totalSummaries)
         let averageCompressionRatio = summaries.isEmpty ? 0.0 : summaries.map { $0.compressionRatio }.reduce(0, +) / Double(totalSummaries)

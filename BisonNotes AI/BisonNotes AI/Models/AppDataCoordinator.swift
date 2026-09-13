@@ -12,6 +12,7 @@ class AppDataCoordinator: ObservableObject {
     @Published var workflowManager: RecordingWorkflowManager
 
     @Published var isInitialized = false
+    @Published private(set) var storageState: PersistenceStoreState
 
     /// The recording shown in the single native-macOS player window. The app
     /// deliberately supports only one player window at a time, so this drives a
@@ -19,19 +20,36 @@ class AppDataCoordinator: ObservableObject {
     @Published var macPlayerRecordingID: UUID?
 
     private var networkRestoredObserver: (any NSObjectProtocol)?
+    private let persistenceController: PersistenceController
 
     init(persistenceController: PersistenceController? = nil) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        self.persistenceController = resolvedPersistenceController
+        self.storageState = resolvedPersistenceController.storeState
         // Initialize Core Data system
-        self.coreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
-        self.workflowManager = RecordingWorkflowManager(persistenceController: resolvedPersistenceController)
+        let resolvedCoreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
+        self.coreDataManager = resolvedCoreDataManager
+        self.workflowManager = RecordingWorkflowManager(
+            persistenceController: resolvedPersistenceController,
+            coreDataManager: resolvedCoreDataManager
+        )
 
         // SummaryManager initializes its engine registry during first access.
         // Migrate the Mac-only Ollama selection before that access so an older
         // iPhone/iPad install cannot restore an unsupported engine into memory.
         BisonNotesAIApp.migrateIOSOllamaSelection()
 
-        // Set up the circular reference after initialization
+        guard storageState.isOperational else {
+            AppLog.shared.coreData(
+                "Persistence-dependent app services withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
+
+        // Set up the circular reference after initialization. Summary and
+        // CloudKit managers are deliberately not touched on the unavailable
+        // path because their initialization can read and migrate local state.
         self.workflowManager.setAppCoordinator(self)
         SummaryManager.shared.configure(with: self)
         SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
@@ -44,6 +62,8 @@ class AppDataCoordinator: ObservableObject {
     }
 
     private func initializeSystem() async {
+        guard storageState.isOperational else { return }
+
         // Core Data system initialization
         isInitialized = true
 
@@ -60,8 +80,14 @@ class AppDataCoordinator: ObservableObject {
 
     // MARK: - Public Interface
 
-    func addRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        let id = workflowManager.createRecording(
+    /// The production readiness gate used by callers that must retain local
+    /// state across a relaunch. Explicit preview/test stores are not durable.
+    func requireDurableStore() throws {
+        try persistenceController.requireDurableStore()
+    }
+
+    func addRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) throws -> UUID {
+        let id = try workflowManager.createRecording(
             url: url,
             name: name,
             date: date,
@@ -74,8 +100,8 @@ class AppDataCoordinator: ObservableObject {
         return id
     }
 
-    func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        let id = workflowManager.createRecording(
+    func addWatchRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) throws -> UUID {
+        let id = try workflowManager.createRecording(
             url: url,
             name: name,
             date: date,
@@ -88,8 +114,8 @@ class AppDataCoordinator: ObservableObject {
         return id
     }
 
-    func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
-        let result = workflowManager.createTranscript(
+    func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) throws -> UUID? {
+        let result = try workflowManager.createTranscript(
             for: recordingId,
             segments: segments,
             speakerMappings: speakerMappings,
@@ -97,14 +123,23 @@ class AppDataCoordinator: ObservableObject {
             processingTime: processingTime,
             confidence: confidence
         )
-        if result != nil, shouldBackUpToiCloud(recordingId: recordingId) {
-            scheduleAutoBackupIfEnabled()
+        if result != nil {
+            do {
+                if try shouldBackUpToiCloud(recordingId: recordingId) {
+                    scheduleAutoBackupIfEnabled()
+                }
+            } catch {
+                AppLog.shared.coreData(
+                    "Transcript saved, but iCloud backup was withheld because recording lookup failed: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
         }
         return result
     }
 
-    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
-        let result = workflowManager.createSummary(
+    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
+        let result = try workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: summary,
@@ -117,8 +152,17 @@ class AppDataCoordinator: ObservableObject {
             originalLength: originalLength,
             processingTime: processingTime
         )
-        if result != nil, shouldBackUpToiCloud(recordingId: recordingId) {
-            scheduleAutoBackupIfEnabled()
+        if result != nil {
+            do {
+                if try shouldBackUpToiCloud(recordingId: recordingId) {
+                    scheduleAutoBackupIfEnabled()
+                }
+            } catch {
+                AppLog.shared.coreData(
+                    "Summary saved, but iCloud backup was withheld because recording lookup failed: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
         }
         return result
     }
@@ -152,8 +196,8 @@ class AppDataCoordinator: ObservableObject {
     }
 
     /// Gets all transcripts
-    func getAllTranscripts() -> [TranscriptEntry] {
-        return coreDataManager.getAllTranscripts()
+    func getAllTranscripts() throws -> [TranscriptEntry] {
+        return try coreDataManager.getAllTranscripts()
     }
 
     /// Gets summary entry for a recording
@@ -162,12 +206,12 @@ class AppDataCoordinator: ObservableObject {
     }
 
     /// Gets all summaries
-    func getAllSummaries() -> [SummaryEntry] {
-        return coreDataManager.getAllSummaries()
+    func getAllSummaries() throws -> [SummaryEntry] {
+        return try coreDataManager.getAllSummaries()
     }
 
-    func getAllSummaryData() -> [EnhancedSummaryData] {
-        return coreDataManager.getAllSummaryData()
+    func getAllSummaryData() throws -> [EnhancedSummaryData] {
+        return try coreDataManager.getAllSummaryData()
     }
 
     @discardableResult
@@ -177,7 +221,14 @@ class AppDataCoordinator: ObservableObject {
         transcriptId: UUID? = nil,
         identityPolicy: SummaryUpsertIdentityPolicy = .preserveExisting
     ) throws -> UUID {
-        let resolvedRecordingId = recordingId ?? summary.recordingId ?? coreDataManager.getRecording(url: summary.recordingURL)?.id
+        let resolvedRecordingId: UUID?
+        if let recordingId {
+            resolvedRecordingId = recordingId
+        } else if let summaryRecordingId = summary.recordingId {
+            resolvedRecordingId = summaryRecordingId
+        } else {
+            resolvedRecordingId = try coreDataManager.fetchRecording(url: summary.recordingURL)?.id
+        }
         guard let resolvedRecordingId else {
             throw SummaryUpsertError.recordingIdentityUnavailable
         }
@@ -193,19 +244,14 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getCompleteRecordingData(id: id)
     }
 
-    func getAllRecordingsWithData() -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
-        return coreDataManager.getAllRecordingsWithData()
+    func getAllRecordingsWithData() throws -> [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] {
+        return try coreDataManager.getAllRecordingsWithData()
     }
 
 
-    func deleteRecording(id: UUID) {
+    func deleteRecording(id: UUID) throws {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        do {
-            try coreDataManager.deleteRecording(id: id)
-        } catch {
-            AppLog.shared.coreData("Failed to delete recording \(id): \(error)", level: .error)
-            return
-        }
+        try coreDataManager.deleteRecording(id: id)
 
         Task {
             do {
@@ -238,84 +284,11 @@ class AppDataCoordinator: ObservableObject {
         recordingId: UUID,
         transcriptId: UUID? = nil
     ) async throws {
-        guard let initialRecording = coreDataManager.getRecording(id: recordingId) else {
-            throw NSError(
-                domain: "AppDataCoordinator",
-                code: 404,
-                userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
-            )
-        }
-
         let iCloudManager = SummaryManager.shared.getiCloudManager()
-        let initialSummary = coreDataManager.getSummary(for: recordingId) ?? initialRecording.summary
-        let transcriptIds = Set([
-            transcriptId,
-            initialRecording.transcriptId,
-            initialRecording.transcript?.id,
-            initialSummary?.transcriptId,
-            initialSummary?.transcript?.id
-        ].compactMap { $0 })
-
-        let deletionDate = Date()
-        var effects = DeferredDeletionEffects()
-        do {
-            for transcriptId in transcriptIds {
-                // Remove every identity collected above, including stale ids from
-                // the recording and summary relationships. Otherwise backup can
-                // select an older remaining row and recreate the deleted transcript.
-                let removedLocalRow = try coreDataManager.stageTranscriptDeletion(
-                    id: transcriptId,
-                    effects: &effects,
-                    requestedAt: deletionDate
-                )
-                if !removedLocalRow {
-                    // An id with no local row is the case this method exists for:
-                    // an imported placeholder whose transcript is already gone
-                    // here but still live in iCloud. Staging the deletion alone
-                    // would tombstone nothing, and the next reconcile would pull
-                    // the transcript back down — the resurrection this method is
-                    // meant to prevent.
-                    effects.stageTranscript(
-                        id: transcriptId,
-                        recordingId: recordingId,
-                        requestedAt: deletionDate
-                    )
-                }
-            }
-
-            guard let recording = coreDataManager.getRecording(id: recordingId) else {
-                throw NSError(
-                    domain: "AppDataCoordinator",
-                    code: 404,
-                    userInfo: [NSLocalizedDescriptionKey: "Recording no longer exists."]
-                )
-            }
-
-            let currentTranscriptId = recording.transcriptId ?? recording.transcript?.id
-            if currentTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
-                recording.transcript = nil
-                recording.transcriptId = nil
-                recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
-            }
-
-            if let summary = coreDataManager.getSummary(for: recordingId) ?? recording.summary {
-                let currentSummaryTranscriptId = summary.transcriptId ?? summary.transcript?.id
-                if currentSummaryTranscriptId.map({ transcriptIds.contains($0) }) ?? true {
-                    summary.transcript = nil
-                    summary.transcriptId = nil
-                }
-            }
-
-            recording.recordingURL = nil
-            recording.lastModified = deletionDate
-            effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
-            try coreDataManager.save(committing: effects)
-        } catch {
-            // `save(committing:)` rolls back both local edits and outbox rows on
-            // failure. Nothing has been published or withdrawn outside the store.
-            coreDataManager.rollbackContext()
-            throw error
-        }
+        try coreDataManager.deleteImportedTranscriptPreservingSummary(
+            recordingId: recordingId,
+            transcriptId: transcriptId
+        )
 
         do {
             try await iCloudManager.flushPendingiCloudDeletions(appCoordinator: self)
@@ -343,8 +316,8 @@ class AppDataCoordinator: ObservableObject {
         }
     }
 
-    func updateRecordingName(recordingId: UUID, newName: String) {
-        workflowManager.updateRecordingName(recordingId: recordingId, newName: newName)
+    func updateRecordingName(recordingId: UUID, newName: String) throws {
+        try coreDataManager.updateRecordingName(for: recordingId, newName: newName)
     }
 
     func setCloudSyncDisabled(for recordingId: UUID, disabled: Bool) async throws {
@@ -369,18 +342,18 @@ class AppDataCoordinator: ObservableObject {
         objectWillChange.send()
     }
 
-    func syncRecordingURLs() {
+    func syncRecordingURLs() throws {
         // First, migrate any remaining absolute URLs to relative paths
-        coreDataManager.migrateURLsToRelativePaths()
+        try coreDataManager.migrateURLsToRelativePaths()
 
         // Then run the legacy sync (should be minimal after migration)
-        coreDataManager.syncRecordingURLs()
+        try coreDataManager.syncRecordingURLs()
     }
 
     /// Cleans up duplicate and orphaned summaries/transcripts, keeping only the most recent for each recording.
     /// Returns a tuple with (summariesDeleted, transcriptsDeleted)
-    func cleanupDuplicates() -> (summaries: Int, transcripts: Int) {
-        return coreDataManager.cleanupDuplicates()
+    func cleanupDuplicates() throws -> (summaries: Int, transcripts: Int) {
+        return try coreDataManager.cleanupDuplicates()
     }
 
     // MARK: - Location Methods
@@ -404,31 +377,41 @@ class AppDataCoordinator: ObservableObject {
     // MARK: - Cleanup Methods
 
     /// Cleans up orphaned recordings that have no audio file and no meaningful content
-    func cleanupOrphanedRecordings() -> Int {
-        return coreDataManager.cleanupOrphanedRecordings()
+    func cleanupOrphanedRecordings() throws -> Int {
+        return try coreDataManager.cleanupOrphanedRecordings()
     }
 
     /// Fixes recordings that should have been deleted completely but still exist as orphans
-    func fixIncompletelyDeletedRecordings() -> Int {
-        return coreDataManager.fixIncompletelyDeletedRecordings()
+    func fixIncompletelyDeletedRecordings() throws -> Int {
+        return try coreDataManager.fixIncompletelyDeletedRecordings()
     }
 
     /// Cleans up recordings that reference missing files
-    func cleanupRecordingsWithMissingFiles() -> Int {
-        return coreDataManager.cleanupRecordingsWithMissingFiles()
+    func cleanupRecordingsWithMissingFiles() throws -> Int {
+        return try coreDataManager.cleanupRecordingsWithMissingFiles()
     }
 
+}
+
+extension AppDataCoordinator {
     // MARK: - Auto-Backup
 
     /// Schedules a debounced auto-backup to iCloud when sync is enabled.
     /// Called automatically after new transcripts and summaries are persisted.
     private func scheduleAutoBackupIfEnabled() {
+        guard storageState.isOperational else {
+            AppLog.shared.coreData(
+                "Automatic iCloud backup withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         iCloudManager.scheduleAutoBackup(appCoordinator: self)
     }
 
-    private func shouldBackUpToiCloud(recordingId: UUID) -> Bool {
-        return coreDataManager.getRecording(id: recordingId)?.isCloudSyncDisabled != true
+    private func shouldBackUpToiCloud(recordingId: UUID) throws -> Bool {
+        return try coreDataManager.fetchRecording(id: recordingId)?.isCloudSyncDisabled != true
     }
 
     /// Asks the sync engine for one routine pass.
@@ -438,9 +421,26 @@ class AppDataCoordinator: ObservableObject {
     /// asked for a backoff. Requests that arrive while a run is in flight are
     /// coalesced there rather than starting a second pass.
     func reconcileiCloudIfEnabled(reason: CloudSyncReason, force: Bool = false) {
+        guard storageState.isOperational else {
+            AppLog.shared.coreData(
+                "iCloud reconcile withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         guard iCloudManager.isEnabled else { return }
-        guard iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else { return }
+        do {
+            guard try iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else {
+                return
+            }
+        } catch {
+            AppLog.shared.coreData(
+                "iCloud reconcile withheld because local collection reads failed: \(error.localizedDescription)",
+                level: .error
+            )
+            return
+        }
 
         Task {
             do {
@@ -456,7 +456,7 @@ class AppDataCoordinator: ObservableObject {
                     )
                     return
                 }
-                syncRecordingURLs()
+                try syncRecordingURLs()
                 NotificationCenter.default.post(name: NSNotification.Name("iCloudReconcileCompleted"), object: nil)
                 objectWillChange.send()
             } catch {
@@ -467,6 +467,13 @@ class AppDataCoordinator: ObservableObject {
 
     /// Picks queued work back up when the network returns.
     func observeNetworkRestorationForiCloud() {
+        guard storageState.isOperational else {
+            AppLog.shared.coreData(
+                "iCloud network-restoration observer withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         guard networkRestoredObserver == nil else { return }
         networkRestoredObserver = NotificationCenter.default.addObserver(
             forName: iCloudStorageManager.networkRestoredNotification,

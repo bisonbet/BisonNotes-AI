@@ -310,6 +310,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 	/// Set the app coordinator reference
 	func setAppCoordinator(_ coordinator: AppDataCoordinator) {
+		guard coordinator.storageState.isOperational else {
+			AppLog.shared.coreData(
+				"Recorder workflow setup withheld because local storage is unavailable",
+				level: .fault
+			)
+			return
+		}
 		self.appCoordinator = coordinator
 		Task { @MainActor in
 			let workflowManager = RecordingWorkflowManager()
@@ -1186,36 +1193,61 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 
 		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
 
-		let recordingId = workflowManager.createRecording(
-			url: url,
-			name: capturedName,
-			date: capturedDate,
-			fileSize: fileSize,
-			duration: duration,
-			quality: quality,
-			locationData: capturedLocation
-		)
-
-		AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
-
-		// Save the live transcript if we have content
-		if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-		   let coordinator = appCoordinator {
-			let segment = TranscriptSegment(
-				speaker: "Speaker 1",
-				text: transcript,
-				startTime: 0,
-				endTime: duration
+		do {
+			let recordingId = try workflowManager.createRecording(
+				url: url,
+				name: capturedName,
+				date: capturedDate,
+				fileSize: fileSize,
+				duration: duration,
+				quality: quality,
+				locationData: capturedLocation
 			)
-			_ = coordinator.addTranscript(
-				for: recordingId,
-				segments: [segment],
-				speakerMappings: [:],
-				engine: .fluidAudio,
-				processingTime: duration,
-				confidence: 0.9
-			)
-			AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
+
+			AppLog.shared.recording("Live transcription recording saved, ID: \(recordingId)")
+
+			// Save the live transcript if we have content. A recording success
+			// state is not cleared until this dependent save also succeeds.
+			if !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+				guard let coordinator = appCoordinator else {
+					throw NSError(
+						domain: "AudioRecorderViewModel",
+						code: -3,
+						userInfo: [NSLocalizedDescriptionKey: "The app coordinator is unavailable for transcript persistence"]
+					)
+				}
+				let segment = TranscriptSegment(
+					speaker: "Speaker 1",
+					text: transcript,
+					startTime: 0,
+					endTime: duration
+				)
+				guard try coordinator.addTranscript(
+					for: recordingId,
+					segments: [segment],
+					speakerMappings: [:],
+					engine: .fluidAudio,
+					processingTime: duration,
+					confidence: 0.9
+				) != nil else {
+					throw NSError(
+						domain: "AudioRecorderViewModel",
+						code: -4,
+						userInfo: [NSLocalizedDescriptionKey: "The live transcript produced no persistable output"]
+					)
+				}
+				AppLog.shared.recording("Live transcript saved for recording \(recordingId)")
+			}
+		} catch {
+			AppLog.shared.recording("Live recording persistence failed; retaining the audio and transcript for retry: \(error)", level: .error)
+			if isCurrentSession() {
+				errorMessage = transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+					? "Recording metadata could not be saved. The audio file was retained for retry."
+					: "Recording saved, but the transcript could not be saved. The audio and transcript were retained for retry."
+				recordingBeingProcessed = false
+				endBackgroundTask()
+			}
+			return
 		}
 
 		guard isCurrentSession() else { return }

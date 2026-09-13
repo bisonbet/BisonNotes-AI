@@ -103,7 +103,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     private func createCompleteRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = appCoordinator.addRecording(
+        let recordingId = try appCoordinator.addRecording(
             url: audioURL,
             name: name,
             date: Date(),
@@ -111,11 +111,11 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             duration: 30,
             quality: .whisperOptimized
         )
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Transcript for \(name)", startTime: 0, endTime: 2)]
         ))
-        _ = appCoordinator.addSummary(
+        _ = try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "Summary for \(name) with enough content to satisfy validation rules and exercise backup selection.",
@@ -355,7 +355,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         _ = try await runReconcile()
 
         XCTAssertTrue(
-            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
+            try appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
             "The run must discover this before trusting the manifest it just wrote"
         )
     }
@@ -401,10 +401,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         _ = try await runReconcile()
 
         XCTAssertFalse(
-            manager.shouldStartRoutineSnapshot(force: false),
+            try manager.shouldStartRoutineSnapshot(force: false),
             "A quiet device that just synced has nothing to check"
         )
-        XCTAssertTrue(manager.shouldStartRoutineSnapshot(force: true), "A cold launch still forces one pass")
+        XCTAssertTrue(try manager.shouldStartRoutineSnapshot(force: true), "A cold launch still forces one pass")
     }
 
     func testAStaleCheckEarnsARunAgain() async throws {
@@ -413,13 +413,13 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
         manager.lastSuccessfulRoutineSyncDate = Date().addingTimeInterval(-1_800)
 
-        XCTAssertTrue(manager.shouldStartRoutineSnapshot(force: false))
+        XCTAssertTrue(try manager.shouldStartRoutineSnapshot(force: false))
     }
 
     func testAQueuedDeletionBypassesTheMaintenanceThrottle() async throws {
         let recordingId = try createCompleteRecording(named: "Deleted")
         _ = try await runReconcile()
-        XCTAssertFalse(manager.shouldStartRoutineSnapshot(force: false))
+        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false))
 
         manager.enqueueRecordingDeletionForiCloud(
             recordingId: recordingId,
@@ -429,7 +429,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            manager.shouldStartRoutineSnapshot(force: false),
+            try manager.shouldStartRoutineSnapshot(force: false),
             "A deletion the user made must never wait out a maintenance window"
         )
         XCTAssertEqual(manager.pendingCloudDeletionCount, 1)
@@ -587,7 +587,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         transport.clearLedger()
 
         XCTAssertTrue(manager.cloudExecutor.isDeferred)
-        XCTAssertFalse(manager.shouldStartRoutineSnapshot(force: false))
+        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false))
 
         let result = try await runReconcile(reason: .appBecameActive)
         XCTAssertNotNil(result.wasDeferredUntil, "A deferred sync must say so rather than look like a clean empty run")
@@ -653,7 +653,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     func testARecordingDeletedMidRunIsNotTreatedAsLive() throws {
         let recordingId = try createCompleteRecording(named: "Deleted while staging")
         let recording = try XCTUnwrap(
-            appCoordinator.coreDataManager.getAllRecordings().first { $0.id == recordingId }
+            try appCoordinator.coreDataManager.getAllRecordings().first { $0.id == recordingId }
         )
 
         XCTAssertTrue(
@@ -738,11 +738,11 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
             "Records that never left the device must still look like pending work on the next activation"
         )
-        XCTAssertFalse(manager.shouldStartRoutineSnapshot(force: false), "…but not until the backoff window has passed")
+        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false), "…but not until the backoff window has passed")
 
         clock.advance(901)
         XCTAssertTrue(
-            manager.shouldStartRoutineSnapshot(force: false),
+            try manager.shouldStartRoutineSnapshot(force: false),
             "Once CloudKit is willing to talk again the outstanding upload must be retried"
         )
     }
@@ -802,7 +802,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     private func createRecordingOnlyForConflict(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        return appCoordinator.addRecording(
+        return try appCoordinator.addRecording(
             url: audioURL,
             name: name,
             date: Date(),
@@ -1170,10 +1170,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     func testRelationshipCleanupRefetchesFullSummaryRecordsBeforeSaving() async throws {
         let recordingId = try createCompleteRecording(named: "Full summary refetch")
         let transcriptId = try XCTUnwrap(
-            appCoordinator.coreDataManager.getAllTranscripts().first { $0.recordingId == recordingId }?.id
+            try appCoordinator.coreDataManager.getAllTranscripts().first { $0.recordingId == recordingId }?.id
         )
         let summaryId = try XCTUnwrap(
-            appCoordinator.coreDataManager.getAllSummaries().first { $0.recordingId == recordingId }?.id
+            try appCoordinator.coreDataManager.getAllSummaries().first { $0.recordingId == recordingId }?.id
         )
         seedTrustedManifest()
         _ = try await runReconcile()
@@ -1692,7 +1692,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         }
 
         XCTAssertFalse(
-            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == goodId },
+            try appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == goodId },
             "Half a dataset must not be committed as a finished restore"
         )
     }
@@ -1903,7 +1903,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
 
         XCTAssertTrue(
-            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
+            try appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == cloudOnlyId },
             "An established device must keep discovering cloud-only records, not just a fresh install"
         )
     }
@@ -1946,14 +1946,14 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         let recordingId = try createCompleteRecording(named: "Original name")
         _ = try await runReconcile()
         XCTAssertFalse(
-            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
             "nothing has changed yet"
         )
 
         try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: "Renamed")
 
         XCTAssertTrue(
-            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
             "A rename must not wait out the maintenance window just because it took a different code path"
         )
     }
@@ -1963,7 +1963,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         try createCompleteRecording(named: "Fine")
 
         // CloudKit refuses the audio for every recording in the batch.
-        let recordingNames = appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+        let recordingNames = try appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
             recording.id.map { "backup_recording_\($0.uuidString)" }
         }
         for name in recordingNames {
@@ -1989,7 +1989,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     func testAnAudioFallbackLeavesTheBackupSignaturePending() async throws {
         try createCompleteRecording(named: "Audio refused")
         seedTrustedManifest()
-        let recordingNames = appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+        let recordingNames = try appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
             recording.id.map { "backup_recording_\($0.uuidString)" }
         }
         for name in recordingNames {
@@ -2005,7 +2005,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             "Recording the signature here would let every later run skip the audio that never uploaded"
         )
         XCTAssertTrue(
-            manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
+            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
             "…and the next activation has to pick the retry up"
         )
     }
@@ -2683,7 +2683,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
         XCTAssertGreaterThan(transport.queryOperationCount, 0, "Without a manifest a scan is the only way to find anything")
         XCTAssertTrue(
-            appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == recordingId },
+            try appCoordinator.coreDataManager.getAllRecordings().contains { $0.id == recordingId },
             "The bootstrap scan must actually restore what it finds"
         )
     }

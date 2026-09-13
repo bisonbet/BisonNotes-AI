@@ -81,6 +81,17 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         self.session = nil
     }
 
+    #if DEBUG
+    /// A receiver with no live WCSession, for deterministic transfer retry tests.
+    init(testing: Bool) {
+        super.init()
+    }
+
+    func receiveForTesting(fileURL: URL, metadata: [String: Any]) {
+        handleWatchRecordingReceived(fileURL: fileURL, metadata: metadata)
+    }
+    #endif
+
     // MARK: - Setup Methods
 
     private func setupWatchConnectivity() {

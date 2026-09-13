@@ -96,6 +96,7 @@ extension AudioRecorderViewModel {
 		var mergeCompleted = false
 		var mergeStage = "preflight"
 		var mergeSegmentDescription = "none"
+		var backupURL: URL?
 		defer {
 			if !mergeCompleted, let temporaryURL,
 			   FileManager.default.fileExists(atPath: temporaryURL.path) {
@@ -248,71 +249,39 @@ extension AudioRecorderViewModel {
 			// exported and validated. Keep a recoverable backup until the move is
 			// complete so a filesystem error cannot discard the last valid segment.
 			let fileManager = FileManager.default
-			let backupURL = mainURL.deletingLastPathComponent()
-				.appendingPathComponent("merge_backup_\(UUID().uuidString).m4a")
-			registerRecordingAttemptArtifact(at: backupURL)
-			var originalMovedToBackup = false
-			do {
-				mergeStage = "replacing original with merged output"
-				if fileManager.fileExists(atPath: mainURL.path) {
-					try fileManager.moveItem(at: mainURL, to: backupURL)
-					originalMovedToBackup = true
-				}
+				let createdBackupURL = mainURL.deletingLastPathComponent()
+					.appendingPathComponent("merge_backup_\(UUID().uuidString).m4a")
+				backupURL = createdBackupURL
+				registerRecordingAttemptArtifact(at: createdBackupURL)
+				var originalMovedToBackup = false
+				do {
+					mergeStage = "replacing original with merged output"
+					if fileManager.fileExists(atPath: mainURL.path) {
+						try fileManager.moveItem(at: mainURL, to: createdBackupURL)
+						originalMovedToBackup = true
+					}
 				try fileManager.moveItem(at: tempURL, to: mainURL)
 			} catch {
-				if originalMovedToBackup,
-				   !fileManager.fileExists(atPath: mainURL.path),
-				   fileManager.fileExists(atPath: backupURL.path) {
-					try? fileManager.moveItem(at: backupURL, to: mainURL)
+					if originalMovedToBackup,
+					   !fileManager.fileExists(atPath: mainURL.path),
+					   fileManager.fileExists(atPath: createdBackupURL.path) {
+						try? fileManager.moveItem(at: createdBackupURL, to: mainURL)
+					}
+					throw error
 				}
-				throw error
-			}
-			mergeCompleted = true
-			removeOwnedRecordingAttemptArtifact(at: backupURL)
-			AppFileProtection.apply(to: mainURL)
+				mergeCompleted = true
+				AppFileProtection.apply(to: mainURL)
 
-			// The merged output is now safe. Remove only the superseded segments;
-			// never delete the new file at mainURL.
-			let obsoleteSegments = segments.filter {
-				$0.standardizedFileURL != mainURL.standardizedFileURL
-			}
-			deleteSegmentFiles(obsoleteSegments)
-
-			// A newer session may own the live recording state by now. That gates
-			// the state writes below — never the save. The merged file exists and
-			// its sources are gone, so returning here would leave the whole
-			// recording on disk with no Core Data row.
-			let stillCurrent = ownsLiveRecordingState && recoveryIsCurrent()
-			if !stillCurrent {
-				AppLog.shared.recording(
-					"A newer recording superseded this merge; persisting the merged file without touching live state",
-					level: .debug
-				)
-			}
-			if stillCurrent, segmentURLTrackingMatches(segments) {
-				recordingSegments = []
-				mainRecordingURL = nil
-				currentSegmentIndex = 0
-			}
-
-			AppLog.shared.recording("Successfully merged all segments")
-
-			if stillCurrent {
-				// Update the recordingURL to point to the merged file
-				recordingURL = mainURL
-
-				// Reads live location state, so it only applies while current.
-				saveLocationData(for: mainURL)
-			}
-
-			AppLog.shared.recording("Merged recording saved in Whisper-optimized format")
-
-			// Add recording using workflow manager
-			if let workflowManager = workflowManager {
+				// Add recording using workflow manager
+				guard let workflowManager else {
+					throw NSError(
+						domain: "AudioRecorderViewModel",
+						code: -5,
+						userInfo: [NSLocalizedDescriptionKey: "The workflow manager is unavailable for merged recording persistence"]
+					)
+				}
 				let quality = AudioRecorderViewModel.getCurrentAudioQuality()
-
-				// Create recording
-				let recordingId = workflowManager.createRecording(
+				let recordingId = try workflowManager.createRecording(
 					url: mainURL,
 					name: capturedName,
 					date: capturedDate,
@@ -322,23 +291,42 @@ extension AudioRecorderViewModel {
 					locationData: capturedLocation
 				)
 
+				// Only after Core Data acknowledges the merged recording may we
+				// discard the backup and source segments or retire recovery state.
+				if let backupURL {
+					removeOwnedRecordingAttemptArtifact(at: backupURL)
+				}
+				let obsoleteSegments = segments.filter {
+					$0.standardizedFileURL != mainURL.standardizedFileURL
+				}
+				deleteSegmentFiles(obsoleteSegments)
 				AppLog.shared.recording("Merged recording created with workflow manager, ID: \(recordingId)")
 
-				// The row exists, so any trail parking these segments has done its
-				// job. Retiring it earlier is what strands audio when an export
-				// fails or the app dies mid-save.
 				#if os(iOS)
 				clearDeferredRecoverySnapshotEntries(containing: mainURL)
 				#endif
 
-				if stillCurrent {
-					self.resetRecordingLocation()
-					self.recordingStartedAt = nil
-					self.resetRecordingAttemptArtifacts()
+				// A newer session may own the live recording state by now. That gates
+				// state cleanup, never the durable save above.
+				let stillCurrent = ownsLiveRecordingState && recoveryIsCurrent()
+				if !stillCurrent {
+					AppLog.shared.recording(
+						"A newer recording superseded this merge; persisting the merged file without touching live state",
+						level: .debug
+					)
 				}
-			} else {
-				AppLog.shared.recording("WorkflowManager not set - merged recording not saved to database", level: .error)
-			}
+				if stillCurrent, segmentURLTrackingMatches(segments) {
+					recordingSegments = []
+					mainRecordingURL = nil
+					currentSegmentIndex = 0
+					recordingURL = mainURL
+					saveLocationData(for: mainURL)
+					resetRecordingLocation()
+					recordingStartedAt = nil
+					resetRecordingAttemptArtifacts()
+				}
+
+				AppLog.shared.recording("Successfully merged all segments")
 
 		} catch {
 			let nsError = error as NSError
@@ -347,7 +335,8 @@ extension AudioRecorderViewModel {
 					+ "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)",
 				level: .error
 			)
-			preserveFailedMergeSegments(segments, mainURL: mainURL)
+			let preservedArtifacts = segments + (backupURL.map { [$0] } ?? [])
+			preserveFailedMergeSegments(preservedArtifacts, mainURL: mainURL)
 			if ownsLiveRecordingState {
 				errorMessage = "The recording could not be combined yet. Its segments were preserved for recovery."
 			}

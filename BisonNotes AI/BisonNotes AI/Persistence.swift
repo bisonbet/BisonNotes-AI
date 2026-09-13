@@ -5,7 +5,9 @@
 //  Created by Tim Champ on 7/26/25.
 //
 
+import Foundation
 import CoreData
+import Combine
 
 // MARK: - Durable Cloud Mutation Outbox
 
@@ -474,14 +476,130 @@ enum PendingCloudMutationStore {
     }
 }
 
+/// The local persistence lifecycle is explicit so a failed store load can never
+/// be mistaken for an empty library or an ephemeral success.
+enum PersistenceStoreState: Equatable, Sendable {
+    case loading
+    case ready
+    case explicitlyEphemeral
+    case unavailable(PersistenceStoreFailure)
+
+    var isOperational: Bool {
+        switch self {
+        case .ready, .explicitlyEphemeral:
+            return true
+        case .loading, .unavailable:
+            return false
+        }
+    }
+
+    var isDurable: Bool {
+        if case .ready = self {
+            return true
+        }
+        return false
+    }
+
+    var userFacingMessage: String {
+        switch self {
+        case .loading:
+            return "Library storage is still loading."
+        case .ready:
+            return "Library storage is ready."
+        case .explicitlyEphemeral:
+            return "This is an explicitly temporary preview or test library."
+        case .unavailable:
+            return "BisonNotes AI could not open its library storage. "
+                + "Existing recordings and sidecar files were not replaced."
+        }
+    }
+}
+
+/// A privacy-safe description of a persistent-store failure.
+///
+/// NSError userInfo is intentionally not retained or logged. The sanitized
+/// domain/code chain is enough for diagnostics without exposing paths,
+/// credentials, or user content.
+struct PersistenceStoreFailure: Error, Equatable, LocalizedError, Sendable {
+    let domain: String
+    let code: Int
+    /// Stored as an array so the recursive cause chain remains indirect while
+    /// preserving value semantics. The initializer accepts at most one cause.
+    let underlying: [PersistenceStoreFailure]
+
+    init(domain: String, code: Int, underlying: PersistenceStoreFailure? = nil) {
+        self.domain = Self.sanitize(domain)
+        self.code = code
+        self.underlying = underlying.map { [$0] } ?? []
+    }
+
+    init(error: Error) {
+        self = Self.make(from: error, depth: 0)
+    }
+
+    var errorDescription: String? {
+        "Library storage is unavailable."
+    }
+
+    var diagnosticDescription: String {
+        var causes = ["\(domain):\(code)"]
+        var next = underlying.first
+        while let cause = next {
+            causes.append("\(cause.domain):\(cause.code)")
+            next = cause.underlying.first
+        }
+        return causes.joined(separator: " -> ")
+    }
+
+    private static func make(from error: Error, depth: Int) -> PersistenceStoreFailure {
+        let nsError = error as NSError
+        let underlying: PersistenceStoreFailure?
+        if depth < 3, let cause = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            underlying = make(from: cause, depth: depth + 1)
+        } else {
+            underlying = nil
+        }
+        return PersistenceStoreFailure(
+            domain: nsError.domain,
+            code: nsError.code,
+            underlying: underlying
+        )
+    }
+
+    private static func sanitize(_ domain: String) -> String {
+        let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        guard !domain.isEmpty, domain.unicodeScalars.allSatisfy(allowedCharacters.contains) else {
+            return "unknown"
+        }
+        return String(domain.prefix(80))
+    }
+}
+
+/// Main-actor observation point for the store lifecycle.
+@MainActor
+final class PersistenceReadiness: ObservableObject {
+    @Published private(set) var state: PersistenceStoreState = .loading
+
+    func markReady() {
+        state = .ready
+    }
+
+    func markExplicitlyEphemeral() {
+        state = .explicitlyEphemeral
+    }
+
+    func markUnavailable(_ failure: PersistenceStoreFailure) {
+        state = .unavailable(failure)
+    }
+}
+
+@MainActor
 struct PersistenceController {
     /// Core Data's container and view context are confined to the main actor.
     /// The shared controller is only used to construct the main-actor data
     /// managers; it is not a Sendable value that may cross actor boundaries.
-    @MainActor
     static let shared = PersistenceController()
 
-    @MainActor
     static let preview: PersistenceController = {
         let result = PersistenceController(inMemory: true)
         let viewContext = result.container.viewContext
@@ -495,14 +613,90 @@ struct PersistenceController {
         return result
     }()
 
+    // Reuse one model so generated managed-object classes have a single entity
+    // description across simultaneously alive fixture and application stores.
+    private static let managedObjectModel = NSPersistentContainer(name: "BisonNotes_AI").managedObjectModel
+
     let container: NSPersistentContainer
+    let readiness: PersistenceReadiness
+
+    var storeState: PersistenceStoreState {
+        readiness.state
+    }
+
+    #if DEBUG
+    /// Deterministic store-load fault seam for isolated tests. It is never set
+    /// by production code and does not touch the user's normal library.
+    static var injectedStoreLoadFailure: PersistenceStoreFailure?
+    #endif
 
     init(inMemory: Bool = false, storeURL: URL? = nil) {
-        let persistentContainer = NSPersistentContainer(name: "BisonNotes_AI")
+        let persistentContainer = NSPersistentContainer(name: "BisonNotes_AI", managedObjectModel: Self.managedObjectModel)
+        let readiness = PersistenceReadiness()
+        let loadStartedAt = Date()
+        let requestedMode = inMemory ? "ephemeral" : "durable"
+
+        Self.configure(persistentContainer, inMemory: inMemory, storeURL: storeURL)
+
+        // Resolve readiness before returning to the eager manager graph. Do not
+        // infer asynchronous behavior merely from loadPersistentStores having a
+        // completion handler; that depends on the store description's options.
+        let description = persistentContainer.persistentStoreDescriptions[0]
+        do {
+            #if DEBUG
+            if let injectedFailure = Self.injectedStoreLoadFailure {
+                throw injectedFailure
+            }
+            #endif
+
+            _ = try persistentContainer.persistentStoreCoordinator.addPersistentStore(
+                ofType: description.type,
+                configurationName: description.configuration,
+                at: description.url,
+                options: description.options
+            )
+
+            if inMemory {
+                readiness.markExplicitlyEphemeral()
+            } else {
+                if let storeURL = description.url {
+                    AppFileProtection.apply(to: storeURL)
+                    AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-wal"))
+                    AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-shm"))
+                }
+                readiness.markReady()
+            }
+
+            let duration = Int(Date().timeIntervalSince(loadStartedAt) * 1_000)
+            AppLog.shared.coreData(
+                "storage_ready mode=\(requestedMode) "
+                    + "attachedStores=\(persistentContainer.persistentStoreCoordinator.persistentStores.count) "
+                    + "readinessDurationMs=\(duration)",
+                level: .info
+            )
+        } catch {
+            let failure = error as? PersistenceStoreFailure ?? PersistenceStoreFailure(error: error)
+            readiness.markUnavailable(failure)
+            let duration = Int(Date().timeIntervalSince(loadStartedAt) * 1_000)
+            AppLog.shared.coreData(
+                "storage_unavailable mode=\(requestedMode) "
+                    + "attachedStores=\(persistentContainer.persistentStoreCoordinator.persistentStores.count) "
+                    + "readinessDurationMs=\(duration) cause=\(failure.diagnosticDescription)",
+                level: .fault
+            )
+        }
+
+        container = persistentContainer
+        self.readiness = readiness
+        container.viewContext.automaticallyMergesChangesFromParent = true
+    }
+
+    private static func configure(_ persistentContainer: NSPersistentContainer, inMemory: Bool, storeURL: URL?) {
         if let storeURL {
             persistentContainer.persistentStoreDescriptions.first?.url = storeURL
         } else if inMemory {
-            persistentContainer.persistentStoreDescriptions.first!.url = URL(fileURLWithPath: "/dev/null")
+            persistentContainer.persistentStoreDescriptions.first?.type = NSInMemoryStoreType
+            persistentContainer.persistentStoreDescriptions.first?.url = nil
         }
         persistentContainer.persistentStoreDescriptions.forEach { description in
             description.setOption(true as NSNumber, forKey: NSMigratePersistentStoresAutomaticallyOption)
@@ -515,48 +709,22 @@ struct PersistenceController {
             )
             #endif
         }
-        persistentContainer.loadPersistentStores(completionHandler: { (storeDescription, error) in
-            if let error = error as NSError? {
-                Self.handlePersistentStoreLoadFailure(error, container: persistentContainer, inMemory: inMemory)
-                return
-            }
-
-            if let storeURL = storeDescription.url, !inMemory {
-                AppFileProtection.apply(to: storeURL)
-                AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-wal"))
-                AppFileProtection.apply(to: URL(fileURLWithPath: storeURL.path + "-shm"))
-            }
-        })
-        container = persistentContainer
-        container.viewContext.automaticallyMergesChangesFromParent = true
     }
 
-    private static func handlePersistentStoreLoadFailure(_ error: NSError,
-                                                         container: NSPersistentContainer,
-                                                         inMemory: Bool) {
-        AppLog.shared.coreData(
-            "Core Data persistent store failed to load: \(error.localizedDescription) userInfo=\(error.userInfo)",
-            level: .fault
-        )
-
-        guard !inMemory else { return }
-
-        do {
-            try container.persistentStoreCoordinator.addPersistentStore(
-                ofType: NSInMemoryStoreType,
-                configurationName: nil,
-                at: nil,
-                options: nil
-            )
-            AppLog.shared.coreData(
-                "Loaded temporary in-memory Core Data fallback after persistent store failure. Existing recordings may be unavailable until the app restarts successfully.",
-                level: .error
-            )
-        } catch {
-            AppLog.shared.coreData(
-                "Failed to load in-memory Core Data fallback after persistent store failure: \(error.localizedDescription)",
-                level: .fault
-            )
+    /// Production services call this before any operation that must survive a
+    /// relaunch. Explicit preview/test stores intentionally fail this check.
+    func requireDurableStore() throws {
+        guard storeState == .ready else {
+            switch storeState {
+            case .unavailable(let failure):
+                throw failure
+            case .loading:
+                throw PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 1)
+            case .explicitlyEphemeral:
+                throw PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 2)
+            case .ready:
+                return
+            }
         }
     }
 }

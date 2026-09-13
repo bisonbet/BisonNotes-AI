@@ -27,7 +27,10 @@ final class TranscriptionStarter: ObservableObject {
     @Published private(set) var lastTranscriptCleanupWarning: TranscriptCleanupWarning?
 
     private var isProcessingCleanupQueue: Bool = false
-    private let backgroundProcessingManager = BackgroundProcessingManager.shared
+    // BackgroundProcessingManager loads and may resume persisted jobs during
+    // initialization. Keep that work behind the ready main-content path so a
+    // failed store cannot be turned into an empty processing queue.
+    private lazy var backgroundProcessingManager = BackgroundProcessingManager.shared
     private let enhancedTranscriptionManager = EnhancedTranscriptionManager()
 
     private init() {}
@@ -87,6 +90,13 @@ final class TranscriptionStarter: ObservableObject {
     func startTranscription(for recording: RecordingEntry,
                             cleanFirst: Bool,
                             appCoordinator: AppDataCoordinator) {
+        guard appCoordinator.storageState.isOperational else {
+            AppLog.shared.transcription(
+                "Transcription deferred: local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         guard !hasActiveTranscriptionJob(for: recording, appCoordinator: appCoordinator) else { return }
 
         if cleanFirst {
@@ -95,6 +105,58 @@ final class TranscriptionStarter: ObservableObject {
         } else {
             performEnhancedTranscription(for: recording, sourceAudioURL: nil, appCoordinator: appCoordinator)
         }
+    }
+
+    /// Enqueues a transcription only after the recording identity has been
+    /// re-read successfully and the background manager has durably saved the
+    /// job. Callers that need an acknowledgement (for example Mac recording
+    /// finalization) must await this method rather than using the fire-and-
+    /// forget UI entry point above.
+    @discardableResult
+    func enqueueTranscriptionJob(
+        for recording: RecordingEntry,
+        sourceAudioURL: URL? = nil,
+        engine: TranscriptionEngine? = nil,
+        transcriptCleanupEnabled: Bool? = nil,
+        appCoordinator: AppDataCoordinator
+    ) async throws -> Bool {
+        guard appCoordinator.storageState.isOperational else {
+            throw BackgroundProcessingError.persistenceUnavailable(
+                "Local storage is unavailable for transcription job persistence."
+            )
+        }
+        guard recording.id != nil else {
+            throw BackgroundProcessingError.recordingIdentityUnavailable(
+                sourceAudioURL
+                    ?? appCoordinator.getAbsoluteURL(for: recording)
+                    ?? URL(fileURLWithPath: "/recording-without-durable-identity")
+            )
+        }
+        guard let recordingId = recording.id,
+              try appCoordinator.coreDataManager.fetchRecording(id: recordingId) != nil else {
+            throw BackgroundProcessingError.recordingDeletedDuringProcessing
+        }
+        guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
+            throw BackgroundProcessingError.fileNotFound(
+                "The recording audio is unavailable for transcription."
+            )
+        }
+        guard !hasActiveTranscriptionJob(for: recording, appCoordinator: appCoordinator) else {
+            return false
+        }
+
+        let selectedEngine = engine ?? TranscriptionEngine(
+            rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine")
+                ?? TranscriptionEngine.fluidAudio.rawValue
+        ) ?? .fluidAudio
+        try await backgroundProcessingManager.startTranscriptionJob(
+            recordingURL: recordingURL,
+            recordingName: recording.recordingName ?? "Unknown Recording",
+            engine: selectedEngine,
+            sourceAudioURL: sourceAudioURL,
+            transcriptCleanupEnabled: transcriptCleanupEnabled
+        )
+        return true
     }
 
     // MARK: - Cleanup queue (serial)
@@ -157,23 +219,32 @@ final class TranscriptionStarter: ObservableObject {
             ) ?? .fluidAudio
 
             do {
-                guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
-                    AppLog.shared.transcription("Invalid recording URL", level: .error)
-                    throw NSError(domain: "Transcription", code: -1,
-                                  userInfo: [NSLocalizedDescriptionKey: "Invalid recording URL"])
-                }
-
-                try await backgroundProcessingManager.startTranscriptionJob(
-                    recordingURL: recordingURL,
-                    recordingName: recording.recordingName ?? "Unknown Recording",
-                    engine: selectedEngine,
+                let didEnqueue = try await enqueueTranscriptionJob(
+                    for: recording,
                     sourceAudioURL: sourceAudioURL,
-                    transcriptCleanupEnabled: cleanupConfiguration.enabled
+                    engine: selectedEngine,
+                    transcriptCleanupEnabled: cleanupConfiguration.enabled,
+                    appCoordinator: appCoordinator
                 )
 
-                AppLog.shared.transcription("Transcription job started through BackgroundProcessingManager")
+                AppLog.shared.transcription(
+                    didEnqueue
+                        ? "Transcription job started through BackgroundProcessingManager"
+                        : "Transcription job was already active"
+                )
             } catch {
                 AppLog.shared.transcription("Failed to start transcription job: \(error)", level: .error)
+
+                if isPersistenceBoundaryFailure(error) {
+                    // A direct transcription would bypass the failed durable
+                    // job acknowledgement and could execute work that cannot
+                    // be represented or resumed. Keep the source for retry.
+                    AppLog.shared.transcription(
+                        "Withholding direct transcription fallback because the persistence boundary failed",
+                        level: .fault
+                    )
+                    return
+                }
 
                 // Fallback to direct transcription if background processing fails.
                 AppLog.shared.transcription("Falling back to direct transcription...", level: .debug)
@@ -188,7 +259,7 @@ final class TranscriptionStarter: ObservableObject {
                         throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptionURL)
                     }
                     let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
-                        transcript: appCoordinator.getTranscriptData(for: recordingId)
+                        transcript: try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
                     )
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(
                         at: transcriptionURL,
@@ -203,9 +274,18 @@ final class TranscriptionStarter: ObservableObject {
                     // is still saved below. Returning early discarded a completed
                     // transcription and skipped the temporary-audio cleanup at
                     // the end of this method.
-                    let isCleanupSourceStale = cleanupConfiguration.enabled
-                        && (appCoordinator.getRecording(id: recordingId) == nil
-                            || !cleanupSourceSnapshot.matches(appCoordinator.getTranscriptData(for: recordingId)))
+                    let isCleanupSourceStale: Bool
+                    if cleanupConfiguration.enabled {
+                        guard try appCoordinator.coreDataManager.fetchRecording(id: recordingId) != nil else {
+                            isCleanupSourceStale = true
+                            throw BackgroundProcessingError.recordingDeletedDuringProcessing
+                        }
+                        isCleanupSourceStale = !cleanupSourceSnapshot.matches(
+                            try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
+                        )
+                    } else {
+                        isCleanupSourceStale = false
+                    }
                     if isCleanupSourceStale {
                         AppLog.shared.transcription(
                             "Discarded stale direct transcription cleanup result, keeping uncleaned transcript: "
@@ -219,21 +299,6 @@ final class TranscriptionStarter: ObservableObject {
                         : result.transcriptCleanupWarning
                     lastTranscriptionWarning = result.speakerLabelWarning
                     lastTranscriptCleanupWarning = cleanupWarning
-                    let warnings = [
-                        result.speakerLabelWarning?.userVisibleMessage,
-                        cleanupWarning?.userVisibleMessage
-                    ].compactMap { $0 }
-                    if !warnings.isEmpty {
-                        AppLog.shared.transcription(
-                            "Direct transcription completed with recoverable warnings: "
-                                + warnings.joined(separator: " | "),
-                            level: .info
-                        )
-                        await backgroundProcessingManager.sendNotification(
-                            title: "Transcription Complete",
-                            body: warnings.joined(separator: "\n\n")
-                        )
-                    }
                     AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
@@ -255,23 +320,58 @@ final class TranscriptionStarter: ObservableObject {
                             processingTime: result.processingTime
                         )
                         try Task.checkCancellation()
-                        let transcriptId = appCoordinator.addTranscript(
+                        guard let transcriptId = try appCoordinator.addTranscript(
                             for: recordingId,
                             segments: transcriptData.segments,
                             speakerMappings: transcriptData.speakerMappings,
                             engine: transcriptData.engine,
                             processingTime: transcriptData.processingTime,
                             confidence: transcriptData.confidence
-                        )
-                        if transcriptId != nil {
-                            AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId!)")
-                        } else {
-                            AppLog.shared.transcription("Failed to save transcript to Core Data", level: .error)
+                        ) else {
+                            throw BackgroundProcessingError.processingFailed(
+                                "The completed transcript produced no persistable output"
+                            )
+                        }
+                        AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId)")
+
+                        let warnings = [
+                            result.speakerLabelWarning?.userVisibleMessage,
+                            cleanupWarning?.userVisibleMessage
+                        ].compactMap { $0 }
+                        if !warnings.isEmpty {
+                            AppLog.shared.transcription(
+                                "Direct transcription completed with recoverable warnings: "
+                                    + warnings.joined(separator: " | "),
+                                level: .info
+                            )
+                            await backgroundProcessingManager.sendNotification(
+                                title: "Transcription Complete",
+                                body: warnings.joined(separator: "\n\n")
+                            )
                         }
 
                         NotificationCenter.default.post(
                             name: NSNotification.Name("TranscriptionCompleted"), object: nil
                         )
+
+                        // The transcript row is durable; only now is the
+                        // cleaned source disposable on this fallback path.
+                        if let cleanupURL = sourceAudioURL,
+                           cleanupURL.lastPathComponent.hasPrefix("cleaned_"),
+                           FileManager.default.fileExists(atPath: cleanupURL.path) {
+                            do {
+                                try FileManager.default.removeItem(at: cleanupURL)
+                                AppLog.shared.transcription(
+                                    "Cleaned up temporary source audio after durable transcript save",
+                                    level: .debug
+                                )
+                            } catch {
+                                AppLog.shared.transcription(
+                                    "Could not remove temporary source audio after transcript save: \(error.localizedDescription)",
+                                    level: .error
+                                )
+                            }
+                        }
                     } else {
                         AppLog.shared.transcription("Transcription failed or returned empty result", level: .error)
                     }
@@ -279,11 +379,8 @@ final class TranscriptionStarter: ObservableObject {
                     AppLog.shared.transcription("Fallback transcription also failed: \(error)", level: .error)
                 }
 
-                // Clean up source audio on fallback-path failure (no BG manager to do it).
-                if let cleanupURL = sourceAudioURL, cleanupURL.lastPathComponent.hasPrefix("cleaned_") {
-                    try? FileManager.default.removeItem(at: cleanupURL)
-                    AppLog.shared.transcription("Cleaned up temporary source audio after fallback", level: .debug)
-                }
+                // The source is retained on every failure. The successful
+                // transcript-save branch owns any post-commit cleanup.
             }
         }
     }

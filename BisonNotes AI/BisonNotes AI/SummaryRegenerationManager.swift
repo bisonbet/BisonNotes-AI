@@ -43,7 +43,20 @@ class SummaryRegenerationManager: ObservableObject {
         currentlyProcessing = "Preparing..."
 
         // Get all recordings with summaries from Core Data
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        do {
+            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+        } catch {
+            completeRegeneration(
+                with: RegenerationResults(
+                    total: 0,
+                    successful: 0,
+                    failed: 1,
+                    errors: ["Could not load summaries: \(error.localizedDescription)"]
+                )
+            )
+            return
+        }
         let summariesToRegenerate = recordingsWithData.compactMap { $0.summary }
         let totalCount = summariesToRegenerate.count
 
@@ -60,10 +73,23 @@ class SummaryRegenerationManager: ObservableObject {
             currentlyProcessing = "Processing \(summary.recordingName)..."
             regenerationProgress = Double(index) / Double(totalCount)
 
-            // Get complete recording data
-            guard let recordingId = summary.recordingId,
-                  let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
-                  let transcript = recordingData.transcript else {
+            // Re-read the authoritative snapshot before generating anything.
+            // A failed read is not equivalent to a missing transcript.
+            guard let recordingId = summary.recordingId else {
+                failed += 1
+                errors.append("\(summary.recordingName): Recording identity is unavailable")
+                continue
+            }
+
+            let recordingData: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)?
+            do {
+                recordingData = try appCoordinator.coreDataManager.fetchCompleteRecordingData(id: recordingId)
+            } catch {
+                failed += 1
+                errors.append("\(summary.recordingName): Could not read recording data: \(error.localizedDescription)")
+                continue
+            }
+            guard let recordingData, let transcript = recordingData.transcript else {
                 failed += 1
                 errors.append("\(summary.recordingName): No transcript found")
                 continue
@@ -83,22 +109,10 @@ class SummaryRegenerationManager: ObservableObject {
                 // Debug: Show what names we're comparing (bulk regeneration)
                 AppLog.shared.summarization("Bulk regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
 
-                // Update the recording name if it changed during regeneration
-                if newEnhancedSummary.recordingName != summary.recordingName {
-                    AppLog.shared.summarization("Bulk regeneration: Recording name was updated by AI")
-                    // Update recording name in Core Data
-                    try appCoordinator.coreDataManager.updateRecordingName(
-                        for: recordingId,
-                        newName: newEnhancedSummary.recordingName
-                    )
-                } else {
-                    AppLog.shared.summarization("Bulk regeneration: Recording name did not change", level: .debug)
-                }
-
                 // Create new summary entry in Core Data with the updated name
-                let newSummaryId = appCoordinator.workflowManager.createSummary(
+                let newSummaryId = try appCoordinator.workflowManager.createSummary(
                     for: recordingId,
-                    transcriptId: summary.transcriptId ?? UUID(),
+                    transcriptId: summary.transcriptId ?? transcript.id,
                     summary: newEnhancedSummary.summary,
                     tasks: newEnhancedSummary.tasks,
                     reminders: newEnhancedSummary.reminders,
@@ -111,6 +125,17 @@ class SummaryRegenerationManager: ObservableObject {
                 )
 
                 if newSummaryId != nil {
+                    // The summary is the primary durable result. Apply the
+                    // optional AI title only after that save succeeds.
+                    if newEnhancedSummary.recordingName != summary.recordingName {
+                        AppLog.shared.summarization("Bulk regeneration: Recording name was updated by AI")
+                        try appCoordinator.coreDataManager.updateRecordingName(
+                            for: recordingId,
+                            newName: newEnhancedSummary.recordingName
+                        )
+                    } else {
+                        AppLog.shared.summarization("Bulk regeneration: Recording name did not change", level: .debug)
+                    }
                     successful += 1
                     AppLog.shared.summarization("Regenerated summary for recording \(recordingId)")
                 } else {
@@ -141,17 +166,18 @@ class SummaryRegenerationManager: ObservableObject {
     }
 
     func regenerateSummary(for recordingURL: URL) async -> Bool {
-        // Find the recording by URL
-        guard let recording = appCoordinator.getRecording(url: recordingURL),
-              let recordingId = recording.id,
-              let recordingData = appCoordinator.getCompleteRecordingData(id: recordingId),
-              let summary = recordingData.summary,
-              let transcript = recordingData.transcript else {
-            AppLog.shared.summarization("No summary or transcript found for recording URL", level: .error)
-            return false
-        }
-
         do {
+            // A throwing URL lookup distinguishes a missing row from an
+            // unavailable store before any regeneration mutation begins.
+            guard let recording = try appCoordinator.coreDataManager.fetchRecording(url: recordingURL),
+                  let recordingId = recording.id,
+                  let recordingData = try appCoordinator.coreDataManager.fetchCompleteRecordingData(id: recordingId),
+                  let summary = recordingData.summary,
+                  let transcript = recordingData.transcript else {
+                AppLog.shared.summarization("No summary or transcript found for recording URL", level: .error)
+                return false
+            }
+
             AppLog.shared.summarization("Regenerating summary for recording \(recordingId)")
 
             // Generate new summary using the current AI engine
@@ -166,22 +192,10 @@ class SummaryRegenerationManager: ObservableObject {
 
             AppLog.shared.summarization("Regeneration name check: nameChanged=\(newEnhancedSummary.recordingName != summary.recordingName)", level: .debug)
 
-            // Update the recording name if it changed during regeneration
-            if newEnhancedSummary.recordingName != summary.recordingName {
-                AppLog.shared.summarization("Recording name was updated by AI for recording \(recordingId)")
-                // Update recording name in Core Data
-                try appCoordinator.coreDataManager.updateRecordingName(
-                    for: recordingId,
-                    newName: newEnhancedSummary.recordingName
-                )
-            } else {
-                AppLog.shared.summarization("Recording name did not change during regeneration", level: .debug)
-            }
-
             // Create new summary entry in Core Data with the updated name
-            let newSummaryId = appCoordinator.workflowManager.createSummary(
+            let newSummaryId = try appCoordinator.workflowManager.createSummary(
                 for: recordingId,
-                transcriptId: summary.transcriptId ?? UUID(),
+                transcriptId: summary.transcriptId ?? transcript.id,
                 summary: newEnhancedSummary.summary,
                 tasks: newEnhancedSummary.tasks,
                 reminders: newEnhancedSummary.reminders,
@@ -194,6 +208,17 @@ class SummaryRegenerationManager: ObservableObject {
             )
 
             if newSummaryId != nil {
+                // Do not change the recording metadata until the replacement
+                // summary has been durably saved.
+                if newEnhancedSummary.recordingName != summary.recordingName {
+                    AppLog.shared.summarization("Recording name was updated by AI for recording \(recordingId)")
+                    try appCoordinator.coreDataManager.updateRecordingName(
+                        for: recordingId,
+                        newName: newEnhancedSummary.recordingName
+                    )
+                } else {
+                    AppLog.shared.summarization("Recording name did not change during regeneration", level: .debug)
+                }
                 AppLog.shared.summarization("Successfully regenerated summary for recording \(recordingId)")
                 return true
             } else {
@@ -202,13 +227,16 @@ class SummaryRegenerationManager: ObservableObject {
             }
 
         } catch {
-            AppLog.shared.summarization("Failed to regenerate summary for recording \(recordingId): \(error.localizedDescription)", level: .error)
+            AppLog.shared.summarization(
+                "Failed to regenerate summary for \(recordingURL.lastPathComponent): \(error.localizedDescription)",
+                level: .error
+            )
             return false
         }
     }
 
-    func shouldPromptForRegeneration(oldEngine: String, newEngine: String) -> Bool {
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+    func shouldPromptForRegeneration(oldEngine: String, newEngine: String) throws -> Bool {
+        let recordingsWithData = try appCoordinator.getAllRecordingsWithData()
         let summariesCount = recordingsWithData.compactMap { $0.summary }.count
         return oldEngine != newEngine && summariesCount > 0
     }
@@ -229,7 +257,16 @@ class SummaryRegenerationManager: ObservableObject {
     }
 
     var canRegenerate: Bool {
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        do {
+            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+        } catch {
+            AppLog.shared.summarization(
+                "Summary regeneration unavailable because local recordings could not be read: \(error.localizedDescription)",
+                level: .error
+            )
+            return false
+        }
         let summariesCount = recordingsWithData.compactMap { $0.summary }.count
         return !isRegenerating && summariesCount > 0
     }
@@ -252,7 +289,9 @@ struct RegenerationResults {
     }
 
     var summary: String {
-        if total == 0 {
+        if total == 0 && !errors.isEmpty {
+            return errors.first ?? "Could not load summaries"
+        } else if total == 0 {
             return "No summaries to regenerate"
         } else if failed == 0 {
             return "Successfully regenerated all \(total) summaries"

@@ -842,7 +842,7 @@ struct SettingsView: View {
                         do {
                             let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
 
-                            let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                            let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
                             let localSummaryIds = Set(localSummaries.compactMap { $0.id })
                             let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 
@@ -1255,7 +1255,7 @@ struct SettingsView: View {
                 includeAudioFiles: iCloudBackupIncludeAudioFiles,
                 restoreSettings: iCloudBackupIncludeSettings
             )
-            appCoordinator.syncRecordingURLs()
+            try appCoordinator.syncRecordingURLs()
 
             let settingsText: String
             if result.settingsRestored {
@@ -1287,7 +1287,7 @@ struct SettingsView: View {
             do {
                 let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
 
-                let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
                 let localSummaryIds = Set(localSummaries.compactMap { $0.id })
                 let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 
@@ -1366,7 +1366,16 @@ struct SettingsView: View {
     }
 
     private var totalRecordingsStorageString: String {
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        do {
+            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+        } catch {
+            AppLog.shared.coreData(
+                "Could not calculate recording storage usage: \(error.localizedDescription)",
+                level: .error
+            )
+            return "Unavailable"
+        }
         var totalSize: Int64 = 0
 
         for entry in recordingsWithData {
@@ -1559,7 +1568,7 @@ struct CloudReviewItemsView: View {
                 appCoordinator: appCoordinator,
                 includeAudioFiles: includeAudioFiles
             )
-            appCoordinator.syncRecordingURLs()
+            try appCoordinator.syncRecordingURLs()
             await MainActor.run {
                 actionMessage = "Restored \(result.recordingsRestored) recordings, \(result.transcriptsRestored) transcripts, \(result.summariesRestored) summaries."
                 actionIsError = false

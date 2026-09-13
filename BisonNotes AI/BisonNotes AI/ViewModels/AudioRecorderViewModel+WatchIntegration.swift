@@ -44,6 +44,14 @@ extension AudioRecorderViewModel {
 
 	/// Handle synchronized recording received from watch
 	func handleWatchSyncRecordingReceived(_ audioData: Data, syncRequest: WatchSyncRequest) {
+		guard let coordinator = appCoordinator,
+			  coordinator.storageState.isOperational else {
+			AppLog.shared.watchConnectivity(
+				"Watch recording retained by sender: local storage is unavailable",
+				level: .fault
+			)
+			return
+		}
 		AppLog.shared.watchConnectivity("Received synchronized recording from watch: \(syncRequest.recordingId)")
 
 		Task {
@@ -61,18 +69,13 @@ extension AudioRecorderViewModel {
 				try audioData.write(to: permanentURL)
 				AppFileProtection.apply(to: permanentURL)
 
-				// Create Core Data entry
-				guard let appCoordinator = appCoordinator else {
-					throw NSError(domain: "AudioRecorderViewModel", code: -1, userInfo: [NSLocalizedDescriptionKey: "App coordinator not available"])
-				}
-
 				// Create display name by removing the technical filename prefix
 				let displayName = syncRequest.filename
 					.replacingOccurrences(of: "recording-", with: "")
 					.replacingOccurrences(of: ".m4a", with: "")
 				let cleanDisplayName = "Audio Recording \(displayName)"
 
-					let recordingId = appCoordinator.addWatchRecording(
+					let recordingId = try coordinator.addWatchRecording(
 					url: permanentURL,
 					name: cleanDisplayName,
 					date: syncRequest.createdAt,
@@ -95,16 +98,11 @@ extension AudioRecorderViewModel {
 					AppLog.shared.watchConnectivity("Called completion callback for successful watch recording: \(syncRequest.recordingId)")
 				}
 
-			} catch {
-				AppLog.shared.watchConnectivity("Failed to create Core Data entry for watch recording: \(error)", level: .error)
-
-				// Recording sync failed - notify the completion callback
-				await MainActor.run {
-					let watchManager = WatchConnectivityManager.shared
-					watchManager.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
-					AppLog.shared.watchConnectivity("Called completion callback for failed watch recording: \(syncRequest.recordingId)", level: .error)
+				} catch {
+					AppLog.shared.watchConnectivity("Failed to create Core Data entry for watch recording: \(error)", level: .error)
+                    // Failure clears receiver in-flight state without acknowledging success.
+                    WatchConnectivityManager.shared.onWatchRecordingSyncCompleted?(syncRequest.recordingId, false)
 				}
-			}
 		}
 	}
 

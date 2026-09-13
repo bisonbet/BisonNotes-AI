@@ -113,7 +113,7 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
         })
         XCTAssertNil(recording.transcript)
         XCTAssertEqual(recording.transcriptId, nil)
-        XCTAssertEqual(coreDataManager.getAllTranscripts().count, 1)
+        XCTAssertEqual(try coreDataManager.getAllTranscripts().count, 1)
     }
 
     func testReportSurfacesDirectoryFailureInsteadOfReportingAnEmptyFolder() async throws {
@@ -240,7 +240,7 @@ final class AdvancedTroubleshootingServiceTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: selectedSidecar.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: unselected.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: referenced.path))
-        XCTAssertEqual(coreDataManager.getAllRecordings().count, 1)
+        XCTAssertEqual(try coreDataManager.getAllRecordings().count, 1)
     }
 
     func testDeletionSkipsAFileThatBecomesReferencedAfterScan() async throws {

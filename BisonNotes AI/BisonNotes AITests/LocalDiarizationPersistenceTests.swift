@@ -112,7 +112,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         let secondID = try persistBackgroundTranscript(second, using: appCoordinator)
 
         XCTAssertEqual(firstID, secondID)
-        XCTAssertEqual(appCoordinator.getAllTranscripts().count, 1)
+        XCTAssertEqual(try appCoordinator.getAllTranscripts().count, 1)
         XCTAssertEqual(
             appCoordinator.getTranscriptData(for: recordingID)?.segments.map(\.text),
             ["Replacement one", "Replacement two"]
@@ -309,7 +309,7 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
     private func makeRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        return appCoordinator.addRecording(
+        return try appCoordinator.addRecording(
             url: audioURL,
             name: name,
             date: Date(),

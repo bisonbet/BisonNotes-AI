@@ -908,41 +908,52 @@ struct SummariesView: View {
 
     private func loadRecordings() {
         // URL sync is now only needed on app startup - getAbsoluteURL() handles runtime resolution
+        do {
+            let recordingsWithData = try appCoordinator.getAllRecordingsWithData()
 
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+            // Show recordings that either have a transcript (can generate) OR already have a summary.
+            // Assign only after the complete read succeeds so a failure retains the last snapshot.
+            recordings = recordingsWithData.compactMap { recordingData in
+                let recording = recordingData.recording
+                let transcript = recordingData.transcript
+                let summary = recordingData.summary
 
-        // Show recordings that either have a transcript (can generate) OR already have a summary
-        recordings = recordingsWithData.compactMap { recordingData in
-            let recording = recordingData.recording
-            let transcript = recordingData.transcript
-            let summary = recordingData.summary
-
-            if transcript != nil || summary != nil || recording.summary != nil {
-                return (recording: recording, transcript: transcript, summary: summary)
-            } else {
-                return nil
+                if transcript != nil || summary != nil || recording.summary != nil {
+                    return (recording: recording, transcript: transcript, summary: summary)
+                } else {
+                    return nil
+                }
             }
+        } catch {
+            errorMessage = "Could not load summaries: \(error.localizedDescription)"
+            errorRecoverySuggestion = "Your existing on-screen data was retained. Try again when storage is available."
+            showErrorAlert = true
+            return
         }
 
         // Debug Core Data state check (logging removed)
         Task { @MainActor in
-            // Check what's actually in Core Data
-            let allRecordings = appCoordinator.coreDataManager.getAllRecordings()
-            let allSummaries = appCoordinator.coreDataManager.getAllSummaries()
+            do {
+                // Check what's actually in Core Data
+                let allRecordings = try appCoordinator.coreDataManager.getAllRecordings()
+                let allSummaries = try appCoordinator.coreDataManager.getAllSummaries()
 
-            if allSummaries.count > 0 && allRecordings.count < allSummaries.count {
-                // Attempt to repair orphaned summaries if needed
+                if allSummaries.count > 0 && allRecordings.count < allSummaries.count {
+                    // Attempt to repair orphaned summaries if needed
+                    let repairedCount = try appCoordinator.coreDataManager.repairOrphanedSummaries()
 
-                // Try to repair the orphaned summaries using CoreDataManager
-                let repairedCount = appCoordinator.coreDataManager.repairOrphanedSummaries()
-
-                if repairedCount > 0 {
-                    AppLog.shared.summarization("Repaired \(repairedCount) orphaned summaries")
-                    // Reload the view after repair
-                    DispatchQueue.main.async {
-                        self.loadRecordings()
+                    if repairedCount > 0 {
+                        AppLog.shared.summarization("Repaired \(repairedCount) orphaned summaries")
+                        // Reload the view after repair
+                        DispatchQueue.main.async {
+                            self.loadRecordings()
+                        }
                     }
                 }
+            } catch {
+                errorMessage = "Could not verify summary storage: \(error.localizedDescription)"
+                errorRecoverySuggestion = "Your existing on-screen data was retained."
+                showErrorAlert = true
             }
         }
 
@@ -956,18 +967,28 @@ struct SummariesView: View {
 
         let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? AIEngineType.mlxSwift.rawValue
         let selectedModel = UserDefaults.standard.string(forKey: "SelectedAIModel")
-        let recordingURL: URL
-        if let absoluteURL = appCoordinator.getAbsoluteURL(for: recording) {
-            recordingURL = absoluteURL
-        } else {
-            recordingURL = URL(fileURLWithPath: recording.recordingURL ?? "")
-        }
         let recordingName = recording.recordingName ?? "Unknown Recording"
 
         AppLog.shared.summarization("Queueing summary job via BackgroundProcessingManager...", level: .debug)
 
         Task {
             do {
+                guard let recordingId = recording.id,
+                      let storedRecording = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
+                    throw BackgroundProcessingError.recordingDeletedDuringProcessing
+                }
+                guard try appCoordinator.coreDataManager.fetchSummary(for: recordingId) == nil else {
+                    await MainActor.run {
+                        isGeneratingSummary = false
+                        generatingSummaryRecordingId = nil
+                    }
+                    return
+                }
+                guard let recordingURL = appCoordinator.getAbsoluteURL(for: storedRecording) else {
+                    throw BackgroundProcessingError.fileNotFound(
+                        "The recording audio is unavailable for summary generation."
+                    )
+                }
                 try await BackgroundProcessingManager.shared.startSummarizationJob(
                     recordingURL: recordingURL,
                     recordingName: recordingName,
@@ -1092,7 +1113,7 @@ struct SummariesView: View {
                 }
 
                 // Get local summary IDs from Core Data
-                let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+                let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
                 let localSummaryIds = Set(localSummaries.compactMap { $0.id })
 
                 let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }

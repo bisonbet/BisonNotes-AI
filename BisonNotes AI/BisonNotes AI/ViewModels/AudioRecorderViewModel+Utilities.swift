@@ -46,6 +46,58 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 		#endif
 	}
 
+	private func persistRecorderCompletion(
+		resolvedRecordingURL: URL, capturedName: String, capturedDate: Date,
+		fileSize: Int64, duration: TimeInterval, capturedLocation: LocationData?, stillCurrent: Bool, flag: Bool
+	) -> Bool {
+		guard let workflowManager else {
+			AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
+			if stillCurrent {
+				recordingBeingProcessed = false
+				errorMessage = "Recording metadata could not be saved. The audio file was retained for retry."
+			}
+			return false
+		}
+
+		let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+		do {
+			let recordingId = try workflowManager.createRecording(
+				url: resolvedRecordingURL,
+				name: capturedName,
+				date: capturedDate,
+				fileSize: fileSize,
+				duration: duration,
+				quality: quality,
+				locationData: capturedLocation
+			)
+
+			AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
+
+			// Clear the recovery reference only after the recording row is durable.
+			#if os(iOS)
+			clearDeferredRecoverySnapshotEntries(containing: resolvedRecordingURL)
+			#endif
+
+			if stillCurrent {
+				self.resetRecordingLocation()
+				self.recordingStartedAt = nil
+				self.resetRecordingAttemptArtifacts()
+
+				if !flag {
+					errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
+				}
+			}
+		} catch {
+			AppLog.shared.recording("Recording metadata save failed; retaining audio for retry: \(error)", level: .error)
+			if stillCurrent {
+				recordingBeingProcessed = false
+				errorMessage = "Recording metadata could not be saved. The audio file was retained for retry."
+			}
+			return false
+		}
+		return true
+	}
+
 	nonisolated func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
 		let finishedURL = recorder.url
 		Task { @MainActor [weak self] in
@@ -174,44 +226,17 @@ extension AudioRecorderViewModel: AVAudioRecorderDelegate {
 					saveLocationData(for: resolvedRecordingURL)
 				}
 
-				// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC)
-				AppLog.shared.recording("Recording saved in Whisper-optimized format")
+					// New recordings are already in Whisper-optimized format (16kHz, 64kbps AAC).
+					// The file is only a recoverable artifact until its metadata row saves.
+					AppLog.shared.recording("Recording finalized in Whisper-optimized format")
 
 				// Add recording using workflow manager for proper UUID consistency
-				if let workflowManager = workflowManager {
-					let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+                guard persistRecorderCompletion(
+                    resolvedRecordingURL: resolvedRecordingURL, capturedName: capturedName,
+                    capturedDate: capturedDate, fileSize: fileSize, duration: duration,
+                    capturedLocation: capturedLocation, stillCurrent: stillCurrent, flag: flag
+                ) else { return }
 
-					// Create recording
-					let recordingId = workflowManager.createRecording(
-						url: resolvedRecordingURL,
-						name: capturedName,
-						date: capturedDate,
-						fileSize: fileSize,
-						duration: duration,
-						quality: quality,
-						locationData: capturedLocation
-					)
-
-					AppLog.shared.recording("Recording created with workflow manager, ID: \(recordingId)")
-
-					// The row exists; only now may a trail parking this file go.
-					#if os(iOS)
-					clearDeferredRecoverySnapshotEntries(containing: resolvedRecordingURL)
-					#endif
-
-					if stillCurrent {
-						// Watch audio integration removed
-						self.resetRecordingLocation()
-						self.recordingStartedAt = nil
-						self.resetRecordingAttemptArtifacts()
-
-						if !flag {
-							errorMessage = "Recording ended unexpectedly. The audio captured before it stopped was saved."
-						}
-					}
-				} else {
-					AppLog.shared.recording("WorkflowManager not set - recording not saved to database", level: .error)
-				}
 			}
 
 			if stillCurrent {

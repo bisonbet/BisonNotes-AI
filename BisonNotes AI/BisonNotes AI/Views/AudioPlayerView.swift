@@ -504,9 +504,16 @@ struct AudioPlayerView: View {
             return
         }
 
-        guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
-              let recordingId = recordingEntry.id else {
-            titleUpdateError = "Could not find this recording in storage."
+        let recordingId: UUID
+        do {
+            guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(url: recording.url),
+                  let id = recordingEntry.id else {
+                titleUpdateError = "Could not find this recording in storage."
+                return
+            }
+            recordingId = id
+        } catch {
+            titleUpdateError = "Could not read this recording from storage: \(error.localizedDescription)"
             return
         }
 
@@ -540,21 +547,46 @@ struct AudioPlayerView: View {
     }
 
     private func refreshCloudSyncPreference() {
-        if let recordingId = recording.recordingId,
-           let entry = appCoordinator.getRecording(id: recordingId) {
-            isCloudSyncDisabled = entry.isCloudSyncDisabled
-        } else if let entry = appCoordinator.getRecording(url: recording.url) {
-            isCloudSyncDisabled = entry.isCloudSyncDisabled
-        } else {
-            isCloudSyncDisabled = recording.isCloudSyncDisabled
+        do {
+            let entry: RecordingEntry?
+            if let recordingId = recording.recordingId {
+                entry = try appCoordinator.coreDataManager.fetchRecording(id: recordingId)
+            } else {
+                entry = try appCoordinator.coreDataManager.fetchRecording(url: recording.url)
+            }
+            if let entry {
+                isCloudSyncDisabled = entry.isCloudSyncDisabled
+            }
+        } catch {
+            // This is a refresh-only read. Retain the last displayed value while
+            // the store failure is surfaced through the next mutation attempt.
+            AppLog.shared.coreData(
+                "Could not refresh cloud-sync preference: \(error.localizedDescription)",
+                level: .error
+            )
         }
     }
 
     private func updateCloudSyncPreference(disabled: Bool) {
         guard !isUpdatingCloudSyncPreference else { return }
 
-        guard let recordingId = recording.recordingId ?? appCoordinator.getRecording(url: recording.url)?.id else {
-            cloudSyncPreferenceError = "Could not find this recording in storage."
+        let recordingId: UUID
+        do {
+            if let explicitID = recording.recordingId {
+                guard try appCoordinator.coreDataManager.fetchRecording(id: explicitID) != nil else {
+                    cloudSyncPreferenceError = "Could not find this recording in storage."
+                    return
+                }
+                recordingId = explicitID
+            } else {
+                guard let resolvedID = try appCoordinator.coreDataManager.fetchRecording(url: recording.url)?.id else {
+                    cloudSyncPreferenceError = "Could not find this recording in storage."
+                    return
+                }
+                recordingId = resolvedID
+            }
+        } catch {
+            cloudSyncPreferenceError = "Could not read this recording from storage: \(error.localizedDescription)"
             return
         }
 

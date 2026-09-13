@@ -71,6 +71,7 @@ struct RecordingsListView: View {
     @State private var audioExportSkippedCount = 0
     @State private var archiveInfoRecording: AudioRecordingFile?
     @State private var archiveRestoreError: String?
+    @State private var loadError: String?
     @State private var restoringArchiveRecordingId: UUID?
     @State private var showDateFilter = false
     @State private var dateFilterStart: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
@@ -262,6 +263,14 @@ struct RecordingsListView: View {
                 Button("OK", role: .cancel) { archiveRestoreError = nil }
             } message: {
                 Text(archiveRestoreError ?? "Unknown error")
+            }
+            .alert("Unable to Load Recordings", isPresented: Binding(
+                get: { loadError != nil },
+                set: { if !$0 { loadError = nil } }
+            )) {
+                Button("OK", role: .cancel) { loadError = nil }
+            } message: {
+                Text(loadError ?? "The recordings could not be loaded.")
             }
             .sheet(item: $selectedRecordingForTranscript) { entry in
                 if let recordingId = entry.id,
@@ -1139,11 +1148,20 @@ struct RecordingsListView: View {
     private func completeArchiveExport(exportedURLs: [URL]?) {
         showingArchiveExportPicker = false
         if let exportedURLs {
-            let archivedCount = RecordingArchiveService.shared.archiveRecordings(
-                recordingsToArchive,
-                removeLocal: removeLocalAfterArchive,
-                exportedURLs: exportedURLs
-            )
+            let archivedCount: Int
+            do {
+                archivedCount = try RecordingArchiveService.shared.archiveRecordings(
+                    recordingsToArchive,
+                    removeLocal: removeLocalAfterArchive,
+                    exportedURLs: exportedURLs
+                )
+            } catch {
+                archiveRestoreError = "The export was retained, but the archive state could not be saved: \(error.localizedDescription)"
+                recordingsToArchive = []
+                archiveExportURLs = []
+                RecordingArchiveService.shared.cleanupArchiveStaging()
+                return
+            }
             if archivedCount == 0 {
                 archiveRestoreError = "The export completed, but the selected destination was not iCloud Drive or was not trackable. The audio was left local so you can archive it again to iCloud Drive."
             }
@@ -1173,95 +1191,99 @@ struct RecordingsListView: View {
 
     private func loadRecordings() {
         // Use the app coordinator to get recordings with proper database names
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        do {
+            let recordingsWithData = try appCoordinator.getAllRecordingsWithData()
 
-        // Deduplicate by resolved filename; prefer entries with content and non-generic titles
-        var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = [:]
+            // Deduplicate by resolved filename; prefer entries with content and non-generic titles
+            var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = [:]
 
-        func score(_ e: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> Int {
-            var s = 0
-            if e.summary != nil { s += 3 }
-            if e.transcript != nil { s += 2 }
-            if let name = e.recording.recordingName, !isGenericName(name) { s += 1 }
-            if e.recording.duration > 0 { s += 1 }
-            return s
+            func score(_ e: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)) -> Int {
+                var s = 0
+                if e.summary != nil { s += 3 }
+                if e.transcript != nil { s += 2 }
+                if let name = e.recording.recordingName, !isGenericName(name) { s += 1 }
+                if e.recording.duration > 0 { s += 1 }
+                return s
+            }
+
+            for entry in recordingsWithData {
+                // Skip imported transcripts - they appear in the Transcripts tab only
+                if entry.recording.audioQuality == "imported" {
+                    continue
+                }
+
+                // For archived recordings, use stored URL even if file is missing
+                let url: URL?
+                if entry.recording.isArchived {
+                    url = appCoordinator.getAbsoluteURL(for: entry.recording)
+                        ?? appCoordinator.getStoredURL(for: entry.recording)
+                } else {
+                    url = appCoordinator.getAbsoluteURL(for: entry.recording)
+                }
+
+                guard let resolvedURL = url else { continue }
+                let key = resolvedURL.lastPathComponent
+                if let existing = bestByFilename[key] {
+                    bestByFilename[key] = score(existing) >= score(entry) ? existing : entry
+                } else {
+                    bestByFilename[key] = entry
+                }
+            }
+
+            let deduped = Array(bestByFilename.values)
+
+            recordings = deduped.compactMap { recordingData -> AudioRecordingFile? in
+                let recording = recordingData.recording
+                guard let recordingName = recording.recordingName else {
+                    return nil
+                }
+
+                let isArchived = recording.isArchived
+                let recordingURL: URL?
+
+                if isArchived {
+                    recordingURL = appCoordinator.getAbsoluteURL(for: recording)
+                        ?? appCoordinator.getStoredURL(for: recording)
+                } else {
+                    recordingURL = appCoordinator.getAbsoluteURL(for: recording)
+                }
+
+                guard let url = recordingURL else {
+                    AppLog.shared.recording("Skipping recording with missing data", level: .debug)
+                    return nil
+                }
+
+                // Non-archived recordings must have a local file
+                if !isArchived && !FileManager.default.fileExists(atPath: url.path) {
+                    AppLog.shared.recording("Skipping recording with missing file", level: .debug)
+                    return nil
+                }
+
+                let date = recording.recordingDate ?? recording.createdAt ?? Date()
+                let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: url)
+                let locationData = appCoordinator.loadLocationData(for: recording)
+
+                return AudioRecordingFile(
+                    url: url,
+                    name: recordingName,
+                    date: date,
+                    duration: duration,
+                    locationData: locationData,
+                    isArchived: isArchived,
+                    archivedAt: recording.archivedAt,
+                    archiveNote: recording.archiveNote,
+                    recordingId: recording.id,
+                    storedFileSize: recording.fileSize,
+                    isCloudSyncDisabled: recording.isCloudSyncDisabled
+                )
+            }
+            .sorted { $0.date > $1.date }
+
+            // Geocode locations for all recordings (with rate limiting)
+            loadLocationAddressesBatch(for: recordings)
+        } catch {
+            loadError = "Could not load recordings: \(error.localizedDescription)"
         }
-
-        for entry in recordingsWithData {
-            // Skip imported transcripts - they appear in the Transcripts tab only
-            if entry.recording.audioQuality == "imported" {
-                continue
-            }
-
-            // For archived recordings, use stored URL even if file is missing
-            let url: URL?
-            if entry.recording.isArchived {
-                url = appCoordinator.getAbsoluteURL(for: entry.recording)
-                    ?? appCoordinator.getStoredURL(for: entry.recording)
-            } else {
-                url = appCoordinator.getAbsoluteURL(for: entry.recording)
-            }
-
-            guard let resolvedURL = url else { continue }
-            let key = resolvedURL.lastPathComponent
-            if let existing = bestByFilename[key] {
-                bestByFilename[key] = score(existing) >= score(entry) ? existing : entry
-            } else {
-                bestByFilename[key] = entry
-            }
-        }
-
-        let deduped = Array(bestByFilename.values)
-
-        recordings = deduped.compactMap { recordingData -> AudioRecordingFile? in
-            let recording = recordingData.recording
-            guard let recordingName = recording.recordingName else {
-                return nil
-            }
-
-            let isArchived = recording.isArchived
-            let recordingURL: URL?
-
-            if isArchived {
-                recordingURL = appCoordinator.getAbsoluteURL(for: recording)
-                    ?? appCoordinator.getStoredURL(for: recording)
-            } else {
-                recordingURL = appCoordinator.getAbsoluteURL(for: recording)
-            }
-
-            guard let url = recordingURL else {
-                AppLog.shared.recording("Skipping recording with missing data", level: .debug)
-                return nil
-            }
-
-            // Non-archived recordings must have a local file
-            if !isArchived && !FileManager.default.fileExists(atPath: url.path) {
-                AppLog.shared.recording("Skipping recording with missing file", level: .debug)
-                return nil
-            }
-
-            let date = recording.recordingDate ?? recording.createdAt ?? Date()
-            let duration = recording.duration > 0 ? recording.duration : getRecordingDuration(url: url)
-            let locationData = appCoordinator.loadLocationData(for: recording)
-
-            return AudioRecordingFile(
-                url: url,
-                name: recordingName,
-                date: date,
-                duration: duration,
-                locationData: locationData,
-                isArchived: isArchived,
-                archivedAt: recording.archivedAt,
-                archiveNote: recording.archiveNote,
-                recordingId: recording.id,
-                storedFileSize: recording.fileSize,
-                isCloudSyncDisabled: recording.isCloudSyncDisabled
-            )
-        }
-        .sorted { $0.date > $1.date }
-
-        // Geocode locations for all recordings (with rate limiting)
-        loadLocationAddressesBatch(for: recordings)
     }
 
     private func isGenericName(_ name: String) -> Bool {
@@ -1365,7 +1387,15 @@ struct RecordingsListView: View {
 
             // If no relationships exist, create them on demand
             if relationships == nil {
-                await enhancedFileManager.refreshRelationships(for: recording.url)
+                do {
+                    try await enhancedFileManager.refreshRelationships(for: recording.url)
+                } catch {
+                    AppLog.shared.recording(
+                        "Could not refresh recording relationships before deletion: \(error.localizedDescription)",
+                        level: .error
+                    )
+                    return
+                }
                 relationships = enhancedFileManager.getFileRelationships(for: recording.url)
             }
 
@@ -1384,17 +1414,20 @@ struct RecordingsListView: View {
     }
 
     private func performDirectDeletion(_ recording: AudioRecordingFile) {
-        guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
-              let recordingId = recordingEntry.id else {
+        do {
+            guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(url: recording.url),
+                  let recordingId = recordingEntry.id else {
+                throw FileManagementError.relationshipNotFound
+            }
+            try appCoordinator.deleteRecording(id: recordingId)
+            loadRecordings()
+        } catch {
+            loadError = "Could not delete recording: \(error.localizedDescription)"
             AppLog.shared.recording(
-                "Failed to resolve recording for deletion: \(recording.url.lastPathComponent)",
+                "Failed to delete recording \(recording.url.lastPathComponent): \(error)",
                 level: .error
             )
-            return
         }
-
-        appCoordinator.deleteRecording(id: recordingId)
-        loadRecordings()
     }
 
     private func deleteRecordingWithRelationships(_ recording: AudioRecordingFile, preserveSummary: Bool) async {
@@ -1422,7 +1455,15 @@ struct RecordingsListView: View {
         Task {
             // Refresh relationships for all recordings in the background
             for recording in recordings {
-                await enhancedFileManager.refreshRelationships(for: recording.url)
+                do {
+                    try await enhancedFileManager.refreshRelationships(for: recording.url)
+                } catch {
+                    AppLog.shared.recording(
+                        "Recording relationship refresh failed: \(error.localizedDescription)",
+                        level: .error
+                    )
+                    return
+                }
             }
 
             await MainActor.run {
@@ -1503,27 +1544,28 @@ struct RecordingsListView: View {
             return
         }
 
-        // Check if either recording has transcripts or summaries
-        var issues: [String] = []
-
-        if let firstEntry = appCoordinator.getRecording(url: firstRecording.url),
-           let firstId = firstEntry.id {
-            if appCoordinator.getTranscript(for: firstId) != nil {
-                issues.append("'\(firstRecording.name)' has a transcript")
+        // Check if either recording has transcripts or summaries. Every read
+        // here authorizes a later destructive combine, so a store failure must
+        // stop the flow instead of looking like an empty recording.
+        let issues: [String]
+        do {
+            var detectedIssues: [String] = []
+            for (recording, label) in [(firstRecording, firstRecording.name), (secondRecording, secondRecording.name)] {
+                guard let entry = try appCoordinator.coreDataManager.fetchRecording(url: recording.url),
+                      let recordingId = entry.id else {
+                    throw CoreDataDeletionError.recordingNotFound(recording.recordingId ?? UUID())
+                }
+                if try appCoordinator.coreDataManager.fetchTranscript(for: recordingId) != nil {
+                    detectedIssues.append("'\(label)' has a transcript")
+                }
+                if try appCoordinator.coreDataManager.fetchSummary(for: recordingId) != nil {
+                    detectedIssues.append("'\(label)' has a summary")
+                }
             }
-            if appCoordinator.getSummary(for: firstId) != nil {
-                issues.append("'\(firstRecording.name)' has a summary")
-            }
-        }
-
-        if let secondEntry = appCoordinator.getRecording(url: secondRecording.url),
-           let secondId = secondEntry.id {
-            if appCoordinator.getTranscript(for: secondId) != nil {
-                issues.append("'\(secondRecording.name)' has a transcript")
-            }
-            if appCoordinator.getSummary(for: secondId) != nil {
-                issues.append("'\(secondRecording.name)' has a summary")
-            }
+            issues = detectedIssues
+        } catch {
+            loadError = "Could not verify the selected recordings before combining: \(error.localizedDescription)"
+            return
         }
 
         if !issues.isEmpty {
@@ -1553,8 +1595,7 @@ struct RecordingsListView: View {
 
     private func restoreArchivedAudio(_ recording: AudioRecordingFile) {
         guard restoringArchiveRecordingId == nil else { return }
-        guard let recordingId = recording.recordingId,
-              let recordingEntry = appCoordinator.getRecording(id: recordingId) else {
+        guard let recordingId = recording.recordingId else {
             archiveRestoreError = "Could not find this recording in storage."
             return
         }
@@ -1563,6 +1604,9 @@ struct RecordingsListView: View {
 
         Task { @MainActor in
             do {
+                guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
+                    throw CoreDataDeletionError.recordingNotFound(recordingId)
+                }
                 _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
                 loadRecordings()
                 refreshFileRelationships()
@@ -1577,20 +1621,32 @@ struct RecordingsListView: View {
     }
 
     private func clearLocalArchiveState(_ recording: AudioRecordingFile) {
-        guard let recordingId = recording.recordingId,
-              let recordingEntry = appCoordinator.getRecording(id: recordingId) else {
+        guard let recordingId = recording.recordingId else {
             archiveRestoreError = "Could not find this recording in storage."
             return
         }
 
-        RecordingArchiveService.shared.clearArchiveFlags(for: recordingEntry)
-        loadRecordings()
-        refreshFileRelationships()
+        do {
+            guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
+                throw CoreDataDeletionError.recordingNotFound(recordingId)
+            }
+            try RecordingArchiveService.shared.clearArchiveFlags(for: recordingEntry)
+            loadRecordings()
+            refreshFileRelationships()
+        } catch {
+            archiveRestoreError = "Could not save the archive state: \(error.localizedDescription)"
+        }
     }
 
     private func prepareArchiveFromSelection() {
         let selectedURLs = selectedRecordings
-        let allRecordings = appCoordinator.getAllRecordingsWithData()
+        let allRecordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        do {
+            allRecordings = try appCoordinator.getAllRecordingsWithData()
+        } catch {
+            loadError = "Could not prepare the archive: \(error.localizedDescription)"
+            return
+        }
         recordingsToArchive = allRecordings.compactMap { entry -> RecordingEntry? in
             guard let url = appCoordinator.getAbsoluteURL(for: entry.recording),
                   selectedURLs.contains(url) else { return nil }
@@ -1666,7 +1722,12 @@ struct RecordingsListView: View {
 
                 Button(action: {
                     showingArchiveOlderThan = false
-                    recordingsToArchive = RecordingArchiveService.shared.recordingsOlderThan(days: archiveOlderThanDays)
+                    do {
+                        recordingsToArchive = try RecordingArchiveService.shared.fetchRecordingsOlderThan(days: archiveOlderThanDays)
+                    } catch {
+                        loadError = "Could not verify recordings for archive: \(error.localizedDescription)"
+                        return
+                    }
                     if !recordingsToArchive.isEmpty {
                         removeLocalAfterArchive = false
                         showingArchiveConfirmation = true

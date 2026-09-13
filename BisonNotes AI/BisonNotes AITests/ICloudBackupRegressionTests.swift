@@ -80,7 +80,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let localOnlyId = try createCompleteRecording(named: "Local Only")
         try appCoordinator.coreDataManager.updateCloudSyncDisabled(for: localOnlyId, disabled: true)
 
-        let selection = iCloudStorageManager.backupSourceSelection(from: appCoordinator.coreDataManager)
+        let selection = try iCloudStorageManager.backupSourceSelection(from: appCoordinator.coreDataManager)
 
         XCTAssertEqual(selection.excludedRecordingIds, Set([localOnlyId]))
         XCTAssertTrue(selection.recordings.contains { $0.id == syncableId })
@@ -147,7 +147,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let recordingId = try createCompleteRecording(named: "Delete Me")
         let iCloudManager = SummaryManager.shared.getiCloudManager()
 
-        appCoordinator.deleteRecording(id: recordingId)
+        try appCoordinator.deleteRecording(id: recordingId)
 
         XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
         XCTAssertNil(appCoordinator.coreDataManager.getTranscript(for: recordingId))
@@ -158,7 +158,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
     func testDeletingImportedRecordingWithoutTranscriptQueuesRecordingTombstone() throws {
         let audioURL = tempDirectory.appendingPathComponent("orphan-import.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = appCoordinator.addRecording(
+        let recordingId = try appCoordinator.addRecording(
             url: audioURL,
             name: "Orphan Imported Transcript",
             date: Date(),
@@ -172,7 +172,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         XCTAssertNil(appCoordinator.getTranscript(for: recordingId))
 
-        appCoordinator.deleteRecording(id: recordingId)
+        try appCoordinator.deleteRecording(id: recordingId)
 
         XCTAssertNil(appCoordinator.getRecording(id: recordingId))
         XCTAssertEqual(
@@ -215,7 +215,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         XCTAssertEqual(iCloudManager.pendingCloudDeletionCountForTesting, 0)
 
-        let fixed = appCoordinator.fixIncompletelyDeletedRecordings()
+        let fixed = try appCoordinator.fixIncompletelyDeletedRecordings()
 
         XCTAssertEqual(fixed, 1)
         XCTAssertNil(appCoordinator.coreDataManager.getRecording(id: recordingId))
@@ -543,10 +543,10 @@ final class ICloudBackupRegressionTests: XCTestCase {
         let recordingId = try createCompleteRecording(named: "Core Data Summary Source")
         let expectedSummaryId = try XCTUnwrap(appCoordinator.getSummary(for: recordingId)?.id)
 
-        let summaries = SummaryManager.shared.getAuthoritativeSummaryData()
+        let summaries = try SummaryManager.shared.getAuthoritativeSummaryData()
         XCTAssertEqual(summaries.map(\.id), [expectedSummaryId])
 
-        let statistics = SummaryManager.shared.getSummaryStatistics()
+        let statistics = try SummaryManager.shared.getSummaryStatistics()
         XCTAssertEqual(statistics.totalSummaries, 1)
     }
 
@@ -578,14 +578,14 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         XCTAssertEqual(firstID, summary.id)
         XCTAssertEqual(secondID, summary.id)
-        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
-        XCTAssertEqual(appCoordinator.getAllSummaries().first?.id, summary.id)
-        XCTAssertEqual(appCoordinator.getAllSummaries().first?.summary, updatedSummary.summary)
-        let storedMethod = try XCTUnwrap(appCoordinator.getAllSummaries().first?.aiMethod)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().first?.id, summary.id)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().first?.summary, updatedSummary.summary)
+        let storedMethod = try XCTUnwrap(try appCoordinator.getAllSummaries().first?.aiMethod)
         let decodedMethod = SummaryMetadataCodec.decode(storedMethod)
         XCTAssertEqual(decodedMethod.engine, "Fixture")
         XCTAssertEqual(decodedMethod.model, "cloud-fixture-v2")
-        XCTAssertEqual(appCoordinator.getAllSummaries().first?.recording?.recordingName, "Updated cloud-only summary")
+        XCTAssertEqual(try appCoordinator.getAllSummaries().first?.recording?.recordingName, "Updated cloud-only summary")
     }
 
     func testIncomingCloudIdentityReplacesExistingLocalSummaryIdentity() throws {
@@ -616,7 +616,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         XCTAssertEqual(restoredId, cloudSummaryId)
         XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: existingSummaryId))
-        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().count, 1)
         XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.id, cloudSummaryId)
         XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.summary, cloudSummary.summary)
     }
@@ -846,7 +846,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             generatedAt: Date(timeIntervalSince1970: 1_600_000_000)
         )
 
-        let selection = iCloudStorageManager.backupSourceSelection(from: appCoordinator.coreDataManager)
+        let selection = try iCloudStorageManager.backupSourceSelection(from: appCoordinator.coreDataManager)
 
         XCTAssertEqual(selection.transcripts.compactMap(\.id), [currentTranscriptId])
         XCTAssertEqual(selection.summaries.compactMap(\.id), [currentSummaryId])
@@ -867,7 +867,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
         let iCloudManager = SummaryManager.shared.getiCloudManager()
 
-        let pruned = iCloudManager.pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
+        let pruned = try iCloudManager.pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
 
         XCTAssertEqual(pruned.transcripts, 1)
         XCTAssertEqual(pruned.summaries, 1)
@@ -888,7 +888,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             createdAt: Date(timeIntervalSince1970: 4_000_000_000)
         )
 
-        let pruned = SummaryManager.shared.getiCloudManager()
+        let pruned = try SummaryManager.shared.getiCloudManager()
             .pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
 
         XCTAssertEqual(pruned.transcripts, 0)
@@ -927,11 +927,11 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
     private func createCompleteRecording(named name: String) throws -> UUID {
         let recordingId = try createRecordingOnly(named: name)
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Transcript for \(name)", startTime: 0, endTime: 2)]
         ))
-        _ = appCoordinator.addSummary(
+        _ = try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "Summary for \(name) with enough content to satisfy validation rules and exercise backup selection.",
@@ -944,7 +944,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
     private func createRecordingOnly(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        return appCoordinator.addRecording(
+        return try appCoordinator.addRecording(
             url: audioURL,
             name: name,
             date: Date(),
@@ -1494,9 +1494,9 @@ final class ICloudBackupRegressionTests: XCTestCase {
 
         await migrationManager.clearAllCoreData()
 
-        XCTAssertTrue(appCoordinator.coreDataManager.getAllRecordings().isEmpty)
-        XCTAssertTrue(appCoordinator.coreDataManager.getAllTranscripts().isEmpty)
-        XCTAssertTrue(appCoordinator.coreDataManager.getAllSummaries().isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.getAllRecordings().isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.getAllTranscripts().isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.getAllSummaries().isEmpty)
 
         let mutations = try PendingCloudMutationStore.fetchAll(
             in: persistenceController.container.viewContext

@@ -495,6 +495,7 @@ class BackgroundProcessingManager: ObservableObject {
     @Published var activeJobs: [ProcessingJob] = []
     @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
+    @Published private(set) var jobLoadError: String? = nil
 
     // MARK: - Completion Handlers
 
@@ -519,7 +520,7 @@ class BackgroundProcessingManager: ObservableObject {
     private let performanceOptimizer = PerformanceOptimizer.shared
     private let enhancedFileManager = EnhancedFileManager.shared
     private let audioSessionManager: EnhancedAudioSessionManager
-    private let coreDataManager = CoreDataManager()
+    private let coreDataManager: CoreDataManager
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
     private let previousSessionCrashed: Bool
@@ -547,10 +548,37 @@ class BackgroundProcessingManager: ObservableObject {
 
     private static let fluidAudioMinimumTranscribableDuration: TimeInterval = 0.3
 
-    private init(audioSessionManager: EnhancedAudioSessionManager = .shared) {
+    private init(
+        audioSessionManager: EnhancedAudioSessionManager = .shared,
+        coreDataManager: CoreDataManager = CoreDataManager()
+    ) {
         self.audioSessionManager = audioSessionManager
+        self.coreDataManager = coreDataManager
         self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
-        loadJobsFromCoreData()
+
+        guard coreDataManager.persistenceState.isOperational else {
+            jobLoadError = "Background processing is unavailable because local storage is unavailable."
+            AppLog.shared.coreData(
+                "Background processing manager startup withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
+
+        do {
+            try loadJobsFromCoreData()
+        } catch {
+            jobLoadError = error.localizedDescription
+            AppLog.shared.coreData(
+                "Background processing manager startup withheld because processing jobs could not be read: "
+                    + error.localizedDescription,
+                level: .error
+            )
+            return
+        }
+        Task {
+            await cleanupStaleJobs()
+        }
         if previousSessionCrashed {
             // Captured before the sweep below rewrites their statuses, so the
             // resume paths can still tell a pre-crash job from a fresh one.
@@ -575,6 +603,30 @@ class BackgroundProcessingManager: ObservableObject {
                 await processNextJob()
             }
         }
+    }
+
+    #if DEBUG
+    static func makeForTesting(
+        coreDataManager: CoreDataManager,
+        audioSessionManager: EnhancedAudioSessionManager = .shared
+    ) -> BackgroundProcessingManager {
+        BackgroundProcessingManager(
+            audioSessionManager: audioSessionManager,
+            coreDataManager: coreDataManager
+        )
+    }
+    #endif
+
+    private func requireLoadedJobStore() throws {
+        guard coreDataManager.persistenceState.isOperational, jobLoadError == nil else {
+            throw BackgroundProcessingError.persistenceUnavailable(
+                jobLoadError ?? "Background processing is unavailable because local storage is unavailable."
+            )
+        }
+    }
+
+    private var canUseLoadedJobStore: Bool {
+        coreDataManager.persistenceState.isOperational && jobLoadError == nil
     }
 
     deinit {
@@ -637,6 +689,7 @@ class BackgroundProcessingManager: ObservableObject {
         localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration? = nil,
         transcriptCleanupEnabled: Bool? = nil
     ) async throws {
+        try requireLoadedJobStore()
         let capturedSpeakerLabelsConfiguration = engine == .fluidAudio
             ? (localSpeakerLabelsConfiguration ?? LocalSpeakerLabelsConfiguration.currentUserChoice())
             : LocalSpeakerLabelsConfiguration()
@@ -650,7 +703,7 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         // Ensure recording exists in Core Data (always use the original recording URL)
-        let recordingId = await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
+        let recordingId = try await ensureRecordingExists(recordingURL: recordingURL, recordingName: recordingName)
         _ = try requiredRecordingID(recordingId, for: recordingURL)
 
         let job = ProcessingJob(
@@ -665,12 +718,23 @@ class BackgroundProcessingManager: ObservableObject {
         )
 
         // For transcription jobs, check if we need to replace an existing job
-        await addTranscriptionJob(job)
+        try await addTranscriptionJob(job)
         await processNextJob()
     }
 
     @discardableResult
     func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws -> UUID {
+        try requireLoadedJobStore()
+
+        // A summary job must attach to an existing recording. A throwing URL
+        // lookup distinguishes a missing row from an unavailable store; neither
+        // case may be turned into a job that later runs against an empty or
+        // different library.
+        guard let recording = try coreDataManager.fetchRecording(url: recordingURL),
+              recording.id != nil else {
+            throw BackgroundProcessingError.recordingIdentityUnavailable(recordingURL)
+        }
+
         // Queue size limit
         let queuedCount = activeJobs.filter { $0.status == .queued }.count
         guard queuedCount < 20 else {
@@ -689,8 +753,10 @@ class BackgroundProcessingManager: ObservableObject {
             regenerationSummaryIds[job.id] = oldSummaryId
         }
 
-        // Remove old terminal summarization jobs for this recording to prevent stale matches
-        activeJobs.removeAll { existingJob in
+        // Remove old terminal summarization jobs only after their durable
+        // deletion succeeds. A failed read/delete must not make the new job
+        // look like a clean replacement.
+        let terminalJobs = activeJobs.filter { existingJob in
             if case .summarization = existingJob.type,
                existingJob.recordingPath == job.recordingPath,
                existingJob.status.isTerminal {
@@ -698,8 +764,16 @@ class BackgroundProcessingManager: ObservableObject {
             }
             return false
         }
+        for existingJob in terminalJobs {
+            guard let jobEntry = try coreDataManager.fetchProcessingJob(id: existingJob.id) else {
+                activeJobs.removeAll { $0.id == existingJob.id }
+                continue
+            }
+            try coreDataManager.deleteProcessingJob(jobEntry)
+            activeJobs.removeAll { $0.id == existingJob.id }
+        }
 
-        await addJob(job)
+        try await addJob(job)
         await processNextJob()
         return job.id
     }
@@ -715,7 +789,14 @@ class BackgroundProcessingManager: ObservableObject {
     func cancelQueuedJob(id: UUID) async {
         guard let index = activeJobs.firstIndex(where: { $0.id == id && $0.status == .queued }) else { return }
         let cancelledJob = activeJobs[index].withStatus(.cancelled)
-        await updateJob(cancelledJob)
+        do {
+            try await updateJob(cancelledJob)
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Could not persist queued-job cancellation; job remains queued: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     func cancelJob(id: UUID) async {
@@ -723,10 +804,17 @@ class BackgroundProcessingManager: ObservableObject {
             await cancelActiveJob()
         } else if let task = externalTaskHandles[id] {
             task.cancel()
-            externalTaskHandles.removeValue(forKey: id)
             if let index = activeJobs.firstIndex(where: { $0.id == id }) {
                 let cancelledJob = activeJobs[index].withStatus(.cancelled)
-                await updateJob(cancelledJob)
+                do {
+                    try await updateJob(cancelledJob)
+                    externalTaskHandles.removeValue(forKey: id)
+                } catch {
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist external-job cancellation; job remains pending: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
         } else {
             await cancelQueuedJob(id: id)
@@ -759,11 +847,10 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    func removeCompletedJobs() async {
-        // Remove from Core Data
-        coreDataManager.deleteCompletedProcessingJobs()
-
-        // Remove from active jobs array
+    func removeCompletedJobs() async throws {
+        // Remove from Core Data first. A failed read/save leaves the in-memory
+        // list intact and therefore cannot report a successful cleanup.
+        _ = try coreDataManager.deleteCompletedProcessingJobs()
         activeJobs.removeAll { job in
             job.status.isTerminal
         }
@@ -771,9 +858,9 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - External Job Tracking
 
-    func trackExternalJob(_ job: ProcessingJob) async {
+    func trackExternalJob(_ job: ProcessingJob) async throws {
         AppLog.shared.backgroundProcessing("trackExternalJob: \(job.type.displayName) - activeJobs count before: \(activeJobs.count)", level: .debug)
-        await addJob(job)
+        try await addJob(job)
         AppLog.shared.backgroundProcessing("trackExternalJob done: activeJobs count after: \(activeJobs.count)", level: .debug)
         objectWillChange.send()
     }
@@ -782,9 +869,9 @@ class BackgroundProcessingManager: ObservableObject {
         externalTaskHandles[jobId] = task
     }
 
-    func updateExternalJob(_ job: ProcessingJob) async {
+    func updateExternalJob(_ job: ProcessingJob) async throws {
         AppLog.shared.backgroundProcessing("updateExternalJob: status=\(job.status.displayName), activeJobs count: \(activeJobs.count)", level: .debug)
-        await updateJob(job)
+        try await updateJob(job)
         // Clean up task handle if job is terminal
         if job.status.isTerminal {
             externalTaskHandles.removeValue(forKey: job.id)
@@ -805,7 +892,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Private Job Management
 
-    private func addJob(_ job: ProcessingJob) async {
+    private func addJob(_ job: ProcessingJob) async throws {
         // Check for existing jobs for the same recording to prevent duplicates
         let existingJobs = activeJobs.filter { existingJob in
             existingJob.recordingPath == job.recordingPath &&
@@ -819,8 +906,11 @@ class BackgroundProcessingManager: ObservableObject {
         }
         AppLog.shared.backgroundProcessing("addJob: adding \(job.type.displayName) id=\(job.id)", level: .debug)
 
-        // Create Core Data entry
-        let jobEntry = coreDataManager.createProcessingJob(
+        // `createProcessingJob` writes the canonical queued state. Do not issue
+        // a second save just to copy the same initial values: if that redundant
+        // save failed, the durable row could exist while this caller had no
+        // successful enqueue acknowledgement.
+        _ = try coreDataManager.createProcessingJob(
             id: job.id,
             jobType: job.type.displayName,
             engine: getEngineString(from: job.type),
@@ -829,15 +919,10 @@ class BackgroundProcessingManager: ObservableObject {
             modelName: job.persistedModelNameValue
         )
 
-        // Update the job entry with initial status
-        jobEntry.status = job.status.displayName
-        jobEntry.progress = job.progress
-        coreDataManager.updateProcessingJob(jobEntry)
-
         activeJobs.append(job)
     }
 
-    private func addTranscriptionJob(_ job: ProcessingJob) async {
+    private func addTranscriptionJob(_ job: ProcessingJob) async throws {
         // For transcription jobs, we want to allow reruns by replacing existing completed/failed jobs
         let existingJobs = activeJobs.filter { existingJob in
             existingJob.recordingPath == job.recordingPath &&
@@ -846,19 +931,19 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Remove any existing transcription jobs for this recording (to allow reruns)
         for existingJob in existingJobs {
-            if let index = activeJobs.firstIndex(where: { $0.id == existingJob.id }) {
-                AppLog.shared.backgroundProcessing("Removing existing transcription job to allow rerun")
-                activeJobs.remove(at: index)
+            AppLog.shared.backgroundProcessing("Removing existing transcription job to allow rerun")
 
-                // Also remove from Core Data
-                if let jobEntry = coreDataManager.getProcessingJob(id: existingJob.id) {
-                    coreDataManager.deleteProcessingJob(jobEntry)
-                }
+            // Delete durably before dropping the in-memory representation.
+            // A failed lookup/save leaves the prior job available for retry.
+            if let jobEntry = try coreDataManager.fetchProcessingJob(id: existingJob.id) {
+                try coreDataManager.deleteProcessingJob(jobEntry)
             }
+            activeJobs.removeAll { $0.id == existingJob.id }
         }
 
-        // Create Core Data entry
-        let jobEntry = coreDataManager.createProcessingJob(
+        // `createProcessingJob` writes the canonical queued state. Keep the
+        // in-memory enqueue acknowledgement behind that one durable save.
+        _ = try coreDataManager.createProcessingJob(
             id: job.id,
             jobType: job.type.displayName,
             engine: getEngineString(from: job.type),
@@ -867,51 +952,43 @@ class BackgroundProcessingManager: ObservableObject {
             modelName: job.persistedModelNameValue
         )
 
-        // Update the job entry with initial status
-        jobEntry.status = job.status.displayName
-        jobEntry.progress = job.progress
-        coreDataManager.updateProcessingJob(jobEntry)
-
         activeJobs.append(job)
         AppLog.shared.backgroundProcessing("Added new transcription job (replacing existing job)")
     }
 
-    private func updateJob(_ updatedJob: ProcessingJob) async {
+    private func updateJob(_ updatedJob: ProcessingJob) async throws {
+        guard activeJobs.contains(where: { $0.id == updatedJob.id }) else { return }
+        guard let jobEntry = try coreDataManager.fetchProcessingJob(id: updatedJob.id) else {
+            throw BackgroundProcessingError.jobNotFound
+        }
+
+        jobEntry.status = updatedJob.status.displayName
+        jobEntry.progress = updatedJob.progress
+        jobEntry.completionTime = updatedJob.status.isTerminal ? Date() : updatedJob.completionTime
+        jobEntry.error = updatedJob.status.errorMessage
+        try coreDataManager.updateProcessingJob(jobEntry)
+
+        // Durable state is the authorization point for the in-memory state.
         if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
             activeJobs[index] = updatedJob
-
-            if updatedJob.id == currentJob?.id {
-                currentJob = updatedJob
-                processingStatus = updatedJob.status
-            }
-
-            // Update Core Data entry
-            if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-                jobEntry.status = updatedJob.status.displayName
-                jobEntry.progress = updatedJob.progress
-                jobEntry.lastModified = Date()
-
-                if updatedJob.status.isTerminal {
-                    jobEntry.completionTime = Date()
-                }
-
-                if let errorMsg = updatedJob.status.errorMessage {
-                    jobEntry.error = errorMsg
-                }
-
-                coreDataManager.updateProcessingJob(jobEntry)
-            }
+        }
+        if updatedJob.id == currentJob?.id {
+            currentJob = updatedJob
+            processingStatus = updatedJob.status
         }
     }
 
     private func failUnfinishedJobsAfterCrash() {
         let message = BackgroundProcessingCrashRecoveryPolicy.failureMessage
         var failedCount = 0
+        var reconciledJobs: [ProcessingJob] = []
 
-        activeJobs = activeJobs.map { job in
-            guard !job.status.isTerminal else { return job }
+        for job in activeJobs {
+            guard !job.status.isTerminal else {
+                reconciledJobs.append(job)
+                continue
+            }
 
-            failedCount += 1
             let failedJob = job.withStatus(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: job.status,
@@ -919,17 +996,30 @@ class BackgroundProcessingManager: ObservableObject {
                 )
             )
 
-            if let jobEntry = coreDataManager.getProcessingJob(id: failedJob.id) {
+            do {
+                guard let jobEntry = try coreDataManager.fetchProcessingJob(id: failedJob.id) else {
+                    throw BackgroundProcessingError.jobNotFound
+                }
                 jobEntry.status = failedJob.status.displayName
                 jobEntry.progress = failedJob.progress
                 jobEntry.error = message
                 jobEntry.completionTime = failedJob.completionTime
-                jobEntry.lastModified = Date()
-                coreDataManager.updateProcessingJob(jobEntry)
+                try coreDataManager.updateProcessingJob(jobEntry)
+                reconciledJobs.append(failedJob)
+                failedCount += 1
+            } catch {
+                // Do not make an in-memory failed job look durable when the
+                // crash reconciliation save failed. Withhold all auto-resume
+                // work for this session and leave the original state visible.
+                reconciledJobs.append(job)
+                jobLoadError = "Processing jobs could not be reconciled: \(error.localizedDescription)"
+                AppLog.shared.backgroundProcessing(
+                    "Could not persist crash reconciliation for job \(job.id): \(error.localizedDescription)",
+                    level: .error
+                )
             }
-
-            return failedJob
         }
+        activeJobs = reconciledJobs
 
         if failedCount > 0 {
             processingStatus = .ready
@@ -939,6 +1029,13 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     func processNextJob() async {
+        guard canUseLoadedJobStore else {
+            AppLog.shared.backgroundProcessing(
+                "Job execution withheld because processing-job storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         // Don't start a new job if one is already running
         guard currentJob == nil else { return }
 
@@ -957,12 +1054,25 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update job status to processing
         let processingJob = nextJob.withStatus(.processing)
-        await updateJob(processingJob)
+        do {
+            try await updateJob(processingJob)
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Could not persist processing state for \(nextJob.type.displayName); execution withheld: \(error.localizedDescription)",
+                level: .error
+            )
+            jobLoadError = "Processing could not start because the job state could not be saved."
+            currentJob = nil
+            processingStatus = .ready
+            await endBackgroundTask()
+            return
+        }
 
         AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
+            var completionStatePersisted = false
             do {
                 try Task.checkCancellation()
 
@@ -984,9 +1094,22 @@ class BackgroundProcessingManager: ObservableObject {
 
                 // Job completed successfully
                 let completedJob = processingJob.withStatus(.completed).withProgress(1.0)
-                await updateJob(completedJob)
+                try await updateJob(completedJob)
+                completionStatePersisted = true
 
                 AppLog.shared.backgroundProcessing("Job completed: \(nextJob.type.displayName)")
+
+                let completionTitle: String
+                let completionBody: String
+                switch nextJob.type {
+                case .transcription:
+                    completionTitle = "Transcription Complete"
+                    completionBody = "Successfully transcribed \(nextJob.recordingName)"
+                case .summarization:
+                    completionTitle = "Summarization Complete"
+                    completionBody = "Successfully summarized \(nextJob.recordingName)"
+                }
+                await sendNotification(title: completionTitle, body: completionBody)
 
                 // Post-processing cleanup
                 await performCleanupTasks(for: processingJob)
@@ -1001,24 +1124,41 @@ class BackgroundProcessingManager: ObservableObject {
                     cancellationReason = nil
                 } else if let reason = cancellationReason {
                     let interruptedJob = processingJob.withStatus(.interrupted(reason))
-                    await updateJob(interruptedJob)
-                    AppLog.shared.backgroundProcessing("Job interrupted (\(reason)): \(nextJob.type.displayName)")
+                    do {
+                        try await updateJob(interruptedJob)
+                        AppLog.shared.backgroundProcessing("Job interrupted (\(reason)): \(nextJob.type.displayName)")
 
-                    // Send detailed notification for interruptions
-                    let jobTypeDesc = switch nextJob.type {
-                    case .transcription: "Transcription"
-                    case .summarization: "Summarization"
+                        // Send detailed notification only after the interrupted
+                        // state is durable.
+                        let jobTypeDesc = switch nextJob.type {
+                        case .transcription: "Transcription"
+                        case .summarization: "Summarization"
+                        }
+                        let modelInfo = nextJob.modelName.map { " (\($0))" } ?? ""
+                        await sendNotification(
+                            title: "\(jobTypeDesc) Paused",
+                            body: "\(nextJob.recordingName) — \(nextJob.type.engineName)\(modelInfo). Open the app to resume."
+                        )
+                    } catch {
+                        jobLoadError = "The interrupted job state could not be saved; it remains pending for retry."
+                        AppLog.shared.backgroundProcessing(
+                            "Could not persist interrupted job state: \(error.localizedDescription)",
+                            level: .error
+                        )
                     }
-                    let modelInfo = nextJob.modelName.map { " (\($0))" } ?? ""
-                    await sendNotification(
-                        title: "\(jobTypeDesc) Paused",
-                        body: "\(nextJob.recordingName) — \(nextJob.type.engineName)\(modelInfo). Open the app to resume."
-                    )
                     cancellationReason = nil
                 } else {
                     let cancelledJob = processingJob.withStatus(.cancelled)
-                    await updateJob(cancelledJob)
-                    AppLog.shared.backgroundProcessing("Job cancelled: \(nextJob.type.displayName)")
+                    do {
+                        try await updateJob(cancelledJob)
+                        AppLog.shared.backgroundProcessing("Job cancelled: \(nextJob.type.displayName)")
+                    } catch {
+                        jobLoadError = "The cancelled job state could not be saved; it remains pending for retry."
+                        AppLog.shared.backgroundProcessing(
+                            "Could not persist cancelled job state: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
                 }
 
             } catch {
@@ -1032,33 +1172,33 @@ class BackgroundProcessingManager: ObservableObject {
                     AppLog.shared.backgroundProcessing("Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName), error was: \(error.localizedDescription)", level: .error)
                 } else {
                     let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
-                    await updateJob(failedJob)
+                    do {
+                        try await updateJob(failedJob)
+                        AppLog.shared.backgroundProcessing("Job failed: \(nextJob.type.displayName), error: \(error.localizedDescription)", level: .error)
 
-                    AppLog.shared.backgroundProcessing("Job failed: \(nextJob.type.displayName), error: \(error.localizedDescription)", level: .error)
-
-                    // Save detailed error log
-                    await saveErrorLog(for: processingJob, error: error)
-
-                    // Error recovery
-                    await handleJobFailure(processingJob, error: error)
-
-                    // Send failure notification
-                    await sendNotification(
-                        title: "Processing Failed",
-                        body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
-                    )
+                        // Save detailed error log and run failure recovery only
+                        // after the failed state itself is durable.
+                        await saveErrorLog(for: processingJob, error: error)
+                        await handleJobFailure(processingJob, error: error)
+                        await sendNotification(
+                            title: "Processing Failed",
+                            body: "Failed to process \(nextJob.recordingName): \(error.localizedDescription)"
+                        )
+                    } catch {
+                        jobLoadError = "The failed job state could not be saved; no cleanup or retry acknowledgement was issued."
+                        AppLog.shared.backgroundProcessing(
+                            "Could not persist failed job state: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
                 }
             }
 
-            // Clean up source audio file on any terminal state (failure, cancellation, etc.)
-            // Success cleanup is handled in performCleanupTasks, but we also need to clean up
-            // on failure/cancellation so cleaned audio files don't leak.
-            if let sourcePath = nextJob.sourceAudioPath, sourcePath.hasPrefix("cleaned_") {
-                let sourceURL = nextJob.audioSourceURL
-                if FileManager.default.fileExists(atPath: sourceURL.path) {
-                    try? FileManager.default.removeItem(at: sourceURL)
-                    AppLog.shared.backgroundProcessing("Cleaned up source audio file after job ended")
-                }
+            // A source file is disposable only after the successful terminal
+            // job state has been persisted. Failed/cancelled state saves retain
+            // the source for retry or support recovery.
+            if completionStatePersisted {
+                cleanupSourceAudio(for: nextJob)
             }
 
             // Clear current job and task handle
@@ -1118,7 +1258,7 @@ class BackgroundProcessingManager: ObservableObject {
         // itself instead of inheriting the configuration the direct paths build.
         var detectedLanguageCode: String?
         let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
-            transcript: coreDataManager.getTranscriptData(for: recordingId)
+            transcript: try coreDataManager.fetchTranscriptData(for: recordingId)
         )
 
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
@@ -1129,7 +1269,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update progress
         let progressJob = job.withProgress(0.1)
-        await updateJob(progressJob)
+        try await updateJob(progressJob)
 
         // Get chunks or create them if needed
         let chunks: [AudioChunk]
@@ -1160,7 +1300,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update progress after chunking
         let chunkingProgressJob = job.withProgress(0.2)
-        await updateJob(chunkingProgressJob)
+        try await updateJob(chunkingProgressJob)
 
         // Process each chunk
         var transcriptChunks: [TranscriptChunk] = []
@@ -1176,7 +1316,7 @@ class BackgroundProcessingManager: ObservableObject {
             // Update progress for this chunk
             let chunkProgress = 0.2 + (0.7 * Double(index) / Double(totalChunks))
             let chunkProgressJob = job.withProgress(chunkProgress)
-            await updateJob(chunkProgressJob)
+            try await updateJob(chunkProgressJob)
 
             // Send progress notification for significant progress updates
             if index == 0 || index == totalChunks / 2 || index == totalChunks - 1 {
@@ -1310,7 +1450,7 @@ class BackgroundProcessingManager: ObservableObject {
                 mode: .automatic,
                 languageCode: detectedLanguageCode
             )
-            let cleanupPreparation = await prepareTranscriptCleanup(
+            let cleanupPreparation = try await prepareTranscriptCleanup(
                 for: finalTranscriptData,
                 recordingId: recordingId,
                 sourceSnapshot: cleanupSourceSnapshot,
@@ -1338,7 +1478,7 @@ class BackgroundProcessingManager: ObservableObject {
             // be enabled — so it must not borrow the cleanup warning above, which
             // tells the user only a derived cleanup result was discarded. Matches
             // the wording the direct rerun path already uses in `TranscriptViews`.
-            guard coreDataManager.getRecording(id: recordingId) != nil else {
+            guard try coreDataManager.fetchRecording(id: recordingId) != nil else {
                 AppLog.shared.backgroundProcessing(
                     "Discarded the completed transcription because the recording was deleted: "
                         + "recording=\(recordingId.uuidString)",
@@ -1368,32 +1508,8 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
 
             // Mark as failed instead of completed
-            let failedJob = job.withStatus(.failed("No transcript content generated")).withProgress(1.0)
-            await updateJob(failedJob)
-
-            await sendNotification(
-                title: "Transcription Failed",
-                body: "No transcript content was generated for \(job.recordingName)"
-            )
-
             throw BackgroundProcessingError.processingFailed("Transcription completed but generated no content")
         }
-
-        let completedJob = job.withStatus(.completed).withProgress(1.0)
-        await updateJob(completedJob)
-
-        // Send completion notification
-        let warnings = [
-            speakerLabelWarning?.userVisibleMessage,
-            transcriptCleanupWarning?.userVisibleMessage
-        ].compactMap { $0 }
-        let completionBody = warnings.isEmpty
-            ? "Successfully transcribed \(job.recordingName)"
-            : "Successfully transcribed \(job.recordingName).\n\n" + warnings.joined(separator: "\n\n")
-        await sendNotification(
-            title: "Transcription Complete",
-            body: completionBody
-        )
 
         AppLog.shared.backgroundProcessing("Transcription job completed with valid content")
     }
@@ -1545,43 +1661,46 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
 
-    private func ensureRecordingExists(recordingURL: URL, recordingName: String) async -> UUID? {
-        if let appCoordinator = enhancedFileManager.getCoordinator() {
-            // Check if recording already exists
-            if let recording = appCoordinator.getRecording(url: recordingURL), let recordingId = recording.id {
+    private func ensureRecordingExists(recordingURL: URL, recordingName: String) async throws -> UUID {
+        guard let appCoordinator = enhancedFileManager.getCoordinator() else {
+            throw BackgroundProcessingError.persistenceUnavailable(
+                "App data coordinator is unavailable for recording persistence"
+            )
+        }
+
+        // Check if recording already exists. A failed read must not look like
+        // an absent row and authorize a second recording identity.
+        if let recording = try appCoordinator.coreDataManager.fetchRecording(url: recordingURL),
+           let recordingId = recording.id {
                 AppLog.shared.backgroundProcessing("Recording already exists in Core Data")
                 return recordingId
-            }
+        }
 
-            // Create recording entry if it doesn't exist
-            AppLog.shared.backgroundProcessing("Creating recording entry in Core Data")
+        // Create recording entry if it doesn't exist
+        AppLog.shared.backgroundProcessing("Creating recording entry in Core Data")
 
-            // Get file metadata
-            let fileSize = getFileSize(url: recordingURL)
-            let duration = await getAudioDuration(url: recordingURL)
+        // Get file metadata
+        let fileSize = getFileSize(url: recordingURL)
+        let duration = await getAudioDuration(url: recordingURL)
 
-            return await MainActor.run {
-                let recordingId = appCoordinator.addRecording(
-                    url: recordingURL,
-                    name: recordingName,
-                    date: Date(),
-                    fileSize: fileSize,
-                    duration: duration,
-                    quality: .whisperOptimized,
-                    locationData: nil
-                )
+        return try await MainActor.run {
+            let recordingId = try appCoordinator.addRecording(
+                url: recordingURL,
+                name: recordingName,
+                date: Date(),
+                fileSize: fileSize,
+                duration: duration,
+                quality: .whisperOptimized,
+                locationData: nil
+            )
 
-                AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
-                return recordingId
-            }
-        } else {
-            AppLog.shared.backgroundProcessing("AppCoordinator not available for recording creation", level: .error)
-            return nil
+            AppLog.shared.backgroundProcessing("Created recording entry with ID: \(recordingId)")
+            return recordingId
         }
     }
 
     private func resolveRecordingID(for recordingURL: URL) throws -> UUID {
-        let recordingId = enhancedFileManager.getCoordinator()?.getRecording(url: recordingURL)?.id
+        let recordingId = try enhancedFileManager.getCoordinator()?.coreDataManager.fetchRecording(url: recordingURL)?.id
         return try requiredRecordingID(recordingId, for: recordingURL)
     }
 
@@ -1640,12 +1759,12 @@ class BackgroundProcessingManager: ObservableObject {
         recordingId: UUID,
         sourceSnapshot: TranscriptCleanupSourceSnapshot,
         configuration: TranscriptCleanupConfiguration
-    ) async -> TranscriptCleanupSavePreparation {
+    ) async throws -> TranscriptCleanupSavePreparation {
         guard configuration.enabled else {
             return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, isCleanupUsable: true)
         }
 
-        guard sourceSnapshot.matches(coreDataManager.getTranscriptData(for: recordingId)) else {
+        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
             return TranscriptCleanupSavePreparation(
                 transcript: transcript,
                 warning: .staleResult,
@@ -1658,7 +1777,7 @@ class BackgroundProcessingManager: ObservableObject {
             configuration: configuration
         )
 
-        guard sourceSnapshot.matches(coreDataManager.getTranscriptData(for: recordingId)) else {
+        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
             return TranscriptCleanupSavePreparation(
                 transcript: transcript,
                 warning: .staleResult,
@@ -1674,30 +1793,9 @@ class BackgroundProcessingManager: ObservableObject {
         )
     }
 
-    private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
-        AppLog.shared.backgroundProcessing("Starting summarization job")
-
-        try Task.checkCancellation()
-
-        // Update progress
-        let progressJob = job.withProgress(0.1)
-        await updateJob(progressJob)
-
-        // Look up the recording in Core Data to get IDs
-        let recording = coreDataManager.getRecording(url: job.recordingURL)
-        guard let recordingId = recording?.id else {
-            throw BackgroundProcessingError.processingFailed("Recording not found in Core Data for \(job.recordingName)")
-        }
-
-        // Get transcript data
-        guard let transcriptEntry = recording?.transcript,
-              let transcriptId = transcriptEntry.id else {
-            throw BackgroundProcessingError.processingFailed("No transcript found for \(job.recordingName). Transcribe the recording first.")
-        }
-
-        let resolvedRecordingDate = recording?.recordingDate ?? recordingDate(for: job)
-
-        // Parse transcript to get text for summarization
+    private func summarizationText(
+        _ transcriptEntry: TranscriptEntry, recordingURL: URL, recordingName: String, recordingDate: Date
+    ) throws -> String {
         let transcriptText: String
         if let segmentsJSON = transcriptEntry.segments,
            let segmentsData = segmentsJSON.data(using: .utf8),
@@ -1710,16 +1808,47 @@ class BackgroundProcessingManager: ObservableObject {
             }
             // Build TranscriptData to use textForSummarization (includes speaker labels)
             let transcriptData = TranscriptData(
-                recordingURL: job.recordingURL,
-                recordingName: job.recordingName,
-                recordingDate: resolvedRecordingDate,
+                recordingURL: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
                 segments: segments,
                 speakerMappings: speakerMappings
             )
             transcriptText = transcriptData.textForSummarization
         } else {
-            throw BackgroundProcessingError.processingFailed("Could not read transcript text for \(job.recordingName)")
+            throw BackgroundProcessingError.processingFailed("Could not read transcript text for \(recordingName)")
         }
+
+        return transcriptText
+    }
+
+    private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
+        AppLog.shared.backgroundProcessing("Starting summarization job")
+
+        try Task.checkCancellation()
+
+        // Update progress
+        let progressJob = job.withProgress(0.1)
+        try await updateJob(progressJob)
+
+        // Look up the recording in Core Data to get IDs
+        let recording = try coreDataManager.fetchRecording(url: job.recordingURL)
+        guard let recordingId = recording?.id else {
+            throw BackgroundProcessingError.processingFailed("Recording not found in Core Data for \(job.recordingName)")
+        }
+
+        // Get transcript data
+        guard let transcriptEntry = try coreDataManager.fetchTranscript(for: recordingId),
+              let transcriptId = transcriptEntry.id else {
+            throw BackgroundProcessingError.processingFailed("No transcript found for \(job.recordingName). Transcribe the recording first.")
+        }
+
+        let resolvedRecordingDate = recording?.recordingDate ?? job.startTime
+
+        let transcriptText = try summarizationText(
+            transcriptEntry, recordingURL: job.recordingURL,
+            recordingName: job.recordingName, recordingDate: resolvedRecordingDate
+        )
 
         guard !transcriptText.isEmpty else {
             throw BackgroundProcessingError.processingFailed("Transcript is empty for \(job.recordingName)")
@@ -1729,7 +1858,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update progress after getting transcript
         let transcriptProgressJob = job.withProgress(0.3)
-        await updateJob(transcriptProgressJob)
+        try await updateJob(transcriptProgressJob)
 
         try Task.checkCancellation()
 
@@ -1774,14 +1903,12 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update progress after summarization
         let summaryProgressJob = job.withProgress(0.8)
-        await updateJob(summaryProgressJob)
-
-        // Clear regeneration tracking (cleanup now happens in RecordingWorkflowManager.createSummary)
-        regenerationSummaryIds.removeValue(forKey: job.id)
+        try await updateJob(summaryProgressJob)
 
         // Save summary to Core Data using RecordingWorkflowManager
-        let workflowManager = RecordingWorkflowManager()
-        let summaryId = workflowManager.createSummary(
+        let workflowManager = enhancedFileManager.getCoordinator()?.workflowManager
+            ?? RecordingWorkflowManager(coreDataManager: coreDataManager)
+        let summaryId = try workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: enhancedSummary.summary,
@@ -1799,29 +1926,21 @@ class BackgroundProcessingManager: ObservableObject {
             throw BackgroundProcessingError.processingFailed("Failed to save summary for \(job.recordingName)")
         }
 
+        // Cleanup of an old regeneration row is part of the successful
+        // replacement path; retain the mapping when the new save throws.
+        regenerationSummaryIds.removeValue(forKey: job.id)
+
         AppLog.shared.backgroundProcessing("Summary saved with ID: \(summaryId?.uuidString ?? "nil")", level: .debug)
 
         // Update recording name if the AI generated a better one
         if enhancedSummary.recordingName != job.recordingName {
             AppLog.shared.backgroundProcessing("Updating recording name from AI-generated title", level: .debug)
-            try? coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
+            try coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
         }
 
         // Update progress to near-complete (processNextJob sets final .completed status)
         let nearCompleteJob = job.withProgress(0.95)
-        await updateJob(nearCompleteJob)
-
-        // Send completion notification
-        let taskCount = enhancedSummary.tasks.count
-        let reminderCount = enhancedSummary.reminders.count
-        let notificationBody = "Successfully summarized \(job.recordingName)" +
-                              (taskCount > 0 ? " • \(taskCount) tasks" : "") +
-                              (reminderCount > 0 ? " • \(reminderCount) reminders" : "")
-
-        await sendNotification(
-            title: "Summarization Complete",
-            body: notificationBody
-        )
+        try await updateJob(nearCompleteJob)
 
         AppLog.shared.backgroundProcessing("Summarization job completed")
     }
@@ -1934,63 +2053,95 @@ class BackgroundProcessingManager: ObservableObject {
     private func performCleanupTasks(for job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("Performing cleanup tasks for job")
 
-        // Clean up source audio file (e.g. cleaned audio copy) now that the job is done
-        if let sourcePath = job.sourceAudioPath, sourcePath.hasPrefix("cleaned_") {
-            let sourceURL = job.audioSourceURL
-            if FileManager.default.fileExists(atPath: sourceURL.path) {
-                try? FileManager.default.removeItem(at: sourceURL)
-                AppLog.shared.backgroundProcessing("Cleaned up source audio file")
-            }
-        }
-
         // Clean up temporary chunk files
         if let chunks = job.chunks {
             try? await chunkingService.cleanupChunks(chunks)
         }
 
-        // Update file relationships
-        await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
-            recordingURL: job.recordingURL,
-            recordingName: job.recordingName,
-            recordingDate: recordingDate(for: job),
-            transcriptExists: true,
-            summaryExists: false,
-            iCloudSyncEligible: isCloudSyncEligible(for: job.recordingURL)
-        ))
+        // This post-commit cache update must not reinterpret a failed
+        // recording read as an ordinary recording with no cloud eligibility.
+        guard let coordinator = enhancedFileManager.getCoordinator() else {
+            AppLog.shared.backgroundProcessing(
+                "File relationship cleanup withheld because the app coordinator is unavailable",
+                level: .error
+            )
+            return
+        }
+        do {
+            guard let recording = try coordinator.coreDataManager.fetchRecording(url: job.recordingURL) else {
+                throw BackgroundProcessingError.recordingIdentityUnavailable(job.recordingURL)
+            }
+            await enhancedFileManager.updateFileRelationships(
+                for: job.recordingURL,
+                relationships: FileRelationships(
+                    recordingURL: job.recordingURL,
+                    recordingName: job.recordingName,
+                    recordingDate: recording.recordingDate ?? job.startTime,
+                    transcriptExists: true,
+                    summaryExists: false,
+                    iCloudSyncEligible: SummaryManager.shared.getiCloudManager().isEnabled
+                        && !recording.isCloudSyncDisabled
+                )
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "File relationship cleanup withheld because recording lookup failed: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func cleanupSourceAudio(for job: ProcessingJob) {
+        guard let sourcePath = job.sourceAudioPath, sourcePath.hasPrefix("cleaned_") else { return }
+        let sourceURL = job.audioSourceURL
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return }
+
+        do {
+            try FileManager.default.removeItem(at: sourceURL)
+            AppLog.shared.backgroundProcessing("Cleaned up source audio file after durable job completion")
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "Could not remove source audio file after durable job completion: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     private func updateFileMetadata(for job: ProcessingJob) async {
         AppLog.shared.backgroundProcessing("Updating file metadata for job")
 
-        // Update file relationships to reflect new transcript
-        await enhancedFileManager.updateFileRelationships(for: job.recordingURL, relationships: FileRelationships(
-            recordingURL: job.recordingURL,
-            recordingName: job.recordingName,
-            recordingDate: recordingDate(for: job),
-            transcriptExists: true,
-            summaryExists: false,
-            iCloudSyncEligible: isCloudSyncEligible(for: job.recordingURL)
-        ))
-    }
+        guard let coordinator = enhancedFileManager.getCoordinator() else {
+            AppLog.shared.backgroundProcessing(
+                "File relationship update withheld because the app coordinator is unavailable",
+                level: .error
+            )
+            return
+        }
 
-    private func recordingDate(for job: ProcessingJob) -> Date {
-        if let recording = enhancedFileManager.getCoordinator()?.getRecording(url: job.recordingURL),
-           let recordingDate = recording.recordingDate {
-            return recordingDate
+        do {
+            // This post-commit cache update must not reinterpret a failed
+            // recording read as an ordinary recording with no cloud eligibility.
+            guard let recording = try coordinator.coreDataManager.fetchRecording(url: job.recordingURL) else {
+                throw BackgroundProcessingError.recordingIdentityUnavailable(job.recordingURL)
+            }
+            await enhancedFileManager.updateFileRelationships(
+                for: job.recordingURL,
+                relationships: FileRelationships(
+                    recordingURL: job.recordingURL,
+                    recordingName: job.recordingName,
+                    recordingDate: recording.recordingDate ?? job.startTime,
+                    transcriptExists: true,
+                    summaryExists: false,
+                    iCloudSyncEligible: SummaryManager.shared.getiCloudManager().isEnabled
+                        && !recording.isCloudSyncDisabled
+                )
+            )
+        } catch {
+            AppLog.shared.backgroundProcessing(
+                "File relationship update withheld because recording lookup failed: \(error.localizedDescription)",
+                level: .error
+            )
         }
-        if let resourceValues = try? job.recordingURL.resourceValues(forKeys: [.creationDateKey]),
-           let creationDate = resourceValues.creationDate {
-            return creationDate
-        }
-        return job.startTime
-    }
-
-    private func isCloudSyncEligible(for recordingURL: URL) -> Bool {
-        guard let coordinator = enhancedFileManager.getCoordinator(),
-              let recording = coordinator.getRecording(url: recordingURL) else {
-            return false
-        }
-        return SummaryManager.shared.getiCloudManager().isEnabled && !recording.isCloudSyncDisabled
     }
 
     // MARK: - Job Status Management
@@ -2216,11 +2367,17 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Remove duplicate jobs
         for job in jobsToRemove {
-            if let index = activeJobs.firstIndex(where: { $0.id == job.id }) {
-                activeJobs.remove(at: index)
-            }
-            if let jobEntry = coreDataManager.getProcessingJob(id: job.id) {
-                coreDataManager.deleteProcessingJob(jobEntry)
+            do {
+                if let jobEntry = try coreDataManager.fetchProcessingJob(id: job.id) {
+                    try coreDataManager.deleteProcessingJob(jobEntry)
+                }
+                activeJobs.removeAll { $0.id == job.id }
+            } catch {
+                jobLoadError = "Duplicate processing jobs could not be reconciled: \(error.localizedDescription)"
+                AppLog.shared.backgroundProcessing(
+                    "Could not delete duplicate interrupted job \(job.id): \(error.localizedDescription)",
+                    level: .error
+                )
             }
         }
 
@@ -2233,16 +2390,32 @@ class BackgroundProcessingManager: ObservableObject {
 
             if availability.available {
                 let resumedJob = job.withStatus(.queued).withProgress(0.0)
-                await updateJob(resumedJob)
-                resumedCount += 1
-                AppLog.shared.backgroundProcessing("Resumed job: \(job.type.displayName)")
+                do {
+                    try await updateJob(resumedJob)
+                    resumedCount += 1
+                    AppLog.shared.backgroundProcessing("Resumed job: \(job.type.displayName)")
+                } catch {
+                    jobLoadError = "Interrupted jobs could not be resumed: \(error.localizedDescription)"
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist resumed job state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             } else {
                 // Keep as interrupted with updated reason
                 let reason = availability.reason ?? "Engine unavailable"
                 let waitingJob = job.withStatus(.interrupted(reason))
-                await updateJob(waitingJob)
-                waitingCount += 1
-                AppLog.shared.backgroundProcessing("Job waiting: \(job.type.displayName) — \(reason)")
+                do {
+                    try await updateJob(waitingJob)
+                    waitingCount += 1
+                    AppLog.shared.backgroundProcessing("Job waiting: \(job.type.displayName) — \(reason)")
+                } catch {
+                    jobLoadError = "Interrupted jobs could not be retained: \(error.localizedDescription)"
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist waiting job state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
         }
 
@@ -2361,17 +2534,25 @@ class BackgroundProcessingManager: ObservableObject {
         // so also directly mark the job as interrupted as a safety net
         if let job = currentJob {
             let interruptedJob = job.withStatus(.interrupted("App was closed"))
-            await updateJob(interruptedJob)
+            do {
+                try await updateJob(interruptedJob)
 
-            let jobTypeDesc = switch job.type {
-            case .transcription: "Transcription"
-            case .summarization: "Summarization"
+                let jobTypeDesc = switch job.type {
+                case .transcription: "Transcription"
+                case .summarization: "Summarization"
+                }
+                let modelInfo = job.modelName.map { " (\($0))" } ?? ""
+                await sendNotification(
+                    title: "\(jobTypeDesc) Stopped",
+                    body: "\(job.recordingName) — \(job.type.engineName)\(modelInfo) was stopped because the app was closed. Open the app to resume."
+                )
+            } catch {
+                jobLoadError = "The interrupted job state could not be saved before termination."
+                AppLog.shared.backgroundProcessing(
+                    "Could not persist termination state: \(error.localizedDescription)",
+                    level: .error
+                )
             }
-            let modelInfo = job.modelName.map { " (\($0))" } ?? ""
-            await sendNotification(
-                title: "\(jobTypeDesc) Stopped",
-                body: "\(job.recordingName) — \(job.type.engineName)\(modelInfo) was stopped because the app was closed. Open the app to resume."
-            )
         }
 
         currentJob = nil
@@ -2390,14 +2571,9 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Core Data Persistence
 
-    private func loadJobsFromCoreData() {
-        let jobEntries = coreDataManager.getAllProcessingJobs()
+    private func loadJobsFromCoreData() throws {
+        let jobEntries = try coreDataManager.getAllProcessingJobs()
         activeJobs = jobEntries.compactMap { convertToProcessingJob(from: $0) }
-
-        // Clean up stale jobs on startup
-        Task {
-            await cleanupStaleJobs()
-        }
     }
 
     private func convertToProcessingJob(from jobEntry: ProcessingJobEntry) -> ProcessingJob? {
@@ -2906,6 +3082,13 @@ class BackgroundProcessingManager: ObservableObject {
 
     /// Reconciles jobs that are stuck in `processing` without a live task, or exceed timeout.
     func cleanupStaleJobs() async {
+        guard canUseLoadedJobStore else {
+            AppLog.shared.backgroundProcessing(
+                "Stale-job cleanup withheld because processing-job storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         guard !isCleaningUpStaleJobs else { return }
         isCleaningUpStaleJobs = true
         defer { isCleaningUpStaleJobs = false }
@@ -2928,8 +3111,16 @@ class BackgroundProcessingManager: ObservableObject {
 
                 // Write the failure status first, before cancelling the task.
                 let failedJob = job.withStatus(.failed(timeoutMessage))
-                await updateJobInMemoryAndCoreData(failedJob)
-                reconciledCount += 1
+                do {
+                    try await updateJob(failedJob)
+                    reconciledCount += 1
+                } catch {
+                    jobLoadError = "Stale job cleanup could not save its reconciliation: \(error.localizedDescription)"
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist timed-out job state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
 
                 // Cancel live task handles. Set cancellationReason so the task's
                 // CancellationError catch block doesn't overwrite .failed with .cancelled.
@@ -2949,8 +3140,16 @@ class BackgroundProcessingManager: ObservableObject {
             // If no task is actively associated with this processing job, reconcile it out of active state.
             if !isCurrentInProcess && !hasExternalTask && timeSinceProcessingBegan > orphanedProcessingThreshold {
                 let interruptedJob = job.withStatus(.interrupted("Processing stopped unexpectedly"))
-                await updateJobInMemoryAndCoreData(interruptedJob)
-                reconciledCount += 1
+                do {
+                    try await updateJob(interruptedJob)
+                    reconciledCount += 1
+                } catch {
+                    jobLoadError = "Stale job cleanup could not save its reconciliation: \(error.localizedDescription)"
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist orphaned job state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
         }
 
@@ -2966,56 +3165,17 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    /// Updates job both in memory and Core Data
-    private func updateJobInMemoryAndCoreData(_ updatedJob: ProcessingJob) async {
-        // Update in memory
-        if let index = activeJobs.firstIndex(where: { $0.id == updatedJob.id }) {
-            activeJobs[index] = updatedJob
-        }
-
-        // Keep currentJob in sync so the UI reflects the update immediately
-        if updatedJob.id == currentJob?.id {
-            currentJob = updatedJob
-            processingStatus = updatedJob.status
-        }
-
-        // Update in Core Data — use displayName for status (title-case) to match
-        // convertToProcessingJob's expected format, and store error separately.
-        if let jobEntry = coreDataManager.getProcessingJob(id: updatedJob.id) {
-            jobEntry.status = updatedJob.status.displayName
-            jobEntry.error = updatedJob.error
-            jobEntry.completionTime = updatedJob.completionTime
-            jobEntry.progress = updatedJob.progress
-
-            do {
-                try coreDataManager.saveContext()
-            } catch {
-                AppLog.shared.backgroundProcessing("Failed to update job in Core Data: \(error.localizedDescription)", level: .error)
-            }
-        }
-    }
-
     // MARK: - Manual Cleanup Functions
 
-    /// Manually cleanup all failed and completed jobs
-    func cleanupCompletedJobs() async {
-        let jobsToRemove = activeJobs.filter { job in
-            job.status.isTerminal
-        }
+    /// Manually cleanup all failed and completed jobs.
+    func cleanupCompletedJobs() async throws {
+        try requireLoadedJobStore()
+        let deletedCount = try coreDataManager.deleteCompletedProcessingJobs()
 
-        for job in jobsToRemove {
-            // Remove from Core Data
-            if let jobEntry = coreDataManager.getProcessingJob(id: job.id) {
-                coreDataManager.deleteProcessingJob(jobEntry)
-            }
-        }
+        // Remove from memory only after the durable cleanup succeeds.
+        activeJobs.removeAll { $0.status.isTerminal }
 
-        // Remove from memory
-        activeJobs.removeAll { job in
-            job.status.isTerminal
-        }
-
-        AppLog.shared.backgroundProcessing("Cleaned up \(jobsToRemove.count) completed/failed jobs")
+        AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) completed/failed jobs")
 
         // Update UI
         await MainActor.run {
@@ -3029,41 +3189,65 @@ class BackgroundProcessingManager: ObservableObject {
         // status update and cleanup for the active job
         currentTaskHandle?.cancel()
 
-        // Cancel all external task handles
+        // Cancel all external task handles. Keep a handle and the in-memory
+        // pending state when its cancellation save fails.
+        var externallyCancelledCount = 0
         for (id, task) in externalTaskHandles {
             task.cancel()
             // Update external job status to cancelled
             if let index = activeJobs.firstIndex(where: { $0.id == id }) {
                 let cancelledJob = activeJobs[index].withStatus(.cancelled)
-                await updateJob(cancelledJob)
+                do {
+                    try await updateJob(cancelledJob)
+                    externalTaskHandles.removeValue(forKey: id)
+                    externallyCancelledCount += 1
+                } catch {
+                    AppLog.shared.backgroundProcessing(
+                        "Could not persist external-job cancellation; retaining it for retry: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
         }
-        let externalCount = externalTaskHandles.count
-        externalTaskHandles.removeAll()
 
         // Cancel all queued jobs (these don't have task handles)
         let queuedJobs = activeJobs.filter { $0.status == .queued }
+        var queuedCancelledCount = 0
         for job in queuedJobs {
             let cancelledJob = job.withStatus(.cancelled)
-            await updateJob(cancelledJob)
+            do {
+                try await updateJob(cancelledJob)
+                queuedCancelledCount += 1
+            } catch {
+                AppLog.shared.backgroundProcessing(
+                    "Could not persist queued-job cancellation; retaining it for retry: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
         }
 
-        let totalCancelled = (currentJob != nil ? 1 : 0) + externalCount + queuedJobs.count
+        let totalCancelled = (currentJob != nil ? 1 : 0) + externallyCancelledCount + queuedCancelledCount
         if totalCancelled > 0 {
             AppLog.shared.backgroundProcessing("Cancelling \(totalCancelled) jobs")
         }
     }
 
     /// Force cleanup all jobs (nuclear option)
-    func clearAllJobs() async {
+    func clearAllJobs() async throws {
+        try requireLoadedJobStore()
+
         // Remove all jobs from Core Data
-        let allJobEntries = coreDataManager.getAllProcessingJobs()
+        let allJobEntries = try coreDataManager.getAllProcessingJobs()
+        var deletedJobIDs: Set<UUID> = []
         for jobEntry in allJobEntries {
-            coreDataManager.deleteProcessingJob(jobEntry)
+            try coreDataManager.deleteProcessingJob(jobEntry)
+            if let id = jobEntry.id {
+                deletedJobIDs.insert(id)
+            }
         }
 
         // Clear from memory
-        activeJobs.removeAll()
+        activeJobs.removeAll { deletedJobIDs.contains($0.id) }
         currentJob = nil
 
         AppLog.shared.backgroundProcessing("Cleared all background processing jobs")
@@ -3090,12 +3274,12 @@ func persistBackgroundTranscript(
     }
 
     guard let recordingId = transcriptData.recordingId,
-          appCoordinator.getRecording(id: recordingId)?.id == recordingId else {
+          try appCoordinator.coreDataManager.fetchRecording(id: recordingId) != nil else {
         throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptData.recordingURL)
     }
 
     try Task.checkCancellation()
-    guard let transcriptId = appCoordinator.addTranscript(
+    guard let transcriptId = try appCoordinator.addTranscript(
         for: recordingId,
         segments: transcriptData.segments,
         speakerMappings: transcriptData.speakerMappings,
@@ -3123,6 +3307,9 @@ enum BackgroundProcessingError: LocalizedError {
     case noActiveJob
     case jobNotFound
     case processingFailed(String)
+    /// The durable job/recording store could not authorize this operation. A
+    /// caller must not fall back to direct processing when this boundary fails.
+    case persistenceUnavailable(String)
     case timeoutError
     case resourceUnavailable
     case queueFull
@@ -3144,6 +3331,8 @@ enum BackgroundProcessingError: LocalizedError {
             return "The specified job could not be found."
         case .processingFailed(let message):
             return "Processing failed: \(message)"
+        case .persistenceUnavailable(let message):
+            return "Processing storage is unavailable: \(message)"
         case .timeoutError:
             return "Processing job timed out"
         case .resourceUnavailable:

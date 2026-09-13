@@ -25,6 +25,10 @@ class DataMigrationManager: ObservableObject {
     }
 
     func performDataMigration() async {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.dataMigration("Data migration withheld: local storage is unavailable", level: .fault)
+            return
+        }
         AppLog.shared.dataMigration("Starting data migration")
         migrationStatus = "Starting migration..."
         migrationProgress = 0.0

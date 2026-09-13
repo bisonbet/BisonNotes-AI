@@ -1357,34 +1357,19 @@ struct SummaryDetailView: View {
 
         Task {
             do {
-                // Clean up attachment files before removing the Core Data entry.
-                try? SummaryAttachmentStore.shared.deleteAll(for: summaryData.id)
-
                 // Delete the summary locally and from iCloud
                 try await appCoordinator.deleteSummary(id: summaryData.id)
                 AppLog.shared.summarization("Summary deleted from Core Data")
 
                 // If this was a preserved summary, also remove the now-empty recording anchor
                 if let recordingId = summaryData.recordingId,
-                   let recording = appCoordinator.getRecording(id: recordingId) {
-                    recording.summaryId = nil
-                    recording.summaryStatus = ProcessingStatus.notStarted.rawValue
-                    recording.lastModified = Date()
-
+                   let recording = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) {
                     let hadNoURL = (recording.recordingURL == nil)
                     let hadNoTranscript = (recording.transcript == nil && recording.transcriptId == nil)
                     if hadNoURL && hadNoTranscript {
                         // Safe to delete the anchor recording entry
-                        appCoordinator.deleteRecording(id: recordingId)
+                        try appCoordinator.deleteRecording(id: recordingId)
                         AppLog.shared.summarization("Deleted empty anchor recording entry after summary deletion", level: .debug)
-                    } else {
-                        // Save the updated recording if we keep it
-                        do {
-                            try appCoordinator.coreDataManager.saveContext()
-                            AppLog.shared.summarization("Recording updated to remove summary reference")
-                        } catch {
-                            AppLog.shared.summarization("Failed to update recording: \(error)", level: .error)
-                        }
                     }
                 } else {
                     AppLog.shared.summarization("Recording no longer exists (orphaned summary) - skipping recording update", level: .debug)
@@ -1642,7 +1627,7 @@ struct SummaryDetailView: View {
 
     private func updateRecordingDateInCoreData(recordingId: UUID, newDate: Date) async throws {
         // For now, we'll use a simple approach - later we'll add the dateSource field
-        guard let recording = appCoordinator.getRecording(id: recordingId) else {
+        guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
         }
 
@@ -1693,7 +1678,7 @@ struct SummaryDetailView: View {
     }
 
     private func updateRecordingLocationInCoreData(recordingId: UUID, locationData: LocationData) async throws {
-        guard let recording = appCoordinator.getRecording(id: recordingId) else {
+        guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
             throw NSError(domain: "CoreDataManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Recording not found"])
         }
 

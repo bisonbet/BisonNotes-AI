@@ -232,11 +232,21 @@ extension AudioRecorderViewModel {
 		persistedURL: URL?
 	) -> Bool {
 		let key = mainURL?.lastPathComponent ?? segments.first?.lastPathComponent
-		if let persistedURL,
-		   let appCoordinator,
-		   appCoordinator.getRecording(url: persistedURL) != nil {
-			clearDeferredRecoverySnapshot(forKey: key)
-			return false
+		if let persistedURL, let appCoordinator {
+			do {
+				if try appCoordinator.coreDataManager.fetchRecording(url: persistedURL) != nil {
+					clearDeferredRecoverySnapshot(forKey: key)
+					return false
+				}
+			} catch {
+				// A failed lookup is not evidence that the recovery row is absent.
+				// Keep the parked trail and let a later pass retry the save.
+				AppLog.shared.audioSession(
+					"Could not verify terminated recovery persistence; retaining the recovery trail: \(error.localizedDescription)",
+					level: .error
+				)
+				return true
+			}
 		}
 
 		let survivors = segments.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -584,9 +594,20 @@ extension AudioRecorderViewModel {
 		for parked: ParkedRecovery,
 		persistedURL: URL
 	) {
-		if let appCoordinator, appCoordinator.getRecording(url: persistedURL) != nil {
-			clearDeferredRecoverySnapshot(forKey: parked.key)
-			return
+		if let appCoordinator {
+			do {
+				if try appCoordinator.coreDataManager.fetchRecording(url: persistedURL) != nil {
+					clearDeferredRecoverySnapshot(forKey: parked.key)
+					return
+				}
+			} catch {
+				// Do not clear a recovery trail merely because the lookup failed.
+				AppLog.shared.audioSession(
+					"Could not verify reclaimed recovery persistence; retaining the recovery trail: \(error.localizedDescription)",
+					level: .error
+				)
+				return
+			}
 		}
 
 		let survivors = parked.segments.filter { FileManager.default.fileExists(atPath: $0.path) }

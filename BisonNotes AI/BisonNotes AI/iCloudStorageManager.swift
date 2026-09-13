@@ -883,7 +883,7 @@ class iCloudStorageManager: ObservableObject {
         AppLog.shared.iCloudSync("Manual full sync requested")
         // Core Data is the authoritative local summary store. SummaryManager only exposes
         // this read-through for callers that do not already have an AppDataCoordinator.
-        let allSummaries = SummaryManager.shared.getAuthoritativeSummaryData()
+        let allSummaries = try SummaryManager.shared.getAuthoritativeSummaryData()
         try await syncAllSummaries(allSummaries)
     }
 
@@ -1074,7 +1074,7 @@ class iCloudStorageManager: ObservableObject {
             AppLog.shared.iCloudSync("Found \(cloudSummaries.count) summaries in iCloud", level: .debug)
 
             // Get local summary IDs from Core Data for comparison
-            let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+            let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
             let localSummaryIds = Set(localSummaries.compactMap { $0.id })
 
             AppLog.shared.iCloudSync("Found \(localSummaries.count) local summaries", level: .debug)
@@ -1289,7 +1289,7 @@ class iCloudStorageManager: ObservableObject {
         guard let database = database else { return [] }
 
         // Get all summaries from Core Data to get their IDs
-        let localSummaries = appCoordinator.coreDataManager.getAllSummaries()
+        let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
 
         var foundSummaries: [EnhancedSummaryData] = []
         var checkedUUIDs: Set<String> = Set()
@@ -1625,13 +1625,13 @@ class iCloudStorageManager: ObservableObject {
         if let cloudRecordingId = cloudSummary.recordingId {
             // A cloud recording UUID is authoritative. Do not map it to another local
             // recording by filename when the UUID is present.
-            localRecordingId = appCoordinator.getRecording(id: cloudRecordingId)?.id
+            localRecordingId = try appCoordinator.coreDataManager.fetchRecording(id: cloudRecordingId)?.id
         } else {
-            localRecordingId = appCoordinator.getRecording(url: cloudSummary.recordingURL)?.id
+            localRecordingId = try appCoordinator.coreDataManager.fetchRecording(url: cloudSummary.recordingURL)?.id
         }
 
         if let localRecordingId,
-           appCoordinator.coreDataManager.getRecording(id: localRecordingId)?.isCloudSyncDisabled == true {
+           try appCoordinator.coreDataManager.fetchRecording(id: localRecordingId)?.isCloudSyncDisabled == true {
             AppLog.shared.iCloudSync("Skipping cloud summary for a recording marked Keep on This Device", level: .debug)
             return false
         }
@@ -1860,7 +1860,7 @@ class iCloudStorageManager: ObservableObject {
     /// A cold launch forces one; the activation notification that follows it a
     /// moment later finds that run in flight and joins it, so the pair produces one
     /// sync rather than two.
-    func shouldStartRoutineSnapshot(force: Bool, appCoordinator: AppDataCoordinator? = nil) -> Bool {
+    func shouldStartRoutineSnapshot(force: Bool, appCoordinator: AppDataCoordinator? = nil) throws -> Bool {
         guard isEnabled else { return false }
         if force { return true }
         // Never start work CloudKit has asked us to hold off on.
@@ -1871,7 +1871,7 @@ class iCloudStorageManager: ObservableObject {
         // edit then waited out the maintenance window. The backup signature covers
         // every local edit however it was made, so it — not the flag — is the
         // authority on whether there is anything to send.
-        if let appCoordinator, localDataDiffersFromLastBackup(appCoordinator: appCoordinator) {
+        if let appCoordinator, try localDataDiffersFromLastBackup(appCoordinator: appCoordinator) {
             return true
         }
         guard let lastSuccess = lastSuccessfulRoutineSyncDate else { return true }
@@ -1880,12 +1880,12 @@ class iCloudStorageManager: ObservableObject {
 
     /// Whether the local dataset still matches what the last completed backup sent.
     /// A local Core Data read; far cheaper than the CloudKit round trip it decides.
-    private func localDataDiffersFromLastBackup(appCoordinator: AppDataCoordinator) -> Bool {
+    private func localDataDiffersFromLastBackup(appCoordinator: AppDataCoordinator) throws -> Bool {
         guard let storedSignature = UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) else {
             return true
         }
 
-        let selection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+        let selection = try Self.backupSourceSelection(from: appCoordinator.coreDataManager)
         let currentSignature = computeBackupStateSignature(
             recordings: selection.recordings,
             transcripts: selection.transcripts,
@@ -3347,7 +3347,7 @@ extension iCloudStorageManager {
         let deletionTargets = preflight.deletionTargets
         let importedAudioDeletionTargetIds = deletionTargets.importedAudioRecordings
 
-        let backupSourceSelection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+        let backupSourceSelection = try Self.backupSourceSelection(from: appCoordinator.coreDataManager)
         let excludedRecordingIds = backupSourceSelection.excludedRecordingIds
         let recordings = backupSourceSelection.recordings.filter { recording in
             guard let recordingId = recording.id else { return true }
@@ -4147,10 +4147,10 @@ extension iCloudStorageManager {
         var builders: [String: CloudReviewItemBuilder] = [:]
         let trustedManifest = try await fetchTrustedActiveManifestRecordNames()
 
-        let localRecordings = appCoordinator.coreDataManager.getAllRecordings()
+        let localRecordings = try appCoordinator.coreDataManager.getAllRecordings()
         let localRecordingIds = Set(localRecordings.compactMap { $0.id })
-        let localTranscriptIds = Set(appCoordinator.coreDataManager.getAllTranscripts().compactMap { $0.id })
-        let localSummaryIds = Set(appCoordinator.coreDataManager.getAllSummaries().compactMap { $0.id })
+        let localTranscriptIds = Set(try appCoordinator.coreDataManager.getAllTranscripts().compactMap { $0.id })
+        let localSummaryIds = Set(try appCoordinator.coreDataManager.getAllSummaries().compactMap { $0.id })
         let locallyExcludedRecordingIds = Set(localRecordings.compactMap { recording in
             recording.isCloudSyncDisabled ? recording.id : nil
         })
@@ -4756,7 +4756,7 @@ extension iCloudStorageManager {
             }
 
             recorder?.begin(.applyCloudWinners)
-            let locallyExcludedRecordingIds = Set(appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
+            let locallyExcludedRecordingIds = Set(try appCoordinator.coreDataManager.getAllRecordings().compactMap { recording in
                 recording.isCloudSyncDisabled ? recording.id : nil
             })
             if !locallyExcludedRecordingIds.isEmpty {
@@ -4905,7 +4905,7 @@ extension iCloudStorageManager {
             summaryRecords = summaryResolution.keptRecords
 
             var recordingsById = [UUID: RecordingEntry]()
-            for recording in appCoordinator.coreDataManager.getAllRecordings() {
+            for recording in try appCoordinator.coreDataManager.getAllRecordings() {
                 if let id = recording.id {
                     recordingsById[id] = recording
                 }
@@ -5024,7 +5024,7 @@ extension iCloudStorageManager {
             }
 
             var transcriptsById = [UUID: TranscriptEntry]()
-            for transcript in appCoordinator.coreDataManager.getAllTranscripts() {
+            for transcript in try appCoordinator.coreDataManager.getAllTranscripts() {
                 if let id = transcript.id {
                     transcriptsById[id] = transcript
                 }
@@ -5104,7 +5104,7 @@ extension iCloudStorageManager {
             }
 
             var summariesById = [UUID: SummaryEntry]()
-            for summary in appCoordinator.coreDataManager.getAllSummaries() {
+            for summary in try appCoordinator.coreDataManager.getAllSummaries() {
                 if let id = summary.id {
                     summariesById[id] = summary
                 }
@@ -5212,7 +5212,7 @@ extension iCloudStorageManager {
                 // Try falling back to CloudKit summary-sync records.
                 // Use try? so that CloudKit errors don't replace the more
                 // helpful "run Backup Now" message below.
-                let reviewItems = (try? await scanCloudOnlyReviewItems(appCoordinator: appCoordinator)) ?? []
+                let reviewItems = try await scanCloudOnlyReviewItems(appCoordinator: appCoordinator)
                 result.itemsHeldForReview += reviewItems.count
             }
 
@@ -5301,7 +5301,7 @@ extension iCloudStorageManager {
         appCoordinator: AppDataCoordinator
     ) async throws -> Int {
         var restoredCount = 0
-        let existingSummaryIds = Set(appCoordinator.coreDataManager.getAllSummaries().compactMap { $0.id })
+        let existingSummaryIds = Set(try appCoordinator.coreDataManager.getAllSummaries().compactMap { $0.id })
         let deletionTargets = try await fetchDeletionTargets()
 
         for recordName in recordNames {
@@ -5576,7 +5576,7 @@ extension iCloudStorageManager {
             // The restore leg has just pointed every recording at the winning transcript and
             // summary, so any duplicate left behind is now safe to drop.
             recorder?.begin(.pruneDuplicates)
-            let pruned = pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
+            let pruned = try pruneSupersededLocalDuplicates(appCoordinator: appCoordinator)
             result.prunedDuplicateItems = pruned.transcripts + pruned.summaries
             recorder?.endPhase()
 
@@ -5814,10 +5814,10 @@ extension iCloudStorageManager {
 
         try await validateiCloudAccountAvailability()
 
-        let transcripts = appCoordinator.coreDataManager.getAllTranscripts().filter {
+        let transcripts = try appCoordinator.coreDataManager.getAllTranscripts().filter {
             $0.recordingId == recordingId
         }
-        let summaries = appCoordinator.coreDataManager.getAllSummaries().filter {
+        let summaries = try appCoordinator.coreDataManager.getAllSummaries().filter {
             ($0.recordingId ?? $0.recording?.id) == recordingId
         }
 
@@ -6404,7 +6404,7 @@ extension iCloudStorageManager {
                 flushedSummaryRemovals += 1
 
             case .localOnlyRemoval:
-                guard let recording = appCoordinator.coreDataManager.getRecording(id: mutation.targetId) else {
+                guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: mutation.targetId) else {
                     acknowledgePendingCloudMutation(mutation)
                     continue
                 }
@@ -6546,7 +6546,7 @@ extension iCloudStorageManager {
                 continue
             }
 
-            if shouldWithdrawDeletionMarker(for: target, appCoordinator: appCoordinator) {
+            if try shouldWithdrawDeletionMarker(for: target, appCoordinator: appCoordinator) {
                 // The later edit wins, and because the marker goes before this
                 // reconcile's backup leg runs, the surviving item uploads again for
                 // every device.
@@ -6604,7 +6604,7 @@ extension iCloudStorageManager {
 
         if let workspace {
             for marker in applicableMarkers {
-                applyDeletionMarker(
+                try applyDeletionMarker(
                     marker.target,
                     appCoordinator: appCoordinator,
                     workspace: workspace,
@@ -6624,7 +6624,7 @@ extension iCloudStorageManager {
         for marker in applicableMarkers {
             guard let deletedAt = marker.deletedAt,
                   syncClock.now.timeIntervalSince(deletedAt) > Self.deletionMarkerRetentionInterval,
-                  !deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator) else {
+                  !(try deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator)) else {
                 continue
             }
             plan.expiredMarkerIDsToRetire.insert(marker.recordID)
@@ -6675,10 +6675,10 @@ extension iCloudStorageManager {
     private func shouldWithdrawDeletionMarker(
         for target: CloudDeletionTarget,
         appCoordinator: AppDataCoordinator
-    ) -> Bool {
+    ) throws -> Bool {
         switch target.kind {
         case .recording:
-            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
+            guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
                   recording.isCloudSyncDisabled == false else {
                 return false
             }
@@ -6687,8 +6687,8 @@ extension iCloudStorageManager {
                 deletedAt: target.deletedAt
             )
         case .transcript:
-            guard let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id),
-                  parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+            guard let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
+                  try parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return false
             }
             return Self.shouldReviveLocallyModifiedItem(
@@ -6696,8 +6696,8 @@ extension iCloudStorageManager {
                 deletedAt: target.deletedAt
             )
         case .summary:
-            guard let summary = appCoordinator.coreDataManager.getSummary(id: target.id),
-                  parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+            guard let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
+                  try parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return false
             }
             return Self.shouldReviveLocallyModifiedItem(
@@ -6733,7 +6733,7 @@ extension iCloudStorageManager {
         workspace: CloudDeletionWorkspace,
         plan: inout CloudDeletionPlan,
         application: inout DeletionMarkerApplication
-    ) {
+    ) throws {
         switch target.kind {
         case .recording:
             planRecordingContentDeletion(
@@ -6744,7 +6744,7 @@ extension iCloudStorageManager {
                 into: &plan
             )
 
-            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
+            guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
                   recording.isCloudSyncDisabled == false else {
                 return
             }
@@ -6759,17 +6759,14 @@ extension iCloudStorageManager {
             } catch CoreDataDeletionError.recordingNotFound {
                 // Already gone locally — the marker has nothing left to apply.
             } catch {
-                AppLog.shared.iCloudSync(
-                    "Failed to apply iCloud recording deletion locally for \(target.id.uuidString): \(error)",
-                    level: .error
-                )
+                throw error
             }
 
         case .transcript:
             planTranscriptContentDeletion(transcriptId: target.id, into: &plan)
 
-            guard let transcript = appCoordinator.coreDataManager.getTranscript(id: target.id),
-                  parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+            guard let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
+                  try parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
             do {
@@ -6780,20 +6777,17 @@ extension iCloudStorageManager {
                     enqueueCloudDeletion: false
                 )
             } catch {
-                AppLog.shared.iCloudSync(
-                    "Failed to apply iCloud transcript deletion locally for \(target.id.uuidString): \(error)",
-                    level: .error
-                )
+                throw error
             }
-            if appCoordinator.coreDataManager.getTranscript(id: target.id) == nil {
+            if try appCoordinator.coreDataManager.fetchTranscript(id: target.id) == nil {
                 application.deletedLocalItems += 1
             }
 
         case .summary:
             planSummaryContentDeletion(summaryIds: [target.id], into: &plan)
 
-            guard let summary = appCoordinator.coreDataManager.getSummary(id: target.id),
-                  parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
+            guard let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
+                  try parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
             do {
@@ -6805,12 +6799,9 @@ extension iCloudStorageManager {
                     enqueueCloudDeletion: false
                 )
             } catch {
-                AppLog.shared.iCloudSync(
-                    "Failed to apply iCloud summary deletion locally for \(target.id.uuidString): \(error)",
-                    level: .error
-                )
+                throw error
             }
-            if appCoordinator.coreDataManager.getSummary(id: target.id) == nil {
+            if try appCoordinator.coreDataManager.fetchSummary(id: target.id) == nil {
                 application.deletedLocalItems += 1
             }
 
@@ -6821,7 +6812,7 @@ extension iCloudStorageManager {
             // marker exists purely so the *other* devices drop their copy — the half
             // that was missing, and the reason a deleted placeholder was uploaded
             // again on the next pass and restored on the device that deleted it.
-            guard let recording = appCoordinator.coreDataManager.getRecording(id: target.id),
+            guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
                   recording.isCloudSyncDisabled == false else {
                 return
             }
@@ -6848,36 +6839,42 @@ extension iCloudStorageManager {
     private func deletionTargetExistsLocally(
         _ target: CloudDeletionTarget,
         appCoordinator: AppDataCoordinator
-    ) -> Bool {
+    ) throws -> Bool {
         switch target.kind {
         case .recording:
-            return appCoordinator.coreDataManager.getRecording(id: target.id) != nil
+            return try appCoordinator.coreDataManager.fetchRecording(id: target.id) != nil
         case .transcript:
-            return appCoordinator.coreDataManager.getTranscript(id: target.id) != nil
+            return try appCoordinator.coreDataManager.fetchTranscript(id: target.id) != nil
         case .summary:
-            return appCoordinator.coreDataManager.getSummary(id: target.id) != nil
+            return try appCoordinator.coreDataManager.fetchSummary(id: target.id) != nil
         case .importedAudio:
             // The marker's target is the audio link, not the row: it has done its
             // job here once the recording no longer points at a file, and only then
             // is it eligible to be retired.
-            return appCoordinator.coreDataManager.getRecording(id: target.id)?.recordingURL != nil
+            return try appCoordinator.coreDataManager.fetchRecording(id: target.id)?.recordingURL != nil
         }
     }
 
     private func parentRecording(
         of transcript: TranscriptEntry,
         appCoordinator: AppDataCoordinator
-    ) -> RecordingEntry? {
-        transcript.recording
-            ?? transcript.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
+    ) throws -> RecordingEntry? {
+        if let recording = transcript.recording {
+            return recording
+        }
+        guard let recordingId = transcript.recordingId else { return nil }
+        return try appCoordinator.coreDataManager.fetchRecording(id: recordingId)
     }
 
     private func parentRecording(
         of summary: SummaryEntry,
         appCoordinator: AppDataCoordinator
-    ) -> RecordingEntry? {
-        summary.recording
-            ?? summary.recordingId.flatMap { appCoordinator.coreDataManager.getRecording(id: $0) }
+    ) throws -> RecordingEntry? {
+        if let recording = summary.recording {
+            return recording
+        }
+        guard let recordingId = summary.recordingId else { return nil }
+        return try appCoordinator.coreDataManager.fetchRecording(id: recordingId)
     }
 
     private func fetchDeletionTargets() async throws -> CloudDeletionTargets {
@@ -8817,8 +8814,8 @@ extension iCloudStorageManager {
         }
     }
 
-    static func backupSourceSelection(from coreDataManager: CoreDataManager) -> CloudBackupSourceSelection {
-        let allRecordings = coreDataManager.getAllRecordings()
+    static func backupSourceSelection(from coreDataManager: CoreDataManager) throws -> CloudBackupSourceSelection {
+        let allRecordings = try coreDataManager.getAllRecordings()
         let excludedRecordingIds = Set(allRecordings.compactMap { recording in
             recording.isCloudSyncDisabled ? recording.id : nil
         })
@@ -8826,11 +8823,11 @@ extension iCloudStorageManager {
             guard let recordingId = recording.id else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let syncableTranscripts = coreDataManager.getAllTranscripts().filter { transcript in
+        let syncableTranscripts = try coreDataManager.getAllTranscripts().filter { transcript in
             guard let recordingId = transcript.recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let syncableSummaries = coreDataManager.getAllSummaries().filter { summary in
+        let syncableSummaries = try coreDataManager.getAllSummaries().filter { summary in
             let recordingId = summary.recordingId ?? summary.recording?.id
             guard let recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)
@@ -8868,13 +8865,13 @@ extension iCloudStorageManager {
     /// iCloud deletion markers are written — see `deleteSupersededDuplicates`.
     func pruneSupersededLocalDuplicates(
         appCoordinator: AppDataCoordinator
-    ) -> (transcripts: Int, summaries: Int) {
-        let selection = Self.backupSourceSelection(from: appCoordinator.coreDataManager)
+    ) throws -> (transcripts: Int, summaries: Int) {
+        let selection = try Self.backupSourceSelection(from: appCoordinator.coreDataManager)
         guard !selection.supersededTranscripts.isEmpty || !selection.supersededSummaries.isEmpty else {
             return (0, 0)
         }
 
-        return appCoordinator.coreDataManager.deleteSupersededDuplicates(
+        return try appCoordinator.coreDataManager.deleteSupersededDuplicates(
             transcriptIds: selection.supersededTranscripts.compactMap(\.id),
             summaryIds: selection.supersededSummaries.compactMap(\.id)
         )
@@ -9246,10 +9243,10 @@ extension CKError {
 
     /// Debug method to check current Core Data state
     @MainActor
-    func debugCoreDataState(appCoordinator: AppDataCoordinator) {
+    func debugCoreDataState(appCoordinator: AppDataCoordinator) throws {
         // Debug logging removed - function kept for potential future use
-        _ = appCoordinator.coreDataManager.getAllRecordings()
-        _ = appCoordinator.coreDataManager.getAllSummaries()
+        _ = try appCoordinator.coreDataManager.getAllRecordings()
+        _ = try appCoordinator.coreDataManager.getAllSummaries()
     }
 
 }

@@ -15,6 +15,7 @@ struct BackgroundProcessingView: View {
     @State private var showingCleanupConfirmation = false
     @State private var showingCancelAllConfirmation = false
     @State private var showingClearAllConfirmation = false
+    @State private var actionError: String?
 
     private var isNativeMacModelessWindow: Bool {
         if case .modelessWindow = presentationContext {
@@ -51,8 +52,17 @@ struct BackgroundProcessingView: View {
                 processingManager: processingManager,
                 showingCleanupConfirmation: $showingCleanupConfirmation,
                 showingCancelAllConfirmation: $showingCancelAllConfirmation,
-                showingClearAllConfirmation: $showingClearAllConfirmation
+                showingClearAllConfirmation: $showingClearAllConfirmation,
+                actionError: $actionError
             ))
+            .alert("Background Processing Error", isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )) {
+                Button("OK", role: .cancel) { actionError = nil }
+            } message: {
+                Text(actionError ?? "The requested background-processing action could not be completed.")
+            }
         }
     }
 
@@ -226,6 +236,7 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
     @Binding var showingCleanupConfirmation: Bool
     @Binding var showingCancelAllConfirmation: Bool
     @Binding var showingClearAllConfirmation: Bool
+    @Binding var actionError: String?
     @Environment(\.dismiss) private var dismiss
 
     func body(content: Content) -> some View {
@@ -314,7 +325,13 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
 
     private func cleanupCompletedJobs() {
         Task {
-            await processingManager.cleanupCompletedJobs()
+            do {
+                try await processingManager.cleanupCompletedJobs()
+            } catch {
+                await MainActor.run {
+                    self.actionError = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -324,9 +341,14 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
         }
     }
 
+    @MainActor
     private func clearAllJobs() {
-        Task {
-            await processingManager.clearAllJobs()
+        Task { @MainActor in
+            do {
+                try await processingManager.clearAllJobs()
+            } catch {
+                self.actionError = error.localizedDescription
+            }
         }
     }
 }

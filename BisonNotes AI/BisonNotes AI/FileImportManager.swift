@@ -27,24 +27,41 @@ class FileImportManager: NSObject, ObservableObject {
     nonisolated static let supportedExtensions = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
     nonisolated static let supportedVideoExtensions = ["mp4", "mov", "m4v", "avi", "mkv"]
     private let persistenceController: PersistenceController
+    private let coreDataManager: CoreDataManager
     private let context: NSManagedObjectContext
 
     override init() {
-        self.persistenceController = PersistenceController.shared
-        self.context = persistenceController.container.viewContext
+        let resolvedPersistenceController = PersistenceController.shared
+        let resolvedCoreDataManager = CoreDataManager(persistenceController: resolvedPersistenceController)
+        self.persistenceController = resolvedPersistenceController
+        self.coreDataManager = resolvedCoreDataManager
+        self.context = resolvedCoreDataManager.managedObjectContext
         super.init()
     }
 
     init(persistenceController: PersistenceController) {
+        let resolvedCoreDataManager = CoreDataManager(persistenceController: persistenceController)
         self.persistenceController = persistenceController
-        self.context = persistenceController.container.viewContext
+        self.coreDataManager = resolvedCoreDataManager
+        self.context = resolvedCoreDataManager.managedObjectContext
         super.init()
     }
 
+}
+
+extension FileImportManager {
     // MARK: - Import Methods
 
-    func importAudioFiles(from urls: [URL]) async {
-        guard !isImporting else { return }
+    @discardableResult
+    func importAudioFiles(from urls: [URL]) async -> Set<URL> {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Audio import withheld because local storage is unavailable",
+                level: .fault
+            )
+            return []
+        }
+        guard !isImporting else { return [] }
 
         isImporting = true
         importProgress = 0.0
@@ -53,9 +70,10 @@ class FileImportManager: NSObject, ObservableObject {
         let totalCount = urls.count
         guard totalCount > 0 else {
             completeImport(with: ImportResults(total: 0, successful: 0, failed: 0, errors: []))
-            return
+            return []
         }
 
+        var acknowledged: Set<URL> = []
         var successful = 0
         var failed = 0
         var errors: [String] = []
@@ -66,6 +84,7 @@ class FileImportManager: NSObject, ObservableObject {
 
             do {
                 try await importAudioFile(from: sourceURL)
+                acknowledged.insert(sourceURL)
                 successful += 1
             } catch {
                 failed += 1
@@ -87,6 +106,7 @@ class FileImportManager: NSObject, ObservableObject {
         )
 
         completeImport(with: results)
+        return acknowledged
     }
 
     private func importAudioFile(from sourceURL: URL) async throws {
@@ -105,7 +125,7 @@ class FileImportManager: NSObject, ObservableObject {
 
         // If the filename carries an archive token, try to restore onto the
         // original recording entry rather than create a duplicate.
-        if let restoreCandidate = matchArchivedRecording(for: sourceURL) {
+        if let restoreCandidate = try matchArchivedRecording(for: sourceURL) {
             try await restoreArchivedRecording(restoreCandidate, from: sourceURL)
             return
         }
@@ -123,8 +143,9 @@ class FileImportManager: NSObject, ObservableObject {
         }
 
         var importCompleted = false
+        var retainCopiedFileOnFailure = false
         defer {
-            if !importCompleted {
+            if !importCompleted && !retainCopiedFileOnFailure {
                 try? FileManager.default.removeItem(at: destinationURL)
             }
         }
@@ -150,7 +171,14 @@ class FileImportManager: NSObject, ObservableObject {
         try validateAudioFile(at: destinationURL)
 
         // Create Core Data entry for the imported file
-        try await createRecordingEntryForImportedFile(at: destinationURL)
+        do {
+            try await createRecordingEntryForImportedFile(at: destinationURL)
+        } catch {
+            // The copied file is now app-owned and is the recoverable input for
+            // a retry after storage becomes available again.
+            retainCopiedFileOnFailure = true
+            throw error
+        }
         importCompleted = true
 
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
@@ -173,19 +201,12 @@ class FileImportManager: NSObject, ObservableObject {
     /// Decide how to handle an incoming import URL based on the archive token
     /// embedded in its filename (if any). Returns nil when the file should go
     /// through the regular new-entry import path.
-    private func matchArchivedRecording(for sourceURL: URL) -> ArchiveMatchResult? {
+    private func matchArchivedRecording(for sourceURL: URL) throws -> ArchiveMatchResult? {
         guard let parsed = RecordingArchiveService.parseArchiveToken(fromFilename: sourceURL.lastPathComponent) else {
             return nil
         }
 
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        let candidates: [RecordingEntry]
-        do {
-            candidates = try context.fetch(fetchRequest)
-        } catch {
-            AppLog.shared.fileManagement("Archive restore: fetch failed: \(error.localizedDescription)", level: .error)
-            return nil
-        }
+        let candidates = try coreDataManager.getAllRecordings()
 
         let matches = candidates.filter { recording in
             guard let id = recording.id?.uuidString.replacingOccurrences(of: "-", with: "").lowercased() else {
@@ -230,7 +251,7 @@ class FileImportManager: NSObject, ObservableObject {
             throw ImportError.alreadyImported(name)
 
         case .clearFlagsOnly(let recording):
-            RecordingArchiveService.shared.clearArchiveFlags(for: recording)
+            try RecordingArchiveService.shared.clearArchiveFlags(for: recording)
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Cleared archive flags for \(recording.recordingName ?? "unknown") (local audio still present)")
 
@@ -244,8 +265,9 @@ class FileImportManager: NSObject, ObservableObject {
             }
 
             var restoreCompleted = false
+            var retainCopiedFileOnFailure = false
             defer {
-                if !restoreCompleted {
+                if !restoreCompleted && !retainCopiedFileOnFailure {
                     try? FileManager.default.removeItem(at: destinationURL)
                 }
             }
@@ -264,7 +286,13 @@ class FileImportManager: NSObject, ObservableObject {
 
             try validateAudioFile(at: destinationURL)
 
-            RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+            do {
+                try RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+            } catch {
+                // Keep the app-owned copy so the metadata save can be retried.
+                retainCopiedFileOnFailure = true
+                throw error
+            }
             restoreCompleted = true
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
@@ -285,8 +313,9 @@ class FileImportManager: NSObject, ObservableObject {
         }
 
         var importCompleted = false
+        var retainCopiedFileOnFailure = false
         defer {
-            if !importCompleted {
+            if !importCompleted && !retainCopiedFileOnFailure {
                 try? FileManager.default.removeItem(at: destinationURL)
             }
         }
@@ -313,7 +342,12 @@ class FileImportManager: NSObject, ObservableObject {
         try validateAudioFile(at: destinationURL)
 
         // Create Core Data entry
-        try await createRecordingEntryForImportedFile(at: destinationURL)
+        do {
+            try await createRecordingEntryForImportedFile(at: destinationURL)
+        } catch {
+            retainCopiedFileOnFailure = true
+            throw error
+        }
         importCompleted = true
 
         AppLog.shared.fileManagement("Successfully extracted audio from video: \(audioFilename)")
@@ -396,19 +430,11 @@ class FileImportManager: NSObject, ObservableObject {
         let originalName = fileURL.deletingPathExtension().lastPathComponent
         let recordingName = AudioRecorderViewModel.generateImportedFileName(originalName: originalName)
 
-        // Check if recording already exists
-        let fetchRequest: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "recordingName == %@", recordingName)
-
-        do {
-            let existingRecordings = try context.fetch(fetchRequest)
-            if !existingRecordings.isEmpty {
-                AppLog.shared.fileManagement("Recording entry already exists for imported file", level: .debug)
-                return
-            }
-        } catch {
-            AppLog.shared.fileManagement("Error checking for existing recording: \(error)", level: .error)
-            throw ImportError.copyFailed("Failed to check existing recordings: \(error.localizedDescription)")
+        // A failed read is not evidence that this is a new recording. Keep the
+        // copied source and stop before creating a duplicate identity.
+        if try coreDataManager.getAllRecordings().contains(where: { $0.recordingName == recordingName }) {
+            AppLog.shared.fileManagement("Recording entry already exists for imported file", level: .debug)
+            return
         }
 
         // Create new recording entry
@@ -452,12 +478,12 @@ class FileImportManager: NSObject, ObservableObject {
 
         // Save the context
         do {
-            try context.save()
+            try coreDataManager.saveContext(operation: "imported recording creation")
             AppLog.shared.fileManagement("Created Core Data entry for imported file")
         } catch {
             AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
             context.delete(recordingEntry)
-            throw ImportError.copyFailed("Failed to save to database: \(error.localizedDescription)")
+            throw ImportError.persistenceFailed(error.localizedDescription)
         }
     }
 
@@ -500,6 +526,7 @@ enum ImportError: LocalizedError {
     case fileAlreadyExists(String)
     case invalidAudioFile(String)
     case copyFailed(String)
+    case persistenceFailed(String)
     case alreadyImported(String)
 
     var errorDescription: String? {
@@ -512,6 +539,8 @@ enum ImportError: LocalizedError {
             return "Invalid audio file: \(reason)"
         case .copyFailed(let reason):
             return "Failed to copy file: \(reason)"
+        case .persistenceFailed(let reason):
+            return "The imported file was retained, but its metadata could not be saved: \(reason)"
         case .alreadyImported(let name):
             return "Already imported: \(name). The original recording still has its audio on this device."
         }
@@ -541,6 +570,19 @@ struct ImportResults {
             return "Successfully imported all \(successful) files"
         } else {
             return "Imported \(successful) of \(total) files successfully"
+        }
+    }
+}
+
+/// Only the current batch's durably acknowledged inputs may be consumed.
+enum ImportSourceCleanup {
+    static func removeAcknowledged(_ acknowledged: Set<URL>, from sources: [URL]) {
+        for source in sources where acknowledged.contains(source) {
+            do {
+                try FileManager.default.removeItem(at: source)
+            } catch {
+                AppLog.shared.fileManagement("Acknowledged import source cleanup deferred", level: .error)
+            }
         }
     }
 }
