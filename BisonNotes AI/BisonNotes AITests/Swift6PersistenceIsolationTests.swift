@@ -253,7 +253,8 @@ final class Swift6PersistenceIsolationTests: XCTestCase {
         let fileImporter = FileImportManager(persistenceController: persistence)
         await fileImporter.importAudioFiles(from: [sourceURL])
         XCTAssertFalse(fileImporter.isImporting)
-        XCTAssertNil(fileImporter.importResults)
+        XCTAssertEqual(fileImporter.importResults?.successful, 0)
+        XCTAssertEqual(fileImporter.importResults?.failed, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
 
         let migrationManager = DataMigrationManager(persistenceController: persistence)
@@ -611,7 +612,7 @@ extension Swift6PersistenceIsolationTests {
         XCTAssertThrowsError(try manager.updateProcessingJob(job))
         CoreDataManager.injectedSaveFailure = nil
         CoreDataManager.injectedSaveOperation = nil
-        XCTAssertEqual(try manager.fetchProcessingJob(id: jobID)?.status, "queued")
+        XCTAssertEqual(try manager.fetchProcessingJob(id: jobID)?.status, "Queued")
 
         CoreDataManager.injectedSaveFailure = PersistenceStoreFailure(domain: "SaveTest", code: 912)
         CoreDataManager.injectedSaveOperation = "processing job deletion"
@@ -819,7 +820,401 @@ extension Swift6PersistenceIsolationTests {
         XCTAssertEqual(try reopenedManager.fetchRecording(id: recordingID)?.recordingName, "Durable B2 fixture")
         XCTAssertEqual(try reopenedManager.fetchTranscript(id: transcriptID)?.recordingId, recordingID)
         XCTAssertEqual(try reopenedManager.fetchSummary(id: summaryID)?.recordingId, recordingID)
-        XCTAssertEqual(try reopenedManager.fetchProcessingJob(id: jobID)?.status, "queued")
+        XCTAssertEqual(try reopenedManager.fetchProcessingJob(id: jobID)?.status, "Queued")
+    }
+
+    func testPersistedJobStatusDecoderAcceptsOnlyDocumentedValues() throws {
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Ready"),
+            .unsupported(rawValue: "Ready")
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Queued"),
+            .supported(.queued)
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("queued"),
+            .supported(.queued)
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Processing"),
+            .supported(.processing)
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Completed"),
+            .supported(.completed)
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Failed"),
+            .supported(.failed(""))
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Cancelled"),
+            .supported(.cancelled)
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("Interrupted"),
+            .supported(.interrupted(""))
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode("queued "),
+            .unsupported(rawValue: "queued ")
+        )
+        XCTAssertEqual(
+            PersistedJobStatusDecoder.decode(nil),
+            .unsupported(rawValue: nil)
+        )
+
+        let marker = try JobRecoveryMarker.encode(
+            reason: "Unsupported persisted status",
+            rawStatus: "future-status"
+        )
+        let decodedMarker = try XCTUnwrap(JobRecoveryMarker.decode(marker))
+        XCTAssertEqual(decodedMarker.reason, "Unsupported persisted status")
+        XCTAssertEqual(decodedMarker.rawStatus, "future-status")
+
+        let missingStatusMarker = try JobRecoveryMarker.encode(
+            reason: "Missing persisted status",
+            rawStatus: nil
+        )
+        let decodedMissingStatusMarker = try XCTUnwrap(JobRecoveryMarker.decode(missingStatusMarker))
+        XCTAssertNil(decodedMissingStatusMarker.rawStatus)
+        XCTAssertNil(JobRecoveryMarker.decode("bisonnotes-recovery-v1:not-valid"))
+
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let createdJob = try manager.createProcessingJob(
+            id: UUID(),
+            jobType: JobType.summarization(engine: "fixture").displayName,
+            engine: "fixture",
+            recordingURL: URL(fileURLWithPath: "/missing-fixture.m4a"),
+            recordingName: "Canonical queue fixture"
+        )
+        XCTAssertEqual(createdJob.status, JobProcessingStatus.queued.displayName)
+        XCTAssertNotEqual(createdJob.status, JobProcessingStatus.ready.displayName)
+    }
+
+    func testUnsupportedPersistedJobIsQuarantinedAndReappearsAfterReopen() throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(directory) }
+        let storeURL = directory.appendingPathComponent("unsupported-job.sqlite")
+        let initial = PersistenceController(storeURL: storeURL)
+        defer { closePersistentStores(of: initial) }
+        let manager = CoreDataManager(persistenceController: initial)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.engine = TranscriptionEngine.whisper.rawValue
+        jobEntry.recordingURL = "future-status.m4a"
+        jobEntry.recordingName = "Future status fixture"
+        jobEntry.status = "FutureStatus"
+        jobEntry.progress = 0
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let firstManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        XCTAssertNil(firstManager.jobLoadError)
+        XCTAssertEqual(firstManager.recoveryIssues.count, 1)
+        XCTAssertTrue(firstManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertEqual(firstManager.recoveryIssues[0].jobID, jobID)
+        XCTAssertEqual(firstManager.recoveryIssues[0].rawStatus, "FutureStatus")
+        XCTAssertEqual(firstManager.activeJobs.count, 1)
+        if case .failed(let message) = firstManager.activeJobs[0].status {
+            XCTAssertTrue(message.contains("unsupported persisted status"))
+        } else {
+            XCTFail("An unsupported persisted job must be terminal and non-runnable")
+        }
+
+        let quarantined = try XCTUnwrap(try manager.fetchProcessingJob(id: jobID))
+        XCTAssertEqual(quarantined.status, "Failed")
+        let marker = try XCTUnwrap(JobRecoveryMarker.decode(quarantined.error))
+        XCTAssertEqual(marker.rawStatus, "FutureStatus")
+
+        closePersistentStores(of: initial)
+        let reopened = PersistenceController(storeURL: storeURL)
+        defer { closePersistentStores(of: reopened) }
+        let reopenedManager = CoreDataManager(persistenceController: reopened)
+        let secondManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: reopenedManager,
+            startBackgroundWork: false
+        )
+        XCTAssertNil(secondManager.jobLoadError)
+        XCTAssertEqual(secondManager.recoveryIssues.count, 1)
+        XCTAssertTrue(secondManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertEqual(secondManager.recoveryIssues[0].rawStatus, "FutureStatus")
+        XCTAssertFalse(secondManager.activeJobs.contains { $0.status == .queued })
+        XCTAssertEqual(try reopenedManager.fetchProcessingJob(id: jobID)?.status, "Failed")
+    }
+
+    func testPersistedProcessingJobRequiresReviewBeforeReplay() async throws {
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.engine = TranscriptionEngine.whisper.rawValue
+        jobEntry.recordingURL = "interrupted-job.m4a"
+        jobEntry.recordingName = "Interrupted job fixture"
+        jobEntry.status = "Processing"
+        jobEntry.progress = 0.4
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let processingManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        await processingManager.resumePersistedJobsForTesting()
+        XCTAssertNil(processingManager.currentJob)
+        XCTAssertNil(processingManager.jobLoadError)
+        XCTAssertEqual(processingManager.recoveryIssues.count, 1)
+        XCTAssertEqual(processingManager.activeJobs.count, 1)
+        XCTAssertTrue(processingManager.activeJobs[0].status.isTerminal)
+        XCTAssertFalse(processingManager.activeJobs.contains { $0.status == .queued })
+        XCTAssertEqual(try manager.fetchProcessingJob(id: jobID)?.status, "Failed")
+    }
+
+    func testCommittedOutputWithUnfinishedJobSurvivesRestartWithoutReplay() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(directory) }
+        let storeURL = directory.appendingPathComponent("partial-output.sqlite")
+        let initial = PersistenceController(storeURL: storeURL)
+        let coordinator = AppDataCoordinator(persistenceController: initial)
+        let url = directory.appendingPathComponent("retained.m4a")
+        try Data("retained source".utf8).write(to: url)
+        let recordingID = try coordinator.addRecording(
+            url: url, name: "Partial output", date: Date(), fileSize: 15,
+            duration: 1, quality: .whisperOptimized
+        )
+        let transcriptID = try XCTUnwrap(try coordinator.addTranscript(
+            for: recordingID,
+            segments: [TranscriptSegment(speaker: "Speaker", text: "Committed output", startTime: 0, endTime: 1)]
+        ))
+        let summaryID = try XCTUnwrap(try coordinator.addSummary(
+            for: recordingID, transcriptId: transcriptID,
+            summary: "Committed summary output must survive restart without repeating the provider request.",
+            aiModel: "fixture", originalLength: 80
+        ))
+        for status in ["Processing", "Interrupted"] {
+            let job = try coordinator.coreDataManager.createProcessingJob(
+                id: UUID(), jobType: "Summarization", engine: AIEngineType.mlxSwift.rawValue,
+                recordingURL: url, recordingName: "Partial output"
+            )
+            job.status = status
+        }
+        try coordinator.coreDataManager.contextForTesting.save()
+        closePersistentStores(of: initial)
+        let reopened = PersistenceController(storeURL: storeURL)
+        defer { closePersistentStores(of: reopened) }
+        let reader = CoreDataManager(persistenceController: reopened)
+        let processing = BackgroundProcessingManager.makeForTesting(coreDataManager: reader, startBackgroundWork: false)
+        await processing.resumePersistedJobsForTesting()
+        XCTAssertNil(processing.currentJob)
+        XCTAssertEqual(processing.recoveryIssues.count, 2)
+        XCTAssertFalse(processing.activeJobs.contains { $0.status == .queued || $0.status == .processing })
+        XCTAssertNotNil(try reader.fetchTranscript(id: transcriptID))
+        XCTAssertNotNil(try reader.fetchSummary(id: summaryID))
+        XCTAssertEqual(try reader.fetchSummaries(forRecordingId: recordingID).count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testQuarantineCannotEnterLegacyResumePath() async throws {
+        for rawStatus in ["interrupted_v2", "App was terminated", "App was closed"] {
+            let persistence = PersistenceController(inMemory: true)
+            let manager = CoreDataManager(persistenceController: persistence)
+            let entry = try manager.createProcessingJob(
+                id: UUID(), jobType: "Transcription", engine: TranscriptionEngine.whisper.rawValue,
+                recordingURL: URL(fileURLWithPath: "/tmp/quarantined.m4a"), recordingName: "Quarantine"
+            )
+            entry.status = rawStatus
+            try manager.contextForTesting.save()
+            let processing = BackgroundProcessingManager.makeForTesting(coreDataManager: manager, startBackgroundWork: false)
+            await processing.resumePersistedJobsForTesting()
+            XCTAssertNil(processing.currentJob)
+            XCTAssertFalse(processing.activeJobs.contains { $0.status == .queued || $0.status == .processing })
+            XCTAssertEqual(entry.status, "Failed")
+            XCTAssertEqual(JobRecoveryMarker.decode(entry.error)?.rawStatus, rawStatus)
+        }
+    }
+
+    func testMalformedQuarantineReopenPreservesMarkerAndCleanupRemovesIssue() async throws {
+        let directory = try TestHelpers.createTemporaryDirectory()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(directory) }
+        let storeURL = directory.appendingPathComponent("malformed.sqlite")
+        let first = PersistenceController(storeURL: storeURL)
+        let manager = CoreDataManager(persistenceController: first)
+        let entry = try manager.createProcessingJob(
+            id: UUID(), jobType: "Transcription", engine: TranscriptionEngine.whisper.rawValue,
+            recordingURL: URL(fileURLWithPath: "/tmp/malformed.m4a"), recordingName: "Malformed"
+        )
+        let id = try XCTUnwrap(entry.id)
+        entry.engine = nil
+        entry.status = "FutureStatus"
+        try manager.contextForTesting.save()
+        _ = BackgroundProcessingManager.makeForTesting(coreDataManager: manager, startBackgroundWork: false)
+        let marker = try XCTUnwrap(entry.error)
+        closePersistentStores(of: first)
+        let reopened = PersistenceController(storeURL: storeURL)
+        defer { closePersistentStores(of: reopened) }
+        let reader = CoreDataManager(persistenceController: reopened)
+        let processing = BackgroundProcessingManager.makeForTesting(coreDataManager: reader, startBackgroundWork: false)
+        XCTAssertEqual(try reader.fetchProcessingJob(id: id)?.error, marker)
+        XCTAssertEqual(processing.recoveryIssues.first?.rawStatus, "FutureStatus")
+        XCTAssertTrue(processing.activeJobs.isEmpty)
+        let previousFailure = CoreDataManager.injectedSaveFailure
+        let previousOperation = CoreDataManager.injectedSaveOperation
+        defer {
+            CoreDataManager.injectedSaveFailure = previousFailure
+            CoreDataManager.injectedSaveOperation = previousOperation
+        }
+        CoreDataManager.injectedSaveFailure = PersistenceStoreFailure(domain: "SaveTest", code: 911)
+        CoreDataManager.injectedSaveOperation = "completed processing job deletion"
+        do {
+            try await processing.cleanupCompletedJobs()
+            XCTFail("Deletion must throw")
+        } catch { }
+        XCTAssertEqual(processing.recoveryIssues.count, 1)
+        XCTAssertNotNil(try reader.fetchProcessingJob(id: id))
+        CoreDataManager.injectedSaveFailure = nil
+        CoreDataManager.injectedSaveOperation = nil
+        try await processing.cleanupCompletedJobs()
+        XCTAssertTrue(processing.recoveryIssues.isEmpty)
+        XCTAssertNil(try reader.fetchProcessingJob(id: id))
+    }
+
+    func testMissingRequiredJobFieldIsQuarantinedAndNotRunnable() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.recordingURL = "missing-engine.m4a"
+        jobEntry.recordingName = "Missing engine fixture"
+        jobEntry.status = "Queued"
+        jobEntry.progress = 0
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let processingManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        XCTAssertNil(processingManager.jobLoadError)
+        XCTAssertEqual(processingManager.recoveryIssues.count, 1)
+        XCTAssertTrue(processingManager.recoveryIssues[0].message.contains("processing engine is missing"))
+        XCTAssertTrue(processingManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertFalse(processingManager.activeJobs.contains { $0.status == .queued })
+        XCTAssertEqual(try manager.fetchProcessingJob(id: jobID)?.status, "Failed")
+    }
+
+    func testMissingPersistedJobStatusIsQuarantinedAndNotRunnable() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.engine = TranscriptionEngine.whisper.rawValue
+        jobEntry.recordingURL = "missing-status.m4a"
+        jobEntry.recordingName = "Missing status fixture"
+        jobEntry.status = nil
+        jobEntry.progress = 0
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let processingManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        XCTAssertNil(processingManager.jobLoadError)
+        XCTAssertEqual(processingManager.recoveryIssues.count, 1)
+        XCTAssertNil(processingManager.recoveryIssues[0].rawStatus)
+        XCTAssertTrue(processingManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertFalse(processingManager.activeJobs.contains { $0.status == .queued })
+
+        let quarantined = try XCTUnwrap(try manager.fetchProcessingJob(id: jobID))
+        XCTAssertEqual(quarantined.status, "Failed")
+        let marker = try XCTUnwrap(JobRecoveryMarker.decode(quarantined.error))
+        XCTAssertNil(marker.rawStatus)
+    }
+
+    func testQuarantineSaveFailureRetainsRawJobAndWithholdsProcessing() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.engine = TranscriptionEngine.whisper.rawValue
+        jobEntry.recordingURL = "quarantine-failure.m4a"
+        jobEntry.recordingName = "Quarantine failure fixture"
+        jobEntry.status = "FutureStatus"
+        jobEntry.progress = 0
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let previousFailure = CoreDataManager.injectedSaveFailure
+        let previousOperation = CoreDataManager.injectedSaveOperation
+        defer {
+            CoreDataManager.injectedSaveFailure = previousFailure
+            CoreDataManager.injectedSaveOperation = previousOperation
+        }
+        CoreDataManager.injectedSaveFailure = PersistenceStoreFailure(domain: "RecoveryTest", code: 916)
+        CoreDataManager.injectedSaveOperation = "processing job quarantine"
+
+        let processingManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        XCTAssertNotNil(processingManager.jobLoadError)
+        XCTAssertTrue(processingManager.activeJobs.isEmpty)
+        XCTAssertEqual(processingManager.recoveryIssues.count, 1)
+        XCTAssertFalse(processingManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertEqual(try manager.fetchProcessingJob(id: jobID)?.status, "FutureStatus")
+        XCTAssertNil(try manager.fetchProcessingJob(id: jobID)?.error)
+    }
+
+    func testCorruptRecoveryMarkerIsRequarantinedAndNotRunnable() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let manager = CoreDataManager(persistenceController: persistence)
+        let context = manager.contextForTesting
+        let jobID = UUID()
+        let jobEntry = ProcessingJobEntry(context: context)
+        jobEntry.id = jobID
+        jobEntry.jobType = JobType.transcription(engine: .whisper).displayName
+        jobEntry.engine = TranscriptionEngine.whisper.rawValue
+        jobEntry.recordingURL = "corrupt-marker.m4a"
+        jobEntry.recordingName = "Corrupt marker fixture"
+        jobEntry.status = "Failed"
+        jobEntry.error = JobRecoveryMarker.prefix + "corrupt"
+        jobEntry.progress = 0
+        jobEntry.startTime = Date()
+        try context.save()
+
+        let processingManager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: manager,
+            startBackgroundWork: false
+        )
+        XCTAssertNil(processingManager.jobLoadError)
+        XCTAssertEqual(processingManager.recoveryIssues.count, 1)
+        XCTAssertTrue(processingManager.recoveryIssues[0].message.contains("recovery marker is corrupt"))
+        XCTAssertTrue(processingManager.recoveryIssues[0].isDurablyQuarantined)
+        XCTAssertFalse(processingManager.activeJobs.contains { $0.status == .queued })
+        let requarantined = try XCTUnwrap(try manager.fetchProcessingJob(id: jobID))
+        XCTAssertEqual(requarantined.status, "Failed")
+        XCTAssertNotEqual(requarantined.error, JobRecoveryMarker.prefix + "corrupt")
+        XCTAssertNotNil(JobRecoveryMarker.decode(requarantined.error))
     }
 }
 #endif

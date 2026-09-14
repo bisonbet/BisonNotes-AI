@@ -63,6 +63,7 @@ struct RecordingsListView: View {
     @State private var showingArchiveExportPicker = false
     @State private var showingArchiveOlderThan = false
     @State private var archiveOlderThanDays = 30
+    @State private var archiveOlderThanMatchCount: Int?
     @State private var removeLocalAfterArchive = false
     @State private var recordingsToArchive: [RecordingEntry] = []
     @State private var archiveExportURLs: [URL] = []
@@ -70,6 +71,7 @@ struct RecordingsListView: View {
     @State private var audioExportURLs: [URL] = []
     @State private var audioExportSkippedCount = 0
     @State private var archiveInfoRecording: AudioRecordingFile?
+    @State private var archiveLocationsByRecordingID: [UUID: RecordingArchiveLocationInfo] = [:]
     @State private var archiveRestoreError: String?
     @State private var loadError: String?
     @State private var restoringArchiveRecordingId: UUID?
@@ -251,7 +253,7 @@ struct RecordingsListView: View {
                 if let rec = archiveInfoRecording {
                     let note = rec.archiveNote ?? "Exported to iCloud Drive"
                     let dateStr = rec.archivedAtString ?? ""
-                    let location = RecordingArchiveService.shared.primaryArchiveLocation(for: rec.recordingId)
+                    let location = rec.recordingId.flatMap { archiveLocationsByRecordingID[$0] }
                     let locationText = location.map { "\nSaved location: \($0.providerDisplayName) / \($0.displayName)" } ?? ""
                     Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\(locationText)\n\nThe audio file is no longer stored locally. Use the download button to restore it, or use \"Import Audio Files\" if the file was moved.")
                 }
@@ -883,7 +885,7 @@ struct RecordingsListView: View {
                 }
                 .foregroundColor(.orange)
 
-                if let location = RecordingArchiveService.shared.primaryArchiveLocation(for: recording.recordingId) {
+                if let location = recording.recordingId.flatMap({ archiveLocationsByRecordingID[$0] }) {
                     Label("\(location.providerDisplayName) / \(location.displayName)", systemImage: "externaldrive.badge.checkmark")
                         .font(.caption2)
                         .foregroundColor(.secondary)
@@ -1193,6 +1195,14 @@ struct RecordingsListView: View {
         // Use the app coordinator to get recordings with proper database names
         do {
             let recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+            var archiveLocations: [UUID: RecordingArchiveLocationInfo] = [:]
+            for entry in recordingsWithData {
+                guard let recordingID = entry.recording.id else { continue }
+                if let location = try RecordingArchiveService.shared.primaryArchiveLocation(for: recordingID) {
+                    archiveLocations[recordingID] = location
+                }
+            }
+            archiveLocationsByRecordingID = archiveLocations
 
             // Deduplicate by resolved filename; prefer entries with content and non-generic titles
             var bestByFilename: [String: (recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = [:]
@@ -1713,10 +1723,15 @@ struct RecordingsListView: View {
                 .pickerStyle(.wheel)
                 .frame(height: 120)
 
-                let matchCount = RecordingArchiveService.shared.recordingsOlderThan(days: archiveOlderThanDays).count
-                Text("\(matchCount) recording\(matchCount == 1 ? "" : "s") match")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                if let matchCount = archiveOlderThanMatchCount {
+                    Text("\(matchCount) recording\(matchCount == 1 ? "" : "s") match")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text("Unable to verify matching recordings")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
 
                 Spacer()
 
@@ -1740,10 +1755,10 @@ struct RecordingsListView: View {
                         .padding()
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(matchCount > 0 ? Color.accentColor : Color.gray)
+                                .fill((archiveOlderThanMatchCount ?? 0) > 0 ? Color.accentColor : Color.gray)
                         )
                 }
-                .disabled(matchCount == 0)
+                .disabled(archiveOlderThanMatchCount == nil || archiveOlderThanMatchCount == 0)
                 .padding(.horizontal)
 
                 Button("Cancel") {
@@ -1753,6 +1768,16 @@ struct RecordingsListView: View {
                 .padding(.bottom, 20)
             }
             .navigationBarHidden(true)
+            .task(id: archiveOlderThanDays) {
+                do {
+                    archiveOlderThanMatchCount = try RecordingArchiveService.shared
+                        .fetchRecordingsOlderThan(days: archiveOlderThanDays)
+                        .count
+                } catch {
+                    archiveOlderThanMatchCount = nil
+                    loadError = "Could not verify recordings for archive: \(error.localizedDescription)"
+                }
+            }
         }
         .presentationDetents([.medium])
     }

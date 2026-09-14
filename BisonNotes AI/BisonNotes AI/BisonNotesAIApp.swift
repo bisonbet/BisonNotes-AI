@@ -838,6 +838,7 @@ struct BisonNotesAIApp: App {
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
+                    reconcileMediaOperationState()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
                     CacheMaintenanceService.shared.pruneCachesIfDue()
                     appCoordinator.observeNetworkRestorationForiCloud()
@@ -880,6 +881,7 @@ struct BisonNotesAIApp: App {
                     }
                     // Repair any files left at .complete protection by v1.11.0.
                     migrateFileProtectionForExistingFiles()
+                    reconcileMediaOperationState()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
                     // Throttled internally: a Mac can stay open for days, so a
                     // launch-only sweep would never run on the machine that
@@ -1212,9 +1214,9 @@ struct BisonNotesAIApp: App {
         let authorized: Bool
         switch trigger {
         case .url(let url):
-            authorized = ShareImportAuthorization.consumeURLToken(from: url, in: containerURL)
+            authorized = ShareImportAuthorization.hasValidURLToken(from: url, in: containerURL)
         case .pendingToken:
-            authorized = ShareImportAuthorization.consumePendingToken(in: containerURL)
+            authorized = ShareImportAuthorization.hasPendingToken(in: containerURL)
         }
 
         guard authorized else {
@@ -1231,7 +1233,10 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        guard !files.isEmpty else { return }
+        guard !files.isEmpty else {
+            ShareImportAuthorization.removeToken(in: containerURL)
+            return
+        }
         NSLog("📎 Shared container scan: found \(files.count) file(s) from Share Extension")
 
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
@@ -1239,11 +1244,10 @@ struct BisonNotesAIApp: App {
         Task { @MainActor in
             // If an import is already running, importAudioFiles/importTranscriptFiles
             // would silently no-op and the cleanup below would still delete every staged
-            // file — discarding the share. Re-arm the token and leave the inbox intact so
-            // a later activation scan retries once the importer is free.
+            // file — discarding the share. Leave the token and inbox intact so a later
+            // activation scan retries once the importer is free.
             if fileImportManager.isImporting || transcriptImportManager.isImporting {
                 NSLog("📎 Shared container scan deferred: an import is already in progress")
-                ShareImportAuthorization.rearmToken(in: containerURL)
                 return
             }
 
@@ -1276,8 +1280,10 @@ struct BisonNotesAIApp: App {
             }
 
             ImportSourceCleanup.removeAcknowledged(acknowledged, from: files)
-            if files.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) {
-                ShareImportAuthorization.rearmToken(in: containerURL)
+            if !files.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                // Consume authorization only after every source in this batch
+                // has been durably acknowledged and removed.
+                ShareImportAuthorization.removeToken(in: containerURL)
             }
 
             NSLog("📎 Shared container: cleanup complete")
@@ -1359,10 +1365,28 @@ struct BisonNotesAIApp: App {
             // Failed and unsupported files remain available to retry or recover.
             ImportSourceCleanup.removeAcknowledged(acknowledged, from: files)
 
-            // Remove Inbox directory if empty
-            let remaining = (try? FileManager.default.contentsOfDirectory(at: inboxURL, includingPropertiesForKeys: nil)) ?? []
-            if remaining.isEmpty {
-                try? FileManager.default.removeItem(at: inboxURL)
+            // Remove Inbox directory only after a successful read proves it is
+            // empty. A failed read is not evidence that every source was removed.
+            do {
+                let remaining = try FileManager.default.contentsOfDirectory(
+                    at: inboxURL,
+                    includingPropertiesForKeys: nil
+                )
+                if remaining.isEmpty {
+                    do {
+                        try FileManager.default.removeItem(at: inboxURL)
+                    } catch {
+                        AppLog.shared.fileManagement(
+                            "Documents Inbox cleanup deferred: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
+                }
+            } catch {
+                AppLog.shared.fileManagement(
+                    "Documents Inbox contents could not be verified; retaining the directory",
+                    level: .error
+                )
             }
 
             if !unsupported.isEmpty {
@@ -1524,6 +1548,62 @@ struct BisonNotesAIApp: App {
             }
         }
 
+    }
+
+    /// Reconcile only D's app-owned media receipts. A failed Core Data read
+    /// withholds every receipt disposition, so a missing reference can never
+    /// be mistaken for permission to delete or replay an artifact.
+    private func reconcileMediaOperationState() {
+        guard let store = MediaOperationRecoveryStore.live() else {
+            AppLog.shared.fileManagement(
+                "staging_reconciled disposition=unavailable",
+                level: .error
+            )
+            return
+        }
+
+        let coreDataManager = CoreDataManager(persistenceController: persistenceController)
+        let recordings: [RecordingEntry]
+        do {
+            recordings = try coreDataManager.getAllRecordings()
+        } catch {
+            AppLog.shared.coreData(
+                "Media recovery reconciliation withheld because recording lookup failed: \(error.localizedDescription)",
+                level: .error
+            )
+            return
+        }
+
+        let documentsDirectory = store.documentsDirectory
+        _ = store.reconcile(isPublishedArtifactReferenced: { receipt in
+            let publishedURL = documentsDirectory
+                .appendingPathComponent(receipt.publishedRelativePath)
+                .standardizedFileURL
+            guard recordings.contains(where: { recording in
+                guard let recordingURL = recording.recordingURL,
+                      let resolvedURL = RecordingArchiveService.resolveLocalURL(from: recordingURL) else {
+                    return false
+                }
+                return resolvedURL.standardizedFileURL.path == publishedURL.path
+            }) else {
+                return false
+            }
+
+            // A transcript import has two metadata commitments. A recording
+            // row alone is not enough to close its receipt after a crash or
+            // activation while the transcript save is still pending.
+            if receipt.kind == .transcriptImport {
+                return recordings.contains { recording in
+                    guard let recordingURL = recording.recordingURL,
+                          let resolvedURL = RecordingArchiveService.resolveLocalURL(from: recordingURL),
+                          resolvedURL.standardizedFileURL.path == publishedURL.path else {
+                        return false
+                    }
+                    return recording.transcript != nil
+                }
+            }
+            return true
+        })
     }
 
     private func setupAppShortcuts() {

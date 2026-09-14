@@ -2168,6 +2168,38 @@ class CoreDataManager: ObservableObject {
         return try fetchCollection(fetchRequest, operation: "processing job").first
     }
 
+    /// Converts an unsupported persisted status into a known terminal state
+    /// without deleting the original job row. The original raw value is kept
+    /// inside the bounded recovery marker stored in the existing error field,
+    /// so older readers cannot route the row through their legacy queued
+    /// fallback.
+    func quarantineProcessingJob(
+        _ job: ProcessingJobEntry,
+        rawStatus: String?,
+        reason: String
+    ) throws {
+        guard let id = job.id else {
+            throw CoreDataProcessingJobError.missingIdentity
+        }
+        guard !job.objectID.isTemporaryID else {
+            throw CoreDataProcessingJobError.temporaryObjectID
+        }
+
+        let marker = try JobRecoveryMarker.encode(reason: reason, rawStatus: rawStatus)
+        _ = try performIsolatedMutation(operation: "processing job quarantine") { isolatedContext in
+            guard let storedJob = try isolatedContext.existingObject(with: job.objectID) as? ProcessingJobEntry else {
+                throw CoreDataProcessingJobError.jobNotFound(id)
+            }
+            storedJob.status = JobProcessingStatus.failed("").displayName
+            storedJob.error = marker
+            storedJob.completionTime = storedJob.completionTime ?? Date()
+        }
+        AppLog.shared.coreData(
+            "job_quarantined id=\(id.uuidString) outcome=durable",
+            level: .error
+        )
+    }
+
     func createProcessingJob(
         id: UUID,
         jobType: String,
@@ -2192,7 +2224,7 @@ class CoreDataManager: ObservableObject {
             job.recordingURL = recordingURL.lastPathComponent
             job.recordingName = recordingName
             job.modelName = modelName
-            job.status = "queued"
+            job.status = JobProcessingStatus.queued.displayName
             job.progress = 0.0
             job.startTime = Date()
             job.completionTime = nil
@@ -2262,22 +2294,36 @@ class CoreDataManager: ObservableObject {
 
     @discardableResult
     func deleteCompletedProcessingJobs() throws -> Int {
-        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "status IN %@", ["completed", "failed"])
+        try deleteCompletedProcessingJobIdentities().count
+    }
 
-        let deletedCount = try performIsolatedMutation(operation: "completed processing job deletion") { isolatedContext in
+    /// Returns identities from the same transaction that deleted the rows.
+    func deleteCompletedProcessingJobIdentities() throws -> [UUID?] {
+        let fetchRequest: NSFetchRequest<ProcessingJobEntry> = ProcessingJobEntry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(
+            format: "status IN %@",
+            [
+                JobProcessingStatus.completed.displayName,
+                JobProcessingStatus.failed("").displayName,
+                "completed",
+                "failed"
+            ]
+        )
+
+        let deletedIDs = try performIsolatedMutation(operation: "completed processing job deletion") { isolatedContext in
             let completedJobs = try fetchCollection(
                 fetchRequest,
                 operation: "completed processing jobs",
                 in: isolatedContext
             )
+            let identities = completedJobs.map(\.id)
             for job in completedJobs {
                 isolatedContext.delete(job)
             }
-            return completedJobs.count
+            return identities
         }
-        AppLog.shared.coreData("Deleted \(deletedCount) completed processing jobs")
-        return deletedCount
+        AppLog.shared.coreData("Deleted \(deletedIDs.count) completed processing jobs")
+        return deletedIDs
     }
 
     // MARK: - Cleanup Operations

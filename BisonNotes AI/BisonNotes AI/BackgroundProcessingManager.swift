@@ -448,6 +448,141 @@ enum JobProcessingStatus: Codable, Equatable {
     }
 }
 
+/// The result of decoding a status stored by an older or newer app version.
+/// `unsupported` is deliberately not a fallback status: callers must keep the
+/// row out of the runnable queue and surface a recovery issue.
+enum JobStatusDecodeResult: Equatable {
+    case supported(JobProcessingStatus)
+    case unsupported(rawValue: String?)
+}
+
+enum PersistedJobStatusDecoder {
+    /// The Core Data writer uses title-case spellings for durable states. The
+    /// lowercase `queued` spelling is the one verified legacy value written by
+    /// older builds and remains read-only compatibility input. `.ready` is a
+    /// manager-only initial state: the source/history audit found no
+    /// production Core Data writer for `Ready`, so that raw value is unsafe to
+    /// accept as a persisted job state.
+    static func decode(_ rawValue: String?) -> JobStatusDecodeResult {
+        switch rawValue {
+        case "Queued", "queued":
+            return .supported(.queued)
+        case "Processing":
+            return .supported(.processing)
+        case "Completed":
+            return .supported(.completed)
+        case "Failed":
+            return .supported(.failed(""))
+        case "Cancelled":
+            return .supported(.cancelled)
+        case "Interrupted":
+            return .supported(.interrupted(""))
+        default:
+            return .unsupported(rawValue: rawValue)
+        }
+    }
+}
+
+/// A persisted job that needs user-visible recovery rather than automatic
+/// execution. The issue is intentionally separate from `activeJobs`, so an
+/// unknown row cannot look runnable merely because it was decoded.
+struct JobRecoveryIssue: Identifiable, Equatable {
+    let id: UUID
+    let jobID: UUID?
+    let recordingName: String?
+    let rawStatus: String?
+    let message: String
+    let isDurablyQuarantined: Bool
+
+    init(
+        jobID: UUID?,
+        recordingName: String?,
+        rawStatus: String?,
+        message: String,
+        isDurablyQuarantined: Bool,
+        id: UUID? = nil
+    ) {
+        self.id = id ?? jobID ?? UUID()
+        self.jobID = jobID
+        self.recordingName = recordingName
+        self.rawStatus = rawStatus
+        self.message = message
+        self.isDurablyQuarantined = isDurablyQuarantined
+    }
+}
+
+/// Versioned, bounded diagnostic data stored in the existing job `error` field
+/// when an unknown status is quarantined. It is not a new receipt or schema
+/// value; older readers see the accompanying canonical `Failed` status.
+enum JobRecoveryMarker {
+    static let prefix = "bisonnotes-recovery-v1:"
+    private static let missingRawStatus = "<missing>"
+    private static let maximumFieldLength = 160
+
+    private struct Payload: Codable {
+        let version: Int
+        let reason: String
+        let rawStatus: String
+    }
+
+    static func encode(reason: String, rawStatus: String?) throws -> String {
+        let payload = Payload(
+            version: 1,
+            reason: bounded(reason) ?? "Recovery required",
+            rawStatus: bounded(rawStatus) ?? missingRawStatus
+        )
+        let data = try JSONEncoder().encode(payload)
+        return prefix + data.base64EncodedString()
+    }
+
+    static func decode(_ value: String?) -> (reason: String, rawStatus: String?)? {
+        guard let value, value.hasPrefix(prefix) else { return nil }
+        let encodedPayload = String(value.dropFirst(prefix.count))
+        guard let data = Data(base64Encoded: encodedPayload) else { return nil }
+        do {
+            let payload = try JSONDecoder().decode(Payload.self, from: data)
+            guard payload.version == 1,
+                  let reason = bounded(payload.reason),
+                  !reason.isEmpty else { return nil }
+            let rawStatus = payload.rawStatus == missingRawStatus
+                ? nil
+                : bounded(payload.rawStatus)
+            return (reason, rawStatus)
+        } catch {
+            return nil
+        }
+    }
+
+    private static func bounded(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+        return String(normalized.prefix(maximumFieldLength))
+    }
+}
+
+enum JobRecoveryIssueMessage {
+    static func unsupportedStatus(_ rawStatus: String?) -> String {
+        let boundedStatus = rawStatus.map { value in
+            value
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let statusDescription = boundedStatus.map { "‘\(String($0.prefix(160)))’" } ?? "missing"
+        return "This processing job has an unsupported persisted status \(statusDescription). "
+            + "It was not started automatically and needs review."
+    }
+
+    static func invalidJob(_ reason: String) -> String {
+        "This processing job could not be restored safely: \(reason). "
+            + "It was not started automatically and needs review."
+    }
+}
+
 enum BackgroundProcessingCrashRecoveryPolicy {
     static let failureMessage = "Not restarted because the previous app session crashed."
 
@@ -496,6 +631,7 @@ class BackgroundProcessingManager: ObservableObject {
     @Published var processingStatus: JobProcessingStatus = .ready
     @Published var currentJob: ProcessingJob?
     @Published private(set) var jobLoadError: String? = nil
+    @Published private(set) var recoveryIssues: [JobRecoveryIssue] = []
 
     // MARK: - Completion Handlers
 
@@ -550,7 +686,8 @@ class BackgroundProcessingManager: ObservableObject {
 
     private init(
         audioSessionManager: EnhancedAudioSessionManager = .shared,
-        coreDataManager: CoreDataManager = CoreDataManager()
+        coreDataManager: CoreDataManager = CoreDataManager(),
+        startBackgroundWork: Bool = true
     ) {
         self.audioSessionManager = audioSessionManager
         self.coreDataManager = coreDataManager
@@ -576,6 +713,7 @@ class BackgroundProcessingManager: ObservableObject {
             )
             return
         }
+        guard startBackgroundWork else { return }
         Task {
             await cleanupStaleJobs()
         }
@@ -608,12 +746,18 @@ class BackgroundProcessingManager: ObservableObject {
     #if DEBUG
     static func makeForTesting(
         coreDataManager: CoreDataManager,
-        audioSessionManager: EnhancedAudioSessionManager = .shared
+        audioSessionManager: EnhancedAudioSessionManager = .shared,
+        startBackgroundWork: Bool = true
     ) -> BackgroundProcessingManager {
         BackgroundProcessingManager(
             audioSessionManager: audioSessionManager,
-            coreDataManager: coreDataManager
+            coreDataManager: coreDataManager,
+            startBackgroundWork: startBackgroundWork
         )
+    }
+    func resumePersistedJobsForTesting() async {
+        await resumeInterruptedJobs(notify: false)
+        await processNextJob()
     }
     #endif
 
@@ -850,10 +994,9 @@ class BackgroundProcessingManager: ObservableObject {
     func removeCompletedJobs() async throws {
         // Remove from Core Data first. A failed read/save leaves the in-memory
         // list intact and therefore cannot report a successful cleanup.
-        _ = try coreDataManager.deleteCompletedProcessingJobs()
-        activeJobs.removeAll { job in
-            job.status.isTerminal
-        }
+        let removedJobIDs = Set(try coreDataManager.deleteCompletedProcessingJobIdentities().compactMap { $0 })
+        activeJobs.removeAll { removedJobIDs.contains($0.id) }
+        removeRecoveryIssues(for: removedJobIDs)
     }
 
     // MARK: - External Job Tracking
@@ -1040,7 +1183,7 @@ class BackgroundProcessingManager: ObservableObject {
         guard currentJob == nil else { return }
 
         // Find the next queued job
-        guard let nextJob = activeJobs.first(where: { $0.status == .queued }) else {
+        guard let nextJob = activeJobs.first(where: { $0.status == .queued && !isRecoveryJob($0.id) }) else {
             processingStatus = .ready
             await endBackgroundTask()
             return
@@ -2332,12 +2475,12 @@ class BackgroundProcessingManager: ObservableObject {
     private func resumeInterruptedJobs(notify: Bool = true) async {
         // Find interrupted jobs (using the new .interrupted status)
         let interruptedJobs = activeJobs.filter {
-            $0.status.isInterrupted && !crashProtectedJobIDs.contains($0.id)
+            $0.status.isInterrupted && !crashProtectedJobIDs.contains($0.id) && !isRecoveryJob($0.id)
         }
 
         // Also find legacy interrupted jobs (from old .failed status messages)
         let legacyInterruptedJobs = activeJobs.filter { job in
-            guard !crashProtectedJobIDs.contains(job.id) else { return false }
+            guard !crashProtectedJobIDs.contains(job.id), !isRecoveryJob(job.id) else { return false }
             if case .failed(let message) = job.status {
                 return message.contains("interrupted") || message.contains("App was terminated") || message.contains("App was closed")
             }
@@ -2573,27 +2716,214 @@ class BackgroundProcessingManager: ObservableObject {
 
     private func loadJobsFromCoreData() throws {
         let jobEntries = try coreDataManager.getAllProcessingJobs()
-        activeJobs = jobEntries.compactMap { convertToProcessingJob(from: $0) }
+        var restoredJobs: [ProcessingJob] = []
+        var restoredIssues: [JobRecoveryIssue] = []
+        var quarantineFailures: [String] = []
+
+        for jobEntry in jobEntries {
+            // Read durable quarantine before validating fields which may still be
+            // missing. Reopening must not overwrite the original status evidence.
+            if jobEntry.status == "Failed", let marker = JobRecoveryMarker.decode(jobEntry.error) {
+                restoredIssues.append(JobRecoveryIssue(
+                    jobID: jobEntry.id, recordingName: jobEntry.recordingName,
+                    rawStatus: marker.rawStatus, message: marker.reason, isDurablyQuarantined: true
+                ))
+                if requiredJobFieldFailure(for: jobEntry) == nil,
+                   let job = convertToProcessingJob(from: jobEntry, status: .failed(marker.reason)) {
+                    restoredJobs.append(job)
+                }
+                continue
+            }
+            // No durable attempt-to-output receipt exists yet. A prior worker
+            // may have committed output before its terminal job save. Withhold
+            // automatic replay rather than repeat a provider request or overwrite it.
+            if jobEntry.status == "Processing" || jobEntry.status == "Interrupted" {
+                let reason = "The previous processing attempt ended without a verified completion. "
+                    + "Review retained output before starting a new attempt."
+                appendRecovery(
+                    for: jobEntry, rawStatus: jobEntry.status, reason: reason,
+                    restoredStatus: .failed(reason), restoredJobs: &restoredJobs,
+                    restoredIssues: &restoredIssues, quarantineFailures: &quarantineFailures
+                )
+                continue
+            }
+            if let requiredFieldFailure = requiredJobFieldFailure(for: jobEntry) {
+                appendRecovery(
+                    for: jobEntry,
+                    rawStatus: jobEntry.status,
+                    reason: JobRecoveryIssueMessage.invalidJob(requiredFieldFailure),
+                    restoredStatus: .failed(JobRecoveryIssueMessage.invalidJob(requiredFieldFailure)),
+                    restoredJobs: &restoredJobs,
+                    restoredIssues: &restoredIssues,
+                    quarantineFailures: &quarantineFailures
+                )
+                continue
+            }
+
+            switch PersistedJobStatusDecoder.decode(jobEntry.status) {
+            case .supported(let decodedStatus):
+                if case .failed = decodedStatus,
+                   jobEntry.error?.hasPrefix(JobRecoveryMarker.prefix) == true {
+                    let reason = JobRecoveryIssueMessage.invalidJob("the persisted recovery marker is corrupt")
+                    appendRecovery(
+                        for: jobEntry,
+                        rawStatus: jobEntry.status,
+                        reason: reason,
+                        restoredStatus: .failed(reason),
+                        restoredJobs: &restoredJobs,
+                        restoredIssues: &restoredIssues,
+                        quarantineFailures: &quarantineFailures
+                    )
+                } else if let job = convertToProcessingJob(
+                    from: jobEntry,
+                    status: restoredStatus(decodedStatus, error: jobEntry.error)
+                ) {
+                    restoredJobs.append(job)
+                } else {
+                    appendRecovery(
+                        for: jobEntry,
+                        rawStatus: jobEntry.status,
+                        reason: JobRecoveryIssueMessage.invalidJob("one or more required fields could not be restored"),
+                        restoredStatus: .failed("Recovery required"),
+                        restoredJobs: &restoredJobs,
+                        restoredIssues: &restoredIssues,
+                        quarantineFailures: &quarantineFailures
+                    )
+                }
+            case .unsupported(let rawStatus):
+                let reason = JobRecoveryIssueMessage.unsupportedStatus(rawStatus)
+                appendRecovery(
+                    for: jobEntry,
+                    rawStatus: rawStatus,
+                    reason: reason,
+                    restoredStatus: .failed(reason),
+                    restoredJobs: &restoredJobs,
+                    restoredIssues: &restoredIssues,
+                    quarantineFailures: &quarantineFailures
+                )
+            }
+        }
+
+        activeJobs = restoredJobs
+        recoveryIssues = restoredIssues
+
+        if !quarantineFailures.isEmpty {
+            jobLoadError = "Some processing jobs could not be quarantined safely; processing is withheld: "
+                + quarantineFailures.joined(separator: "; ")
+        }
     }
 
-    private func convertToProcessingJob(from jobEntry: ProcessingJobEntry) -> ProcessingJob? {
+    private func appendRecovery(
+        for jobEntry: ProcessingJobEntry,
+        rawStatus: String?,
+        reason: String,
+        restoredStatus: JobProcessingStatus,
+        restoredJobs: inout [ProcessingJob],
+        restoredIssues: inout [JobRecoveryIssue],
+        quarantineFailures: inout [String]
+    ) {
+        let issueID = jobEntry.id
+        do {
+            try coreDataManager.quarantineProcessingJob(
+                jobEntry,
+                rawStatus: rawStatus,
+                reason: reason
+            )
+            restoredIssues.append(JobRecoveryIssue(
+                jobID: issueID,
+                recordingName: jobEntry.recordingName,
+                rawStatus: rawStatus,
+                message: reason,
+                isDurablyQuarantined: true
+            ))
+            if let job = convertToProcessingJob(from: jobEntry, status: restoredStatus) {
+                restoredJobs.append(job)
+            }
+        } catch {
+            restoredIssues.append(JobRecoveryIssue(
+                jobID: issueID,
+                recordingName: jobEntry.recordingName,
+                rawStatus: rawStatus,
+                message: reason + " The quarantine save failed and the row was retained for retry.",
+                isDurablyQuarantined: false
+            ))
+            quarantineFailures.append(
+                "job \(issueID?.uuidString ?? "without identity"): \(error.localizedDescription)"
+            )
+            AppLog.shared.backgroundProcessing(
+                "job_quarantined id=\(issueID?.uuidString ?? "without identity") outcome=failed "
+                    + "cause=\(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func requiredJobFieldFailure(for jobEntry: ProcessingJobEntry) -> String? {
+        guard jobEntry.id != nil else { return "the job has no identifier" }
+        guard let recordingURL = jobEntry.recordingURL,
+              !recordingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "the recording path is missing"
+        }
+        guard let recordingName = jobEntry.recordingName,
+              !recordingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "the recording name is missing"
+        }
+        guard let jobType = jobEntry.jobType,
+              !jobType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "the job type is missing"
+        }
+        guard jobEntry.startTime != nil else { return "the start time is missing" }
+        guard let engine = jobEntry.engine,
+              !engine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return "the processing engine is missing"
+        }
+
+        if jobType.hasPrefix("Transcription"), TranscriptionEngine(rawValue: engine) == nil {
+            return "the transcription engine is unsupported"
+        }
+        guard jobType.hasPrefix("Transcription") || jobType.hasPrefix("Summarization") else {
+            return "the job type is unsupported"
+        }
+        return nil
+    }
+
+    private func restoredStatus(
+        _ decodedStatus: JobProcessingStatus,
+        error: String?
+    ) -> JobProcessingStatus {
+        switch decodedStatus {
+        case .processing:
+            // A persisted processing row has no live task after a relaunch.
+            return .interrupted(error ?? "Recovered after app restart")
+        case .failed:
+            return .failed(error ?? "Unknown error")
+        case .interrupted:
+            return .interrupted(error ?? "App was closed")
+        default:
+            return decodedStatus
+        }
+    }
+
+    private func convertToProcessingJob(
+        from jobEntry: ProcessingJobEntry,
+        status: JobProcessingStatus
+    ) -> ProcessingJob? {
         guard let id = jobEntry.id,
-              let recordingPath = jobEntry.recordingURL, // Now stored as relative path
+              let recordingPath = jobEntry.recordingURL,
               let recordingName = jobEntry.recordingName,
               let jobType = jobEntry.jobType,
-              let status = jobEntry.status else {
+              let engineValue = jobEntry.engine,
+              let startTime = jobEntry.startTime else {
             return nil
         }
 
         // Convert job type string back to JobType enum
         let type: JobType
-        if jobType.contains("Transcription") {
-            let engine = TranscriptionEngine(
-                rawValue: jobEntry.engine ?? TranscriptionEngine.notConfigured.rawValue
-            ) ?? .notConfigured
+        if jobType.hasPrefix("Transcription"),
+           let engine = TranscriptionEngine(rawValue: engineValue) {
             type = .transcription(engine: engine)
-        } else {
-            let persistedEngine = jobEntry.engine ?? AIEngineType.mlxSwift.rawValue
+        } else if jobType.hasPrefix("Summarization") {
+            let persistedEngine = engineValue
             let normalizedEngine = persistedEngine.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let validEngineNames = Set(AIEngineType.allCases.map(\.rawValue))
             // A queued OpenAI job has a successor: startup migrates that provider's
@@ -2612,27 +2942,8 @@ class BackgroundProcessingManager: ObservableObject {
                 engine = persistedEngine
             }
             type = .summarization(engine: engine)
-        }
-
-        // Convert status string back to JobProcessingStatus enum
-        let processingStatus: JobProcessingStatus
-        switch status {
-        case "Queued":
-            processingStatus = .queued
-        case "Processing":
-            // A persisted "Processing" job means the previous app session ended before status was finalized.
-            // Mark as interrupted so it can be resumed instead of appearing permanently active.
-            processingStatus = .interrupted(jobEntry.error ?? "Recovered after app restart")
-        case "Completed":
-            processingStatus = .completed
-        case "Failed":
-            processingStatus = .failed(jobEntry.error ?? "Unknown error")
-        case "Cancelled":
-            processingStatus = .cancelled
-        case "Interrupted":
-            processingStatus = .interrupted(jobEntry.error ?? "App was closed")
-        default:
-            processingStatus = .queued
+        } else {
+            return nil
         }
 
         let restoredValues = ProcessingJob.restoredPersistenceValues(from: jobEntry.modelName)
@@ -2642,9 +2953,9 @@ class BackgroundProcessingManager: ObservableObject {
             recordingPath: recordingPath,
             recordingName: recordingName,
             modelName: restoredValues.modelName,
-            status: processingStatus,
+            status: status,
             progress: jobEntry.progress,
-            startTime: jobEntry.startTime ?? Date(),
+            startTime: startTime,
             completionTime: jobEntry.completionTime,
             chunks: nil,
             error: jobEntry.error,
@@ -3167,13 +3478,27 @@ class BackgroundProcessingManager: ObservableObject {
 
     // MARK: - Manual Cleanup Functions
 
+    private func isRecoveryJob(_ id: UUID) -> Bool {
+        recoveryIssues.contains { $0.jobID == id }
+    }
+
+    private func removeRecoveryIssues(for jobIDs: Set<UUID>) {
+        recoveryIssues.removeAll { issue in
+            guard let jobID = issue.jobID else { return false }
+            return jobIDs.contains(jobID)
+        }
+    }
+
     /// Manually cleanup all failed and completed jobs.
     func cleanupCompletedJobs() async throws {
         try requireLoadedJobStore()
-        let deletedCount = try coreDataManager.deleteCompletedProcessingJobs()
+        let deletedIDs = try coreDataManager.deleteCompletedProcessingJobIdentities()
+        let deletedCount = deletedIDs.count
 
-        // Remove from memory only after the durable cleanup succeeds.
-        activeJobs.removeAll { $0.status.isTerminal }
+        // Include malformed rows which have no activeJobs projection.
+        let removedJobIDs = Set(deletedIDs.compactMap { $0 })
+        activeJobs.removeAll { removedJobIDs.contains($0.id) }
+        removeRecoveryIssues(for: removedJobIDs)
 
         AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) completed/failed jobs")
 
@@ -3248,6 +3573,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Clear from memory
         activeJobs.removeAll { deletedJobIDs.contains($0.id) }
+        recoveryIssues.removeAll()
         currentJob = nil
 
         AppLog.shared.backgroundProcessing("Cleared all background processing jobs")

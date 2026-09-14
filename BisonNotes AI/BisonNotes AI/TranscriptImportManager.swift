@@ -26,6 +26,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
     private let persistenceController: PersistenceController
     private let coreDataManager: CoreDataManager
     private let context: NSManagedObjectContext
+    private let mediaRecoveryStore: MediaOperationRecoveryStore?
     nonisolated static let supportedTextExtensions = ["txt", "text", "md", "markdown", "vtt", "srt"]
     nonisolated static let supportedDocumentExtensions = ["pdf", "doc", "docx"]
 
@@ -63,7 +64,24 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let resolvedCoreDataManager = CoreDataManager(persistenceController: persistenceController)
         self.coreDataManager = resolvedCoreDataManager
         self.context = resolvedCoreDataManager.managedObjectContext
+        self.mediaRecoveryStore = MediaOperationRecoveryStore.live()
         super.init()
+    }
+
+    init(
+        persistenceController: PersistenceController,
+        mediaRecoveryStore: MediaOperationRecoveryStore? = nil
+    ) {
+        self.persistenceController = persistenceController
+        let resolvedCoreDataManager = CoreDataManager(persistenceController: persistenceController)
+        self.coreDataManager = resolvedCoreDataManager
+        self.context = resolvedCoreDataManager.managedObjectContext
+        self.mediaRecoveryStore = mediaRecoveryStore ?? MediaOperationRecoveryStore.live()
+        super.init()
+    }
+
+    var isStorageOperational: Bool {
+        persistenceController.storeState.isOperational
     }
 
     // MARK: - Import Methods
@@ -76,6 +94,12 @@ class TranscriptImportManager: NSObject, ObservableObject {
                 "Transcript import withheld because local storage is unavailable",
                 level: .fault
             )
+            completeImport(with: TranscriptImportResults(
+                total: urls.count,
+                successful: 0,
+                failed: urls.count,
+                errors: urls.map { "\($0.lastPathComponent): Local storage is unavailable" }
+            ))
             return []
         }
         guard !isImporting else { return [] }
@@ -128,46 +152,238 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Import a single transcript from text content
     func importTranscript(text: String, name: String? = nil) async throws -> UUID {
+        guard persistenceController.storeState.isOperational else {
+            throw TranscriptImportError.databaseError("Local storage is unavailable")
+        }
+
         let baseName = name ?? "Imported Transcript \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
 
+        guard let mediaRecoveryStore else {
+            throw TranscriptImportError.databaseError("Media recovery storage is unavailable")
+        }
+
+        let sourceData = Data(text.utf8)
+        let sourceFileSize = Int64(sourceData.count)
+        let sourceFingerprint = MediaOperationRecoveryStore.fingerprint(for: sourceData)
+
+        // A failed transcript save leaves the published dummy audio and its
+        // receipt. An explicit re-import of the same text reuses that exact
+        // operation before name uniquing can create a second recording.
+        if let pending = try mediaRecoveryStore.pendingOperation(
+            kind: .transcriptImport,
+            sourceFileSize: sourceFileSize,
+            sourceFingerprint: sourceFingerprint
+        ) {
+            return try await retryPendingTranscriptImport(
+                pending,
+                text: text,
+                mediaRecoveryStore: mediaRecoveryStore
+            )
+        }
+
+        return try await importNewTranscript(text: text, baseName: baseName,
+            sourceFileSize: sourceFileSize, sourceFingerprint: sourceFingerprint, mediaRecoveryStore: mediaRecoveryStore)
+    }
+
+    private func importNewTranscript(text: String, baseName: String, sourceFileSize: Int64,
+                                     sourceFingerprint: String, mediaRecoveryStore: MediaOperationRecoveryStore) async throws -> UUID {
         // Generate unique name if duplicates exist (appends " (2)", " (3)", etc.)
         let transcriptName = try await generateUniqueRecordingName(baseName: baseName)
 
-        // Create dummy audio file with unique name
-        let dummyAudioURL = try await createDummyAudioFile(name: transcriptName)
+        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dummyFilename = dummyAudioFilename(for: transcriptName)
+        let dummyAudioURL = documentsPath.appendingPathComponent(dummyFilename)
+        guard !FileManager.default.fileExists(atPath: dummyAudioURL.path) else {
+            throw TranscriptImportError.databaseError("A transcript audio destination already exists")
+        }
 
-        // Parse text into transcript segments
-        let segments = parseTextIntoSegments(text)
-
-        // Create recording entry
-        let recordingId = try await createRecordingEntryForImportedTranscript(
-            audioURL: dummyAudioURL,
-            name: transcriptName
-        )
-
-        // The dummy audio remains app-owned and recoverable until both metadata
-        // saves succeed. A failed transcript save must not erase the only input
-        // that can be retried or diagnosed.
+        var operation: MediaOperation?
         do {
+            operation = try mediaRecoveryStore.begin(
+                kind: .transcriptImport,
+                sourceName: transcriptName,
+                destinationURL: dummyAudioURL,
+                fileExtension: "m4a",
+                recordingID: UUID(),
+                sourceFileSize: sourceFileSize,
+                sourceFingerprint: sourceFingerprint
+            )
+            guard let prepared = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+            try await createDummyAudioFile(at: prepared.stagingURL)
+            operation = try mediaRecoveryStore.markStaged(prepared)
+            guard let staged = operation else {
+                throw MediaOperationRecoveryError.missingStagingArtifact
+            }
+            operation = try mediaRecoveryStore.publish(staged)
+            guard let published = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(published)
+
+            // Parse text into transcript segments
+            let segments = parseTextIntoSegments(text)
+
+            // Create recording entry
+            let recordingId = try await createRecordingEntryForImportedTranscript(
+                audioURL: dummyAudioURL,
+                name: transcriptName,
+                recordingID: published.receipt.recordingID
+            )
+
+            guard let pendingOperation = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(
+                pendingOperation,
+                recordingID: recordingId
+            )
+
+            // The dummy audio remains app-owned and recoverable until both metadata
+            // saves succeed. A failed transcript save must not erase the only input
+            // that can be retried or diagnosed.
             try await createTranscriptEntry(
                 for: recordingId,
                 segments: segments
             )
+
+            if let committed = operation {
+                do {
+                    let durable = try mediaRecoveryStore.markMetadataCommitted(
+                        committed,
+                        recordingID: recordingId
+                    )
+                    try mediaRecoveryStore.finish(durable)
+                } catch {
+                    AppLog.shared.transcription(
+                        "Transcript import closed with deferred receipt cleanup: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
+
+            if transcriptName != baseName {
+                AppLog.shared.transcription("Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
+            } else {
+                AppLog.shared.transcription("Successfully imported transcript: \(transcriptName)")
+            }
+
+            return recordingId
         } catch {
-            AppLog.shared.transcription(
-                "Transcript creation failed; retaining the imported recording and audio for retry: \(error)",
-                level: .error
-            )
+            if let operation,
+               FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                AppLog.shared.transcription(
+                    "Transcript audio retained after a failed metadata/publication step: \(error.localizedDescription)",
+                    level: .error
+                )
+            } else if let operation {
+                do {
+                    try mediaRecoveryStore.abortBeforePublish(operation)
+                } catch {
+                    AppLog.shared.transcription(
+                        "Could not remove failed transcript staging state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
+            if let transcriptError = error as? TranscriptImportError {
+                throw transcriptError
+            }
+            if error is MediaOperationRecoveryError {
+                throw TranscriptImportError.databaseError("Media recovery state could not be recorded")
+            }
             throw error
         }
+    }
 
-        if transcriptName != baseName {
-            AppLog.shared.transcription("Successfully imported transcript with unique name: \(transcriptName) (original: \(baseName))")
-        } else {
-            AppLog.shared.transcription("Successfully imported transcript: \(transcriptName)")
+    /// Completes an explicitly retried transcript import from its retained
+    /// published dummy audio. This path never calls an AI/provider service.
+    private func retryPendingTranscriptImport(
+        _ pending: MediaOperation,
+        text: String,
+        mediaRecoveryStore: MediaOperationRecoveryStore
+    ) async throws -> UUID {
+        var operation = pending
+        switch operation.receipt.phase {
+        case .staged:
+            if !FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                operation = try mediaRecoveryStore.publish(operation)
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(operation)
+        case .published:
+            operation = try mediaRecoveryStore.markMetadataPending(operation)
+        case .metadataPending:
+            operation = try mediaRecoveryStore.markMetadataPending(operation)
+        case .metadataCommitted:
+            _ = try mediaRecoveryStore.artifactIdentity(for: operation.publishedURL)
+        case .prepared:
+            throw TranscriptImportError.databaseError("Transcript recovery operation is not runnable")
         }
 
-        return recordingId
+        let recordingID: UUID
+        if let persistedID = operation.receipt.recordingID {
+            if let _ = try coreDataManager.fetchRecording(id: persistedID) {
+                if try coreDataManager.fetchTranscript(for: persistedID) != nil {
+                    let committed = try mediaRecoveryStore.markMetadataCommitted(
+                        operation,
+                        recordingID: persistedID
+                    )
+                    try mediaRecoveryStore.finish(committed)
+                    return persistedID
+                }
+                guard operation.receipt.phase != .metadataCommitted else {
+                    throw TranscriptImportError.databaseError(
+                        "A committed transcript operation has no matching transcript"
+                    )
+                }
+                recordingID = persistedID
+            } else {
+                guard operation.receipt.phase != .metadataCommitted else {
+                    throw TranscriptImportError.databaseError(
+                        "A committed transcript artifact has no matching recording"
+                    )
+                }
+                recordingID = try await createRecordingEntryForImportedTranscript(
+                    audioURL: operation.publishedURL,
+                    name: operation.receipt.sourceName,
+                    recordingID: persistedID
+                )
+            }
+        } else {
+            // Compatibility with receipts written before identity allocation
+            // moved ahead of the recording save.
+            if let existing = try coreDataManager.fetchRecording(url: operation.publishedURL),
+               let existingID = existing.id {
+                recordingID = existingID
+            } else {
+                let allocatedID = UUID()
+                operation = try mediaRecoveryStore.markMetadataPending(operation, recordingID: allocatedID)
+                recordingID = try await createRecordingEntryForImportedTranscript(
+                    audioURL: operation.publishedURL,
+                    name: operation.receipt.sourceName,
+                    recordingID: allocatedID
+                )
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(
+                operation,
+                recordingID: recordingID
+            )
+        }
+
+        try await createTranscriptEntry(
+            for: recordingID,
+            segments: parseTextIntoSegments(text)
+        )
+        let committed = try mediaRecoveryStore.markMetadataCommitted(
+            operation,
+            recordingID: recordingID
+        )
+        try mediaRecoveryStore.finish(committed)
+        AppLog.shared.transcription(
+            "Successfully completed explicit transcript recovery: \(operation.receipt.sourceName)"
+        )
+        return recordingID
     }
 
     // MARK: - Private Methods
@@ -234,6 +450,13 @@ class TranscriptImportManager: NSObject, ObservableObject {
         let fileExtension = sourceURL.pathExtension.lowercased()
         guard supportedExtensions.contains(fileExtension) else {
             throw TranscriptImportError.unsupportedFormat(fileExtension)
+        }
+
+        let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if startedAccessing {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
         }
 
         // Validate file size before loading
@@ -589,19 +812,18 @@ class TranscriptImportManager: NSObject, ObservableObject {
         return limited.isEmpty ? "Imported Transcript" : limited
     }
 
-    /// Creates a minimal dummy audio file (~1KB) for the imported transcript
-    /// Note: This generates a silent audio file programmatically WITHOUT using the microphone
-    private func createDummyAudioFile(name: String) async throws -> URL {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-
-        // Generate unique filename
+    /// Creates the destination filename for the minimal dummy audio file used
+    /// by a transcript-only recording. The file is published by the media
+    /// operation store, not written directly into Documents.
+    private func dummyAudioFilename(for name: String) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let timestamp = formatter.string(from: Date())
-        let filename = "\(sanitizedFilenameComponent(name))_\(timestamp)_transcript.m4a"
-        let fileURL = documentsPath.appendingPathComponent(filename)
+        return "\(sanitizedFilenameComponent(name))_\(timestamp)_transcript.m4a"
+    }
 
-        // Create silent audio file programmatically (no microphone needed)
+    /// Creates a silent M4A audio file programmatically without using the microphone.
+    private func createDummyAudioFile(at fileURL: URL) async throws {
         try await createSilentAudioFile(at: fileURL)
         AppFileProtection.apply(to: fileURL)
 
@@ -613,9 +835,10 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Verify file size is reasonable
         let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
         let fileSize = attributes[.size] as? Int64 ?? 0
-        AppLog.shared.transcription("Created dummy audio file: \(filename) (\(fileSize) bytes)", level: .debug)
-
-        return fileURL
+        guard fileSize > 0 else {
+            throw TranscriptImportError.dummyAudioCreationFailed("The generated audio file is empty")
+        }
+        AppLog.shared.transcription("Created dummy audio file (\(fileSize) bytes)", level: .debug)
     }
 
     /// Creates a silent M4A audio file programmatically without using the microphone
@@ -825,35 +1048,56 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     /// Create a recording entry for the imported transcript
     /// Note: Duplicate check should be done before calling this function to avoid orphaned audio files
-    private func createRecordingEntryForImportedTranscript(audioURL: URL, name: String) async throws -> UUID {
+    private func createRecordingEntryForImportedTranscript(
+        audioURL: URL,
+        name: String,
+        recordingID: UUID?
+    ) async throws -> UUID {
         // Create new recording entry
         let recordingEntry = RecordingEntry(context: context)
-        let recordingId = UUID()
+        let recordingId = recordingID ?? UUID()
         recordingEntry.id = recordingId
         recordingEntry.recordingName = name
 
         // Store relative path instead of absolute URL
-        recordingEntry.recordingURL = urlToRelativePath(audioURL)
+        guard let relativePath = urlToRelativePath(audioURL) else {
+            context.delete(recordingEntry)
+            throw TranscriptImportError.databaseError("Could not determine the transcript audio path")
+        }
+        recordingEntry.recordingURL = relativePath
 
         // Get file metadata
         do {
-            let resourceValues = try audioURL.resourceValues(forKeys: [.creationDateKey, .fileSizeKey])
-            recordingEntry.recordingDate = resourceValues.creationDate ?? Date()
-            recordingEntry.createdAt = resourceValues.creationDate ?? Date()
+            let resourceValues = try audioURL.resourceValues(
+                forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey]
+            )
+            guard let recordingDate = resourceValues.creationDate
+                    ?? resourceValues.contentModificationDate,
+                  let fileSize = resourceValues.fileSize,
+                  fileSize > 0 else {
+                throw TranscriptImportError.databaseError("Generated transcript audio has incomplete metadata")
+            }
+            recordingEntry.recordingDate = recordingDate
+            recordingEntry.createdAt = recordingDate
             recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
+            recordingEntry.fileSize = Int64(fileSize)
 
             // Get duration (should be ~0.1 seconds)
-            let duration = await getAudioDuration(url: audioURL)
+            let duration = try await getAudioDuration(url: audioURL)
+            guard duration.isFinite, duration > 0 else {
+                throw TranscriptImportError.databaseError("Generated transcript audio has no readable duration")
+            }
             recordingEntry.duration = duration
 
         } catch {
             AppLog.shared.transcription("Error getting file metadata: \(error)", level: .error)
-            recordingEntry.recordingDate = Date()
-            recordingEntry.createdAt = Date()
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = 0
-            recordingEntry.duration = 0.1
+            context.delete(recordingEntry)
+            if let transcriptError = error as? TranscriptImportError {
+                throw transcriptError
+            }
+            throw TranscriptImportError.databaseError(
+                "Unable to read generated transcript audio metadata: \(error.localizedDescription)"
+            )
         }
 
         // Set default values
@@ -932,15 +1176,10 @@ class TranscriptImportManager: NSObject, ObservableObject {
 
     // MARK: - Helper Methods
 
-    private func getAudioDuration(url: URL) async -> TimeInterval {
-        do {
-            let asset = AVURLAsset(url: url)
-            let duration = try await asset.load(.duration)
-            return CMTimeGetSeconds(duration)
-        } catch {
-            AppLog.shared.transcription("Using default duration for dummy audio file (error: \(error.localizedDescription))", level: .debug)
-            return 0.1 // Default to 0.1 seconds for dummy file
-        }
+    private func getAudioDuration(url: URL) async throws -> TimeInterval {
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        return CMTimeGetSeconds(duration)
     }
 
     private func urlToRelativePath(_ url: URL) -> String? {

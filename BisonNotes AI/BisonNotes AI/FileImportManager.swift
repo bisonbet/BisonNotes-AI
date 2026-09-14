@@ -7,6 +7,7 @@
 
 import Foundation
 @preconcurrency import AVFoundation
+import CryptoKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -29,6 +30,7 @@ class FileImportManager: NSObject, ObservableObject {
     private let persistenceController: PersistenceController
     private let coreDataManager: CoreDataManager
     private let context: NSManagedObjectContext
+    private let mediaRecoveryStore: MediaOperationRecoveryStore?
 
     override init() {
         let resolvedPersistenceController = PersistenceController.shared
@@ -36,14 +38,19 @@ class FileImportManager: NSObject, ObservableObject {
         self.persistenceController = resolvedPersistenceController
         self.coreDataManager = resolvedCoreDataManager
         self.context = resolvedCoreDataManager.managedObjectContext
+        self.mediaRecoveryStore = MediaOperationRecoveryStore.live()
         super.init()
     }
 
-    init(persistenceController: PersistenceController) {
+    init(
+        persistenceController: PersistenceController,
+        mediaRecoveryStore: MediaOperationRecoveryStore? = nil
+    ) {
         let resolvedCoreDataManager = CoreDataManager(persistenceController: persistenceController)
         self.persistenceController = persistenceController
         self.coreDataManager = resolvedCoreDataManager
         self.context = resolvedCoreDataManager.managedObjectContext
+        self.mediaRecoveryStore = mediaRecoveryStore ?? MediaOperationRecoveryStore.live()
         super.init()
     }
 
@@ -59,6 +66,12 @@ extension FileImportManager {
                 "Audio import withheld because local storage is unavailable",
                 level: .fault
             )
+            completeImport(with: ImportResults(
+                total: urls.count,
+                successful: 0,
+                failed: urls.count,
+                errors: urls.map { "\($0.lastPathComponent): Local storage is unavailable" }
+            ))
             return []
         }
         guard !isImporting else { return [] }
@@ -130,6 +143,67 @@ extension FileImportManager {
             return
         }
 
+        guard let mediaRecoveryStore else {
+            throw ImportError.recoveryStateUnavailable
+        }
+
+        let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if startedAccessing {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let sourceFileSize: Int64
+        do {
+            let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = values.fileSize, size > 0 else {
+                throw ImportError.copyFailed("The source file is empty or its size is unavailable.")
+            }
+            sourceFileSize = Int64(size)
+        } catch let error as ImportError {
+            throw error
+        } catch {
+            throw ImportError.copyFailed("Could not read the source file: \(error.localizedDescription)")
+        }
+        let sourceFingerprint = try fileFingerprint(for: sourceURL)
+        let recordingName = importedRecordingName(for: sourceURL)
+
+        // An earlier metadata failure leaves a published operation receipt.
+        // Reuse it only when the source identity matches exactly by size and
+        // content; a filename match alone cannot authorize a retry or cleanup.
+        if let pending = try mediaRecoveryStore.pendingOperation(
+            kind: .audioImport,
+            sourceName: sourceURL.lastPathComponent,
+            sourceFileSize: sourceFileSize,
+            sourceFingerprint: sourceFingerprint
+        ) {
+            try await retryPendingAudioImport(
+                pending,
+                recordingName: recordingName,
+                mediaRecoveryStore: mediaRecoveryStore
+            )
+            return
+        }
+
+        // Avoid creating a second row when an identical source was already
+        // committed. Different content with the same display name remains a
+        // distinct import.
+        if try hasExistingRecording(named: recordingName, matching: sourceFingerprint) {
+            AppLog.shared.fileManagement(
+                "Identical imported recording already exists; acknowledging without republishing",
+                level: .debug
+            )
+            return
+        }
+
+        try await importNewAudio(from: sourceURL, fileExtension: fileExtension, recordingName: recordingName,
+            sourceFileSize: sourceFileSize, sourceFingerprint: sourceFingerprint, mediaRecoveryStore: mediaRecoveryStore)
+    }
+
+    private func importNewAudio(from sourceURL: URL, fileExtension: String, recordingName: String,
+                                sourceFileSize: Int64, sourceFingerprint: String,
+                                mediaRecoveryStore: MediaOperationRecoveryStore) async throws {
         // Get documents directory
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -142,44 +216,86 @@ extension FileImportManager {
             throw ImportError.fileAlreadyExists(filename)
         }
 
-        var importCompleted = false
-        var retainCopiedFileOnFailure = false
-        defer {
-            if !importCompleted && !retainCopiedFileOnFailure {
-                try? FileManager.default.removeItem(at: destinationURL)
-            }
-        }
-
-        // Copy file to documents directory with comprehensive error handling for thumbnail issues
+        var operation: MediaOperation?
         do {
-            try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-            AppFileProtection.apply(to: destinationURL)
-
-        } catch {
-            // Check if this is a thumbnail-related error that we can ignore
-            if error.isThumbnailGenerationError {
-                AppLog.shared.fileManagement("Thumbnail generation warning: \(error.localizedDescription)", level: .debug)
-                // Continue with import even if thumbnail generation fails
-                // The file copy operation itself succeeded, only thumbnail generation failed
-            } else {
-                throw ImportError.copyFailed(error.localizedDescription)
+            operation = try mediaRecoveryStore.begin(
+                kind: .audioImport,
+                sourceName: sourceURL.lastPathComponent,
+                destinationURL: destinationURL,
+                fileExtension: fileExtension,
+                sourceFileSize: sourceFileSize,
+                sourceFingerprint: sourceFingerprint
+            )
+            guard let prepared = operation else {
+                throw MediaOperationRecoveryError.unavailable
             }
-        }
-        AppFileProtection.apply(to: destinationURL)
 
-        // Validate the copied file
-        try validateAudioFile(at: destinationURL)
+            operation = try mediaRecoveryStore.stageCopy(from: sourceURL, for: prepared)
+            guard let staged = operation else {
+                throw MediaOperationRecoveryError.missingStagingArtifact
+            }
+            try validateAudioFile(at: staged.stagingURL)
 
-        // Create Core Data entry for the imported file
-        do {
-            try await createRecordingEntryForImportedFile(at: destinationURL)
+            if try hasExistingRecording(named: recordingName, matching: sourceFingerprint) {
+                try mediaRecoveryStore.abortBeforePublish(staged)
+                operation = nil
+                return
+            }
+
+            operation = try mediaRecoveryStore.publish(staged)
+            guard let published = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(published)
+
+            // The copied file is now app-owned. A failed metadata save leaves
+            // the published bytes and receipt available for a later, explicit
+            // recovery; the borrowed source is not acknowledged by the caller.
+            try await createRecordingEntryForImportedFile(
+                at: destinationURL,
+                recordingName: recordingName
+            )
+
+            if let committed = operation {
+                do {
+                    let durable = try mediaRecoveryStore.markMetadataCommitted(committed)
+                    try mediaRecoveryStore.finish(durable)
+                } catch {
+                    // Core Data is already the durable commitment. Keeping the
+                    // receipt is safe: launch reconciliation can remove it once
+                    // the recording URL is verified.
+                    AppLog.shared.fileManagement(
+                        "Media operation closed with deferred receipt cleanup: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
         } catch {
-            // The copied file is now app-owned and is the recoverable input for
-            // a retry after storage becomes available again.
-            retainCopiedFileOnFailure = true
-            throw error
+            if let operation,
+               FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                AppLog.shared.fileManagement(
+                    "Imported media retained after a failed metadata/publication step: \(error.localizedDescription)",
+                    level: .error
+                )
+            } else if let operation {
+                do {
+                    try mediaRecoveryStore.abortBeforePublish(operation)
+                } catch {
+                    AppLog.shared.fileManagement(
+                        "Could not remove failed media staging state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
+
+            if let importError = error as? ImportError {
+                throw importError
+            }
+            if error is MediaOperationRecoveryError {
+                throw ImportError.recoveryStateUnavailable
+            }
+            throw ImportError.copyFailed(error.localizedDescription)
         }
-        importCompleted = true
 
         AppLog.shared.fileManagement("Successfully imported: \(filename)")
     }
@@ -264,60 +380,117 @@ extension FileImportManager {
                 throw ImportError.fileAlreadyExists(filename)
             }
 
-            var restoreCompleted = false
-            var retainCopiedFileOnFailure = false
+            guard let mediaRecoveryStore else {
+                throw ImportError.recoveryStateUnavailable
+            }
+            let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
             defer {
-                if !restoreCompleted && !retainCopiedFileOnFailure {
-                    try? FileManager.default.removeItem(at: destinationURL)
+                if startedAccessing {
+                    sourceURL.stopAccessingSecurityScopedResource()
                 }
             }
 
+            var operation: MediaOperation?
             do {
-                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
-                AppFileProtection.apply(to: destinationURL)
-            } catch {
-                if error.isThumbnailGenerationError {
-                    AppLog.shared.fileManagement("Thumbnail generation warning: \(error.localizedDescription)", level: .debug)
-                } else {
-                    throw ImportError.copyFailed(error.localizedDescription)
+                operation = try mediaRecoveryStore.begin(
+                    kind: .archiveRestore,
+                    sourceName: sourceURL.lastPathComponent,
+                    destinationURL: destinationURL,
+                    fileExtension: sourceURL.pathExtension
+                )
+                guard let prepared = operation else {
+                    throw MediaOperationRecoveryError.unavailable
                 }
-            }
-            AppFileProtection.apply(to: destinationURL)
-
-            try validateAudioFile(at: destinationURL)
-
-            do {
+                operation = try mediaRecoveryStore.stageCopy(from: sourceURL, for: prepared)
+                guard let staged = operation else {
+                    throw MediaOperationRecoveryError.missingStagingArtifact
+                }
+                try validateAudioFile(at: staged.stagingURL)
+                operation = try mediaRecoveryStore.publish(staged)
+                guard let published = operation else {
+                    throw MediaOperationRecoveryError.unavailable
+                }
+                operation = try mediaRecoveryStore.markMetadataPending(published)
                 try RecordingArchiveService.shared.restoreRecording(recording, newAudioURL: destinationURL)
+
+                if let committed = operation {
+                    do {
+                        let durable = try mediaRecoveryStore.markMetadataCommitted(committed, recordingID: recording.id)
+                        try mediaRecoveryStore.finish(durable)
+                    } catch {
+                        AppLog.shared.fileManagement(
+                            "Archive import closed with deferred receipt cleanup: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
+                }
             } catch {
-                // Keep the app-owned copy so the metadata save can be retried.
-                retainCopiedFileOnFailure = true
+                if let operation,
+                   FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                    AppLog.shared.fileManagement(
+                        "Restored archive media retained after a failed metadata/publication step: \(error.localizedDescription)",
+                        level: .error
+                    )
+                } else if let operation {
+                    do {
+                        try mediaRecoveryStore.abortBeforePublish(operation)
+                    } catch {
+                        AppLog.shared.fileManagement(
+                            "Could not remove failed archive staging state: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
+                }
+                if let importError = error as? ImportError {
+                    throw importError
+                }
+                if error is MediaOperationRecoveryError {
+                    throw ImportError.recoveryStateUnavailable
+                }
                 throw error
             }
-            restoreCompleted = true
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
             AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
         }
     }
 
-    private func importVideoFile(from sourceURL: URL) async throws {
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+    private func videoDestination(for sourceURL: URL) -> URL {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let timestamp = formatter.string(from: Date())
-        let audioFilename = "\(baseName)_\(timestamp).m4a"
-        let destinationURL = documentsPath.appendingPathComponent(audioFilename)
+        let name = sourceURL.deletingPathExtension().lastPathComponent
+        return documents.appendingPathComponent("\(name)_\(formatter.string(from: Date())).m4a")
+    }
 
-        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
-            throw ImportError.fileAlreadyExists(audioFilename)
+    private func importVideoFile(from sourceURL: URL) async throws {
+        let baseName = sourceURL.deletingPathExtension().lastPathComponent
+        let destinationURL = videoDestination(for: sourceURL)
+        let audioFilename = destinationURL.lastPathComponent
+
+        guard let mediaRecoveryStore else {
+            throw ImportError.recoveryStateUnavailable
         }
 
-        var importCompleted = false
-        var retainCopiedFileOnFailure = false
+        let startedAccessing = sourceURL.startAccessingSecurityScopedResource()
         defer {
-            if !importCompleted && !retainCopiedFileOnFailure {
-                try? FileManager.default.removeItem(at: destinationURL)
+            if startedAccessing {
+                sourceURL.stopAccessingSecurityScopedResource()
             }
+        }
+
+        let sourceIdentity = try mediaRecoveryStore.artifactIdentity(for: sourceURL)
+        if let pending = try mediaRecoveryStore.pendingOperation(
+            kind: .videoImport, sourceName: sourceURL.lastPathComponent,
+            sourceFileSize: sourceIdentity.fileSize, sourceFingerprint: sourceIdentity.fingerprint
+        ) {
+            try await retryPendingAudioImport(
+                pending, recordingName: AudioRecorderViewModel.generateImportedFileName(originalName: baseName),
+                mediaRecoveryStore: mediaRecoveryStore
+            )
+            return
+        }
+        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+            throw ImportError.fileAlreadyExists(audioFilename)
         }
 
         let asset = AVURLAsset(url: sourceURL)
@@ -332,23 +505,74 @@ extension FileImportManager {
             throw ImportError.copyFailed("Could not create audio export session")
         }
 
-        exportSession.outputURL = destinationURL
-        exportSession.outputFileType = .m4a
-
-        try await exportSession.export(to: destinationURL, as: .m4a)
-        AppFileProtection.apply(to: destinationURL)
-
-        // Validate the extracted audio
-        try validateAudioFile(at: destinationURL)
-
-        // Create Core Data entry
+        var operation: MediaOperation?
         do {
-            try await createRecordingEntryForImportedFile(at: destinationURL)
+            operation = try mediaRecoveryStore.begin(
+                kind: .videoImport,
+                sourceName: sourceURL.lastPathComponent,
+                destinationURL: destinationURL,
+                fileExtension: "m4a",
+                sourceFileSize: sourceIdentity.fileSize,
+                sourceFingerprint: sourceIdentity.fingerprint
+            )
+            guard let prepared = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+
+            exportSession.outputURL = prepared.stagingURL
+            try await exportSession.export(to: prepared.stagingURL, as: .m4a)
+            operation = try mediaRecoveryStore.markStaged(prepared)
+            guard let staged = operation else {
+                throw MediaOperationRecoveryError.missingStagingArtifact
+            }
+            try validateAudioFile(at: staged.stagingURL)
+            operation = try mediaRecoveryStore.publish(staged)
+            guard let published = operation else {
+                throw MediaOperationRecoveryError.unavailable
+            }
+            operation = try mediaRecoveryStore.markMetadataPending(published)
+
+            try await createRecordingEntryForImportedFile(
+                at: destinationURL,
+                recordingName: AudioRecorderViewModel.generateImportedFileName(originalName: baseName)
+            )
+
+            if let committed = operation {
+                do {
+                    let durable = try mediaRecoveryStore.markMetadataCommitted(committed)
+                    try mediaRecoveryStore.finish(durable)
+                } catch {
+                    AppLog.shared.fileManagement(
+                        "Video import closed with deferred receipt cleanup: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
         } catch {
-            retainCopiedFileOnFailure = true
-            throw error
+            if let operation,
+               FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                AppLog.shared.fileManagement(
+                    "Extracted audio retained after a failed metadata/publication step: \(error.localizedDescription)",
+                    level: .error
+                )
+            } else if let operation {
+                do {
+                    try mediaRecoveryStore.abortBeforePublish(operation)
+                } catch {
+                    AppLog.shared.fileManagement(
+                        "Could not remove failed video staging state: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+            }
+            if let importError = error as? ImportError {
+                throw importError
+            }
+            if error is MediaOperationRecoveryError {
+                throw ImportError.recoveryStateUnavailable
+            }
+            throw ImportError.copyFailed(error.localizedDescription)
         }
-        importCompleted = true
 
         AppLog.shared.fileManagement("Successfully extracted audio from video: \(audioFilename)")
     }
@@ -426,23 +650,20 @@ extension FileImportManager {
 
     // MARK: - Core Data Integration
 
-    private func createRecordingEntryForImportedFile(at fileURL: URL) async throws {
-        let originalName = fileURL.deletingPathExtension().lastPathComponent
-        let recordingName = AudioRecorderViewModel.generateImportedFileName(originalName: originalName)
-
-        // A failed read is not evidence that this is a new recording. Keep the
-        // copied source and stop before creating a duplicate identity.
-        if try coreDataManager.getAllRecordings().contains(where: { $0.recordingName == recordingName }) {
-            AppLog.shared.fileManagement("Recording entry already exists for imported file", level: .debug)
-            return
-        }
-
+    private func createRecordingEntryForImportedFile(
+        at fileURL: URL,
+        recordingName: String
+    ) async throws {
         // Create new recording entry
         let recordingEntry = RecordingEntry(context: context)
         recordingEntry.id = UUID()
         recordingEntry.recordingName = recordingName
         // Store relative path instead of absolute URL for resilience across app launches
-        recordingEntry.recordingURL = urlToRelativePath(fileURL)
+        guard let relativePath = urlToRelativePath(fileURL) else {
+            context.delete(recordingEntry)
+            throw ImportError.persistenceFailed("Could not determine the imported file's local path")
+        }
+        recordingEntry.recordingURL = relativePath
 
         // Get file metadata. Prefer the file's modification date as the recording
         // date: archives exported by this app stamp mtime with the original
@@ -452,23 +673,30 @@ extension FileImportManager {
             let resourceValues = try fileURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey, .fileSizeKey])
             let originalDate = resourceValues.contentModificationDate
                 ?? resourceValues.creationDate
-                ?? Date()
+            guard let originalDate,
+                  let fileSize = resourceValues.fileSize,
+                  fileSize > 0 else {
+                throw ImportError.persistenceFailed("The imported file has incomplete metadata")
+            }
             recordingEntry.recordingDate = originalDate
             recordingEntry.createdAt = originalDate
             recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = Int64(resourceValues.fileSize ?? 0)
+            recordingEntry.fileSize = Int64(fileSize)
 
             // Get duration
-            let duration = await getAudioDuration(url: fileURL)
+            let duration = try await getAudioDuration(url: fileURL)
+            guard duration.isFinite, duration > 0 else {
+                throw ImportError.invalidAudioFile("File has no readable duration")
+            }
             recordingEntry.duration = duration
 
         } catch {
             AppLog.shared.fileManagement("Error getting file metadata: \(error)", level: .error)
-            recordingEntry.recordingDate = Date()
-            recordingEntry.createdAt = Date()
-            recordingEntry.lastModified = Date()
-            recordingEntry.fileSize = 0
-            recordingEntry.duration = 0
+            context.delete(recordingEntry)
+            if let importError = error as? ImportError {
+                throw importError
+            }
+            throw ImportError.persistenceFailed("Unable to read imported file metadata: \(error.localizedDescription)")
         }
 
         // Set default values
@@ -487,15 +715,105 @@ extension FileImportManager {
         }
     }
 
-    private func getAudioDuration(url: URL) async -> TimeInterval {
-        do {
-            let asset = AVURLAsset(url: url)
-            let duration = try await asset.load(.duration)
-            return CMTimeGetSeconds(duration)
-        } catch {
-            AppLog.shared.fileManagement("Error getting audio duration: \(error)", level: .error)
-            return 0
+    private func getAudioDuration(url: URL) async throws -> TimeInterval {
+        let asset = AVURLAsset(url: url)
+        let duration = try await asset.load(.duration)
+        return CMTimeGetSeconds(duration)
+    }
+
+    private func importedRecordingName(for sourceURL: URL) -> String {
+        let originalName = sourceURL.deletingPathExtension().lastPathComponent
+        return AudioRecorderViewModel.generateImportedFileName(originalName: originalName)
+    }
+
+    private func hasExistingRecording(named name: String, matching fingerprint: String) throws -> Bool {
+        let recordings = try coreDataManager.getAllRecordings()
+        for recording in recordings where recording.recordingName == name {
+            guard let storedPath = recording.recordingURL,
+                  let storedURL = RecordingArchiveService.resolveLocalURL(from: storedPath),
+                  FileManager.default.fileExists(atPath: storedURL.path) else {
+                continue
+            }
+            if try fileFingerprint(for: storedURL) == fingerprint {
+                return true
+            }
         }
+        return false
+    }
+
+    private func retryPendingAudioImport(
+        _ pending: MediaOperation,
+        recordingName: String,
+        mediaRecoveryStore: MediaOperationRecoveryStore
+    ) async throws {
+        var operation = pending
+        let wasMetadataCommitted = operation.receipt.phase == .metadataCommitted
+        if operation.receipt.phase == .staged,
+           !FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+            try validateAudioFile(at: operation.stagingURL)
+            operation = try mediaRecoveryStore.publish(operation)
+        }
+        try validateAudioFile(at: operation.publishedURL)
+        operation = try mediaRecoveryStore.markMetadataPending(operation)
+
+        if try hasRecordingReference(to: operation.publishedURL) {
+            do {
+                let committed = try mediaRecoveryStore.markMetadataCommitted(operation)
+                try mediaRecoveryStore.finish(committed)
+            } catch {
+                AppLog.shared.fileManagement(
+                    "Recovered audio metadata reference but receipt cleanup is deferred: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
+            return
+        }
+
+        guard !wasMetadataCommitted else {
+            throw ImportError.persistenceFailed(
+                "A committed import receipt has no matching recording reference."
+            )
+        }
+
+        try await createRecordingEntryForImportedFile(
+            at: operation.publishedURL,
+            recordingName: recordingName
+        )
+        do {
+            let committed = try mediaRecoveryStore.markMetadataCommitted(operation)
+            try mediaRecoveryStore.finish(committed)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Recovered audio import but receipt cleanup is deferred: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func hasRecordingReference(to url: URL) throws -> Bool {
+        let target = url.standardizedFileURL.path
+        return try coreDataManager.getAllRecordings().contains { recording in
+            guard let storedPath = recording.recordingURL,
+                  let storedURL = RecordingArchiveService.resolveLocalURL(from: storedPath) else {
+                return false
+            }
+            return storedURL.standardizedFileURL.path == target
+        }
+    }
+
+    private func fileFingerprint(for url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
+            if chunk.isEmpty {
+                break
+            }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Converts an absolute URL to a relative path for storage
@@ -527,6 +845,7 @@ enum ImportError: LocalizedError {
     case invalidAudioFile(String)
     case copyFailed(String)
     case persistenceFailed(String)
+    case recoveryStateUnavailable
     case alreadyImported(String)
 
     var errorDescription: String? {
@@ -541,6 +860,8 @@ enum ImportError: LocalizedError {
             return "Failed to copy file: \(reason)"
         case .persistenceFailed(let reason):
             return "The imported file was retained, but its metadata could not be saved: \(reason)"
+        case .recoveryStateUnavailable:
+            return "The imported file was not started because its recovery state could not be recorded."
         case .alreadyImported(let name):
             return "Already imported: \(name). The original recording still has its audio on this device."
         }
