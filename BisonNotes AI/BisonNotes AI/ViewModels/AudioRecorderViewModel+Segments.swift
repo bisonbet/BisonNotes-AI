@@ -341,9 +341,25 @@ extension AudioRecorderViewModel {
 			// would make the next recovery pass merge the completed recording together
 			// with its own inputs and duplicate the audio. After a completed merge only
 			// the merged file needs retrying — the metadata save is what failed.
-			let preservedArtifacts = mergeCompleted
-				? [mainURL]
-				: segments + (backupURL.map { [$0] } ?? [])
+			//
+			// Those superseded inputs must still be released here. The success path
+			// below discards them once Core Data acknowledges the merge, and it never
+			// ran; if they are neither snapshotted nor deleted they become untracked
+			// full-size files that a later recovery — which only knows about mainURL —
+			// can never reclaim. Their audio is already inside the merged output, so
+			// dropping them loses nothing.
+			let preservedArtifacts: [URL]
+			if mergeCompleted {
+				if let backupURL {
+					removeOwnedRecordingAttemptArtifact(at: backupURL)
+				}
+				deleteSegmentFiles(segments.filter {
+					$0.standardizedFileURL != mainURL.standardizedFileURL
+				})
+				preservedArtifacts = [mainURL]
+			} else {
+				preservedArtifacts = segments + (backupURL.map { [$0] } ?? [])
+			}
 			preserveFailedMergeSegments(preservedArtifacts, mainURL: mainURL)
 			if ownsLiveRecordingState {
 				errorMessage = "The recording could not be combined yet. Its segments were preserved for recovery."
