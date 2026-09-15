@@ -21,6 +21,8 @@ class RecordingArchiveService: ObservableObject {
     private static let statusAvailable = "available"
     private static let statusStaleBookmark = "staleBookmark"
     private static let statusMissing = "missing"
+    /// A restore succeeded but its external source outlived the cleanup.
+    static let statusCleanupPending = "cleanupPending"
 
     private lazy var coreDataManager = CoreDataManager(persistenceController: PersistenceController.shared)
     private let mediaRecoveryStore: MediaOperationRecoveryStore?
@@ -371,16 +373,30 @@ class RecordingArchiveService: ObservableObject {
                 )
             }
 
-            try deleteArchivedSource(at: sourceURL)
+            // The recording is restored and its audio is in place; everything
+            // below only retires external bookkeeping. A file provider that
+            // refuses the delete must not turn a completed restore into a
+            // reported failure — the user's recording is back either way, and
+            // the restore action is not offered again once it is unarchived.
+            do {
+                try deleteArchivedSource(at: sourceURL)
 
-            let locationObjectID = locationObject.objectID
-            try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
-                let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
-                isolatedContext.delete(isolatedLocation)
-            }
+                let locationObjectID = locationObject.objectID
+                try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
+                    let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
+                    isolatedContext.delete(isolatedLocation)
+                }
 
-            if let committed = operation {
-                try mediaRecoveryStore.finish(committed)
+                if let committed = operation {
+                    try mediaRecoveryStore.finish(committed)
+                }
+            } catch {
+                // Leave the location row behind, marked, rather than silently
+                // stale: it is the only durable record that this source was
+                // never retired, and `archiveLocations(for:)` surfaces the
+                // status so the leftover is describable instead of looking like
+                // a healthy archive.
+                markArchiveLocationCleanupPending(locationObject, reason: error)
             }
         } catch {
             if let operation,
@@ -450,6 +466,31 @@ class RecordingArchiveService: ObservableObject {
         }
         try mediaRecoveryStore.finish(operation)
         return operation.publishedURL
+    }
+
+    /// Records that a restore completed but its external source could not be
+    /// retired. The recording itself is healthy; this marks the bookkeeping that
+    /// still needs attention so it is visible rather than an archive row that
+    /// claims to be available.
+    private func markArchiveLocationCleanupPending(_ locationObject: NSManagedObject, reason: Error) {
+        AppLog.shared.recording(
+            "Archive restore completed, but the external source was not retired: "
+                + "\(reason.localizedDescription)",
+            level: .fault
+        )
+        let locationObjectID = locationObject.objectID
+        do {
+            try coreDataManager.performIsolatedMutation(operation: "archive location cleanup status") { isolatedContext in
+                let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
+                isolatedLocation.setValue(Self.statusCleanupPending, forKey: "status")
+                isolatedLocation.setValue(Date(), forKey: "lastVerifiedAt")
+            }
+        } catch {
+            AppLog.shared.recording(
+                "Could not mark the archive location for cleanup: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     private func deleteArchivedSource(at sourceURL: URL) throws {
