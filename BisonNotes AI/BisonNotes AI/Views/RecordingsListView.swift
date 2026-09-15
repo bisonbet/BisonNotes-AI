@@ -1617,11 +1617,20 @@ struct RecordingsListView: View {
                 guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(id: recordingId) else {
                     throw CoreDataDeletionError.recordingNotFound(recordingId)
                 }
-                _ = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
+                let outcome = try RecordingArchiveService.shared.restoreArchivedRecording(recordingEntry)
                 loadRecordings()
                 refreshFileRelationships()
                 if let restoredRecording = recordings.first(where: { $0.recordingId == recordingId }) {
                     openOrSelectRecording(restoredRecording)
+                }
+                // The recording is back either way. When its archived copy could
+                // not be retired, that copy is left in the archive location the
+                // user chose, where only they can remove it — so say where it is
+                // rather than leaving it to quietly occupy their storage.
+                if let retainedSource = outcome.retainedArchiveSource {
+                    archiveRestoreError = "This recording was restored, but its archived copy "
+                        + "(\(retainedSource)) could not be removed. You can delete it there when "
+                        + "you no longer need it."
                 }
             } catch {
                 archiveRestoreError = error.localizedDescription

@@ -271,7 +271,24 @@ class RecordingArchiveService: ObservableObject {
         return locationObject
     }
 
-    func restoreArchivedRecording(_ recording: RecordingEntry, from locationId: UUID? = nil) throws -> URL {
+    /// The result of restoring an archived recording.
+    ///
+    /// Carries a third outcome beside success and failure: restored, but the
+    /// external archived copy outlived the cleanup. The recording is healthy in
+    /// that case, so it is not an error — but the copy sits in the user's own
+    /// archive location and only they can retire it, which means they have to be
+    /// told it is still there.
+    struct RecordingArchiveRestoreOutcome {
+        let restoredURL: URL
+        let retainedArchiveSource: String?
+    }
+
+    @discardableResult
+    func restoreArchivedRecording(
+        _ recording: RecordingEntry,
+        from locationId: UUID? = nil
+    ) throws -> RecordingArchiveRestoreOutcome {
+        var retainedArchiveSource: String?
         let locationObject = try restoreLocation(for: recording, locationId: locationId)
 
         let sourceURL = try resolvedArchiveURL(from: locationObject)
@@ -321,7 +338,7 @@ class RecordingArchiveService: ObservableObject {
             sourceFingerprint: sourceIdentity.fingerprint,
             recordingID: recording.id
         ) {
-            let resumedURL = try resumePendingArchiveRestore(
+            let resumed = try resumePendingArchiveRestore(
                 pending,
                 recording: recording,
                 sourceURL: sourceURL,
@@ -331,7 +348,7 @@ class RecordingArchiveService: ObservableObject {
             AppLog.shared.recording(
                 "Resumed an interrupted archive restore for \(recording.recordingName ?? "unknown")"
             )
-            return resumedURL
+            return resumed
         }
 
         var operation: MediaOperation?
@@ -373,31 +390,12 @@ class RecordingArchiveService: ObservableObject {
                 )
             }
 
-            // The recording is restored and its audio is in place; everything
-            // below only retires external bookkeeping. A file provider that
-            // refuses the delete must not turn a completed restore into a
-            // reported failure — the user's recording is back either way, and
-            // the restore action is not offered again once it is unarchived.
-            do {
-                try deleteArchivedSource(at: sourceURL)
-
-                let locationObjectID = locationObject.objectID
-                try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
-                    let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
-                    isolatedContext.delete(isolatedLocation)
-                }
-
-                if let committed = operation {
-                    try mediaRecoveryStore.finish(committed)
-                }
-            } catch {
-                // Leave the location row behind, marked, rather than silently
-                // stale: it is the only durable record that this source was
-                // never retired, and `archiveLocations(for:)` surfaces the
-                // status so the leftover is describable instead of looking like
-                // a healthy archive.
-                markArchiveLocationCleanupPending(locationObject, reason: error)
-            }
+            retainedArchiveSource = retireArchiveSource(
+                at: sourceURL,
+                locationObject: locationObject,
+                operation: operation,
+                mediaRecoveryStore: mediaRecoveryStore
+            )
         } catch {
             if let operation,
                FileManager.default.fileExists(atPath: operation.publishedURL.path) {
@@ -423,7 +421,10 @@ class RecordingArchiveService: ObservableObject {
             }
             throw error
         }
-        return destinationURL
+        return RecordingArchiveRestoreOutcome(
+            restoredURL: destinationURL,
+            retainedArchiveSource: retainedArchiveSource
+        )
     }
 
     /// Finishes an archive restore whose publication already succeeded. The
@@ -435,7 +436,7 @@ class RecordingArchiveService: ObservableObject {
         sourceURL: URL,
         locationObject: NSManagedObject,
         mediaRecoveryStore: MediaOperationRecoveryStore
-    ) throws -> URL {
+    ) throws -> RecordingArchiveRestoreOutcome {
         var operation = pending
         let wasMetadataCommitted = operation.receipt.phase == .metadataCommitted
         if operation.receipt.phase == .staged,
@@ -458,14 +459,49 @@ class RecordingArchiveService: ObservableObject {
         }
         operation = try mediaRecoveryStore.markMetadataCommitted(operation, recordingID: recording.id)
 
-        try deleteArchivedSource(at: sourceURL)
-        let locationObjectID = locationObject.objectID
-        try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
-            let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
-            isolatedContext.delete(isolatedLocation)
+        let retained = retireArchiveSource(
+            at: sourceURL,
+            locationObject: locationObject,
+            operation: operation,
+            mediaRecoveryStore: mediaRecoveryStore
+        )
+        return RecordingArchiveRestoreOutcome(
+            restoredURL: operation.publishedURL,
+            retainedArchiveSource: retained
+        )
+    }
+
+    /// Retires the external archived copy and its bookkeeping once a restore has
+    /// committed. Returns a description of the copy when it could not be
+    /// removed.
+    ///
+    /// Best-effort by design. The recording is already back with its audio, so
+    /// failing the restore over bookkeeping would report a healthy result as
+    /// broken — and the restore action is not offered again once the recording
+    /// is unarchived. The leftover is the user's own file in the archive
+    /// location they chose, so naming it is what lets them finish the job; there
+    /// is nothing here for the app to reclaim on their behalf.
+    private func retireArchiveSource(
+        at sourceURL: URL,
+        locationObject: NSManagedObject,
+        operation: MediaOperation?,
+        mediaRecoveryStore: MediaOperationRecoveryStore
+    ) -> String? {
+        do {
+            try deleteArchivedSource(at: sourceURL)
+            let locationObjectID = locationObject.objectID
+            try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
+                let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
+                isolatedContext.delete(isolatedLocation)
+            }
+            if let operation {
+                try mediaRecoveryStore.finish(operation)
+            }
+            return nil
+        } catch {
+            markArchiveLocationCleanupPending(locationObject, reason: error)
+            return "\(Self.displayName(for: sourceURL)) in \(Self.providerDisplayName(for: sourceURL))"
         }
-        try mediaRecoveryStore.finish(operation)
-        return operation.publishedURL
     }
 
     /// Records that a restore completed but its external source could not be
