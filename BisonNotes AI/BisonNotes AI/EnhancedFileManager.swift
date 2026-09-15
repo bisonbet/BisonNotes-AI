@@ -255,11 +255,29 @@ final class EnhancedFileManager: ObservableObject {
             throw FileManagementError.relationshipNotFound
         }
 
-        // Get the recording ID from the coordinator
-        guard let appCoordinator = appCoordinator,
-              let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(url: normalizedURL),
-              let recordingId = recordingEntry.id else {
+        guard let appCoordinator = appCoordinator else {
             throw FileManagementError.relationshipNotFound
+        }
+
+        // A relationship with no resolvable recording row is the tail of an
+        // earlier attempt whose metadata delete committed and whose post-commit
+        // filesystem step then failed. `fetchRecording(url:)` throws on a store
+        // read failure, so nil here means the row is genuinely gone, not that the
+        // lookup broke. Refusing that retry was a dead end: the row it needs can
+        // never come back, so the orphaned audio could not be removed through
+        // this path at all while relationship refresh kept rediscovering it.
+        // Finish the cleanup instead.
+        guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(url: normalizedURL),
+              let recordingId = recordingEntry.id else {
+            try deleteAudioAndSidecars(at: normalizedURL, hasRecording: relationships.hasRecording)
+            await MainActor.run {
+                _ = fileRelationships.removeValue(forKey: normalizedURL)
+                saveFileRelationships()
+            }
+            AppLog.shared.fileManagement(
+                "Completed a previously interrupted post-commit cleanup for \(normalizedURL.lastPathComponent)"
+            )
+            return
         }
 
         // Stop any playback if this recording is currently playing

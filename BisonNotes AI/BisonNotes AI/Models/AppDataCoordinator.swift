@@ -57,7 +57,15 @@ class AppDataCoordinator: ObservableObject {
                 to: coreDataManager.managedObjectContext
             )
         } catch {
-            AppLog.shared.coreData("Cloud outbox binding failed; startup withheld: \(error)", level: .error)
+            // Returning alone withheld nothing. `isInitialized` is published but
+            // nothing observes it — ContentView's like-named flag is its own local
+            // @State — so every `storageState.isOperational` gate stayed open and
+            // the app went on to run initialization, cleanup, imports and sync
+            // against an outbox that is not bound to the active store. Mark the
+            // store unavailable so the withholding this log claims actually
+            // happens, and so the UI surfaces it rather than looking healthy.
+            storageState = .unavailable(PersistenceStoreFailure(error: error))
+            AppLog.shared.coreData("Cloud outbox binding failed; startup withheld: \(error)", level: .fault)
             return
         }
 

@@ -390,13 +390,56 @@ extension FileImportManager {
                 }
             }
 
+            // Identify the source the same way the plain audio import does.
+            // Without a size and fingerprint on the receipt, a restore that
+            // failed after publication could never be matched again: the retained
+            // receipt has no identity to compare, so re-importing the same
+            // archive generated a fresh destination and published a second copy
+            // while reconciliation could not commit the first — the recording
+            // still points at its old missing URL.
+            let sourceFileSize: Int64
+            do {
+                let values = try sourceURL.resourceValues(forKeys: [.fileSizeKey])
+                guard let size = values.fileSize, size > 0 else {
+                    throw ImportError.copyFailed("The archived source file is empty or its size is unavailable.")
+                }
+                sourceFileSize = Int64(size)
+            } catch let error as ImportError {
+                throw error
+            } catch {
+                throw ImportError.copyFailed("Could not read the archived source file: \(error.localizedDescription)")
+            }
+            let sourceFingerprint = try fileFingerprint(for: sourceURL)
+
+            if let pending = try mediaRecoveryStore.pendingOperation(
+                kind: .archiveRestore,
+                sourceName: sourceURL.lastPathComponent,
+                sourceFileSize: sourceFileSize,
+                sourceFingerprint: sourceFingerprint,
+                recordingID: recording.id
+            ) {
+                try await resumePendingArchiveRestore(
+                    pending,
+                    recording: recording,
+                    mediaRecoveryStore: mediaRecoveryStore
+                )
+                NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+                AppLog.shared.fileManagement(
+                    "Resumed an interrupted archive restore for \(recording.recordingName ?? "unknown")"
+                )
+                return
+            }
+
             var operation: MediaOperation?
             do {
                 operation = try mediaRecoveryStore.begin(
                     kind: .archiveRestore,
                     sourceName: sourceURL.lastPathComponent,
                     destinationURL: destinationURL,
-                    fileExtension: sourceURL.pathExtension
+                    fileExtension: sourceURL.pathExtension,
+                    recordingID: recording.id,
+                    sourceFileSize: sourceFileSize,
+                    sourceFingerprint: sourceFingerprint
                 )
                 guard let prepared = operation else {
                     throw MediaOperationRecoveryError.unavailable
@@ -739,6 +782,58 @@ extension FileImportManager {
             }
         }
         return false
+    }
+
+    /// Finishes an archive restore whose publication succeeded but whose
+    /// metadata step did not. The published file is already app-owned, so this
+    /// re-points the recording at it rather than publishing a second copy.
+    private func resumePendingArchiveRestore(
+        _ pending: MediaOperation,
+        recording: RecordingEntry,
+        mediaRecoveryStore: MediaOperationRecoveryStore
+    ) async throws {
+        var operation = pending
+        let wasMetadataCommitted = operation.receipt.phase == .metadataCommitted
+        if operation.receipt.phase == .staged,
+           !FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+            try validateAudioFile(at: operation.stagingURL)
+            operation = try mediaRecoveryStore.publish(operation)
+        }
+        try validateAudioFile(at: operation.publishedURL)
+        operation = try mediaRecoveryStore.markMetadataPending(operation, recordingID: recording.id)
+
+        if try hasRecordingReference(to: operation.publishedURL) {
+            do {
+                let committed = try mediaRecoveryStore.markMetadataCommitted(operation, recordingID: recording.id)
+                try mediaRecoveryStore.finish(committed)
+            } catch {
+                AppLog.shared.fileManagement(
+                    "Recovered archive restore reference but receipt cleanup is deferred: \(error.localizedDescription)",
+                    level: .error
+                )
+            }
+            return
+        }
+
+        guard !wasMetadataCommitted else {
+            throw ImportError.persistenceFailed(
+                "A committed archive-restore receipt has no matching recording reference."
+            )
+        }
+
+        try RecordingArchiveService.shared.restoreRecording(
+            recording,
+            newAudioURL: operation.publishedURL
+        )
+        do {
+            let committed = try mediaRecoveryStore.markMetadataCommitted(operation, recordingID: recording.id)
+            try mediaRecoveryStore.finish(committed)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Recovered archive restore but receipt cleanup is deferred: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     private func retryPendingAudioImport(
