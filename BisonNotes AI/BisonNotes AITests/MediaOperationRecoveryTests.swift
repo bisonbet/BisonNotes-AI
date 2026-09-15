@@ -552,3 +552,151 @@ final class MediaOperationRecoveryTests: XCTestCase {
         }
     }
 }
+
+/// `finish` deliberately keeps a committed receipt for the borrowed-source flows
+/// so a redelivery is recognized rather than imported twice. Reconciliation then
+/// runs on every launch *and* every activation, so what it does with those
+/// tokens is a recurring cost, not a one-off.
+@MainActor
+final class CommittedReceiptReconciliationTests: XCTestCase {
+    private struct Fixture {
+        let root: URL
+        let store: MediaOperationRecoveryStore
+        let published: URL
+        let receipt: URL
+    }
+
+    private func makeCommittedVideoImport(
+        kind: MediaOperationKind = .videoImport,
+        callFinish: Bool = true
+    ) throws -> Fixture {
+        let root = try TestHelpers.createTemporaryDirectory()
+        let recoveryDirectory = root.appendingPathComponent("recovery", isDirectory: true)
+        let documentsDirectory = root.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documentsDirectory, withIntermediateDirectories: true)
+        let store = MediaOperationRecoveryStore(
+            recoveryDirectory: recoveryDirectory,
+            documentsDirectory: documentsDirectory
+        )
+
+        let source = root.appendingPathComponent("source.m4a")
+        try Data("extracted video audio".utf8).write(to: source)
+        let destination = documentsDirectory.appendingPathComponent("imported.m4a")
+
+        var operation = try store.begin(
+            kind: kind,
+            sourceName: source.lastPathComponent,
+            destinationURL: destination,
+            fileExtension: "m4a"
+        )
+        operation = try store.stageCopy(from: source, for: operation)
+        operation = try store.publish(operation)
+        operation = try store.markMetadataPending(operation)
+        operation = try store.markMetadataCommitted(operation)
+        if callFinish {
+            try store.finish(operation)
+        }
+
+        let receiptURL = recoveryDirectory.appendingPathComponent(
+            "\(MediaOperationRecoveryStore.receiptFilePrefix)\(operation.receipt.operationID.uuidString).json"
+        )
+        return Fixture(root: root, store: store, published: destination, receipt: receiptURL)
+    }
+
+    /// The regression: reconciling a committed token used to verify it, which
+    /// meant hashing the whole published file and then hashing it again inside
+    /// `markMetadataCommitted`. Rewriting the published bytes makes that reread
+    /// observable — a pass that still reads the media sees a mismatch and cannot
+    /// report the token as simply retained.
+    func testCommittedTokenIsReconciledWithoutRereadingTheMedia() throws {
+        let fixture = try makeCommittedVideoImport()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(fixture.root) }
+
+        try Data("completely different bytes, different length".utf8)
+            .write(to: fixture.published)
+
+        let result = fixture.store.reconcile(
+            isPublishedArtifactReferenced: { _ in
+                XCTFail("A committed token must not need a recording-reference lookup")
+                return true
+            }
+        )
+
+        XCTAssertEqual(result.retainedCount, 1)
+        XCTAssertEqual(result.committedCount, 0)
+        XCTAssertEqual(result.failedCount, 0)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: fixture.receipt.path),
+            "The deduplication token must survive reconciliation"
+        )
+    }
+
+    /// Repeated activations must stay cheap and must not churn the token.
+    func testRepeatedReconciliationLeavesTheTokenUntouched() throws {
+        let fixture = try makeCommittedVideoImport()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(fixture.root) }
+
+        let before = try Data(contentsOf: fixture.receipt)
+        for _ in 0..<5 {
+            _ = fixture.store.reconcile(isPublishedArtifactReferenced: { _ in true })
+        }
+
+        XCTAssertEqual(try Data(contentsOf: fixture.receipt), before)
+    }
+
+    /// Skipping verification must not mean keeping tokens forever: past the
+    /// retention window the dedup value has expired and the receipt goes.
+    func testCommittedTokenIsRetiredOnceRetentionHasPassed() throws {
+        let fixture = try makeCommittedVideoImport()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(fixture.root) }
+
+        let result = fixture.store.reconcile(
+            isPublishedArtifactReferenced: { _ in true },
+            now: Date().addingTimeInterval(MediaOperationRecoveryStore.defaultRetention + 60)
+        )
+
+        XCTAssertEqual(result.removedReceiptCount, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.receipt.path))
+    }
+
+    /// `finish` retains a committed receipt only for the borrowed-source flows.
+    func testFinishRetainsOnlyBorrowedSourceTokens() throws {
+        let token = try makeCommittedVideoImport(kind: .videoImport)
+        defer { try? TestHelpers.cleanupTemporaryDirectory(token.root) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: token.receipt.path))
+
+        let plain = try makeCommittedVideoImport(kind: .audioImport)
+        defer { try? TestHelpers.cleanupTemporaryDirectory(plain.root) }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plain.receipt.path))
+    }
+
+    /// A committed receipt of a non-token kind on disk is one `finish` never got
+    /// to delete — a process killed between the commit and the cleanup. It is
+    /// removed on sight rather than held for the retention window.
+    func testCommittedReceiptOfANonTokenKindIsRemovedImmediately() throws {
+        let fixture = try makeCommittedVideoImport(kind: .audioImport, callFinish: false)
+        defer { try? TestHelpers.cleanupTemporaryDirectory(fixture.root) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.receipt.path))
+
+        let result = fixture.store.reconcile(isPublishedArtifactReferenced: { _ in true })
+
+        XCTAssertEqual(result.removedReceiptCount, 1)
+        XCTAssertEqual(result.retainedCount, 0)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.receipt.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.published.path))
+    }
+
+    /// The published media is never touched by any of this — reconciliation
+    /// tidies app-owned recovery state, never the user's recording.
+    func testReconciliationNeverRemovesThePublishedMedia() throws {
+        let fixture = try makeCommittedVideoImport()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(fixture.root) }
+
+        _ = fixture.store.reconcile(
+            isPublishedArtifactReferenced: { _ in true },
+            now: Date().addingTimeInterval(MediaOperationRecoveryStore.defaultRetention + 60)
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.published.path))
+    }
+}

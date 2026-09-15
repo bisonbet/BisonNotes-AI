@@ -468,6 +468,39 @@ extension MediaOperationRecoveryStore {
                 let receipt = try readReceipt(at: receiptURL)
                 let stagingURL = try stagingURL(for: receipt)
                 let publishedURL = try publishedURL(for: receipt)
+
+                // A committed receipt has no pending work left to reconcile: it
+                // survives `finish` only as a deduplication token, so a source
+                // redelivered after an interrupted acknowledgement is recognized
+                // instead of imported twice.
+                //
+                // Verifying one costs a full SHA-256 of the published media, and
+                // then `markMetadataCommitted` hashes it a second time — for
+                // every video ever imported, on every launch *and* every
+                // activation, synchronously on the main actor. A library with a
+                // few large extracted videos turned becoming active into
+                // gigabytes of I/O. Nothing about that work could change the
+                // outcome, so skip straight to aging the token out.
+                if receipt.phase == .metadataCommitted {
+                    if fileManager.fileExists(atPath: stagingURL.path) {
+                        try fileManager.removeItem(at: stagingURL)
+                    }
+                    // Only the borrowed-source flows keep a token. Any other kind
+                    // reaching here is a receipt `finish` did not get to delete.
+                    let isDeduplicationToken = receipt.kind == .transcriptImport
+                        || receipt.kind == .videoImport
+                    guard isDeduplicationToken,
+                          now.timeIntervalSince(receipt.updatedAt) < retention else {
+                        try fileManager.removeItem(at: receiptURL)
+                        result.removedReceiptCount += 1
+                        logReconciliation(receipt, disposition: "receipt-removed")
+                        continue
+                    }
+                    result.retainedCount += 1
+                    logReconciliation(receipt, disposition: "committed-token-retained")
+                    continue
+                }
+
                 let publishedExists = fileManager.fileExists(atPath: publishedURL.path)
                 let stagingExists = fileManager.fileExists(atPath: stagingURL.path)
                 let publishedMatches: Bool
