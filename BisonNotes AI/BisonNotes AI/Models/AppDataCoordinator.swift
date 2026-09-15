@@ -57,21 +57,18 @@ class AppDataCoordinator: ObservableObject {
                 to: coreDataManager.managedObjectContext
             )
         } catch {
-            // Returning alone withheld nothing. `isInitialized` is published but
+            // Returning alone withheld nothing: `isInitialized` is published but
             // nothing observes it — ContentView's like-named flag is its own local
-            // @State — so every `storageState.isOperational` gate stayed open and
-            // the app went on to run initialization, cleanup, imports and sync
-            // against an outbox that is not bound to the active store. Mark the
-            // store unavailable so the withholding this log claims actually
-            // happens, and so the UI surfaces it rather than looking healthy.
-            // Mark BOTH readiness surfaces. Setting only `storageState` closed the
-            // ContentView gate but left `persistenceController.storeState` at
-            // .ready, so launch and activation work in BisonNotesAIApp — media
-            // receipt reconciliation, share/inbox scans, watch setup — plus every
-            // caller of requireDurableStore() kept running against an outbox that
-            // is not bound to the active store, while the UI showed storage as
-            // unavailable. Marking the persistence readiness closes all of them
-            // from one place instead of adding a second gate at each call site.
+            // @State — so the app went on to run initialization, cleanup, imports
+            // and sync against an outbox that is not bound to the active store.
+            //
+            // Both readiness surfaces have to move. `storageState` alone only
+            // closes the ContentView gate; the launch and activation work in
+            // BisonNotesAIApp (media receipt reconciliation, share/inbox scans,
+            // watch setup), the import managers, and every requireDurableStore()
+            // caller read `persistenceController.storeState`, which is derived
+            // from the readiness below. Marking it closes all of them at the
+            // source instead of adding a second gate at each call site.
             let failure = PersistenceStoreFailure(error: error)
             resolvedPersistenceController.readiness.markUnavailable(failure)
             storageState = .unavailable(failure)
