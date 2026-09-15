@@ -53,11 +53,18 @@ extension AudioRecorderViewModel {
 
             // Persist the recording before deleting any scratch/system source.
             // A failed metadata save leaves every recovery input available.
+            //
+            // Capture the system-audio source first: the save ends by calling
+            // resetMacFinalizationState(), which clears `macSystemAudioURL`, so
+            // reading the property afterwards always sees nil and would leak the
+            // temporary meeting-audio file on every recording. `scratchURLs` is
+            // already held in a local for the same reason.
+            let systemAudioSourceURL = macSystemAudioURL
             try await saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
             removeMacScratchFiles(scratchURLs)
-            if let systemAudioURL = macSystemAudioURL {
+            if let systemAudioSourceURL {
                 do {
-                    try FileManager.default.removeItem(at: systemAudioURL)
+                    try FileManager.default.removeItem(at: systemAudioSourceURL)
                 } catch {
                     AppLog.shared.recording(
                         "Could not remove Mac system-audio source after durable save: \(error.localizedDescription)",

@@ -345,13 +345,17 @@ final class MacRecordingReliabilityTests: XCTestCase {
 
     // MARK: - Input tap format readiness
 
-    /// The shipping failure, in the shape the log recorded it: a C922 webcam
-    /// running at 16 kHz bound to an engine still reporting the previous 48 kHz
-    /// device. The tap was installed with the 48 kHz format, AUHAL delivered
-    /// nothing, and the segment recorded zero frames until the capture watchdog
-    /// rebuilt it five seconds later — losing the first five seconds of audio on
-    /// every recording whose input did not already run at the graph rate.
-    func testStaleNodeFormatIsNotTreatedAsReadyToTap() {
+    /// The shipping failure, in the shape the diagnostic log recorded it: a C922
+    /// webcam running at 16 kHz while the engine reports a 48 kHz node. The tap
+    /// was installed anyway, AUHAL delivered nothing, and the segment recorded
+    /// zero frames until the capture watchdog rebuilt it five seconds later —
+    /// losing the first five seconds of every such recording.
+    ///
+    /// Measured against a real 16 kHz input, this state delivers zero frames
+    /// whether the tap asks for the node format or the hardware format, and
+    /// fails `start()` outright with `nil`. There is no format to fall back to,
+    /// so the only correct answer is to reject the device.
+    func testSampleRateMismatchIsRejected() {
         XCTAssertEqual(
             MacInputTapFormatPolicy.readiness(
                 for: MacInputFormatSnapshot(
@@ -361,13 +365,38 @@ final class MacRecordingReliabilityTests: XCTestCase {
                     nodeChannelCount: 2
                 )
             ),
-            .unsettled
+            .sampleRateMismatch
         )
     }
 
-    /// The same recording one rebuild later: once the node caught up to the
-    /// device it was bound to, the first buffer arrived within ~100 ms.
-    func testSettledNodeFormatIsReadyToTap() {
+    /// The built-in MacBook microphone reports one hardware channel against the
+    /// node's two, and captures perfectly — as does an iPhone Continuity
+    /// microphone with the same shape. Rejecting a channel-count disagreement
+    /// would refuse the most common input on a Mac, so the policy must ignore it
+    /// and look only at the sample rate.
+    func testChannelCountDisagreementIsStillUsable() {
+        for snapshot in [
+            // Built-in MacBook Pro microphone.
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 1,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            ),
+            // iPhone Continuity microphone.
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 1,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            )
+        ] {
+            XCTAssertEqual(MacInputTapFormatPolicy.readiness(for: snapshot), .usable)
+        }
+    }
+
+    /// A matching rate on a plain two-channel device — the common healthy case.
+    func testMatchingSampleRateIsUsable() {
         XCTAssertEqual(
             MacInputTapFormatPolicy.readiness(
                 for: MacInputFormatSnapshot(
@@ -377,29 +406,13 @@ final class MacRecordingReliabilityTests: XCTestCase {
                     nodeChannelCount: 2
                 )
             ),
-            .settled
+            .usable
         )
     }
 
-    /// A channel-count disagreement strands a tap exactly as a rate
-    /// disagreement does, so it must not read as settled either.
-    func testChannelCountMismatchIsNotReadyToTap() {
-        XCTAssertEqual(
-            MacInputTapFormatPolicy.readiness(
-                for: MacInputFormatSnapshot(
-                    hardwareSampleRate: 48_000,
-                    hardwareChannelCount: 1,
-                    nodeSampleRate: 48_000,
-                    nodeChannelCount: 2
-                )
-            ),
-            .unsettled
-        )
-    }
-
-    /// An absent format means no input is enabled at all — a different failure
-    /// from a node that is merely behind, and one that must not be waited out.
-    func testMissingFormatReportsUnavailableRatherThanUnsettled() {
+    /// An absent format means no input is enabled at all, which is a different
+    /// failure from a device whose rate simply does not match.
+    func testMissingFormatReportsUnavailable() {
         for snapshot in [
             MacInputFormatSnapshot(
                 hardwareSampleRate: 0,
@@ -419,8 +432,8 @@ final class MacRecordingReliabilityTests: XCTestCase {
     }
 
     /// Sample rates arrive as doubles, so a rate that differs only by floating
-    /// point noise must not send a healthy start into the settle wait.
-    func testFloatingPointNoiseStillCountsAsSettled() {
+    /// point noise must not reject a healthy device.
+    func testFloatingPointNoiseIsStillUsable() {
         XCTAssertEqual(
             MacInputTapFormatPolicy.readiness(
                 for: MacInputFormatSnapshot(
@@ -430,14 +443,14 @@ final class MacRecordingReliabilityTests: XCTestCase {
                     nodeChannelCount: 1
                 )
             ),
-            .settled
+            .usable
         )
     }
 
-    /// A start that gives up must name both rates. Without them the log says
-    /// only that the microphone failed, which is what made the original bug
-    /// look like bad hardware for six weeks.
-    func testMismatchDescriptionNamesBothFormats() {
+    /// A rejected start must name both rates. Without them the log says only
+    /// that the microphone failed, which is what made the original bug look like
+    /// bad hardware for six weeks.
+    func testMismatchDescriptionNamesBothRates() {
         let description = MacInputTapFormatPolicy.mismatchDescription(
             for: MacInputFormatSnapshot(
                 hardwareSampleRate: 16_000,
