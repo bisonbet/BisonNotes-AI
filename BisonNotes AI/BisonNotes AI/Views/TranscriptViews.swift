@@ -1503,7 +1503,23 @@ struct TranscriptsView: View {
             if shouldDeleteImportedRecording {
                 try appCoordinator.deleteRecording(id: request.recordingId)
                 if let recordingURL {
-                    try deleteImportedAudioFiles(at: recordingURL)
+                    // The row is already gone, so a throw here would be swallowed
+                    // by the outer catch and the reload would drop the item from
+                    // the list, leaving audio on disk that this screen can no
+                    // longer reach. Report the retained file by name instead of
+                    // failing the whole deletion, and point at the orphaned-audio
+                    // cleanup in Advanced Troubleshooting, which is what can still
+                    // collect it.
+                    do {
+                        try deleteImportedAudioFiles(at: recordingURL)
+                    } catch {
+                        AppLog.shared.transcription(
+                            "Deleted the imported transcript row, but its audio was retained: "
+                                + "\(recordingURL.lastPathComponent) (\(error.localizedDescription)). "
+                                + "Use Advanced Troubleshooting > orphaned audio cleanup to remove it.",
+                            level: .fault
+                        )
+                    }
                 }
                 AppLog.shared.transcription("Deleted imported transcript and its recording entry")
             } else if request.imported {

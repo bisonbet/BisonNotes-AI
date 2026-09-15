@@ -269,7 +269,13 @@ final class EnhancedFileManager: ObservableObject {
         // Finish the cleanup instead.
         guard let recordingEntry = try appCoordinator.coreDataManager.fetchRecording(url: normalizedURL),
               let recordingId = recordingEntry.id else {
-            try deleteAudioAndSidecars(at: normalizedURL, hasRecording: relationships.hasRecording)
+            // Do not let a stale cache decide here. `hasRecording` short-circuits
+            // the helper, so a relationship that went out of date while audio is
+            // still on disk would silently skip the deletion and strand the file.
+            // A file present at this URL with no row is an orphan by definition.
+            let ownsRetainedAudio = relationships.hasRecording
+                || FileManager.default.fileExists(atPath: normalizedURL.path)
+            try deleteAudioAndSidecars(at: normalizedURL, hasRecording: ownsRetainedAudio)
             await MainActor.run {
                 _ = fileRelationships.removeValue(forKey: normalizedURL)
                 saveFileRelationships()
@@ -385,36 +391,34 @@ final class EnhancedFileManager: ObservableObject {
     private func deleteAudioAndSidecars(at url: URL, hasRecording: Bool) throws {
         guard hasRecording else { return }
 
-        do {
-            try FileManager.default.removeItem(at: url)
-            AppLog.shared.fileManagement("Deleted audio file: \(url.lastPathComponent)")
-        } catch {
-            if error.isThumbnailGenerationError {
-                AppLog.shared.fileManagement(
-                    "Thumbnail generation warning during file deletion: \(error.localizedDescription)",
-                    level: .debug
-                )
-            } else {
-                throw error
-            }
-        }
-
-        for ext in ["location", "recordingmeta"] {
-            let sidecarURL = url.deletingPathExtension().appendingPathExtension(ext)
-            guard FileManager.default.fileExists(atPath: sidecarURL.path) else { continue }
+        // Every removal below is skipped when its target is already gone, so the
+        // whole helper is safe to run again. Without that on the main file, a
+        // first attempt that removed the audio and then failed on a sidecar could
+        // never be finished: the retry threw fileNoSuchFile here before reaching
+        // the sidecar that actually needed removing, leaving it and the
+        // relationship entry stuck for good.
+        for target in [url] + Self.sidecarURLs(for: url) {
+            guard FileManager.default.fileExists(atPath: target.path) else { continue }
             do {
-                try FileManager.default.removeItem(at: sidecarURL)
-                AppLog.shared.fileManagement("Deleted \(ext) file: \(sidecarURL.lastPathComponent)")
+                try FileManager.default.removeItem(at: target)
+                AppLog.shared.fileManagement("Deleted file: \(target.lastPathComponent)")
             } catch {
                 if error.isThumbnailGenerationError {
                     AppLog.shared.fileManagement(
-                        "Thumbnail generation warning during \(ext) file deletion: \(error.localizedDescription)",
+                        "Thumbnail generation warning during deletion of \(target.lastPathComponent): "
+                            + "\(error.localizedDescription)",
                         level: .debug
                     )
                 } else {
                     throw error
                 }
             }
+        }
+    }
+
+    private static func sidecarURLs(for url: URL) -> [URL] {
+        ["location", "recordingmeta"].map {
+            url.deletingPathExtension().appendingPathExtension($0)
         }
     }
 

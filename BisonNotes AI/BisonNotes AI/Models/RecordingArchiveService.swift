@@ -281,6 +281,35 @@ class RecordingArchiveService: ObservableObject {
             throw RecordingArchiveError.copyFailed("Media recovery storage is unavailable.")
         }
 
+        // Identify the source so a restore interrupted after publication can be
+        // matched again. Without a size and fingerprint on the receipt, nothing
+        // could resume it: localRestoreDestination(for:sourceURL:) hands back the
+        // recording's original URL only while that file is absent, so a retry
+        // found the published copy already there, fell through to a fresh unique
+        // name, and published a second copy — while reconciliation could not
+        // commit the first because the recording still pointed at its old URL.
+        let sourceIdentity = try mediaRecoveryStore.artifactIdentity(for: sourceURL)
+
+        if let pending = try mediaRecoveryStore.pendingOperation(
+            kind: .archiveRestore,
+            sourceName: sourceName,
+            sourceFileSize: sourceIdentity.fileSize,
+            sourceFingerprint: sourceIdentity.fingerprint,
+            recordingID: recording.id
+        ) {
+            let resumedURL = try resumePendingArchiveRestore(
+                pending,
+                recording: recording,
+                sourceURL: sourceURL,
+                locationObject: locationObject,
+                mediaRecoveryStore: mediaRecoveryStore
+            )
+            AppLog.shared.recording(
+                "Resumed an interrupted archive restore for \(recording.recordingName ?? "unknown")"
+            )
+            return resumedURL
+        }
+
         var operation: MediaOperation?
         do {
             operation = try mediaRecoveryStore.begin(
@@ -288,7 +317,9 @@ class RecordingArchiveService: ObservableObject {
                 sourceName: sourceName,
                 destinationURL: destinationURL,
                 fileExtension: sourceURL.pathExtension,
-                recordingID: recording.id
+                recordingID: recording.id,
+                sourceFileSize: sourceIdentity.fileSize,
+                sourceFingerprint: sourceIdentity.fingerprint
             )
             guard let prepared = operation else {
                 throw MediaOperationRecoveryError.unavailable
@@ -355,6 +386,48 @@ class RecordingArchiveService: ObservableObject {
             throw error
         }
         return destinationURL
+    }
+
+    /// Finishes an archive restore whose publication already succeeded. The
+    /// published file is app-owned, so this re-points the recording at it and
+    /// completes the source/location cleanup rather than publishing a second copy.
+    private func resumePendingArchiveRestore(
+        _ pending: MediaOperation,
+        recording: RecordingEntry,
+        sourceURL: URL,
+        locationObject: NSManagedObject,
+        mediaRecoveryStore: MediaOperationRecoveryStore
+    ) throws -> URL {
+        var operation = pending
+        let wasMetadataCommitted = operation.receipt.phase == .metadataCommitted
+        if operation.receipt.phase == .staged,
+           !FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+            try validateAudioFile(at: operation.stagingURL)
+            operation = try mediaRecoveryStore.publish(operation)
+        }
+        try validateAudioFile(at: operation.publishedURL)
+        operation = try mediaRecoveryStore.markMetadataPending(operation, recordingID: recording.id)
+
+        let alreadyReferenced = Self.resolveLocalURL(from: recording.recordingURL ?? "")?
+            .standardizedFileURL.path == operation.publishedURL.standardizedFileURL.path
+        if !alreadyReferenced {
+            guard !wasMetadataCommitted else {
+                throw RecordingArchiveError.copyFailed(
+                    "A committed archive-restore receipt has no matching recording reference."
+                )
+            }
+            try restoreRecording(recording, newAudioURL: operation.publishedURL)
+        }
+        operation = try mediaRecoveryStore.markMetadataCommitted(operation, recordingID: recording.id)
+
+        try deleteArchivedSource(at: sourceURL)
+        let locationObjectID = locationObject.objectID
+        try coreDataManager.performIsolatedMutation(operation: "archive location removal") { isolatedContext in
+            let isolatedLocation = try isolatedContext.existingObject(with: locationObjectID)
+            isolatedContext.delete(isolatedLocation)
+        }
+        try mediaRecoveryStore.finish(operation)
+        return operation.publishedURL
     }
 
     private func deleteArchivedSource(at sourceURL: URL) throws {

@@ -64,7 +64,17 @@ class AppDataCoordinator: ObservableObject {
             // against an outbox that is not bound to the active store. Mark the
             // store unavailable so the withholding this log claims actually
             // happens, and so the UI surfaces it rather than looking healthy.
-            storageState = .unavailable(PersistenceStoreFailure(error: error))
+            // Mark BOTH readiness surfaces. Setting only `storageState` closed the
+            // ContentView gate but left `persistenceController.storeState` at
+            // .ready, so launch and activation work in BisonNotesAIApp — media
+            // receipt reconciliation, share/inbox scans, watch setup — plus every
+            // caller of requireDurableStore() kept running against an outbox that
+            // is not bound to the active store, while the UI showed storage as
+            // unavailable. Marking the persistence readiness closes all of them
+            // from one place instead of adding a second gate at each call site.
+            let failure = PersistenceStoreFailure(error: error)
+            resolvedPersistenceController.readiness.markUnavailable(failure)
+            storageState = .unavailable(failure)
             AppLog.shared.coreData("Cloud outbox binding failed; startup withheld: \(error)", level: .fault)
             return
         }

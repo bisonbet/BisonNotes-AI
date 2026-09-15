@@ -2687,7 +2687,12 @@ class BackgroundProcessingManager: ObservableObject {
                 let modelInfo = job.modelName.map { " (\($0))" } ?? ""
                 await sendNotification(
                     title: "\(jobTypeDesc) Stopped",
-                    body: "\(job.recordingName) — \(job.type.engineName)\(modelInfo) was stopped because the app was closed. Open the app to resume."
+                    // Do not promise resumption. A persisted "Interrupted" job is
+                    // quarantined on the next cold load, because no durable
+                    // attempt-to-output receipt proves the previous attempt did not
+                    // already commit output. It comes back as a recovery issue for
+                    // review, never as an automatic replay.
+                    body: "\(job.recordingName) — \(job.type.engineName)\(modelInfo) was stopped because the app was closed. Open the app and check Background Processing to review it."
                 )
             } catch {
                 jobLoadError = "The interrupted job state could not be saved before termination."

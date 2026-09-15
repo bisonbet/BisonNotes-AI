@@ -335,7 +335,15 @@ extension AudioRecorderViewModel {
 					+ "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)",
 				level: .error
 			)
-			let preservedArtifacts = segments + (backupURL.map { [$0] } ?? [])
+			// Once the merge completed, `segments` no longer describes inputs: its
+			// mainURL entry IS the finished output that replaced the original first
+			// segment, and backupURL holds that original. Snapshotting the whole set
+			// would make the next recovery pass merge the completed recording together
+			// with its own inputs and duplicate the audio. After a completed merge only
+			// the merged file needs retrying — the metadata save is what failed.
+			let preservedArtifacts = mergeCompleted
+				? [mainURL]
+				: segments + (backupURL.map { [$0] } ?? [])
 			preserveFailedMergeSegments(preservedArtifacts, mainURL: mainURL)
 			if ownsLiveRecordingState {
 				errorMessage = "The recording could not be combined yet. Its segments were preserved for recovery."
