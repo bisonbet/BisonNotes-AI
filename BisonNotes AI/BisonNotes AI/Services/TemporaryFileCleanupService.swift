@@ -26,8 +26,16 @@ final class TemporaryFileCleanupService {
         var reclaimedBytes: Int64 = 0
         var errors: [String] = []
 
+        // A deferred recovery snapshot is a durable claim on the files it names.
+        // Age alone cannot decide those: a `merge_backup_*.m4a` recorded as a
+        // recovery input is the only surviving copy of the original first segment
+        // when both halves of the merge swap failed, and sweeping it six hours
+        // later destroyed audio that reclamation was still going to retrieve.
+        let claimedFilenames = deferredRecoveryFilenames()
+
         for candidate in cleanupCandidates() {
             guard isKnownTemporaryFile(candidate.url),
+                  !claimedFilenames.contains(candidate.url.lastPathComponent),
                   isSafeChild(candidate.url, of: candidate.allowedRoot),
                   isOlderThanCutoff(candidate.url, cutoff: cutoff) else {
                 continue
@@ -189,6 +197,47 @@ final class TemporaryFileCleanupService {
         )) ?? []
     }
 
+    /// Filenames a deferred recovery snapshot still points at.
+    private func deferredRecoveryFilenames() -> Set<String> {
+        guard let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let data = try? Data(contentsOf: documents.appendingPathComponent("deferred-recovery.json")) else {
+            return []
+        }
+        return Self.recoveryClaimedFilenames(fromSnapshot: data)
+    }
+
+    /// Collects every filename a deferred recovery snapshot claims.
+    ///
+    /// Parsed loosely rather than through the writer's `Codable` types: this
+    /// service must not fail closed on a snapshot shape it does not recognize,
+    /// and both the current multi-entry store and the legacy bare snapshot need
+    /// to be honored. Unreadable or unrecognized content claims nothing, which
+    /// restores the previous age-only behavior rather than stranding files.
+    static func recoveryClaimedFilenames(fromSnapshot data: Data) -> Set<String> {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
+
+        var names: Set<String> = []
+        func collect(_ value: Any) {
+            if let object = value as? [String: Any] {
+                if let main = object["mainRecordingFilename"] as? String {
+                    names.insert(main)
+                }
+                if let segments = object["segmentFilenames"] as? [String] {
+                    names.formUnion(segments)
+                }
+                for nested in object.values {
+                    collect(nested)
+                }
+            } else if let array = value as? [Any] {
+                for nested in array {
+                    collect(nested)
+                }
+            }
+        }
+        collect(root)
+        return names
+    }
+
     private func isKnownTemporaryFile(_ url: URL) -> Bool {
         let name = url.lastPathComponent
         let ext = url.pathExtension.lowercased()
@@ -212,8 +261,10 @@ final class TemporaryFileCleanupService {
         if name.hasPrefix("temp_merge_") && ext == "m4a" { return true }
         // The segment merge moves the original main segment aside before it moves
         // the merged output into place. Both halves of that swap failing — or a
-        // kill between them — leaves a full copy of the recording under this name
-        // with nothing else in the app that knows to reclaim it.
+        // kill between them — leaves a full copy of the recording under this name.
+        // Truly orphaned copies are swept here; one that a deferred recovery
+        // snapshot still claims is exempted by the caller, because for that case
+        // this file is the only surviving first segment rather than litter.
         if name.hasPrefix("merge_backup_") && ext == "m4a" { return true }
         // `RestoredAudioFileInstaller` copies a CloudKit audio asset into a sibling of
         // its Documents destination and renames it into place. Its `defer` covers every

@@ -368,43 +368,50 @@ struct CombineRecordingsView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    private func checkForTranscriptsAndSummaries() {
-        var issues: [String] = []
+    @discardableResult
+    private func checkForTranscriptsAndSummaries() -> Bool {
+        do {
+            var issues: [String] = []
+            guard let firstEntry = try appCoordinator.coreDataManager.fetchRecording(url: firstRecording.url),
+                  let firstId = firstEntry.id,
+                  let secondEntry = try appCoordinator.coreDataManager.fetchRecording(url: secondRecording.url),
+                  let secondId = secondEntry.id else {
+                throw FileManagementError.relationshipNotFound
+            }
 
-        // Check first recording
-        if let firstEntry = appCoordinator.getRecording(url: firstRecording.url),
-           let firstId = firstEntry.id {
-            if appCoordinator.getTranscript(for: firstId) != nil {
+            if try appCoordinator.coreDataManager.fetchTranscript(for: firstId) != nil {
                 issues.append("'\(firstRecording.name)' has a transcript")
             }
-            if appCoordinator.getSummary(for: firstId) != nil {
+            if try appCoordinator.coreDataManager.fetchSummary(for: firstId) != nil {
                 issues.append("'\(firstRecording.name)' has a summary")
             }
-        }
-
-        // Check second recording
-        if let secondEntry = appCoordinator.getRecording(url: secondRecording.url),
-           let secondId = secondEntry.id {
-            if appCoordinator.getTranscript(for: secondId) != nil {
+            if try appCoordinator.coreDataManager.fetchTranscript(for: secondId) != nil {
                 issues.append("'\(secondRecording.name)' has a transcript")
             }
-            if appCoordinator.getSummary(for: secondId) != nil {
+            if try appCoordinator.coreDataManager.fetchSummary(for: secondId) != nil {
                 issues.append("'\(secondRecording.name)' has a summary")
             }
-        }
 
-        if !issues.isEmpty {
+            if !issues.isEmpty {
+                hasTranscriptsOrSummaries = true
+                blockingMessage = issues.joined(separator: "\n")
+            } else {
+                hasTranscriptsOrSummaries = false
+                blockingMessage = nil
+            }
+            return true
+        } catch {
             hasTranscriptsOrSummaries = true
-            blockingMessage = issues.joined(separator: "\n")
-        } else {
-            hasTranscriptsOrSummaries = false
-            blockingMessage = nil
+            blockingMessage = "Could not verify the selected recordings before combining."
+            errorMessage = "Could not verify the selected recordings: \(error.localizedDescription)"
+            showingError = true
+            return false
         }
     }
 
     private func combineRecordings() async {
         // Double-check before combining
-        checkForTranscriptsAndSummaries()
+        guard checkForTranscriptsAndSummaries() else { return }
         guard !hasTranscriptsOrSummaries else {
             await MainActor.run {
                 errorMessage = "Cannot combine recordings with existing transcripts or summaries. Please delete them first."
@@ -477,23 +484,23 @@ struct CombineRecordingsView: View {
             let combinedName = "combined recording \(dateTimeString)"
 
             // Get recording IDs for potential deletion
-            let firstEntry = appCoordinator.getRecording(url: selectedFirst.url)
-            let secondEntry = appCoordinator.getRecording(url: selectedSecond.url)
+            guard let firstEntry = try appCoordinator.coreDataManager.fetchRecording(url: selectedFirst.url),
+                  let secondEntry = try appCoordinator.coreDataManager.fetchRecording(url: selectedSecond.url),
+                  firstEntry.id != nil,
+                  secondEntry.id != nil else {
+                throw FileManagementError.relationshipNotFound
+            }
 
             // Get location data from both recordings
             // Try getLocationData first (from Core Data fields), then loadLocationData (from file)
             let firstLocation: LocationData? = {
-                guard let entry = firstEntry else {
-                    AppLog.shared.recording("Combine: First recording entry not found", level: .debug)
-                    return nil
-                }
                 // First try Core Data fields
-                if let location = appCoordinator.coreDataManager.getLocationData(for: entry) {
+                if let location = appCoordinator.coreDataManager.getLocationData(for: firstEntry) {
                     AppLog.shared.recording("Combine: Found first location from Core Data", level: .debug)
                     return location
                 }
                 // Fallback to file-based location
-                if let location = appCoordinator.loadLocationData(for: entry) {
+                if let location = appCoordinator.loadLocationData(for: firstEntry) {
                     AppLog.shared.recording("Combine: Found first location from file", level: .debug)
                     return location
                 }
@@ -502,17 +509,13 @@ struct CombineRecordingsView: View {
             }()
 
             let secondLocation: LocationData? = {
-                guard let entry = secondEntry else {
-                    AppLog.shared.recording("Combine: Second recording entry not found", level: .debug)
-                    return nil
-                }
                 // First try Core Data fields
-                if let location = appCoordinator.coreDataManager.getLocationData(for: entry) {
+                if let location = appCoordinator.coreDataManager.getLocationData(for: secondEntry) {
                     AppLog.shared.recording("Combine: Found second location from Core Data", level: .debug)
                     return location
                 }
                 // Fallback to file-based location
-                if let location = appCoordinator.loadLocationData(for: entry) {
+                if let location = appCoordinator.loadLocationData(for: secondEntry) {
                     AppLog.shared.recording("Combine: Found second location from file", level: .debug)
                     return location
                 }
@@ -544,20 +547,20 @@ struct CombineRecordingsView: View {
             }
 
             // Store values for confirmation dialog
-            await MainActor.run {
+            _ = try await MainActor.run {
                 combinedRecordingURL = combinedURL
                 combinedRecordingName = combinedName
                 combinedRecordingDate = combinedDate
                 combinedRecordingFileSize = fileSize
                 combinedRecordingDuration = combinedDuration
-                firstRecordingId = firstEntry?.id
-                secondRecordingId = secondEntry?.id
+                firstRecordingId = firstEntry.id
+                secondRecordingId = secondEntry.id
 
                 // Log location data before adding
                 AppLog.shared.recording("Combine: hasLocation=\(combinedLocation != nil) for addRecording", level: .debug)
 
                 // Add to Core Data first
-                let recordingId = appCoordinator.addRecording(
+                let recordingId = try appCoordinator.addRecording(
                     url: combinedURL,
                     name: combinedName,
                     date: combinedDate,
@@ -583,6 +586,7 @@ struct CombineRecordingsView: View {
                 // Show confirmation dialog for deleting originals
                 showingDeleteConfirmation = true
                 isCombining = false
+                return recordingId
             }
         } catch {
             await MainActor.run {
@@ -599,17 +603,30 @@ struct CombineRecordingsView: View {
     }
 
     private func deleteOriginalRecordings() {
-        // Delete the original recordings if they exist in Core Data
-        if let firstId = firstRecordingId {
-            appCoordinator.deleteRecording(id: firstId)
-        }
-        if let secondId = secondRecordingId {
-            appCoordinator.deleteRecording(id: secondId)
+        // Each original is retired independently, and an id that is already gone
+        // counts as done. Sharing one do/catch stranded the second recording for
+        // good: when the first delete committed and the second threw, the retry
+        // hit `recordingNotFound` on the already-deleted first id and never
+        // reached the second.
+        var failures: [String] = []
+        for recordingId in [firstRecordingId, secondRecordingId].compactMap({ $0 }) {
+            do {
+                try appCoordinator.deleteRecording(id: recordingId)
+            } catch CoreDataDeletionError.recordingNotFound {
+                continue
+            } catch {
+                failures.append(error.localizedDescription)
+            }
         }
 
-        // Post notification to refresh views
+        // Post notification and dismiss only once every original is durably gone.
+        guard failures.isEmpty else {
+            errorMessage = "Could not delete the original recordings: "
+                + failures.joined(separator: "; ")
+            showingError = true
+            return
+        }
         NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-
         dismiss()
     }
 

@@ -697,3 +697,62 @@ private actor Counter {
         return value
     }
 }
+
+/// The temporary-file sweep deletes by name and age alone, so anything a
+/// deferred recovery snapshot still claims has to be exempted from it. A
+/// `merge_backup_*.m4a` recorded as a recovery input is the only surviving copy
+/// of the original first segment when both halves of the merge swap failed, and
+/// sweeping it six hours later destroyed audio reclamation was going to retrieve.
+@MainActor
+final class DeferredRecoveryClaimTests: XCTestCase {
+    private func claims(_ json: String) -> Set<String> {
+        TemporaryFileCleanupService.recoveryClaimedFilenames(
+            fromSnapshot: Data(json.utf8)
+        )
+    }
+
+    func testClaimsEveryFilenameInAMultiEntryStore() {
+        let names = claims("""
+        {"entries":[
+          {"mainRecordingFilename":"a.m4a","segmentFilenames":["a.m4a","a_seg2.m4a"],"currentSegmentIndex":1},
+          {"mainRecordingFilename":"b.m4a","segmentFilenames":["merge_backup_XYZ.m4a"],"currentSegmentIndex":0}
+        ]}
+        """)
+
+        XCTAssertEqual(names, ["a.m4a", "a_seg2.m4a", "b.m4a", "merge_backup_XYZ.m4a"])
+    }
+
+    /// Builds that wrote one bare snapshot still decode, so their claims must
+    /// still be honored after an upgrade.
+    func testClaimsFilenamesInALegacyBareSnapshot() {
+        let names = claims("""
+        {"mainRecordingFilename":"old.m4a","segmentFilenames":["merge_backup_LEGACY.m4a"],"currentSegmentIndex":0}
+        """)
+
+        XCTAssertEqual(names, ["old.m4a", "merge_backup_LEGACY.m4a"])
+    }
+
+    /// An unreadable or unrecognized snapshot must claim nothing rather than
+    /// throwing, so the sweep falls back to its previous age-only behavior
+    /// instead of stranding every temporary file on disk.
+    func testUnreadableOrUnknownSnapshotClaimsNothing() {
+        XCTAssertTrue(claims("not json at all").isEmpty)
+        XCTAssertTrue(claims("{\"unexpected\":\"shape\"}").isEmpty)
+        XCTAssertTrue(claims("[]").isEmpty)
+        XCTAssertTrue(
+            TemporaryFileCleanupService.recoveryClaimedFilenames(fromSnapshot: Data()).isEmpty
+        )
+    }
+
+    /// A malformed entry must not discard the claims of its siblings.
+    func testOneMalformedEntryDoesNotDropOtherClaims() {
+        let names = claims("""
+        {"entries":[
+          {"segmentFilenames":[1,2,3]},
+          {"mainRecordingFilename":"survivor.m4a"}
+        ]}
+        """)
+
+        XCTAssertEqual(names, ["survivor.m4a"])
+    }
+}

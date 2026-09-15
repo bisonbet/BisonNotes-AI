@@ -34,7 +34,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         let audioURL = tempDirectory.appendingPathComponent("workflow-recording.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
 
-        let recordingId = appCoordinator.addRecording(
+        let recordingId = try appCoordinator.addRecording(
             url: audioURL,
             name: "Workflow Recording",
             date: Date(timeIntervalSince1970: 1_770_000_000),
@@ -42,7 +42,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             duration: 60,
             quality: .whisperOptimized
         )
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [
                 TranscriptSegment(speaker: "Speaker 1", text: "Discuss the release checklist.", startTime: 0, endTime: 3)
@@ -51,7 +51,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             processingTime: 0.2,
             confidence: 0.95
         ))
-        let summaryId = try XCTUnwrap(appCoordinator.addSummary(
+        let summaryId = try XCTUnwrap(try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "Release checklist discussion with enough detail to be considered a real generated summary.",
@@ -76,12 +76,12 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
     @MainActor
     func testTranscriptReplacementPreservesTranscriptIdAndUpdatesSegments() throws {
         let recordingId = try createRecording(named: "Transcript Replacement")
-        let firstId = try XCTUnwrap(appCoordinator.addTranscript(
+        let firstId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Old text", startTime: 0, endTime: 1)]
         ))
 
-        let secondId = try XCTUnwrap(appCoordinator.addTranscript(
+        let secondId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "New replacement text", startTime: 0, endTime: 2)],
             engine: .fluidAudio,
@@ -97,11 +97,11 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
     @MainActor
     func testShortSummaryIsRejectedWithoutReplacingExistingSummary() throws {
         let recordingId = try createRecording(named: "Summary Guard")
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Enough transcript text", startTime: 0, endTime: 2)]
         ))
-        let existingSummaryId = try XCTUnwrap(appCoordinator.addSummary(
+        let existingSummaryId = try XCTUnwrap(try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "This existing summary is long enough to be persisted before a failed regeneration attempt.",
@@ -109,7 +109,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             originalLength: 60
         ))
 
-        let rejected = appCoordinator.addSummary(
+        let rejected = try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "Too short",
@@ -126,7 +126,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
     func testLegacySummaryMigrationUsesURLFallbackAndIsIdempotent() throws {
         let audioURL = tempDirectory.appendingPathComponent("legacy-summary.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = appCoordinator.addRecording(
+        let recordingId = try appCoordinator.addRecording(
             url: audioURL,
             name: "Legacy Summary Recording",
             date: Date(timeIntervalSince1970: 1_770_000_000),
@@ -134,7 +134,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             duration: 30,
             quality: .whisperOptimized
         )
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Legacy transcript", startTime: 0, endTime: 1)]
         ))
@@ -167,7 +167,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         let secondReport = SummaryManager.shared.migrateLegacySummaries(from: data, using: appCoordinator)
         XCTAssertEqual(secondReport.migratedCount, 1)
         XCTAssertTrue(secondReport.didComplete)
-        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().count, 1)
         XCTAssertEqual(appCoordinator.getSummary(for: recordingId)?.id, legacySummary.id)
     }
 
@@ -175,7 +175,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
     func testLegacySummaryMigrationPreservesExistingCoreDataSummary() throws {
         let audioURL = tempDirectory.appendingPathComponent("existing-core-data-summary.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = appCoordinator.addRecording(
+        let recordingId = try appCoordinator.addRecording(
             url: audioURL,
             name: "Existing Core Data Summary",
             date: Date(timeIntervalSince1970: 1_770_000_000),
@@ -183,11 +183,11 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             duration: 30,
             quality: .whisperOptimized
         )
-        let transcriptId = try XCTUnwrap(appCoordinator.addTranscript(
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
             for: recordingId,
             segments: [TranscriptSegment(speaker: "Speaker 1", text: "Current transcript", startTime: 0, endTime: 1)]
         ))
-        let existingSummaryId = try XCTUnwrap(appCoordinator.addSummary(
+        let existingSummaryId = try XCTUnwrap(try appCoordinator.addSummary(
             for: recordingId,
             transcriptId: transcriptId,
             summary: "The current Core Data summary must remain authoritative over stale legacy storage.",
@@ -216,7 +216,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         XCTAssertTrue(report.didComplete)
         XCTAssertEqual(report.migratedCount, 0)
         XCTAssertEqual(report.preservedExistingCount, 1)
-        XCTAssertEqual(appCoordinator.getAllSummaries().count, 1)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().count, 1)
         let persisted = try XCTUnwrap(appCoordinator.getSummary(for: recordingId))
         XCTAssertEqual(persisted.id, existingSummaryId)
         XCTAssertEqual(
@@ -253,7 +253,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         XCTAssertEqual(report.unresolvedCount, 1)
         XCTAssertNotNil(defaults.data(forKey: SummaryManager.legacySummariesKey))
         XCTAssertNil(defaults.object(forKey: SummaryManager.legacyMigrationVersionKey))
-        XCTAssertEqual(appCoordinator.getAllSummaries().count, 0)
+        XCTAssertEqual(try appCoordinator.getAllSummaries().count, 0)
     }
 
     @MainActor
@@ -262,7 +262,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsSuiteName) }
         let matchingURL = tempDirectory.appendingPathComponent("matching-summary.m4a")
         try TestHelpers.createMockAudioFile(at: matchingURL)
-        let matchingID = appCoordinator.addRecording(
+        let matchingID = try appCoordinator.addRecording(
             url: matchingURL,
             name: "Matching Summary",
             date: Date(),
@@ -282,7 +282,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
 
         let unresolvedURL = unresolvedSummary.recordingURL
         try TestHelpers.createMockAudioFile(at: unresolvedURL)
-        _ = appCoordinator.addRecording(
+        _ = try appCoordinator.addRecording(
             url: unresolvedURL,
             name: "Unresolved Summary",
             date: Date(),
@@ -302,7 +302,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
     private func createRecording(named name: String) throws -> UUID {
         let audioURL = tempDirectory.appendingPathComponent("\(UUID().uuidString).m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        return appCoordinator.addRecording(
+        return try appCoordinator.addRecording(
             url: audioURL,
             name: name,
             date: Date(),

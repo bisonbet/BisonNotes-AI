@@ -36,7 +36,9 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             Group {
-                if isInitialized {
+                if !appCoordinator.storageState.isOperational {
+                    PersistenceUnavailableView(state: appCoordinator.storageState)
+                } else if isInitialized {
                     if isFirstLaunch {
                         firstLaunchView
                     } else {
@@ -47,7 +49,7 @@ struct ContentView: View {
                 }
             }
 
-            if shouldShowSplash {
+            if shouldShowSplash && appCoordinator.storageState.isOperational {
                 SplashView(isActive: $showSplash)
                     .transition(.opacity)
                     .zIndex(1)
@@ -56,6 +58,10 @@ struct ContentView: View {
         .preferredColorScheme(horizontalSizeClass == .compact ? .dark : nil)
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
+            guard appCoordinator.storageState.isOperational else {
+                showSplash = false
+                return
+            }
             DispatchQueue.main.async {
                 initializeApp()
             }
@@ -348,7 +354,7 @@ struct ContentView: View {
         VStack {
             ProgressView()
                 .scaleEffect(1.5)
-            Text("Loading...")
+            Text(initializationError == nil ? "Loading..." : "Library could not be loaded")
                 .padding(.top)
 
             if let error = initializationError {
@@ -364,6 +370,11 @@ struct ContentView: View {
 
     @MainActor
     private func initializeApp() {
+        guard appCoordinator.storageState.isOperational else {
+            showSplash = false
+            return
+        }
+
         #if DEBUG
         BisonNotesUITestSupport.prepareLaunchDataIfNeeded(appCoordinator: appCoordinator)
         #endif
@@ -378,9 +389,11 @@ struct ContentView: View {
         // Use a longer delay to ensure the app is fully loaded
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             Task { @MainActor in
+                guard appCoordinator.storageState.isOperational else { return }
+
                 do {
                     // Check if Core Data has recordings, if not, trigger migration
-                    let coreDataRecordings = appCoordinator.getAllRecordingsWithData()
+                    let coreDataRecordings = try appCoordinator.getAllRecordingsWithData()
                     if coreDataRecordings.isEmpty {
                         AppLog.shared.log("No recordings found in Core Data, triggering migration...", category: .general)
                         let migrationManager = DataMigrationManager()
@@ -389,14 +402,14 @@ struct ContentView: View {
                     } else {
                         // Core Data has existing recordings
 
-                        appCoordinator.syncRecordingURLs()
+                        try appCoordinator.syncRecordingURLs()
 
                         // Clean up any orphaned records and missing files
-                        let cleanedCount = appCoordinator.cleanupOrphanedRecordings()
-                        let fixedCount = appCoordinator.fixIncompletelyDeletedRecordings()
+                        let cleanedCount = try appCoordinator.cleanupOrphanedRecordings()
+                        let fixedCount = try appCoordinator.fixIncompletelyDeletedRecordings()
 
                         // Also clean up recordings that reference missing files
-                        let missingFileCount = appCoordinator.cleanupRecordingsWithMissingFiles()
+                        let missingFileCount = try appCoordinator.cleanupRecordingsWithMissingFiles()
 
                         let totalCleaned = cleanedCount + fixedCount + missingFileCount
 
@@ -484,13 +497,21 @@ struct ContentView: View {
                     }
                 } catch {
                     initializationError = error.localizedDescription
-                    isInitialized = true // Still show the app even if there's an error
+                    showSplash = false
+                    isInitialized = false
                 }
             }
         }
     }
 
     private func handleActionButtonLaunchIfNeeded() {
+        guard appCoordinator.storageState.isOperational else {
+            AppLog.shared.coreData(
+                "Action Button recording request retained because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         if ActionButtonLaunchManager.consumeRecordingRequest() {
             AppLog.shared.log("Action button recording requested", level: .debug, category: .general)
             if isInitialized {
@@ -514,6 +535,29 @@ struct ContentView: View {
                 recorderVM.startRecording()
             }
         }
+    }
+}
+
+/// A storage failure is intentionally distinct from a successful empty library.
+/// The screen provides only non-destructive recovery guidance; slice A does not
+/// replace or rebuild the failed store in-process.
+struct PersistenceUnavailableView: View {
+    let state: PersistenceStoreState
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Library Storage Unavailable", systemImage: "externaldrive.badge.xmark")
+        } description: {
+            Text(
+                "\(state.userFacingMessage) Close and reopen BisonNotes AI to retry. "
+                    + "Do not delete or move the app's library files."
+            )
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Library storage unavailable")
+        .accessibilityValue(state.userFacingMessage)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(red: 0.039, green: 0.086, blue: 0.157))
     }
 }
 

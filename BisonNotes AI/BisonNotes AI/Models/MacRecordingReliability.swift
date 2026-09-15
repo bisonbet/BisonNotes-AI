@@ -124,6 +124,76 @@ enum MacRecordingInputSelection {
     }
 }
 
+/// The two formats `AVAudioEngine` reports for its input node.
+///
+/// `inputFormat(forBus:)` describes the hardware the AUHAL is bound to;
+/// `outputFormat(forBus:)` describes what the node will hand a tap.
+struct MacInputFormatSnapshot: Equatable, Sendable {
+    let hardwareSampleRate: Double
+    let hardwareChannelCount: UInt32
+    let nodeSampleRate: Double
+    let nodeChannelCount: UInt32
+}
+
+enum MacInputTapFormatReadiness: Equatable, Sendable {
+    /// Either format is missing, so no microphone input is enabled at all.
+    case unavailable
+    /// The node's output format can be tapped.
+    case usable
+    /// The node is bound to hardware running at a different rate, and will
+    /// deliver nothing.
+    case sampleRateMismatch
+}
+
+/// Decides whether `AVAudioEngine`'s input node can actually be tapped.
+///
+/// Setting `kAudioOutputUnitProperty_CurrentDevice` rebinds the AUHAL, but the
+/// node keeps reporting a 48 kHz output format regardless of the device it was
+/// just bound to. Tapping a node whose hardware runs at another rate produces a
+/// tap that never fires: the segment records zero frames until the capture
+/// watchdog tears it down five seconds later, which cost the head of every
+/// recording on a device that did not already run at 48 kHz.
+///
+/// Measured against real inputs, and both halves of this are load-bearing:
+///
+/// - **Rate disagreement is fatal and cannot be worked around.** A 16 kHz device
+///   bound to a 48 kHz node delivers zero frames when tapped with the node
+///   format *and* when tapped with the hardware format, and fails `start()`
+///   outright with `kAudioUnitErr_FormatNotSupported` when tapped with `nil`.
+///   There is no format to choose; the device is simply uncapturable while the
+///   rates disagree, so the only useful answer is to reject it immediately and
+///   let the caller's fallback try the next input.
+/// - **Channel disagreement is normal and must be ignored.** The built-in
+///   MacBook microphone reports 1 hardware channel against the node's 2, as does
+///   an iPhone Continuity microphone, and both capture perfectly. Rejecting on
+///   channel count would refuse the most common input on a Mac.
+///
+/// Nothing here is worth waiting for: the node does not reconcile on a timer or
+/// on `prepare()`, so this is a single synchronous decision, never a poll.
+enum MacInputTapFormatPolicy {
+    /// Sample rates are reported as doubles, so compare them with a tolerance
+    /// rather than exactly. Nothing in Core Audio distinguishes rates this close.
+    static let sampleRateTolerance: Double = 0.5
+
+    static func readiness(for snapshot: MacInputFormatSnapshot) -> MacInputTapFormatReadiness {
+        guard snapshot.hardwareSampleRate > 0, snapshot.hardwareChannelCount > 0,
+              snapshot.nodeSampleRate > 0, snapshot.nodeChannelCount > 0 else {
+            return .unavailable
+        }
+        guard abs(snapshot.hardwareSampleRate - snapshot.nodeSampleRate) <= sampleRateTolerance else {
+            return .sampleRateMismatch
+        }
+        return .usable
+    }
+
+    /// Describes a rejected input for the error the start throws. Naming both
+    /// rates is what makes the failure diagnosable from a log.
+    static func mismatchDescription(for snapshot: MacInputFormatSnapshot) -> String {
+        "The microphone runs at \(snapshot.hardwareSampleRate) Hz but the audio engine " +
+        "is bound at \(snapshot.nodeSampleRate) Hz, so it would capture nothing."
+    }
+}
+
 struct RecordingCaptureHealthSnapshot: Equatable, Sendable {
     let monitoringStartedAt: Date?
     let firstWriteAt: Date?

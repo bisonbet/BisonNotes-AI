@@ -139,7 +139,7 @@ private extension MacStorageSettingsPane {
                 includeAudioFiles: iCloudBackupIncludeAudioFiles,
                 restoreSettings: iCloudBackupIncludeSettings
             )
-            appCoordinator.syncRecordingURLs()
+            try appCoordinator.syncRecordingURLs()
 
             let settingsText: String
             if result.settingsRestored {
@@ -174,7 +174,7 @@ private extension MacStorageSettingsPane {
         Task {
             do {
                 let cloudSummaries = try await iCloudManager.fetchSummariesFromiCloud(forRecovery: true)
-                let localSummaryIds = Set(appCoordinator.coreDataManager.getAllSummaries().compactMap(\.id))
+                let localSummaryIds = Set(try appCoordinator.coreDataManager.getAllSummaries().compactMap(\.id))
                 let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 
                 if !cloudOnlySummaries.isEmpty {
@@ -234,7 +234,16 @@ private extension MacStorageSettingsPane {
     }
 
     var totalRecordingsStorageString: String {
-        let recordingsWithData = appCoordinator.getAllRecordingsWithData()
+        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        do {
+            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+        } catch {
+            AppLog.shared.coreData(
+                "Could not calculate recording storage usage: \(error.localizedDescription)",
+                level: .error
+            )
+            return "Unavailable"
+        }
         var totalSize: Int64 = 0
 
         for entry in recordingsWithData {

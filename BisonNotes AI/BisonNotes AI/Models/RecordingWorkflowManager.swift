@@ -9,18 +9,41 @@ import Foundation
 import CoreData
 import AVFoundation
 
+enum RecordingWorkflowError: Error, LocalizedError {
+    case encodingFailed(String)
+    case recordingNotFound(UUID)
+    case transcriptNotFound(UUID)
+
+    var errorDescription: String? {
+        switch self {
+        case .encodingFailed(let value):
+            return "The \(value) could not be encoded for local persistence."
+        case .recordingNotFound(let id):
+            return "Recording not found: \(id.uuidString)"
+        case .transcriptNotFound(let id):
+            return "Transcript not found: \(id.uuidString)"
+        }
+    }
+}
+
 /// Manages the complete workflow from recording creation through transcription to summarization
 /// Ensures consistent UUID linking throughout the entire process
 @MainActor
 class RecordingWorkflowManager: ObservableObject {
     private let persistenceController: PersistenceController
     private let context: NSManagedObjectContext
+    private let coreDataManager: CoreDataManager
     private var appCoordinator: AppDataCoordinator?
 
-    init(persistenceController: PersistenceController? = nil) {
+    init(
+        persistenceController: PersistenceController? = nil,
+        coreDataManager: CoreDataManager? = nil
+    ) {
         let resolvedPersistenceController = persistenceController ?? PersistenceController.shared
+        let resolvedCoreDataManager = coreDataManager ?? CoreDataManager(persistenceController: resolvedPersistenceController)
         self.persistenceController = resolvedPersistenceController
-        self.context = resolvedPersistenceController.container.viewContext
+        self.context = resolvedCoreDataManager.managedObjectContext
+        self.coreDataManager = resolvedCoreDataManager
         self.appCoordinator = nil // Will be set later to avoid circular dependency
     }
 
@@ -31,180 +54,98 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Recording Creation
 
     /// Creates a new recording with proper Core Data entry and UUID
-    func createRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) -> UUID {
-        // Create Core Data entry
-        let recordingEntry = RecordingEntry(context: context)
-        let recordingId = UUID()
+    func createRecording(url: URL, name: String, date: Date, fileSize: Int64, duration: TimeInterval, quality: AudioQuality, locationData: LocationData? = nil) throws -> UUID {
+        return try coreDataManager.performIsolatedMutation(operation: "recording creation") { isolatedContext in
+            let recordingEntry = RecordingEntry(context: isolatedContext)
+            let recordingId = UUID()
 
-        recordingEntry.id = recordingId
-        // Store relative path instead of absolute URL for resilience across app launches
-        recordingEntry.recordingURL = urlToRelativePath(url)
-        recordingEntry.recordingDate = date
-        recordingEntry.createdAt = Date()
-        recordingEntry.lastModified = Date()
-        recordingEntry.fileSize = fileSize
-        recordingEntry.duration = duration
-        recordingEntry.audioQuality = quality.rawValue
-        recordingEntry.transcriptionStatus = ProcessingStatus.notStarted.rawValue
-        recordingEntry.summaryStatus = ProcessingStatus.notStarted.rawValue
+            recordingEntry.id = recordingId
+            // Store relative path instead of absolute URL for resilience across app launches
+            recordingEntry.recordingURL = urlToRelativePath(url)
+            recordingEntry.recordingDate = date
+            recordingEntry.createdAt = Date()
+            recordingEntry.lastModified = Date()
+            recordingEntry.fileSize = fileSize
+            recordingEntry.duration = duration
+            recordingEntry.audioQuality = quality.rawValue
+            recordingEntry.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+            recordingEntry.summaryStatus = ProcessingStatus.notStarted.rawValue
 
-        // Set recording name
-        recordingEntry.recordingName = name
+            // Set recording name
+            recordingEntry.recordingName = name
 
-        // Store location data if available
-        if let locationData = locationData {
-            AppLog.shared.backgroundProcessing("Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
-            recordingEntry.locationLatitude = locationData.latitude
-            recordingEntry.locationLongitude = locationData.longitude
-            recordingEntry.locationTimestamp = locationData.timestamp
-            recordingEntry.locationAccuracy = locationData.accuracy ?? 0.0
-            recordingEntry.locationAddress = locationData.address
-            AppLog.shared.backgroundProcessing("Location saved to Core Data entry")
-        } else {
-            AppLog.shared.backgroundProcessing("No location data provided", level: .debug)
+            // Store location data if available
+            if let locationData = locationData {
+                AppLog.shared.backgroundProcessing("Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
+                recordingEntry.locationLatitude = locationData.latitude
+                recordingEntry.locationLongitude = locationData.longitude
+                recordingEntry.locationTimestamp = locationData.timestamp
+                recordingEntry.locationAccuracy = locationData.accuracy ?? 0.0
+                recordingEntry.locationAddress = locationData.address
+                AppLog.shared.backgroundProcessing("Location saved to Core Data entry")
+            } else {
+                AppLog.shared.backgroundProcessing("No location data provided", level: .debug)
+            }
+
+            return recordingId
         }
-
-        // Save to Core Data
-        do {
-            try context.save()
-        } catch {
-            AppLog.shared.backgroundProcessing("Failed to save recording to Core Data: \(error)", level: .error)
-        }
-
-        return recordingId
     }
 
     // MARK: - Transcription Workflow
 
     /// Creates a transcript linked to a recording with proper UUID relationships
-    func createTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
+    func createTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) throws -> UUID? {
 
-        // Get the recording from Core Data
-        guard let recordingEntry = getRecordingEntry(id: recordingId) else {
-            AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
-            return nil
+        guard let recording = try coreDataManager.fetchRecording(id: recordingId) else {
+            throw RecordingWorkflowError.recordingNotFound(recordingId)
         }
-
-        // Log recording for debugging/analytics
-        AppLog.shared.backgroundProcessing("Creating transcript for recording: \(recordingEntry.recordingName ?? "unknown")")
-
-        // Check if a transcript already exists for this recording
-        if let existingTranscript = recordingEntry.transcript {
-            AppLog.shared.backgroundProcessing("Existing transcript found, replacing with new transcript")
-            return replaceTranscript(existingTranscript, with: segments, speakerMappings: speakerMappings, engine: engine, processingTime: processingTime, confidence: confidence)
+        guard !recording.objectID.isTemporaryID else { throw CoreDataMutationError.contextUnavailable }
+        let operation = recording.transcript == nil ? "transcript creation" : "transcript replacement"
+        let segmentsString = try encodedString(segments)
+        let mappingsString = speakerMappings.isEmpty ? nil : try encodedString(speakerMappings)
+        return try coreDataManager.performIsolatedMutation(operation: operation) { isolatedContext in
+            guard let storedRecording = try isolatedContext.existingObject(with: recording.objectID) as? RecordingEntry else {
+                throw RecordingWorkflowError.recordingNotFound(recordingId)
+            }
+            let transcript = storedRecording.transcript ?? TranscriptEntry(context: isolatedContext)
+            if transcript.id == nil { transcript.id = UUID() }
+            if transcript.createdAt == nil { transcript.createdAt = Date() }
+            transcript.lastModified = Date()
+            transcript.recordingId = recordingId
+            transcript.recording = storedRecording
+            transcript.engine = engine?.rawValue
+            transcript.processingTime = processingTime
+            transcript.confidence = confidence
+            transcript.segments = segmentsString
+            transcript.speakerMappings = mappingsString
+            storedRecording.transcript = transcript
+            storedRecording.transcriptId = transcript.id
+            storedRecording.transcriptionStatus = ProcessingStatus.completed.rawValue
+            storedRecording.lastModified = Date()
+            return transcript.id
         }
-
-        // Create transcript data with proper UUID linking
-        let transcriptData = TranscriptData(
-            recordingId: recordingId,
-            recordingURL: URL(string: recordingEntry.recordingURL ?? "")!,
-            recordingName: recordingEntry.recordingName ?? "",
-            recordingDate: recordingEntry.recordingDate ?? Date(),
-            segments: segments,
-            speakerMappings: speakerMappings,
-            engine: engine,
-            processingTime: processingTime,
-            confidence: confidence
-        )
-
-        // Create Core Data transcript entry
-        let transcriptEntry = TranscriptEntry(context: context)
-        transcriptEntry.id = transcriptData.id
-        transcriptEntry.recordingId = recordingId
-        transcriptEntry.createdAt = transcriptData.createdAt
-        transcriptEntry.lastModified = transcriptData.lastModified
-        transcriptEntry.engine = engine?.rawValue
-        transcriptEntry.processingTime = processingTime
-        transcriptEntry.confidence = confidence
-
-        // Store segments as JSON
-        if let segmentsData = try? JSONEncoder().encode(segments),
-           let segmentsString = String(data: segmentsData, encoding: .utf8) {
-            transcriptEntry.segments = segmentsString
-        }
-
-        // Store speaker mappings as JSON
-        if !speakerMappings.isEmpty,
-           let mappingsData = try? JSONEncoder().encode(speakerMappings),
-           let mappingsString = String(data: mappingsData, encoding: .utf8) {
-            transcriptEntry.speakerMappings = mappingsString
-        } else {
-            transcriptEntry.speakerMappings = nil
-        }
-
-        // Link to recording
-        transcriptEntry.recording = recordingEntry
-        recordingEntry.transcript = transcriptEntry
-        recordingEntry.transcriptId = transcriptData.id
-        recordingEntry.transcriptionStatus = ProcessingStatus.completed.rawValue
-        recordingEntry.lastModified = Date()
-
-        // Save to Core Data
-        do {
-            try context.save()
-        } catch {
-            AppLog.shared.backgroundProcessing("Failed to save transcript to Core Data: \(error)", level: .error)
-            return nil
-        }
-
-        return transcriptData.id
     }
 
-    /// Replaces an existing transcript with new content while preserving the same UUID
-    private func replaceTranscript(_ existingTranscript: TranscriptEntry, with segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) -> UUID? {
-
-        AppLog.shared.backgroundProcessing("Replacing existing transcript with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
-
-        // Update the existing transcript entry with new data
-        existingTranscript.lastModified = Date()
-        existingTranscript.engine = engine?.rawValue
-        existingTranscript.processingTime = processingTime
-        existingTranscript.confidence = confidence
-
-        // Store new segments as JSON
-        if let segmentsData = try? JSONEncoder().encode(segments),
-           let segmentsString = String(data: segmentsData, encoding: .utf8) {
-            existingTranscript.segments = segmentsString
+    private func encodedString<Value: Encodable>(_ value: Value) throws -> String {
+        guard let string = String(data: try JSONEncoder().encode(value), encoding: .utf8) else {
+            throw RecordingWorkflowError.encodingFailed("structured content")
         }
-
-        // Store speaker mappings as JSON
-        if !speakerMappings.isEmpty,
-           let mappingsData = try? JSONEncoder().encode(speakerMappings),
-           let mappingsString = String(data: mappingsData, encoding: .utf8) {
-            existingTranscript.speakerMappings = mappingsString
-        } else {
-            existingTranscript.speakerMappings = nil
-        }
-
-        // Update the recording's last modified date
-        existingTranscript.recording?.lastModified = Date()
-
-        // Save to Core Data
-        do {
-            try context.save()
-            AppLog.shared.backgroundProcessing("Transcript replaced successfully with ID: \(existingTranscript.id?.uuidString ?? "unknown")")
-            return existingTranscript.id
-        } catch {
-            AppLog.shared.backgroundProcessing("Failed to replace transcript in Core Data: \(error)", level: .error)
-            return nil
-        }
+        return string
     }
 
     // MARK: - Summary Workflow
 
     /// Creates a summary linked to both recording and transcript with proper UUID relationships
-    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) -> UUID? {
+    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
 
-        // Get the recording from Core Data
-        guard let recordingEntry = getRecordingEntry(id: recordingId) else {
+        guard let recordingEntry = try coreDataManager.fetchRecording(id: recordingId) else {
             AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
-            return nil
+            throw RecordingWorkflowError.recordingNotFound(recordingId)
         }
 
-        // Get the transcript from Core Data
-        guard let transcriptEntry = getTranscriptEntry(id: transcriptId) else {
+        guard let transcriptEntry = try coreDataManager.fetchTranscript(id: transcriptId) else {
             AppLog.shared.backgroundProcessing("Transcript not found for ID: \(transcriptId)", level: .error)
-            return nil
+            throw RecordingWorkflowError.transcriptNotFound(transcriptId)
         }
 
         // Reject obviously-failed summaries before touching Core Data at all
@@ -218,22 +159,31 @@ class RecordingWorkflowManager: ObservableObject {
         AppLog.shared.backgroundProcessing("Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
         AppLog.shared.backgroundProcessing("Recording UUID: \(recordingId), Transcript UUID: \(transcriptId)", level: .debug)
 
-        // Capture existing summaries BEFORE creating new one using context directly
-        // (appCoordinator may be nil, so we use context to avoid silent no-ops)
-        // We'll delete these only AFTER successfully saving the new summary
-        let existingSummaryFetch: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
-        existingSummaryFetch.predicate = NSPredicate(format: "recordingId == %@", recordingId as CVarArg)
-        // Sort most-recent-first so existingSummaries.first is deterministic and matches
-        // the summary most likely to hold the user's latest notes/attachments.
-        existingSummaryFetch.sortDescriptors = [NSSortDescriptor(key: "generatedAt", ascending: false)]
-        let existingSummaries = (try? context.fetch(existingSummaryFetch)) ?? []
+        // Capture existing summaries before creating the new one. A failed
+        // read is not an empty library and must stop the mutation.
+        let existingSummaries = try coreDataManager.fetchSummaries(forRecordingId: recordingId)
         if !existingSummaries.isEmpty {
             AppLog.shared.backgroundProcessing("Found \(existingSummaries.count) existing summary(ies) to clean up after save", level: .debug)
         }
 
-        // Create summary data with proper UUID linking
-        // Use proper URL resolution instead of force unwrapping
-        let recordingURL = appCoordinator?.coreDataManager.getAbsoluteURL(for: recordingEntry) ?? URL(fileURLWithPath: "")
+        let titlesData = try JSONEncoder().encode(titles)
+        guard let titlesString = String(data: titlesData, encoding: .utf8) else {
+            throw RecordingWorkflowError.encodingFailed("summary titles")
+        }
+        let tasksData = try JSONEncoder().encode(tasks)
+        guard let tasksString = String(data: tasksData, encoding: .utf8) else {
+            throw RecordingWorkflowError.encodingFailed("summary tasks")
+        }
+        let remindersData = try JSONEncoder().encode(reminders)
+        guard let remindersString = String(data: remindersData, encoding: .utf8) else {
+            throw RecordingWorkflowError.encodingFailed("summary reminders")
+        }
+
+        // Create summary data with proper UUID linking. Preserve a stable,
+        // recoverable reference when the external file is unavailable; an
+        // empty URL would make a failed lookup look like a valid save.
+        let recordingURL = coreDataManager.getStoredURL(for: recordingEntry)
+            ?? URL(fileURLWithPath: "/preserved-recordings/\(recordingId.uuidString)")
 
         let summaryData = EnhancedSummaryData(
             recordingId: recordingId,
@@ -253,122 +203,116 @@ class RecordingWorkflowManager: ObservableObject {
         )
         AppLog.shared.backgroundProcessing("Summary UUID: \(summaryData.id)", level: .debug)
 
-        // Create Core Data summary entry
-        let summaryEntry = SummaryEntry(context: context)
-        summaryEntry.id = summaryData.id
-        summaryEntry.recordingId = recordingId
-        summaryEntry.transcriptId = transcriptId
-        summaryEntry.generatedAt = summaryData.generatedAt
-        summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
+        guard !recordingEntry.objectID.isTemporaryID, !transcriptEntry.objectID.isTemporaryID else {
+            throw CoreDataMutationError.contextUnavailable
+        }
+        try coreDataManager.performIsolatedMutation(operation: "summary creation") { isolatedContext in
+            guard let recordingEntry = try isolatedContext.existingObject(with: recordingEntry.objectID) as? RecordingEntry,
+                  let transcriptEntry = try isolatedContext.existingObject(with: transcriptEntry.objectID) as? TranscriptEntry else {
+                throw CoreDataMutationError.contextUnavailable
+            }
+            // Create Core Data summary entry
+            let summaryEntry = SummaryEntry(context: isolatedContext)
+            summaryEntry.id = summaryData.id
+            summaryEntry.recordingId = recordingId
+            summaryEntry.transcriptId = transcriptId
+            summaryEntry.generatedAt = summaryData.generatedAt
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
 
-        summaryEntry.processingTime = processingTime
-        summaryEntry.confidence = summaryData.confidence
-        summaryEntry.summary = summary
-        summaryEntry.contentType = contentType.rawValue
-        summaryEntry.wordCount = Int32(summaryData.wordCount)
-        summaryEntry.originalLength = Int32(originalLength)
-        summaryEntry.compressionRatio = summaryData.compressionRatio
-        summaryEntry.version = Int32(summaryData.version)
+            summaryEntry.processingTime = processingTime
+            summaryEntry.confidence = summaryData.confidence
+            summaryEntry.summary = summary
+            summaryEntry.contentType = contentType.rawValue
+            summaryEntry.wordCount = Int32(summaryData.wordCount)
+            summaryEntry.originalLength = Int32(originalLength)
+            summaryEntry.compressionRatio = summaryData.compressionRatio
+            summaryEntry.version = Int32(summaryData.version)
 
-        // Store structured data as JSON
-        if let titlesData = try? JSONEncoder().encode(titles),
-           let titlesString = String(data: titlesData, encoding: .utf8) {
+            // Store structured data as JSON. Encoding errors are part of the
+            // failed mutation; do not create a partially populated success row.
             summaryEntry.titles = titlesString
-        }
-        if let tasksData = try? JSONEncoder().encode(tasks),
-           let tasksString = String(data: tasksData, encoding: .utf8) {
             summaryEntry.tasks = tasksString
-        }
-        if let remindersData = try? JSONEncoder().encode(reminders),
-           let remindersString = String(data: remindersData, encoding: .utf8) {
             summaryEntry.reminders = remindersString
+
+            // Link to recording and transcript
+            summaryEntry.recording = recordingEntry
+            summaryEntry.transcript = transcriptEntry
+            recordingEntry.summary = summaryEntry
+            recordingEntry.summaryId = summaryData.id
+            recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
+            recordingEntry.lastModified = Date()
+
         }
-
-        // Link to recording and transcript
-        summaryEntry.recording = recordingEntry
-        summaryEntry.transcript = transcriptEntry
-        recordingEntry.summary = summaryEntry
-        recordingEntry.summaryId = summaryData.id
-        recordingEntry.summaryStatus = ProcessingStatus.completed.rawValue
-        recordingEntry.lastModified = Date()
-
-        // Save to Core Data
-        do {
-            try context.save()
-            AppLog.shared.backgroundProcessing("Summary saved to Core Data with ID: \(summaryData.id)")
-
-            // NOW clean up old summaries using context directly (only after new one is safely saved)
-            if !existingSummaries.isEmpty {
-                // Migrate supplemental data (notes/attachments) from the most recent old summary
-                // to the new summary so user data is not lost on regeneration.
-                if let primaryOld = existingSummaries.first, let oldId = primaryOld.id {
-                    do {
-                        try SummaryAttachmentStore.shared.migrate(from: oldId, to: summaryData.id)
-                        AppLog.shared.backgroundProcessing("Migrated supplemental data from \(oldId) to \(summaryData.id)", level: .debug)
-                    } catch {
-                        AppLog.shared.backgroundProcessing("Failed to migrate supplemental data from \(oldId): \(error)", level: .error)
-                    }
-                }
-
-                // Nothing outside Core Data may be touched until the deletion has
-                // actually committed. Both a tombstone and an attachment folder are
-                // one-way: raising them for a row that then survives a failed save
-                // deletes the user's cloud copy — and their notes — for a summary
-                // that is still on the device.
-                let migratedSummaryId = existingSummaries.first?.id
-                var effects = DeferredDeletionEffects()
-                var deletedCount = 0
-
-                for oldSummary in existingSummaries {
-                    let oldId = oldSummary.id?.uuidString ?? "nil"
-                    if let oldSummaryId = oldSummary.id {
-                        // Keep the primary folder because its supplemental data was
-                        // migrated to the new summary. Other folders are removed only
-                        // after the row deletion and its outbox intent commit.
-                        effects.stage(
-                            summary: oldSummary,
-                            deleteAttachments: oldSummaryId != migratedSummaryId
-                        )
-                    }
-                    context.delete(oldSummary)
-                    deletedCount += 1
-                    AppLog.shared.backgroundProcessing("Deleted old summary \(oldId)", level: .debug)
-                }
-
-                if deletedCount > 0 {
-                    do {
-                        let coreDataManager = appCoordinator?.coreDataManager
-                            ?? CoreDataManager(persistenceController: persistenceController)
-                        try coreDataManager.save(committing: effects)
-
-                        AppLog.shared.backgroundProcessing("Cleaned up \(deletedCount) old summary(ies) for recording \(recordingId)", level: .debug)
-                    } catch {
-                        // The old rows and their outbox intents roll back together,
-                        // leaving the cloud copies and local rows in step.
-                        AppLog.shared.backgroundProcessing(
-                            "Failed to clean up \(deletedCount) old summary(ies) for recording \(recordingId); " +
-                            "keeping them locally and in iCloud: \(error)",
-                            level: .error
-                        )
-                    }
-                }
-            }
-
-            // Post notification to refresh UI views
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("SummaryCreated"),
-                    object: nil,
-                    userInfo: ["recordingId": recordingId, "summaryId": summaryData.id]
-                )
-            }
-        } catch {
-            AppLog.shared.backgroundProcessing("Failed to save summary to Core Data: \(error)", level: .error)
-            // Note: We did NOT delete old summaries, so user still has their previous data
-            return nil
-        }
-
+        AppLog.shared.backgroundProcessing("Summary saved to Core Data with ID: \(summaryData.id)")
+        finishSummaryCreation(summaryData, existingSummaries: existingSummaries, recordingId: recordingId)
         return summaryData.id
+    }
+
+    private func finishSummaryCreation(
+        _ summaryData: EnhancedSummaryData,
+        existingSummaries: [SummaryEntry],
+        recordingId: UUID
+    ) {
+        // Clean up old summaries only after the new summary is durable.
+        // This secondary cleanup is isolated so a failed delete cannot
+        // roll back the new summary or commit unrelated pending edits.
+        if !existingSummaries.isEmpty {
+            // Migrate supplemental data (notes/attachments) from the most recent old summary
+            // to the new summary so user data is not lost on regeneration.
+            if let primaryOld = existingSummaries.first, let oldId = primaryOld.id {
+                do {
+                    try SummaryAttachmentStore.shared.migrate(from: oldId, to: summaryData.id)
+                    AppLog.shared.backgroundProcessing("Migrated supplemental data from \(oldId) to \(summaryData.id)", level: .debug)
+                } catch {
+                    AppLog.shared.backgroundProcessing("Failed to migrate supplemental data from \(oldId): \(error)", level: .error)
+                }
+            }
+
+            let migratedSummaryId = existingSummaries.first?.id
+            var effects = DeferredDeletionEffects()
+            var summaryIDs: [UUID] = []
+
+            for oldSummary in existingSummaries {
+                let oldId = oldSummary.id?.uuidString ?? "nil"
+                if let oldSummaryId = oldSummary.id {
+                    summaryIDs.append(oldSummaryId)
+                    // Keep the primary folder because its supplemental data was
+                    // migrated to the new summary. Other folders are removed only
+                    // after the row deletion and its outbox intent commit.
+                    effects.stage(
+                        summary: oldSummary,
+                        deleteAttachments: oldSummaryId != migratedSummaryId
+                    )
+                }
+                AppLog.shared.backgroundProcessing("Queued old summary \(oldId) for cleanup after save", level: .debug)
+            }
+
+            if !summaryIDs.isEmpty {
+                do {
+                    try coreDataManager.deleteSummariesAfterSave(ids: summaryIDs, effects: effects)
+
+                    AppLog.shared.backgroundProcessing("Cleaned up \(summaryIDs.count) old summary(ies) for recording \(recordingId)", level: .debug)
+                } catch {
+                    // The new summary is already durable. Leave old rows and
+                    // their attachments for a later reconcile rather than
+                    // reporting a false primary-save failure.
+                    AppLog.shared.backgroundProcessing(
+                        "Failed to clean up \(summaryIDs.count) old summary(ies) for recording \(recordingId); " +
+                        "keeping them locally and in iCloud: \(error)",
+                        level: .error
+                    )
+                }
+            }
+        }
+
+        // Post notification to refresh UI views
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: NSNotification.Name("SummaryCreated"),
+                object: nil,
+                userInfo: ["recordingId": recordingId, "summaryId": summaryData.id]
+            )
+        }
     }
 
     // MARK: - Name Updates
@@ -415,19 +359,6 @@ class RecordingWorkflowManager: ObservableObject {
             return results.first
         } catch {
             AppLog.shared.backgroundProcessing("Error fetching recording: \(error)", level: .error)
-            return nil
-        }
-    }
-
-    private func getTranscriptEntry(id: UUID) -> TranscriptEntry? {
-        let fetchRequest: NSFetchRequest<TranscriptEntry> = TranscriptEntry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "id == %@", id as CVarArg)
-
-        do {
-            let results = try context.fetch(fetchRequest)
-            return results.first
-        } catch {
-            AppLog.shared.backgroundProcessing("Error fetching transcript: \(error)", level: .error)
             return nil
         }
     }

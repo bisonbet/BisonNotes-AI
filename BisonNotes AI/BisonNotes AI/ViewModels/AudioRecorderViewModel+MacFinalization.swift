@@ -51,11 +51,27 @@ extension AudioRecorderViewModel {
                 )
             }
 
+            // Persist the recording before deleting any scratch/system source.
+            // A failed metadata save leaves every recovery input available.
+            //
+            // Capture the system-audio source first: the save ends by calling
+            // resetMacFinalizationState(), which clears `macSystemAudioURL`, so
+            // reading the property afterwards always sees nil and would leak the
+            // temporary meeting-audio file on every recording. `scratchURLs` is
+            // already held in a local for the same reason.
+            let systemAudioSourceURL = macSystemAudioURL
+            try await saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
             removeMacScratchFiles(scratchURLs)
-            if let systemAudioURL = macSystemAudioURL {
-                try? FileManager.default.removeItem(at: systemAudioURL)
+            if let systemAudioSourceURL {
+                do {
+                    try FileManager.default.removeItem(at: systemAudioSourceURL)
+                } catch {
+                    AppLog.shared.recording(
+                        "Could not remove Mac system-audio source after durable save: \(error.localizedDescription)",
+                        level: .error
+                    )
+                }
             }
-            saveFinalizedMacRecording(at: url, fileSize: fileSize, duration: duration)
             return
         } catch {
             handleMacFinalizationFailure(error, scratchURLs: scratchURLs, finalURL: url)
@@ -111,9 +127,15 @@ extension AudioRecorderViewModel {
         case .usable:
             return true
         case .rejected(let rejection):
+            // Not a fault on its own. A capture-health rebuild deliberately
+            // abandons the segment it was recording into, so every recovered
+            // recording leaves one zero-length scratch file behind for this to
+            // reject. The finalization plan logged just below carries the real
+            // signal — how many segments survived — and a recording with none
+            // fails loudly through `.unavailable`.
             AppLog.shared.recording(
-                "Could not inspect captured audio \(url.lastPathComponent): \(rejection)",
-                level: .error
+                "Skipping unusable captured audio \(url.lastPathComponent): \(rejection)",
+                level: .debug
             )
             return false
         }
@@ -140,23 +162,25 @@ extension AudioRecorderViewModel {
     }
 
     @MainActor
-    private func saveFinalizedMacRecording(at url: URL, fileSize: Int64, duration: TimeInterval) {
+    private func saveFinalizedMacRecording(at url: URL, fileSize: Int64, duration: TimeInterval) async throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
-            AppLog.shared.recording(
-                "Mac finalize: recording file is missing at \(url.lastPathComponent)",
-                level: .error
+            throw NSError(
+                domain: "AudioRecorderViewModel.Mac",
+                code: -19,
+                userInfo: [NSLocalizedDescriptionKey: "The finalized recording file is missing at \(url.lastPathComponent)"]
             )
-            errorMessage = "Recording was lost — file was not written."
-            return
         }
 
         saveLocationData(for: url)
         guard let workflowManager else {
-            AppLog.shared.recording("WorkflowManager not set - Mac recording not saved", level: .error)
-            return
+            throw NSError(
+                domain: "AudioRecorderViewModel.Mac",
+                code: -20,
+                userInfo: [NSLocalizedDescriptionKey: "The workflow manager is unavailable for Mac recording persistence"]
+            )
         }
 
-        let recordingId = workflowManager.createRecording(
+        let recordingId = try workflowManager.createRecording(
             url: url,
             name: generateAppRecordingDisplayName(),
             date: currentRecordingDate(for: url),
@@ -174,14 +198,29 @@ extension AudioRecorderViewModel {
         // meeting recording — non-meeting recordings with the setting on take the live
         // path and never finalize here.
         if UserDefaults.standard.bool(forKey: "enableLiveTranscription"),
-           let coordinator = appCoordinator,
-           let entry = coordinator.getRecording(id: recordingId) {
-            TranscriptionStarter.shared.startTranscription(
-                for: entry,
-                cleanFirst: false,
-                appCoordinator: coordinator
-            )
-            AppLog.shared.recording("Mac meeting recording queued for file-based transcription")
+           let coordinator = appCoordinator {
+            do {
+                guard let entry = try coordinator.coreDataManager.fetchRecording(id: recordingId) else {
+                    throw BackgroundProcessingError.recordingIdentityUnavailable(url)
+                }
+                let didEnqueue = try await TranscriptionStarter.shared.enqueueTranscriptionJob(
+                    for: entry,
+                    appCoordinator: coordinator
+                )
+                AppLog.shared.recording(
+                    didEnqueue
+                        ? "Mac meeting recording queued for file-based transcription"
+                        : "Mac meeting recording already had an active file-based transcription job"
+                )
+            } catch {
+                // The row is durable, but a failed dependent lookup must not
+                // fabricate a queued-transcription success.
+                AppLog.shared.recording(
+                    "Mac recording saved, but file-based transcription was not queued: \(error.localizedDescription)",
+                    level: .error
+                )
+                errorMessage = "Recording saved, but transcription could not be queued yet."
+            }
         }
 
         resetMacFinalizationState()

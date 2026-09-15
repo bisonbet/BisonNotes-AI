@@ -22,11 +22,7 @@ enum ShareImportAuthorization {
     }
 
     static func consumeURLToken(from url: URL, in inboxURL: URL) -> Bool {
-        guard isShareImportURL(url),
-              let candidate = token(from: url),
-              isValidToken(candidate),
-              let stored = storedToken(in: inboxURL),
-              candidate == stored else {
+        guard hasValidURLToken(from: url, in: inboxURL) else {
             return false
         }
 
@@ -35,12 +31,31 @@ enum ShareImportAuthorization {
     }
 
     static func consumePendingToken(in inboxURL: URL) -> Bool {
-        guard let stored = storedToken(in: inboxURL), isValidToken(stored) else {
+        guard hasPendingToken(in: inboxURL) else {
             return false
         }
 
         removeToken(in: inboxURL)
         return true
+    }
+
+    /// Validates authorization without consuming it. Share/Inbox files remain
+    /// retryable until the importing manager returns a durable acknowledgement.
+    static func hasValidURLToken(from url: URL, in inboxURL: URL) -> Bool {
+        guard isShareImportURL(url),
+              let candidate = token(from: url),
+              isValidToken(candidate),
+              let stored = storedToken(in: inboxURL) else {
+            return false
+        }
+        return candidate == stored
+    }
+
+    /// Validates the pending token while leaving it in place for a crash-safe
+    /// scan. The caller removes it only after every staged source is gone.
+    static func hasPendingToken(in inboxURL: URL) -> Bool {
+        guard let stored = storedToken(in: inboxURL) else { return false }
+        return isValidToken(stored)
     }
 
     static func removeToken(in inboxURL: URL) {

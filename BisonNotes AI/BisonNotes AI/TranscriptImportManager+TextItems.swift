@@ -14,6 +14,19 @@ struct TranscriptTextImportItem {
 
 extension TranscriptImportManager {
     func importTranscriptTextItems(_ items: [TranscriptTextImportItem]) async {
+        guard isStorageOperational else {
+            AppLog.shared.coreData(
+                "Transcript text import withheld because local storage is unavailable",
+                level: .fault
+            )
+            completeImport(with: TranscriptImportResults(
+                total: items.count,
+                successful: 0,
+                failed: items.count,
+                errors: items.map { "\($0.name): Local storage is unavailable" }
+            ))
+            return
+        }
         guard !isImporting else { return }
 
         isImporting = true

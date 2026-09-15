@@ -28,6 +28,7 @@ struct BisonNotesAIApp: App {
     @StateObject private var fileImportManager = FileImportManager()
     @StateObject private var transcriptImportManager = TranscriptImportManager()
     @State private var hasQueuedParakeetStartupRepair = false
+    @State private var showUnavailableImportAlert = false
     @FocusedValue(\.summaryExportAction) private var summaryExportAction
     @FocusedValue(\.transcriptSaveAction) private var transcriptSaveAction
 
@@ -683,7 +684,18 @@ struct BisonNotesAIApp: App {
         // Log device capabilities on startup
         logDeviceCapabilities()
 
+        // Register system launch handlers even when storage cannot be opened.
+        // Their handlers decline persistence work and complete the task unsuccessfully.
         setupBackgroundTasks()
+
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Application startup work withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
+
         setupAppShortcuts()
         migrateAIEngineSelection()
         Self.migrateIOSOllamaSelection()
@@ -813,18 +825,32 @@ struct BisonNotesAIApp: App {
                 .environmentObject(transcriptImportManager)
                 .environment(\.managedObjectContext, persistenceController.container.viewContext)
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didFinishLaunchingNotification)) { _ in
+                    guard persistenceController.storeState.isOperational else {
+                        AppLog.shared.coreData(
+                            "Launch cleanup, sync, watch, and processing withheld: local storage is unavailable",
+                            level: .fault
+                        )
+                        return
+                    }
                     requestBackgroundAppRefreshPermission()
                     setupWatchConnectivity()
                     // Note: Notification permission is now requested when first needed (in BackgroundProcessingManager)
                     // Initialize download monitor for on-device AI models
                     _ = OnDeviceAIDownloadMonitor.shared
                     queueParakeetStartupRepairIfNeeded()
+                    reconcileMediaOperationState()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
                     CacheMaintenanceService.shared.pruneCachesIfDue()
                     appCoordinator.observeNetworkRestorationForiCloud()
                     appCoordinator.reconcileiCloudIfEnabled(reason: .appLaunch, force: true)
                 }
                 .onOpenURL(perform: handleOpenURL)
+                .alert("Import Not Started", isPresented: $showUnavailableImportAlert) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text("Library storage is unavailable. After reopening BisonNotes AI and restoring library access, "
+                        + "open or share this file again. The original file was not changed.")
+                }
                 #if os(iOS)
                 // iOS can kill a backgrounded app without ever sending willTerminate, so
                 // entering the background is the last reliable clean-shutdown checkpoint.
@@ -846,8 +872,16 @@ struct BisonNotesAIApp: App {
                     // scene-based SwiftUI apps where the UIApplicationDelegate method
                     // may be skipped.
                     appDelegate.clearAppBadge(reason: "activation")
+                    guard persistenceController.storeState.isOperational else {
+                        AppLog.shared.coreData(
+                            "Activation cleanup and synchronization withheld because local storage is unavailable",
+                            level: .fault
+                        )
+                        return
+                    }
                     // Repair any files left at .complete protection by v1.11.0.
                     migrateFileProtectionForExistingFiles()
+                    reconcileMediaOperationState()
                     TemporaryFileCleanupService.shared.cleanupStaleFiles()
                     // Throttled internally: a Mac can stay open for days, so a
                     // launch-only sweep would never run on the machine that
@@ -938,29 +972,39 @@ struct BisonNotesAIApp: App {
 
         #if os(macOS)
         Settings {
-            SettingsView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
-                .environmentObject(fileImportManager)
-                .environmentObject(transcriptImportManager)
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .frame(minWidth: 680, minHeight: 600)
+            if persistenceController.storeState.isOperational {
+                SettingsView()
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environmentObject(fileImportManager)
+                    .environmentObject(transcriptImportManager)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                    .frame(minWidth: 680, minHeight: 600)
+            } else {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            }
         }
         .defaultSize(width: 760, height: 700)
 
         // Restoration stays disabled so the window never reopens on its own at launch:
         // its `.task` starts a CloudKit scan, which must remain user-initiated.
         Window("iCloud Items Review", id: NativeWindowID.cloudReview) {
-            CloudReviewItemsView()
-                .environmentObject(appCoordinator)
-                .frame(minWidth: 680, minHeight: 520)
+            if persistenceController.storeState.isOperational {
+                CloudReviewItemsView()
+                    .environmentObject(appCoordinator)
+                    .frame(minWidth: 680, minHeight: 520)
+            } else {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            }
         }
         .defaultSize(width: 780, height: 700)
         .windowResizability(.contentMinSize)
         .restorationBehavior(.disabled)
 
         WindowGroup("Summary", id: NativeWindowID.summary, for: UUID.self) { $recordingID in
-            if let recordingID {
+            if !persistenceController.storeState.isOperational {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            } else if let recordingID {
                 NativeSummaryWindowView(recordingID: recordingID)
                     .environmentObject(appCoordinator)
                     .environment(\.managedObjectContext, persistenceController.container.viewContext)
@@ -976,7 +1020,9 @@ struct BisonNotesAIApp: App {
         .windowResizability(.contentMinSize)
 
         WindowGroup("Transcript", id: NativeWindowID.transcript, for: UUID.self) { $recordingID in
-            if let recordingID {
+            if !persistenceController.storeState.isOperational {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            } else if let recordingID {
                 NativeTranscriptWindowView(recordingID: recordingID)
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
@@ -991,7 +1037,9 @@ struct BisonNotesAIApp: App {
         // appCoordinator.macPlayerRecordingID) prevents multiple player windows
         // from fighting over the shared AudioRecorderViewModel playback state.
         Window("Recording", id: NativeWindowID.recording) {
-            if let recordingID = appCoordinator.macPlayerRecordingID {
+            if !persistenceController.storeState.isOperational {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            } else if let recordingID = appCoordinator.macPlayerRecordingID {
                 NativeRecordingWindowView(recordingID: recordingID)
                     .environmentObject(recorderVM)
                     .environmentObject(appCoordinator)
@@ -1008,13 +1056,17 @@ struct BisonNotesAIApp: App {
         .windowResizability(.contentMinSize)
 
         Window("Recordings", id: NativeWindowID.recordings) {
-            RecordingsListView()
-                .nativeMacPresentationContext(.modelessWindow)
-                .environment(\.isEmbeddedInSplitView, false)
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
-                .environment(\.managedObjectContext, persistenceController.container.viewContext)
-                .frame(minWidth: 720, minHeight: 520)
+            if persistenceController.storeState.isOperational {
+                RecordingsListView()
+                    .nativeMacPresentationContext(.modelessWindow)
+                    .environment(\.isEmbeddedInSplitView, false)
+                    .environmentObject(recorderVM)
+                    .environmentObject(appCoordinator)
+                    .environment(\.managedObjectContext, persistenceController.container.viewContext)
+                    .frame(minWidth: 720, minHeight: 520)
+            } else {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            }
         }
         .defaultSize(width: 900, height: 720)
         .windowResizability(.contentMinSize)
@@ -1030,15 +1082,21 @@ struct BisonNotesAIApp: App {
         .windowResizability(.contentMinSize)
 
         Window("Background Processing", id: NativeWindowID.backgroundProcessing) {
-            BackgroundProcessingView()
-                .nativeMacPresentationContext(.modelessWindow)
-                .frame(minWidth: 620, minHeight: 500)
+            if persistenceController.storeState.isOperational {
+                BackgroundProcessingView()
+                    .nativeMacPresentationContext(.modelessWindow)
+                    .frame(minWidth: 620, minHeight: 500)
+            } else {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            }
         }
         .defaultSize(width: 760, height: 680)
         .windowResizability(.contentMinSize)
 
         WindowGroup("Processing Job", id: NativeWindowID.processingJob, for: UUID.self) { $jobID in
-            if let jobID {
+            if !persistenceController.storeState.isOperational {
+                PersistenceUnavailableView(state: persistenceController.storeState)
+            } else if let jobID {
                 NativeProcessingJobWindowView(jobID: jobID)
             }
         }
@@ -1066,6 +1124,18 @@ struct BisonNotesAIApp: App {
     /// Handles files opened from the share sheet (e.g. Voice Memos, Files). Imports audio as recordings, text as transcripts.
     /// Also handles the `bisonnotes://share-import` URL scheme from the Share Extension.
     private func handleOpenURL(_ url: URL) {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Open-in import deferred: storage unavailable; external input may require resubmission",
+                level: .fault
+            )
+            if url.isFileURL {
+                // A provider URL is not an owned Inbox copy and may not survive relaunch.
+                // Do not claim retention or silently discard the user's request.
+                showUnavailableImportAlert = true
+            }
+            return
+        }
         NSLog("📎 handleOpenURL called (scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil"), file: \(url.isFileURL ? url.lastPathComponent : "none"))")
 
         // Handle authenticated custom URL scheme from Share Extension.
@@ -1102,10 +1172,9 @@ struct BisonNotesAIApp: App {
                 isHandlingOpenURL = false
             }
 
-            await importFileByExtension(url)
-
-            // Clean up the Inbox copy (iOS places shared files in Documents/Inbox/)
-            cleanupInboxFileIfNeeded(url)
+            if await importFileByExtension(url) {
+                cleanupInboxFileIfNeeded(url)
+            }
 
             // Clear dedup guard after a delay so re-sharing the same file still works
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
@@ -1129,6 +1198,13 @@ struct BisonNotesAIApp: App {
     /// Scans the App Group shared container for files placed by the Share Extension
     /// (e.g. from Voice Memos share sheet). Imports them and cleans up.
     private func scanSharedContainerForImports(trigger: SharedContainerImportTrigger) {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Share Extension import token and files retained because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         guard let containerURL = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?
             .appendingPathComponent(shareInboxFolder) else { return }
@@ -1138,9 +1214,9 @@ struct BisonNotesAIApp: App {
         let authorized: Bool
         switch trigger {
         case .url(let url):
-            authorized = ShareImportAuthorization.consumeURLToken(from: url, in: containerURL)
+            authorized = ShareImportAuthorization.hasValidURLToken(from: url, in: containerURL)
         case .pendingToken:
-            authorized = ShareImportAuthorization.consumePendingToken(in: containerURL)
+            authorized = ShareImportAuthorization.hasPendingToken(in: containerURL)
         }
 
         guard authorized else {
@@ -1157,7 +1233,10 @@ struct BisonNotesAIApp: App {
             return
         }
 
-        guard !files.isEmpty else { return }
+        guard !files.isEmpty else {
+            ShareImportAuthorization.removeToken(in: containerURL)
+            return
+        }
         NSLog("📎 Shared container scan: found \(files.count) file(s) from Share Extension")
 
         NotificationCenter.default.post(name: Notification.Name("SwitchToRecordTabForImport"), object: nil)
@@ -1165,11 +1244,10 @@ struct BisonNotesAIApp: App {
         Task { @MainActor in
             // If an import is already running, importAudioFiles/importTranscriptFiles
             // would silently no-op and the cleanup below would still delete every staged
-            // file — discarding the share. Re-arm the token and leave the inbox intact so
-            // a later activation scan retries once the importer is free.
+            // file — discarding the share. Leave the token and inbox intact so a later
+            // activation scan retries once the importer is free.
             if fileImportManager.isImporting || transcriptImportManager.isImporting {
                 NSLog("📎 Shared container scan deferred: an import is already in progress")
-                ShareImportAuthorization.rearmToken(in: containerURL)
                 return
             }
 
@@ -1190,19 +1268,22 @@ struct BisonNotesAIApp: App {
                 }
             }
 
+            var acknowledged: Set<URL> = []
             if !audioFiles.isEmpty {
                 NSLog("📎 Shared container: importing \(audioFiles.count) audio file(s)")
-                await fileImportManager.importAudioFiles(from: audioFiles)
+                acknowledged.formUnion(await fileImportManager.importAudioFiles(from: audioFiles))
             }
 
             if !textFiles.isEmpty {
                 NSLog("📎 Shared container: importing \(textFiles.count) text file(s)")
-                await transcriptImportManager.importTranscriptFiles(from: textFiles)
+                acknowledged.formUnion(await transcriptImportManager.importTranscriptFiles(from: textFiles))
             }
 
-            // Clean up all files from the shared container after import
-            for file in files {
-                try? FileManager.default.removeItem(at: file)
+            ImportSourceCleanup.removeAcknowledged(acknowledged, from: files)
+            if !files.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) {
+                // Consume authorization only after every source in this batch
+                // has been durably acknowledged and removed.
+                ShareImportAuthorization.removeToken(in: containerURL)
             }
 
             NSLog("📎 Shared container: cleanup complete")
@@ -1215,6 +1296,13 @@ struct BisonNotesAIApp: App {
     /// On modern iOS, the share sheet's "Copy to [App]" action copies files to the Inbox
     /// without opening the app. This method picks them up when the user returns to the app.
     private func scanInboxForImportableFiles() {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Documents Inbox import retained because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         // Don't scan while handleOpenURL is actively importing (it handles its own Inbox cleanup).
         guard !isHandlingOpenURL else { return }
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
@@ -1263,29 +1351,46 @@ struct BisonNotesAIApp: App {
                 }
             }
 
+            var acknowledged: Set<URL> = []
             if !audioFiles.isEmpty {
                 NSLog("📎 Inbox scan: importing \(audioFiles.count) audio file(s)")
-                await fileImportManager.importAudioFiles(from: audioFiles)
+                acknowledged.formUnion(await fileImportManager.importAudioFiles(from: audioFiles))
             }
 
             if !textFiles.isEmpty {
                 NSLog("📎 Inbox scan: importing \(textFiles.count) text file(s)")
-                await transcriptImportManager.importTranscriptFiles(from: textFiles)
+                acknowledged.formUnion(await transcriptImportManager.importTranscriptFiles(from: textFiles))
             }
 
-            // Clean up all Inbox files after import (including unsupported ones)
-            for file in files {
-                try? FileManager.default.removeItem(at: file)
-            }
+            // Failed and unsupported files remain available to retry or recover.
+            ImportSourceCleanup.removeAcknowledged(acknowledged, from: files)
 
-            // Remove Inbox directory if empty
-            let remaining = (try? FileManager.default.contentsOfDirectory(at: inboxURL, includingPropertiesForKeys: nil)) ?? []
-            if remaining.isEmpty {
-                try? FileManager.default.removeItem(at: inboxURL)
+            // Remove Inbox directory only after a successful read proves it is
+            // empty. A failed read is not evidence that every source was removed.
+            do {
+                let remaining = try FileManager.default.contentsOfDirectory(
+                    at: inboxURL,
+                    includingPropertiesForKeys: nil
+                )
+                if remaining.isEmpty {
+                    do {
+                        try FileManager.default.removeItem(at: inboxURL)
+                    } catch {
+                        AppLog.shared.fileManagement(
+                            "Documents Inbox cleanup deferred: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
+                }
+            } catch {
+                AppLog.shared.fileManagement(
+                    "Documents Inbox contents could not be verified; retaining the directory",
+                    level: .error
+                )
             }
 
             if !unsupported.isEmpty {
-                NSLog("📎 Inbox scan: \(unsupported.count) unsupported file(s) cleaned up")
+                NSLog("📎 Inbox scan: \(unsupported.count) unsupported file(s) retained")
             }
         }
     }
@@ -1293,20 +1398,22 @@ struct BisonNotesAIApp: App {
     // MARK: - Import Helpers
 
     /// Classifies a file by extension and imports via the appropriate manager.
-    private func importFileByExtension(_ url: URL) async {
+    private func importFileByExtension(_ url: URL) async -> Bool {
+        guard persistenceController.storeState.isOperational else { return false }
         let ext = url.pathExtension.lowercased()
         let audioExtensions: Set<String> = ["m4a", "mp3", "wav", "caf", "aiff", "aif"]
         let textExtensions: Set<String> = ["txt", "text", "md", "markdown", "pdf", "doc", "docx"]
 
         if audioExtensions.contains(ext) {
             NSLog("📎 Importing audio file (.\(ext))")
-            await fileImportManager.importAudioFiles(from: [url])
+            return await fileImportManager.importAudioFiles(from: [url]).contains(url)
         } else if textExtensions.contains(ext) {
             NSLog("📎 Importing text file (.\(ext))")
-            await transcriptImportManager.importTranscriptFiles(from: [url])
+            return await transcriptImportManager.importTranscriptFiles(from: [url]).contains(url)
         } else {
             NSLog("📎 Unsupported file type: \(ext)")
             NotificationCenter.default.post(name: Notification.Name("UnsupportedFileTypeFromShare"), object: nil)
+            return false
         }
     }
 
@@ -1345,6 +1452,14 @@ struct BisonNotesAIApp: App {
 
     #if os(iOS)
     private func handleBackgroundProcessing(task: BGProcessingTask) {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Background processing task withheld because local storage is unavailable",
+                level: .fault
+            )
+            task.setTaskCompleted(success: false)
+            return
+        }
         AppLog.shared.general("Background processing task started: \(task.identifier)")
 
         // Set expiration handler
@@ -1371,6 +1486,14 @@ struct BisonNotesAIApp: App {
     }
 
     private func handleAppRefresh(task: BGAppRefreshTask) {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Background app refresh withheld because local storage is unavailable",
+                level: .fault
+            )
+            task.setTaskCompleted(success: false)
+            return
+        }
         AppLog.shared.general("Background app refresh started")
 
         task.expirationHandler = {
@@ -1391,6 +1514,13 @@ struct BisonNotesAIApp: App {
     #endif
 
     private func setupWatchConnectivity() {
+        guard persistenceController.storeState.isOperational else {
+            AppLog.shared.coreData(
+                "Watch connectivity setup withheld because local storage is unavailable",
+                level: .fault
+            )
+            return
+        }
         // Initialize watch connectivity for background sync
         let watchManager = WatchConnectivityManager.shared
 
@@ -1418,6 +1548,62 @@ struct BisonNotesAIApp: App {
             }
         }
 
+    }
+
+    /// Reconcile only D's app-owned media receipts. A failed Core Data read
+    /// withholds every receipt disposition, so a missing reference can never
+    /// be mistaken for permission to delete or replay an artifact.
+    private func reconcileMediaOperationState() {
+        guard let store = MediaOperationRecoveryStore.live() else {
+            AppLog.shared.fileManagement(
+                "staging_reconciled disposition=unavailable",
+                level: .error
+            )
+            return
+        }
+
+        let coreDataManager = CoreDataManager(persistenceController: persistenceController)
+        let recordings: [RecordingEntry]
+        do {
+            recordings = try coreDataManager.getAllRecordings()
+        } catch {
+            AppLog.shared.coreData(
+                "Media recovery reconciliation withheld because recording lookup failed: \(error.localizedDescription)",
+                level: .error
+            )
+            return
+        }
+
+        let documentsDirectory = store.documentsDirectory
+        _ = store.reconcile(isPublishedArtifactReferenced: { receipt in
+            let publishedURL = documentsDirectory
+                .appendingPathComponent(receipt.publishedRelativePath)
+                .standardizedFileURL
+            guard recordings.contains(where: { recording in
+                guard let recordingURL = recording.recordingURL,
+                      let resolvedURL = RecordingArchiveService.resolveLocalURL(from: recordingURL) else {
+                    return false
+                }
+                return resolvedURL.standardizedFileURL.path == publishedURL.path
+            }) else {
+                return false
+            }
+
+            // A transcript import has two metadata commitments. A recording
+            // row alone is not enough to close its receipt after a crash or
+            // activation while the transcript save is still pending.
+            if receipt.kind == .transcriptImport {
+                return recordings.contains { recording in
+                    guard let recordingURL = recording.recordingURL,
+                          let resolvedURL = RecordingArchiveService.resolveLocalURL(from: recordingURL),
+                          resolvedURL.standardizedFileURL.path == publishedURL.path else {
+                        return false
+                    }
+                    return recording.transcript != nil
+                }
+            }
+            return true
+        })
     }
 
     private func setupAppShortcuts() {

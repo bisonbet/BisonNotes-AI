@@ -342,4 +342,125 @@ final class MacRecordingReliabilityTests: XCTestCase {
         XCTAssertTrue(inventory.contains(result.directoryURL.lastPathComponent))
         XCTAssertTrue(inventory.contains("3 files"))
     }
+
+    // MARK: - Input tap format readiness
+
+    /// The shipping failure, in the shape the diagnostic log recorded it: a C922
+    /// webcam running at 16 kHz while the engine reports a 48 kHz node. The tap
+    /// was installed anyway, AUHAL delivered nothing, and the segment recorded
+    /// zero frames until the capture watchdog rebuilt it five seconds later —
+    /// losing the first five seconds of every such recording.
+    ///
+    /// Measured against a real 16 kHz input, this state delivers zero frames
+    /// whether the tap asks for the node format or the hardware format, and
+    /// fails `start()` outright with `nil`. There is no format to fall back to,
+    /// so the only correct answer is to reject the device.
+    func testSampleRateMismatchIsRejected() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 16_000,
+                    hardwareChannelCount: 2,
+                    nodeSampleRate: 48_000,
+                    nodeChannelCount: 2
+                )
+            ),
+            .sampleRateMismatch
+        )
+    }
+
+    /// The built-in MacBook microphone reports one hardware channel against the
+    /// node's two, and captures perfectly — as does an iPhone Continuity
+    /// microphone with the same shape. Rejecting a channel-count disagreement
+    /// would refuse the most common input on a Mac, so the policy must ignore it
+    /// and look only at the sample rate.
+    func testChannelCountDisagreementIsStillUsable() {
+        for snapshot in [
+            // Built-in MacBook Pro microphone.
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 1,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            ),
+            // iPhone Continuity microphone.
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 1,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            )
+        ] {
+            XCTAssertEqual(MacInputTapFormatPolicy.readiness(for: snapshot), .usable)
+        }
+    }
+
+    /// A matching rate on a plain two-channel device — the common healthy case.
+    func testMatchingSampleRateIsUsable() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 48_000,
+                    hardwareChannelCount: 2,
+                    nodeSampleRate: 48_000,
+                    nodeChannelCount: 2
+                )
+            ),
+            .usable
+        )
+    }
+
+    /// An absent format means no input is enabled at all, which is a different
+    /// failure from a device whose rate simply does not match.
+    func testMissingFormatReportsUnavailable() {
+        for snapshot in [
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 0,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            ),
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 0
+            )
+        ] {
+            XCTAssertEqual(MacInputTapFormatPolicy.readiness(for: snapshot), .unavailable)
+        }
+    }
+
+    /// Sample rates arrive as doubles, so a rate that differs only by floating
+    /// point noise must not reject a healthy device.
+    func testFloatingPointNoiseIsStillUsable() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 44_100.000_001,
+                    hardwareChannelCount: 1,
+                    nodeSampleRate: 44_100,
+                    nodeChannelCount: 1
+                )
+            ),
+            .usable
+        )
+    }
+
+    /// A rejected start must name both rates. Without them the log says only
+    /// that the microphone failed, which is what made the original bug look like
+    /// bad hardware for six weeks.
+    func testMismatchDescriptionNamesBothRates() {
+        let description = MacInputTapFormatPolicy.mismatchDescription(
+            for: MacInputFormatSnapshot(
+                hardwareSampleRate: 16_000,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            )
+        )
+
+        XCTAssertTrue(description.contains("16000.0"))
+        XCTAssertTrue(description.contains("48000.0"))
+    }
 }

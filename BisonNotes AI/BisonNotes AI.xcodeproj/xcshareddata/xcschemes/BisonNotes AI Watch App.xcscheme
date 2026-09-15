@@ -89,7 +89,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "1485FEA42E526FB10044121F"
             BuildableName = "BisonNotes AI Watch App.app"
-            BlueprintName = "BisonNotes AI Watch App"
             ReferencedContainer = "container:BisonNotes AI.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -106,7 +105,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "1485FEA42E526FB10044121F"
             BuildableName = "BisonNotes AI Watch App.app"
-            BlueprintName = "BisonNotes AI Watch App"
             ReferencedContainer = "container:BisonNotes AI.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

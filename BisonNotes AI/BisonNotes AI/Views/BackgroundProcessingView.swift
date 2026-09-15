@@ -15,6 +15,7 @@ struct BackgroundProcessingView: View {
     @State private var showingCleanupConfirmation = false
     @State private var showingCancelAllConfirmation = false
     @State private var showingClearAllConfirmation = false
+    @State private var actionError: String?
 
     private var isNativeMacModelessWindow: Bool {
         if case .modelessWindow = presentationContext {
@@ -30,11 +31,17 @@ struct BackgroundProcessingView: View {
                 // Header with overall status
                 headerSection
 
+                if !processingManager.recoveryIssues.isEmpty {
+                    recoveryIssuesSection
+                }
+
                 // Active jobs list
                 if !processingManager.activeJobs.isEmpty {
                     jobsListSection
-                } else {
+                } else if processingManager.recoveryIssues.isEmpty {
                     emptyStateSection
+                } else {
+                    recoveryOnlyStateSection
                 }
 
                 Spacer()
@@ -51,8 +58,17 @@ struct BackgroundProcessingView: View {
                 processingManager: processingManager,
                 showingCleanupConfirmation: $showingCleanupConfirmation,
                 showingCancelAllConfirmation: $showingCancelAllConfirmation,
-                showingClearAllConfirmation: $showingClearAllConfirmation
+                showingClearAllConfirmation: $showingClearAllConfirmation,
+                actionError: $actionError
             ))
+            .alert("Background Processing Error", isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )) {
+                Button("OK", role: .cancel) { actionError = nil }
+            } message: {
+                Text(actionError ?? "The requested background-processing action could not be completed.")
+            }
         }
     }
 
@@ -155,6 +171,40 @@ struct BackgroundProcessingView: View {
         }
     }
 
+    private var recoveryIssuesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Recovery Needed", systemImage: "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundColor(.orange)
+
+            ForEach(processingManager.recoveryIssues) { issue in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(issue.recordingName ?? "Processing job")
+                        .font(.subheadline.weight(.semibold))
+                    Text(issue.message)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(
+                        issue.isDurablyQuarantined
+                            ? "The job was retained and will not run automatically."
+                            : "The job was retained, but its recovery state could not be saved; processing is withheld."
+                    )
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.orange.opacity(0.12))
+                )
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .accessibilityIdentifier("backgroundProcessingRecoveryIssues")
+    }
+
     private var emptyStateSection: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle")
@@ -167,6 +217,26 @@ struct BackgroundProcessingView: View {
                 .foregroundColor(.primary)
 
             Text("All processing jobs have been completed or there are no pending jobs.")
+                .font(.body)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var recoveryOnlyStateSection: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 60))
+                .foregroundColor(.orange)
+
+            Text("Review Required")
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+
+            Text("Saved processing jobs need review. No job was started automatically.")
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -226,6 +296,7 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
     @Binding var showingCleanupConfirmation: Bool
     @Binding var showingCancelAllConfirmation: Bool
     @Binding var showingClearAllConfirmation: Bool
+    @Binding var actionError: String?
     @Environment(\.dismiss) private var dismiss
 
     func body(content: Content) -> some View {
@@ -314,7 +385,13 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
 
     private func cleanupCompletedJobs() {
         Task {
-            await processingManager.cleanupCompletedJobs()
+            do {
+                try await processingManager.cleanupCompletedJobs()
+            } catch {
+                await MainActor.run {
+                    self.actionError = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -324,9 +401,14 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
         }
     }
 
+    @MainActor
     private func clearAllJobs() {
-        Task {
-            await processingManager.clearAllJobs()
+        Task { @MainActor in
+            do {
+                try await processingManager.clearAllJobs()
+            } catch {
+                self.actionError = error.localizedDescription
+            }
         }
     }
 }

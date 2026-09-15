@@ -247,18 +247,11 @@ extension AudioRecorderViewModel {
 		let inputNode = engine.inputNode
 		// Apple documents the input-scope format as the hardware-availability
 		// check. The output format can remain populated while a USB input route
-		// is present but not actually delivering microphone buffers.
+		// is present but not actually delivering microphone buffers, and it keeps
+		// reporting 48 kHz for a device bound at another rate — a node in that
+		// state captures nothing no matter which format the tap asks for.
 		let hardwareInputFormat = inputNode.inputFormat(forBus: 0)
-		let inputFormat = inputNode.outputFormat(forBus: 0)
-
-		guard hardwareInputFormat.sampleRate > 0, hardwareInputFormat.channelCount > 0,
-		      inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-			throw NSError(
-				domain: "AudioRecorderViewModel.Mac",
-				code: -1,
-				userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
-			)
-		}
+		let inputFormat = try Self.tappableInputFormat(for: inputNode)
 
 		let scratchURL = suppliedScratchURL ?? Self.macScratchURL(for: url)
 		registerRecordingAttemptArtifact(at: scratchURL)
@@ -300,6 +293,55 @@ extension AudioRecorderViewModel {
 		)
 	}
 
+	/// The tap format for an input node that can actually deliver buffers.
+	///
+	/// Rebinding the AUHAL in `configureInputDevice(for:deviceID:)` does not change
+	/// what the node reports for `outputFormat(forBus:)`: it keeps describing a
+	/// 48 kHz graph regardless of the device just bound to it. Tapping a node whose
+	/// hardware runs at a different rate yields a tap that never fires, and the
+	/// segment sat at zero frames until the capture watchdog rebuilt it five
+	/// seconds later — losing the head of every recording on such a device.
+	///
+	/// There is no format that rescues that state and nothing to wait for: a
+	/// mismatched device delivers zero frames whether the tap asks for the node
+	/// format or the hardware format, refuses to start at all with `nil`, and never
+	/// reconciles on a timer or on `prepare()`. So this is one synchronous read.
+	/// Throwing hands the device straight to the caller's fallback, which tries the
+	/// next input on a fresh engine — the same place the watchdog used to arrive
+	/// five seconds and one lost segment later.
+	private static func tappableInputFormat(
+		for inputNode: AVAudioInputNode
+	) throws -> AVAudioFormat {
+		let hardwareFormat = inputNode.inputFormat(forBus: 0)
+		let nodeFormat = inputNode.outputFormat(forBus: 0)
+		let snapshot = MacInputFormatSnapshot(
+			hardwareSampleRate: hardwareFormat.sampleRate,
+			hardwareChannelCount: hardwareFormat.channelCount,
+			nodeSampleRate: nodeFormat.sampleRate,
+			nodeChannelCount: nodeFormat.channelCount
+		)
+
+		switch MacInputTapFormatPolicy.readiness(for: snapshot) {
+		case .usable:
+			return nodeFormat
+		case .unavailable:
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -1,
+				userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
+			)
+		case .sampleRateMismatch:
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -22,
+				userInfo: [
+					NSLocalizedDescriptionKey:
+						MacInputTapFormatPolicy.mismatchDescription(for: snapshot)
+				]
+			)
+		}
+	}
+
 	/// Pause Mac recording: remove the input tap so the file stops
 	/// receiving samples. The engine and file stay alive so resume can
 	/// continue writing to the same file.
@@ -314,13 +356,44 @@ extension AudioRecorderViewModel {
 	/// Resume Mac recording: re-install the tap on the same input node,
 	/// writing into the same AVAudioFile that was opened in `start...`.
 	func resumeMacEngineRecording() throws {
-		guard macAudioEngine != nil, macAudioFile != nil else {
+		guard let engine = macAudioEngine, macAudioFile != nil else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -2,
 				userInfo: [NSLocalizedDescriptionKey: "Engine state was lost; cannot resume."]
 			)
 		}
+
+		// Re-validate before reinstalling the tap. Pause keeps this engine alive but
+		// stops the capture watchdog, so an input that changed rate or went away
+		// while paused goes unnoticed: the tap would be reinstalled against a format
+		// the hardware no longer delivers, capture nothing, and only be caught by the
+		// watchdog five seconds after resuming — the same silent loss `start` was
+		// fixed for.
+		//
+		// A changed rate cannot simply be adopted here: `macAudioFile` was opened
+		// with the start-time format and this resume continues writing into it, so
+		// there is nothing valid to switch to. Throwing leaves the recording paused
+		// with everything captured so far intact, and the caller surfaces it, so the
+		// user can reconnect the input and resume again rather than lose audio to a
+		// tap that was never going to fire.
+		let resumeFormat = try Self.tappableInputFormat(for: engine.inputNode)
+		if let engineFormat = macEngineFormat,
+		   abs(resumeFormat.sampleRate - engineFormat.sampleRate)
+			> MacInputTapFormatPolicy.sampleRateTolerance {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -23,
+				userInfo: [
+					NSLocalizedDescriptionKey:
+						"The microphone changed to \(resumeFormat.sampleRate) Hz while the recording "
+						+ "was paused, but this recording is being written at "
+						+ "\(engineFormat.sampleRate) Hz. Reconnect the original microphone to resume, "
+						+ "or stop to keep what has been recorded."
+				]
+			)
+		}
+
 		macCaptureHealth.beginSegment()
 		installMacInputTap()
 		macSystemAudioCapture?.setPaused(false)

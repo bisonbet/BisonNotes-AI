@@ -101,6 +101,10 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         try createSilentAudioFixture(at: continuationURL, duration: 0.25)
 
         let viewModel = AudioRecorderViewModel()
+        let persistence = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: persistence)
+        viewModel.appCoordinator = coordinator
+        viewModel.workflowManager = coordinator.workflowManager
         viewModel.recordingSegments = [startupFragmentURL, continuationURL]
         viewModel.mainRecordingURL = startupFragmentURL
         viewModel.recordingURL = continuationURL
@@ -277,7 +281,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         let coordinator = AppDataCoordinator(persistenceController: persistence)
         let audioURL = tempDirectory.appendingPathComponent("missing-identity.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = coordinator.addRecording(
+        let recordingId = try coordinator.addRecording(
             url: audioURL,
             name: "Missing Identity",
             date: Date(),
@@ -308,7 +312,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         let coordinator = AppDataCoordinator(persistenceController: persistence)
         let audioURL = tempDirectory.appendingPathComponent("persisted-transcript.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = coordinator.addRecording(
+        let recordingId = try coordinator.addRecording(
             url: audioURL,
             name: "Persisted Transcript",
             date: Date(),
@@ -340,7 +344,7 @@ final class AudioTranscriptionRegressionTests: XCTestCase {
         let coordinator = AppDataCoordinator(persistenceController: persistence)
         let audioURL = tempDirectory.appendingPathComponent("active-job.m4a")
         try TestHelpers.createMockAudioFile(at: audioURL)
-        let recordingId = coordinator.addRecording(
+        let recordingId = try coordinator.addRecording(
             url: audioURL,
             name: "Active Job",
             date: Date(),

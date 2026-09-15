@@ -129,8 +129,17 @@ enum BisonNotesUITestSupport {
 
     @MainActor
     private static func seedSampleRecordingIfNeeded(appCoordinator: AppDataCoordinator) {
-        let existing = appCoordinator.coreDataManager.getAllRecordings()
-            .contains { $0.recordingName == sampleRecordingName }
+        let existing: Bool
+        do {
+            existing = try appCoordinator.coreDataManager.getAllRecordings()
+                .contains { $0.recordingName == sampleRecordingName }
+        } catch {
+            AppLog.shared.coreData(
+                "UI-test sample seeding withheld because recordings could not be read: \(error.localizedDescription)",
+                level: .error
+            )
+            return
+        }
         guard !existing else { return }
 
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -141,46 +150,54 @@ enum BisonNotesUITestSupport {
         try? createSilentAudioFixture(at: audioURL)
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int64) ?? 0
-        let recordingId = appCoordinator.addRecording(
-            url: audioURL,
-            name: sampleRecordingName,
-            date: Date(timeIntervalSince1970: 1_772_000_000),
-            fileSize: fileSize,
-            duration: 2.0,
-            quality: .whisperOptimized
-        )
-
-        let segments = [
-            TranscriptSegment(
-                speaker: "Speaker 1",
-                text: "This is a deterministic transcript seeded for UI regression tests.",
-                startTime: 0,
-                endTime: 2
+        do {
+            let recordingId = try appCoordinator.addRecording(
+                url: audioURL,
+                name: sampleRecordingName,
+                date: Date(timeIntervalSince1970: 1_772_000_000),
+                fileSize: fileSize,
+                duration: 2.0,
+                quality: .whisperOptimized
             )
-        ]
-        guard let transcriptId = appCoordinator.addTranscript(
-            for: recordingId,
-            segments: segments,
-            engine: .fluidAudio,
-            processingTime: 0.1,
-            confidence: 0.99
-        ) else {
-            return
-        }
 
-        _ = appCoordinator.addSummary(
-            for: recordingId,
-            transcriptId: transcriptId,
-            summary: "This seeded UI test summary is intentionally long enough to pass summary validation and prove the summary linkage survives launch.",
-            tasks: [TaskItem(text: "Verify seeded UI test recording")],
-            reminders: [],
-            titles: [TitleItem(text: "UI Test Recording")],
-            contentType: .meeting,
-            aiEngine: "UITest",
-            aiModel: "fixture",
-            originalLength: segments.first?.text.count ?? 0,
-            processingTime: 0.1
-        )
+            let segments = [
+                TranscriptSegment(
+                    speaker: "Speaker 1",
+                    text: "This is a deterministic transcript seeded for UI regression tests.",
+                    startTime: 0,
+                    endTime: 2
+                )
+            ]
+            guard let transcriptId = try appCoordinator.addTranscript(
+                for: recordingId,
+                segments: segments,
+                engine: .fluidAudio,
+                processingTime: 0.1,
+                confidence: 0.99
+            ) else {
+                AppLog.shared.coreData("UI-test sample transcript produced no persistable output", level: .error)
+                return
+            }
+
+            guard try appCoordinator.addSummary(
+                for: recordingId,
+                transcriptId: transcriptId,
+                summary: "This seeded UI test summary is intentionally long enough to pass summary validation and prove the summary linkage survives launch.",
+                tasks: [TaskItem(text: "Verify seeded UI test recording")],
+                reminders: [],
+                titles: [TitleItem(text: "UI Test Recording")],
+                contentType: .meeting,
+                aiEngine: "UITest",
+                aiModel: "fixture",
+                originalLength: segments.first?.text.count ?? 0,
+                processingTime: 0.1
+            ) != nil else {
+                AppLog.shared.coreData("UI-test sample summary produced no persistable output", level: .error)
+                return
+            }
+        } catch {
+            AppLog.shared.coreData("UI-test sample seeding failed: \(error.localizedDescription)", level: .error)
+        }
     }
 
     private static func createSilentAudioFixture(at url: URL) throws {

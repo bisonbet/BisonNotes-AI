@@ -6,6 +6,7 @@
 //
 
 import Foundation
+@preconcurrency import AVFoundation
 #if os(iOS)
 @preconcurrency import WatchConnectivity
 #endif
@@ -23,6 +24,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     @Published var isWatchAppInstalled: Bool = false
 
     var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchSyncRecordingArtifactReceived: ((MediaOperation, WatchSyncRequest) -> Void)?
     var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
 
     static let shared = WatchConnectivityManager()
@@ -60,15 +62,18 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private let processedRecordingIdsKey = "processedWatchRecordingIds"
     private let maxProcessedIdsRetained = 200
     private var watchConnectivitySupported = false
+    private let mediaRecoveryStore: MediaOperationRecoveryStore?
 
     // MARK: - File sync callbacks
     var onWatchSyncRecordingReceived: ((Data, WatchSyncRequest) -> Void)?
+    var onWatchSyncRecordingArtifactReceived: ((MediaOperation, WatchSyncRequest) -> Void)?
     var onWatchRecordingSyncCompleted: ((UUID, Bool) -> Void)?
 
     // MARK: - Singleton
     static let shared = WatchConnectivityManager()
 
     override init() {
+        self.mediaRecoveryStore = MediaOperationRecoveryStore.live()
         super.init()
         setupWatchConnectivity()
         setupNotificationObservers()
@@ -80,6 +85,23 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         }
         self.session = nil
     }
+
+    #if DEBUG
+    /// A receiver with no live WCSession, for deterministic transfer retry tests.
+    init(testing: Bool) {
+        self.mediaRecoveryStore = nil
+        super.init()
+    }
+
+    init(testing: Bool, mediaRecoveryStore: MediaOperationRecoveryStore) {
+        self.mediaRecoveryStore = mediaRecoveryStore
+        super.init()
+    }
+
+    func receiveForTesting(fileURL: URL, metadata: [String: Any]) {
+        handleWatchRecordingReceived(fileURL: fileURL, metadata: metadata)
+    }
+    #endif
 
     // MARK: - Setup Methods
 
@@ -118,10 +140,114 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
 
+}
+
+extension WatchConnectivityManager {
     // MARK: - Receiving Recordings
 
     /// Handle completed file transfer from watch (file already staged by the
     /// delegate; the staged copy is cleaned up by the caller)
+    private func receiveDurableWatchArtifact(fileURL: URL, syncRequest: WatchSyncRequest,
+        recordingId: UUID, mediaRecoveryStore: MediaOperationRecoveryStore) {
+
+            var operation: MediaOperation?
+            do {
+                let sourceIdentity = try mediaRecoveryStore.artifactIdentity(for: fileURL)
+                guard syncRequest.fileSize <= 0 || sourceIdentity.fileSize == syncRequest.fileSize else {
+                    throw MediaOperationRecoveryError.artifactIntegrityMismatch
+                }
+
+                if let pending = try mediaRecoveryStore.pendingOperation(
+                    kind: .watchImport,
+                    sourceFileSize: sourceIdentity.fileSize,
+                    sourceFingerprint: sourceIdentity.fingerprint,
+                    recordingID: recordingId
+                ) {
+                    // A relaunch/re-delivery reuses the exact owned operation.
+                    // It never creates a second destination for the same
+                    // sender identity and bytes.
+                    operation = pending
+                } else {
+                    let documentsURL = try documentsDirectoryForWatchImport()
+                    let destinationURL = documentsURL.appendingPathComponent(
+                        "apprecording-\(Int(syncRequest.createdAt.timeIntervalSince1970))-\(recordingId.uuidString).m4a",
+                        isDirectory: false
+                    )
+                    let prepared = try mediaRecoveryStore.begin(
+                        kind: .watchImport,
+                        sourceName: syncRequest.filename,
+                        destinationURL: destinationURL,
+                        fileExtension: "m4a",
+                        recordingID: recordingId,
+                        sourceFileSize: sourceIdentity.fileSize,
+                        sourceFingerprint: sourceIdentity.fingerprint
+                    )
+                    operation = try mediaRecoveryStore.stageCopy(from: fileURL, for: prepared)
+                    guard let staged = operation else {
+                        throw MediaOperationRecoveryError.missingStagingArtifact
+                    }
+                    try validateWatchArtifact(staged.stagingURL, expectedSize: syncRequest.fileSize)
+                }
+
+                guard let receivedOperation = operation else {
+                    throw MediaOperationRecoveryError.unavailable
+                }
+                let validationURL = FileManager.default.fileExists(
+                    atPath: receivedOperation.publishedURL.path
+                ) ? receivedOperation.publishedURL : receivedOperation.stagingURL
+                try validateWatchArtifact(validationURL, expectedSize: syncRequest.fileSize)
+                let audioData = try Data(contentsOf: validationURL)
+
+                if !syncRequest.checksumMD5.isEmpty {
+                    let actualChecksum = audioData.md5
+                    guard actualChecksum == syncRequest.checksumMD5 else {
+                        if receivedOperation.receipt.phase == .prepared
+                            || receivedOperation.receipt.phase == .staged {
+                            try mediaRecoveryStore.abortBeforePublish(receivedOperation)
+                        }
+                        AppLog.shared.watchConnectivity("Checksum mismatch for recording", level: .error)
+                        handleSyncFailure(recordingId, reason: "checksum_mismatch")
+                        return
+                    }
+                }
+
+                if let callback = onWatchSyncRecordingArtifactReceived {
+                    callback(receivedOperation, syncRequest)
+                } else if let callback = onWatchSyncRecordingReceived {
+                    // Preserve the old callback surface for tests and older
+                    // integrations; the durable bytes remain owned by this
+                    // manager until confirmSyncComplete resolves them.
+                    callback(audioData, syncRequest)
+                } else {
+                    AppLog.shared.watchConnectivity(
+                        "Watch recording callback is nil - staged file retained for recovery",
+                        level: .error
+                    )
+                    handleSyncFailure(recordingId, reason: "callback_not_set")
+                }
+            } catch {
+                if let operation,
+                   operation.receipt.phase == .prepared || operation.receipt.phase == .staged,
+                   !FileManager.default.fileExists(atPath: operation.publishedURL.path) {
+                    do {
+                        try mediaRecoveryStore.abortBeforePublish(operation)
+                    } catch {
+                        AppLog.shared.watchConnectivity(
+                            "Could not remove failed Watch staging state: \(error.localizedDescription)",
+                            level: .error
+                        )
+                    }
+                }
+                AppLog.shared.watchConnectivity(
+                    "Failed to stage or validate received watch file: \(error.localizedDescription)",
+                    level: .error
+                )
+                handleSyncFailure(recordingId, reason: "staging_error")
+            }
+            return
+
+    }
+
     private func handleWatchRecordingReceived(fileURL: URL, metadata: [String: Any]) {
         guard let recordingIdString = metadata["recordingId"] as? String,
               let recordingId = UUID(uuidString: recordingIdString) else {
@@ -180,6 +306,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             checksumMD5: metadata["checksumMD5"] as? String ?? "",
             locationData: locationData
         )
+
+        if let mediaRecoveryStore {
+            receiveDurableWatchArtifact(fileURL: fileURL, syncRequest: syncRequest,
+                recordingId: recordingId, mediaRecoveryStore: mediaRecoveryStore)
+            return
+        }
 
         let receivedSize = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         let fileSizeMB = Double(receivedSize) / (1024 * 1024)
@@ -284,6 +416,35 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     private func cleanupSyncOperation(_ recordingId: UUID) {
         inFlightRecordingIds.remove(recordingId)
         endImportBackgroundTask(recordingId)
+    }
+
+    private func documentsDirectoryForWatchImport() throws -> URL {
+        guard let documentsURL = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first else {
+            throw MediaOperationRecoveryError.unavailable
+        }
+        return documentsURL
+    }
+
+    private func validateWatchArtifact(_ url: URL, expectedSize: Int64) throws {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let size = attributes[.size] as? Int64 ?? 0
+        guard size > 0, expectedSize <= 0 || size == expectedSize else {
+            throw MediaOperationRecoveryError.missingStagingArtifact
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            guard player.duration > 0, player.duration.isFinite else {
+                throw MediaOperationRecoveryError.missingStagingArtifact
+            }
+        } catch let error as MediaOperationRecoveryError {
+            throw error
+        } catch {
+            throw MediaOperationRecoveryError.receiptReadFailed("The received file is not readable audio.")
+        }
     }
 
     private func endImportBackgroundTask(_ recordingId: UUID) {
