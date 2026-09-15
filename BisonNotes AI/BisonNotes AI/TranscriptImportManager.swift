@@ -169,8 +169,20 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // A failed transcript save leaves the published dummy audio and its
         // receipt. An explicit re-import of the same text reuses that exact
         // operation before name uniquing can create a second recording.
+        // Match on the requested name as well as the text. Identical extracted
+        // text under two different names is two separate imports: matching on
+        // size and fingerprint alone resumed the first one's retained receipt and
+        // returned its recording id, so a file-based caller counted the second
+        // import as successful and removed its Inbox source without ever creating
+        // the separately named recording.
+        //
+        // `baseName` is the identity, not the uniqued name stored previously: a
+        // genuine redelivery of the same import arrives with the same requested
+        // name, while `generateUniqueRecordingName` would have moved on to
+        // " (2)" once the first recording existed and could never match.
         if let pending = try mediaRecoveryStore.pendingOperation(
             kind: .transcriptImport,
+            sourceName: baseName,
             sourceFileSize: sourceFileSize,
             sourceFingerprint: sourceFingerprint
         ) {
@@ -201,7 +213,9 @@ class TranscriptImportManager: NSObject, ObservableObject {
         do {
             operation = try mediaRecoveryStore.begin(
                 kind: .transcriptImport,
-                sourceName: transcriptName,
+                // The requested name, not the uniqued one, so a redelivery of
+                // this same import can still match the receipt above.
+                sourceName: baseName,
                 destinationURL: dummyAudioURL,
                 fileExtension: "m4a",
                 recordingID: UUID(),

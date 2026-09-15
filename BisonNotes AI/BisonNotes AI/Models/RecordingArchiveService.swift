@@ -94,6 +94,7 @@ class RecordingArchiveService: ObservableObject {
             return archivedCount
         }
 
+        var localRemovalFailures: [String] = []
         for recording in recordings {
             guard let recordingId = recording.id,
                   archivedRecordingIDs.contains(recordingId) else {
@@ -108,11 +109,21 @@ class RecordingArchiveService: ObservableObject {
                 try FileManager.default.removeItem(at: url)
                 AppLog.shared.recording("Archived: removed local audio \(url.lastPathComponent)")
             } catch {
+                // Continue to the remaining recordings, as the sidecar cleanup
+                // below already does. Every selected row was marked archived
+                // before this loop, so throwing here left each later recording
+                // archived with its local audio still present — and the caller
+                // clears the archive selection rather than retaining a retry, so
+                // that offload could not be resumed without exporting again. The
+                // failures are still reported once the loop has done all the work
+                // it can.
                 AppLog.shared.recording(
-                    "Archived metadata committed, but local audio removal failed: \(error.localizedDescription)",
+                    "Archived metadata committed, but local audio removal failed for "
+                        + "\(url.lastPathComponent): \(error.localizedDescription)",
                     level: .error
                 )
-                throw RecordingArchiveError.deleteFailed(error.localizedDescription)
+                localRemovalFailures.append(url.lastPathComponent)
+                continue
             }
             // Sidecars are cleanup only; failure to remove one must not erase
             // the durable archive state or the recoverable archive destination.
@@ -132,6 +143,17 @@ class RecordingArchiveService: ObservableObject {
         }
 
         AppLog.shared.recording("Archived \(archivedCount) of \(recordings.count) recording(s), removeLocal=true")
+
+        // Report once, after every recording that could be cleaned up has been.
+        // The archive metadata is committed either way, so this tells the caller
+        // which local sources survived rather than hiding it behind the first
+        // failure.
+        guard localRemovalFailures.isEmpty else {
+            throw RecordingArchiveError.deleteFailed(
+                "Archived \(archivedCount) recording(s), but local audio could not be removed for "
+                    + "\(localRemovalFailures.count): \(localRemovalFailures.joined(separator: ", "))"
+            )
+        }
         return archivedCount
     }
 
