@@ -356,13 +356,44 @@ extension AudioRecorderViewModel {
 	/// Resume Mac recording: re-install the tap on the same input node,
 	/// writing into the same AVAudioFile that was opened in `start...`.
 	func resumeMacEngineRecording() throws {
-		guard macAudioEngine != nil, macAudioFile != nil else {
+		guard let engine = macAudioEngine, macAudioFile != nil else {
 			throw NSError(
 				domain: "AudioRecorderViewModel.Mac",
 				code: -2,
 				userInfo: [NSLocalizedDescriptionKey: "Engine state was lost; cannot resume."]
 			)
 		}
+
+		// Re-validate before reinstalling the tap. Pause keeps this engine alive but
+		// stops the capture watchdog, so an input that changed rate or went away
+		// while paused goes unnoticed: the tap would be reinstalled against a format
+		// the hardware no longer delivers, capture nothing, and only be caught by the
+		// watchdog five seconds after resuming — the same silent loss `start` was
+		// fixed for.
+		//
+		// A changed rate cannot simply be adopted here: `macAudioFile` was opened
+		// with the start-time format and this resume continues writing into it, so
+		// there is nothing valid to switch to. Throwing leaves the recording paused
+		// with everything captured so far intact, and the caller surfaces it, so the
+		// user can reconnect the input and resume again rather than lose audio to a
+		// tap that was never going to fire.
+		let resumeFormat = try Self.tappableInputFormat(for: engine.inputNode)
+		if let engineFormat = macEngineFormat,
+		   abs(resumeFormat.sampleRate - engineFormat.sampleRate)
+			> MacInputTapFormatPolicy.sampleRateTolerance {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Mac",
+				code: -23,
+				userInfo: [
+					NSLocalizedDescriptionKey:
+						"The microphone changed to \(resumeFormat.sampleRate) Hz while the recording "
+						+ "was paused, but this recording is being written at "
+						+ "\(engineFormat.sampleRate) Hz. Reconnect the original microphone to resume, "
+						+ "or stop to keep what has been recorded."
+				]
+			)
+		}
+
 		macCaptureHealth.beginSegment()
 		installMacInputTap()
 		macSystemAudioCapture?.setPaused(false)
