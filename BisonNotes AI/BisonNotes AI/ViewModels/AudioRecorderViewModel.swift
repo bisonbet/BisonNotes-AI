@@ -52,6 +52,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject {
 	// Reference to the app coordinator for adding recordings to registry
 	var appCoordinator: AppDataCoordinator?
 	var workflowManager: RecordingWorkflowManager?
+
+	#if DEBUG
+	/// Injected failure for the merged recording's metadata commit. Lets a test
+	/// run a real segment merge all the way to the point where the merged file is
+	/// in place but Core Data has not acknowledged it — the window in which both
+	/// of this path's production bugs lived. Never set outside tests.
+	var mergeCommitFailureForTesting: (any Error)?
+	#endif
 	var cancellables = Set<AnyCancellable>()
 
 	var audioRecorder: AVAudioRecorder?

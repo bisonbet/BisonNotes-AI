@@ -281,6 +281,13 @@ extension AudioRecorderViewModel {
 					)
 				}
 				let quality = AudioRecorderViewModel.getCurrentAudioQuality()
+				#if DEBUG
+				// Fails the merged recording's metadata commit so tests can drive a
+				// real merge into its post-commit boundary — the window where the
+				// output exists but nothing references it. The production path never
+				// sets this seam.
+				if let injected = mergeCommitFailureForTesting { throw injected }
+				#endif
 				let recordingId = try workflowManager.createRecording(
 					url: mainURL,
 					name: capturedName,
@@ -335,32 +342,22 @@ extension AudioRecorderViewModel {
 					+ "domain=\(nsError.domain) code=\(nsError.code) description=\(nsError.localizedDescription)",
 				level: .error
 			)
-			// Once the merge completed, `segments` no longer describes inputs: its
-			// mainURL entry IS the finished output that replaced the original first
-			// segment, and backupURL holds that original. Snapshotting the whole set
-			// would make the next recovery pass merge the completed recording together
-			// with its own inputs and duplicate the audio. After a completed merge only
-			// the merged file needs retrying — the metadata save is what failed.
-			//
-			// Those superseded inputs must still be released here. The success path
-			// below discards them once Core Data acknowledges the merge, and it never
-			// ran; if they are neither snapshotted nor deleted they become untracked
-			// full-size files that a later recovery — which only knows about mainURL —
-			// can never reclaim. Their audio is already inside the merged output, so
-			// dropping them loses nothing.
-			let preservedArtifacts: [URL]
-			if mergeCompleted {
-				if let backupURL {
-					removeOwnedRecordingAttemptArtifact(at: backupURL)
-				}
-				deleteSegmentFiles(segments.filter {
-					$0.standardizedFileURL != mainURL.standardizedFileURL
-				})
-				preservedArtifacts = [mainURL]
-			} else {
-				preservedArtifacts = segments + (backupURL.map { [$0] } ?? [])
+			// What survives a failed merge is decided in one place, because the two
+			// halves fail in opposite directions: preserving too much makes the next
+			// recovery pass merge the finished recording with its own inputs, and
+			// releasing too little leaves full-size audio on disk that nothing
+			// references. See RecordingMergeRecoveryPolicy.
+			let disposition = RecordingMergeRecoveryPolicy.disposition(
+				mergeCompleted: mergeCompleted,
+				segments: segments,
+				mainURL: mainURL,
+				backupURL: backupURL
+			)
+			if let releasedBackup = disposition.releaseBackup {
+				removeOwnedRecordingAttemptArtifact(at: releasedBackup)
 			}
-			preserveFailedMergeSegments(preservedArtifacts, mainURL: mainURL)
+			deleteSegmentFiles(disposition.releaseSegments)
+			preserveFailedMergeSegments(disposition.preserve, mainURL: mainURL)
 			if ownsLiveRecordingState {
 				errorMessage = "The recording could not be combined yet. Its segments were preserved for recovery."
 			}
