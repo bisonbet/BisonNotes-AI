@@ -30,6 +30,11 @@ struct PendingCloudMutation: Equatable {
     var transcriptIds: [UUID]
     var summaryIds: [UUID]
     var requestedAt: Date
+    /// A local-only fence for the cloud operation that was sent. It lives inside
+    /// the existing JSON payload, not in the Core Data model, so an acknowledgement
+    /// from an older run cannot consume a later enqueue for the same target whose
+    /// user-visible payload happens to be equal.
+    var acknowledgementID: UUID?
 
     init(
         kind: PendingCloudMutationKind,
@@ -37,7 +42,8 @@ struct PendingCloudMutation: Equatable {
         recordingId: UUID? = nil,
         transcriptIds: [UUID] = [],
         summaryIds: [UUID] = [],
-        requestedAt: Date
+        requestedAt: Date,
+        acknowledgementID: UUID? = nil
     ) {
         self.kind = kind
         self.targetId = targetId
@@ -45,6 +51,23 @@ struct PendingCloudMutation: Equatable {
         self.transcriptIds = Array(Set(transcriptIds)).sorted { $0.uuidString < $1.uuidString }
         self.summaryIds = Array(Set(summaryIds)).sorted { $0.uuidString < $1.uuidString }
         self.requestedAt = requestedAt
+        self.acknowledgementID = acknowledgementID
+    }
+
+    /// `acknowledgementID` is an operation fence rather than mutation content.
+    /// Keep the value equality used by diagnostics and migration tests focused on
+    /// the durable intent; acknowledgement matching below includes the fence.
+    static func == (lhs: PendingCloudMutation, rhs: PendingCloudMutation) -> Bool {
+        lhs.kind == rhs.kind &&
+            lhs.targetId == rhs.targetId &&
+            lhs.recordingId == rhs.recordingId &&
+            lhs.transcriptIds == rhs.transcriptIds &&
+            lhs.summaryIds == rhs.summaryIds &&
+            lhs.requestedAt == rhs.requestedAt
+    }
+
+    func matchesAcknowledgement(for snapshot: PendingCloudMutation) -> Bool {
+        self == snapshot && acknowledgementID == snapshot.acknowledgementID
     }
 }
 
@@ -60,6 +83,52 @@ enum PendingCloudMutationStoreError: LocalizedError {
             return "Pending cloud mutation payload is invalid: \(detail)"
         }
     }
+}
+
+private func acknowledgementID(
+    for mutation: PendingCloudMutation,
+    hasExistingMatch: Bool,
+    preserving: Bool
+) -> UUID? {
+    if hasExistingMatch { return UUID() }
+    return preserving && mutation.acknowledgementID != nil
+        ? mutation.acknowledgementID
+        : UUID()
+}
+
+private struct PendingCloudMutationPayload: Codable, Equatable {
+    var transcriptIds: [UUID]
+    var summaryIds: [UUID]
+    var acknowledgementID: UUID?
+}
+
+private struct LegacyDeletionMarker: Codable {
+    let recordingId: UUID
+    var transcriptIds: [UUID]
+    var summaryIds: [UUID]
+    let requestedAt: Date
+}
+
+private struct LegacyLocalOnlyRemoval: Codable {
+    let recordingId: UUID
+    let requestedAt: Date
+}
+
+private struct LegacySummaryRemoval: Codable {
+    let summaryId: UUID
+    var recordingId: UUID?
+    let requestedAt: Date
+}
+
+private struct LegacyTranscriptRemoval: Codable {
+    let transcriptId: UUID
+    var recordingId: UUID?
+    let requestedAt: Date
+}
+
+private struct LegacyImportedAudioRemoval: Codable {
+    let recordingId: UUID
+    let requestedAt: Date
 }
 
 /// Persistence and migration for the durable cloud-removal outbox.
@@ -91,43 +160,13 @@ enum PendingCloudMutationStore {
         legacyQueueKeys.contains { defaults.object(forKey: $0) != nil }
     }
 
-    private struct Payload: Codable, Equatable {
-        var transcriptIds: [UUID]
-        var summaryIds: [UUID]
-    }
-
-    private struct LegacyDeletionMarker: Codable {
-        let recordingId: UUID
-        var transcriptIds: [UUID]
-        var summaryIds: [UUID]
-        let requestedAt: Date
-    }
-
-    private struct LegacyLocalOnlyRemoval: Codable {
-        let recordingId: UUID
-        let requestedAt: Date
-    }
-
-    private struct LegacySummaryRemoval: Codable {
-        let summaryId: UUID
-        var recordingId: UUID?
-        let requestedAt: Date
-    }
-
-    private struct LegacyTranscriptRemoval: Codable {
-        let transcriptId: UUID
-        var recordingId: UUID?
-        let requestedAt: Date
-    }
-
-    private struct LegacyImportedAudioRemoval: Codable {
-        let recordingId: UUID
-        let requestedAt: Date
-    }
-
     /// Merges a mutation into the row with the same kind and target identity.
     /// The earliest request time is load-bearing for cross-device arbitration.
-    static func enqueue(_ mutation: PendingCloudMutation, in context: NSManagedObjectContext) throws {
+    static func enqueue(
+        _ mutation: PendingCloudMutation,
+        in context: NSManagedObjectContext,
+        preservingAcknowledgementID: Bool = false
+    ) throws {
         let matches = try matchingObjects(for: mutation, in: context)
         var merged = mutation
 
@@ -144,6 +183,13 @@ enum PendingCloudMutationStore {
                 Set(merged.summaryIds + existing.summaryIds)
             ).sorted { $0.uuidString < $1.uuidString }
         }
+
+        // New local intent gets a new fence; store binding preserves its fence.
+        merged.acknowledgementID = acknowledgementID(
+            for: merged,
+            hasExistingMatch: !matches.isEmpty,
+            preserving: preservingAcknowledgementID
+        )
 
         let object = matches.first
             ?? NSEntityDescription.insertNewObject(forEntityName: entityName, into: context)
@@ -169,7 +215,7 @@ enum PendingCloudMutationStore {
     ) throws -> Bool {
         let matches = try matchingObjects(for: snapshot, in: context)
         var removed = false
-        for object in matches where try decode(object) == snapshot {
+        for object in matches where try decode(object).matchesAcknowledgement(for: snapshot) {
             context.delete(object)
             removed = true
         }
@@ -418,9 +464,10 @@ enum PendingCloudMutationStore {
         _ mutation: PendingCloudMutation,
         to object: NSManagedObject
     ) throws {
-        let payload = Payload(
+        let payload = PendingCloudMutationPayload(
             transcriptIds: mutation.transcriptIds,
-            summaryIds: mutation.summaryIds
+            summaryIds: mutation.summaryIds,
+            acknowledgementID: mutation.acknowledgementID
         )
         let payloadData: Data
         do {
@@ -454,15 +501,15 @@ enum PendingCloudMutationStore {
             throw PendingCloudMutationStoreError.invalidPayload("unsupported payload version \(version)")
         }
 
-        let payload: Payload
+        let payload: PendingCloudMutationPayload
         if let data = object.value(forKey: "payload") as? Data {
             do {
-                payload = try JSONDecoder().decode(Payload.self, from: data)
+                payload = try JSONDecoder().decode(PendingCloudMutationPayload.self, from: data)
             } catch {
                 throw PendingCloudMutationStoreError.invalidPayload(error.localizedDescription)
             }
         } else {
-            payload = Payload(transcriptIds: [], summaryIds: [])
+            payload = PendingCloudMutationPayload(transcriptIds: [], summaryIds: [], acknowledgementID: nil)
         }
 
         return PendingCloudMutation(
@@ -471,7 +518,8 @@ enum PendingCloudMutationStore {
             recordingId: object.value(forKey: "recordingId") as? UUID,
             transcriptIds: payload.transcriptIds,
             summaryIds: payload.summaryIds,
-            requestedAt: requestedAt
+            requestedAt: requestedAt,
+            acknowledgementID: payload.acknowledgementID
         )
     }
 }

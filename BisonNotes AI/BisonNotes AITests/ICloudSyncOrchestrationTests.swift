@@ -9,6 +9,7 @@
 //
 
 import CloudKit
+import CoreData
 import XCTest
 @testable import BisonNotes_AI
 
@@ -69,7 +70,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         // there via the shared manager, and clearing the default on-disk store
         // instead left those rows behind for `bindPendingMutationContext` to copy
         // into the next test's store, where the flush leg then wrote them out.
-        manager.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
+        try manager.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
         manager.clearPendingCloudMutationsForTesting()
     }
 
@@ -127,6 +128,21 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
     private func runReconcile(reason: CloudSyncReason = .appLaunch) async throws -> CloudReconcileResult {
         try await manager.reconcileAllDataWithiCloud(appCoordinator: appCoordinator, reason: reason)
+    }
+
+    /// Rebinds a fresh manager to the same disposable store. The fixture stands
+    /// in for relaunch without touching the developer's library or a real account.
+    private func makeRelaunchedManager() throws -> iCloudStorageManager {
+        let relaunched = iCloudStorageManager(
+            transport: transport,
+            clock: clock,
+            sleeper: RecordingCloudSyncSleeper(clock: clock),
+            preferences: preferences,
+            metricsSink: metrics
+        )
+        relaunched.networkStatus = .available
+        try relaunched.bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
+        return relaunched
     }
 
     private var contentModifyIndexes: [Int] {
@@ -2649,6 +2665,247 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             manager.isUserTransferWaitingForRunningSync,
             "The flag has to clear once the transfer gets its turn"
         )
+    }
+
+    // MARK: - Slice E durable outbox acknowledgement
+
+    func testDirectDeletionUsesQueuedTimestampAndMergedChildren() async throws {
+        seedTrustedManifest()
+        let id = UUID()
+        let first = UUID()
+        let second = UUID()
+        let originalTime = clock.now.addingTimeInterval(-3600)
+        manager.enqueueRecordingDeletionForiCloud(
+            recordingId: id, transcriptIds: [first], summaryIds: [], requestedAt: originalTime
+        )
+        manager.enqueueRecordingDeletionForiCloud(
+            recordingId: id, transcriptIds: [second], summaryIds: [], requestedAt: clock.now
+        )
+        transport.seed([first, second].map { transcriptID in
+            CloudKitTestRecords.record(
+                type: "CD_BackupTranscript",
+                name: "backup_transcript_\(transcriptID.uuidString)",
+                fields: [
+                    "recordingId": id.uuidString,
+                    "lastModified": originalTime.addingTimeInterval(-60)
+                ]
+            )
+        })
+        try await manager.markRecordingDeletedIniCloud(
+            recordingId: id, transcriptIds: [second], summaryIds: [], deletedAt: clock.now
+        )
+        let marker = try XCTUnwrap(transport.storage[CKRecord.ID(recordName: "backup_deletion_\(id.uuidString)")])
+        XCTAssertEqual(marker["deletedAt"] as? Date, originalTime)
+        for transcriptID in [first, second] {
+            XCTAssertNil(transport.storage[CKRecord.ID(recordName: "backup_transcript_\(transcriptID.uuidString)")])
+        }
+        XCTAssertEqual(manager.pendingCloudDeletionCountForTesting, 0)
+    }
+
+    func testBindingCopyFailureStopsFlushBeforeCloudWrites() async throws {
+        let destination = PersistenceController(inMemory: true)
+        let coordinator = AppDataCoordinator(persistenceController: destination)
+        manager.enqueueSummaryRemovalFromiCloud(summaryId: UUID(), requestedAt: clock.now)
+        manager.setPendingMutationSaveFailureForTesting(CloudKitTestError.ckError(.internalError))
+        defer { manager.setPendingMutationSaveFailureForTesting(nil) }
+        do {
+            _ = try await manager.flushPendingiCloudMutations(appCoordinator: coordinator)
+            XCTFail("A failed outbox transfer must stop the flush")
+        } catch { }
+        XCTAssertEqual(transport.modifyOperationCount, 0)
+        XCTAssertEqual(manager.pendingSummaryRemovalCountForTesting, 1)
+        XCTAssertTrue(
+            try PendingCloudMutationStore.fetchAll(
+                in: coordinator.coreDataManager.managedObjectContext
+            ).isEmpty
+        )
+    }
+
+    func testQueryPaginationCollectsEveryPageAndPropagatesLaterFailure() async throws {
+        var cursors: [Int] = []
+        let records = try await CloudQueryPagination.collect(firstPage: (Array(0..<1000), Optional(1))) { cursor in
+            cursors.append(cursor)
+            return (cursor == 1 ? Array(1000..<2000) : [2000], cursor == 1 ? 2 : nil)
+        }
+        XCTAssertEqual(records, Array(0...2000))
+        XCTAssertEqual(cursors, [1, 2])
+        do {
+            _ = try await CloudQueryPagination.collect(firstPage: ([0], Optional(1))) { cursor in
+                if cursor == 2 { throw CloudKitTestError.ckError(.permissionFailure) }
+                return ([1], Optional(2))
+            }
+            XCTFail("A later page failure must not return a partial inventory")
+        } catch { }
+    }
+
+    func testOutboxReadFailureDoesNotAuthorizeCloudDeletion() async throws {
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let invalid = NSEntityDescription.insertNewObject(
+            forEntityName: PendingCloudMutationStore.entityName,
+            into: context
+        )
+        invalid.setValue(UUID(), forKey: "targetId")
+        invalid.setValue(Date(), forKey: "requestedAt")
+        invalid.setValue(1, forKey: "version")
+        invalid.setValue(Data(), forKey: "payload")
+        try context.save()
+
+        do {
+            _ = try await manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+            XCTFail("An unreadable outbox must not be treated as an empty deletion queue")
+        } catch {
+            // Expected. No CloudKit mutation is authorized by an unreadable queue.
+        }
+        XCTAssertEqual(
+            transport.modifyOperationCount,
+            0,
+            "A failed outbox read must stop before the first marker or content write"
+        )
+    }
+
+    func testDurableLocalIntentSurvivesCloudFailureAndRelaunch() async throws {
+        seedTrustedManifest()
+        let summaryId = UUID()
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            requestedAt: clock.now
+        )
+        transport.modifyFailures = [CloudKitTestError.ckError(.permissionFailure)]
+
+        do {
+            _ = try await manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+            XCTFail("A failed CloudKit write must not acknowledge local deletion intent")
+        } catch {
+            // The local outbox commit succeeded before CloudKit was attempted.
+        }
+        XCTAssertEqual(manager.pendingSummaryRemovalCountForTesting, 1)
+
+        let relaunched = try makeRelaunchedManager()
+        _ = try await relaunched.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+
+        XCTAssertEqual(
+            relaunched.pendingSummaryRemovalCountForTesting,
+            0,
+            "A retry after relaunch must consume only the mutation that actually completed"
+        )
+    }
+
+    func testCloudSuccessWithLocalAcknowledgementFailureRetainsOutboxAcrossRelaunch() async throws {
+        seedTrustedManifest()
+        let summaryId = UUID()
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            requestedAt: clock.now
+        )
+        manager.setPendingMutationSaveFailureForTesting(
+            PersistenceStoreFailure(domain: "SliceETest", code: 1)
+        )
+
+        do {
+            _ = try await manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+            XCTFail("Cloud success followed by a local acknowledgement failure must surface")
+        } catch {
+            // Expected: CloudKit accepted the deletion, but the durable row stayed.
+        }
+        manager.setPendingMutationSaveFailureForTesting(nil)
+
+        XCTAssertEqual(manager.pendingSummaryRemovalCountForTesting, 1)
+        XCTAssertTrue(
+            transport.savedRecordNames.contains { $0.hasPrefix("backup_deletion_summary_") },
+            "Cloud success must be observable independently of local acknowledgement"
+        )
+
+        let relaunched = try makeRelaunchedManager()
+        _ = try await relaunched.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+        XCTAssertEqual(relaunched.pendingSummaryRemovalCountForTesting, 0)
+    }
+
+    func testStaleCompletionCannotAcknowledgeAnEqualNewerIntent() async throws {
+        seedTrustedManifest()
+        let summaryId = UUID()
+        let requestedAt = clock.now
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            requestedAt: requestedAt
+        )
+
+        let gate = AsyncGate()
+        transport.modifyGate = gate
+        let inFlight = Task { @MainActor in
+            try await self.manager.flushPendingiCloudMutations(appCoordinator: self.appCoordinator)
+        }
+        let reachedCloudKit = await waitUntil("the first outbox mutation to reach CloudKit") {
+            self.transport.modifyOperationCount == 1
+        }
+        XCTAssertTrue(reachedCloudKit)
+
+        // Same stable target, timestamp, and payload; the outbox fence still marks
+        // this as newer local intent while the first completion is suspended.
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: summaryId,
+            requestedAt: requestedAt
+        )
+        gate.open()
+        _ = try await inFlight.value
+
+        XCTAssertEqual(
+            manager.pendingSummaryRemovalCountForTesting,
+            1,
+            "The suspended completion must not erase the enqueue made while it was in flight"
+        )
+
+        let relaunched = try makeRelaunchedManager()
+        _ = try await relaunched.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+        XCTAssertEqual(relaunched.pendingSummaryRemovalCountForTesting, 0)
+    }
+
+    func testPartialSummaryBatchAcknowledgesOnlyTheCloudSuccess() async throws {
+        let firstSummaryId = UUID()
+        let secondSummaryId = UUID()
+        let firstRecordName = "backup_summary_\(firstSummaryId.uuidString)"
+        let secondRecordName = "backup_summary_\(secondSummaryId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupContentIndex",
+                name: "content_index",
+                fields: [
+                    "recordingRecordNames": [] as NSArray,
+                    "transcriptRecordNames": [] as NSArray,
+                    "summaryRecordNames": [firstRecordName, secondRecordName] as NSArray,
+                    "manifestSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(type: "CD_BackupSummary", name: firstRecordName),
+            CloudKitTestRecords.record(type: "CD_BackupSummary", name: secondRecordName)
+        ])
+        let firstRequestedAt = clock.now
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: firstSummaryId,
+            requestedAt: firstRequestedAt
+        )
+        clock.advance(1)
+        manager.enqueueSummaryRemovalFromiCloud(
+            summaryId: secondSummaryId,
+            requestedAt: clock.now
+        )
+        transport.perRecordDeleteFailures[CKRecord.ID(recordName: secondRecordName)] = [
+            CloudKitTestError.ckError(.permissionFailure)
+        ]
+
+        do {
+            _ = try await manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+            XCTFail("A partially failed batch must surface its failed mutation")
+        } catch {
+            // First summary deletion completed; the second was refused.
+        }
+
+        XCTAssertNil(transport.record(named: firstRecordName))
+        XCTAssertNotNil(transport.record(named: secondRecordName))
+        XCTAssertEqual(manager.pendingSummaryRemovalCountForTesting, 1)
+
+        _ = try await manager.flushPendingiCloudMutations(appCoordinator: appCoordinator)
+        XCTAssertNil(transport.record(named: secondRecordName))
+        XCTAssertEqual(manager.pendingSummaryRemovalCountForTesting, 0)
     }
 
     // MARK: - Bootstrap

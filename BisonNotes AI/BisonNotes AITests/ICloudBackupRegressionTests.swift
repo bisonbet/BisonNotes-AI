@@ -1646,6 +1646,36 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(Set(retained.transcriptIds), Set([firstTranscript, newerTranscript]))
     }
 
+    func testPendingMutationAcknowledgementRetainsEqualPayloadWithNewerLocalIntent() throws {
+        let controller = PersistenceController(inMemory: true)
+        defer { try? closePersistentStores(of: controller) }
+        let context = controller.container.viewContext
+        let targetId = UUID()
+        let requestedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let intent = PendingCloudMutation(
+            kind: .summaryRemoval,
+            targetId: targetId,
+            requestedAt: requestedAt
+        )
+
+        try PendingCloudMutationStore.enqueue(intent, in: context)
+        try context.save()
+        let inFlight = try XCTUnwrap(PendingCloudMutationStore.fetchAll(in: context).first)
+
+        // A second local delete can coalesce to the same stable target, timestamp,
+        // and payload. Its acknowledgement fence must still be different.
+        try PendingCloudMutationStore.enqueue(intent, in: context)
+        try context.save()
+        let newerIntent = try XCTUnwrap(PendingCloudMutationStore.fetchAll(in: context).first)
+
+        XCTAssertNotEqual(inFlight.acknowledgementID, newerIntent.acknowledgementID)
+        XCTAssertFalse(
+            try PendingCloudMutationStore.removeIfUnchanged(inFlight, from: context),
+            "An older completion must not consume an equal-looking newer local intent"
+        )
+        XCTAssertEqual(try PendingCloudMutationStore.fetchAll(in: context).count, 1)
+    }
+
     // MARK: Arbitration through the real legs
 
     func testNewerCloudRecordWinsThroughBatchedExecution() async throws {

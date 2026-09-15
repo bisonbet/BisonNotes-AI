@@ -155,6 +155,31 @@ enum NetworkStatus: Sendable {
 
 // MARK: - iCloud Storage Manager
 
+private enum PendingCloudMutationReadError: LocalizedError {
+    case storeUnavailable
+    case legacyMigrationFailed
+    case mutationIdentityMismatch
+
+    var errorDescription: String? {
+        switch self {
+        case .storeUnavailable:
+            return "The pending iCloud mutation store is unavailable."
+        case .legacyMigrationFailed:
+            return "The pending iCloud mutation migration did not complete."
+        case .mutationIdentityMismatch:
+            return "The pending iCloud mutation does not match the requested operation."
+        }
+    }
+}
+
+private enum PendingCloudMutationAcknowledgementError: LocalizedError {
+    case persistenceFailed
+
+    var errorDescription: String? {
+        "The completed iCloud mutation could not be acknowledged locally."
+    }
+}
+
 @MainActor
 class iCloudStorageManager: ObservableObject {
 
@@ -189,6 +214,7 @@ class iCloudStorageManager: ObservableObject {
         didSet {
             UserDefaults.standard.set(isEnabled, forKey: "iCloudSyncEnabled")
             if isEnabled {
+                guard shouldUseRealCloudKit else { return }
                 Task {
                     await enableiCloudSync()
                 }
@@ -357,6 +383,11 @@ class iCloudStorageManager: ObservableObject {
     private let syncPreferences: any CloudSyncPreferencesStore
     private let syncMetricsSink: (any CloudSyncMetricsSink)?
 
+    private var shouldUseRealCloudKit: Bool {
+        injectedTransport == nil &&
+            !ProcessInfo.processInfo.arguments.contains("--disable-cloud-services")
+    }
+
     private var cachedTransport: (any CloudKitTransport)?
     private var cachedExecutor: CloudKitBatchExecutor?
     private var cachedContentIndexCoordinator: CloudContentIndexCoordinator?
@@ -407,9 +438,16 @@ class iCloudStorageManager: ObservableObject {
 
     #if DEBUG
     private var restoredAudioFileManagerForTesting: FileManager?
+    private var pendingMutationSaveFailureForTesting: (any Error)?
 
     func setRestoredAudioFileManagerForTesting(_ fileManager: FileManager?) {
         restoredAudioFileManagerForTesting = fileManager
+    }
+
+    /// Fails only the isolated outbox save used by E's acknowledgement tests.
+    /// The production path never sets this seam.
+    func setPendingMutationSaveFailureForTesting(_ error: (any Error)?) {
+        pendingMutationSaveFailureForTesting = error
     }
     #endif
 
@@ -472,9 +510,15 @@ class iCloudStorageManager: ObservableObject {
             return
         }
 
-        // Defer CloudKit initialization to avoid crashes during view setup
-        Task {
-            await initializeCloudKit()
+        // Defer CloudKit initialization to avoid crashes during view setup.
+        // Do not create a CloudKit container when sync is disabled; the
+        // unsigned UI-test host also intentionally passes this argument
+        // without an iCloud entitlement. Enabling sync later still performs
+        // initialization through enableiCloudSync().
+        if isEnabled && shouldUseRealCloudKit {
+            Task {
+                await initializeCloudKit()
+            }
         }
 
         // Enable performance tracking for iCloud operations
@@ -755,12 +799,20 @@ class iCloudStorageManager: ObservableObject {
         // account, so the remembered absence stops being true the moment it runs.
         Self.setLegacySummaryRecordsKnownAbsent(false)
 
-        // A summary can already be queued when the user deletes it. The tombstones
-        // are read once for the whole batch — this used to be one query per summary.
-        let deletionTargets = (try? await fetchDeletionTargets()) ?? CloudDeletionTargets()
-        let pendingRecordingIds = Set(pendingCloudDeletionMarkers.map(\.recordingId))
-        let pendingSummaryIds = Set(pendingSummaryCloudRemovals.map(\.summaryId))
-        let pendingTranscriptIds = Set(pendingTranscriptCloudRemovals.map(\.transcriptId))
+        // A summary can already be queued when the user deletes it. Both sources
+        // are authoritative reads: a failed cloud tombstone read or outbox read
+        // must stop this publisher rather than look like "nothing is deleted".
+        let deletionTargets = try await fetchDeletionTargets()
+        let pendingMutations = try readPendingCloudMutations()
+        let pendingRecordingIds = Set(
+            pendingMutations.filter { $0.kind == .recordingDeletion }.map(\.targetId)
+        )
+        let pendingSummaryIds = Set(
+            pendingMutations.filter { $0.kind == .summaryRemoval }.map(\.targetId)
+        )
+        let pendingTranscriptIds = Set(
+            pendingMutations.filter { $0.kind == .transcriptRemoval }.map(\.targetId)
+        )
 
         var summariesToSync: [EnhancedSummaryData] = []
         for summary in summaries {
@@ -953,7 +1005,7 @@ class iCloudStorageManager: ObservableObject {
                     }
                 }
 
-                let deletionTargets = try? await fetchDeletionTargets()
+                let deletionTargets = try await fetchDeletionTargets()
                 summaries = filterDeletedSummaryData(summaries, deletionTargets: deletionTargets)
                 AppLog.shared.iCloudSync("Fetched \(summaries.count) summaries from iCloud", level: .debug)
                 return summaries
@@ -1133,7 +1185,7 @@ class iCloudStorageManager: ObservableObject {
             cursor = nextCursor
         }
 
-        let deletionTargets = try? await fetchDeletionTargets()
+        let deletionTargets = try await fetchDeletionTargets()
         return filterDeletedSummaryData(summaries, deletionTargets: deletionTargets)
     }
 
@@ -1271,7 +1323,7 @@ class iCloudStorageManager: ObservableObject {
             .values
             .map { $0 }
 
-        let deletionTargets = try? await fetchDeletionTargets()
+        let deletionTargets = try await fetchDeletionTargets()
         let filteredSummaries = filterDeletedSummaryData(Array(uniqueSummaries), deletionTargets: deletionTargets)
         let duplicateCount = allSummaries.count - uniqueSummaries.count
         let duplicateSuffix = duplicateCount > 0 ? "; removed \(duplicateCount) duplicates" : ""
@@ -3394,12 +3446,18 @@ extension iCloudStorageManager {
             appCoordinator: appCoordinator,
             options: options
         )
-        // Read once for the whole run, the way line ~724 already does for the other
-        // queues. Each read of `pendingImportedAudioRemovals` is a Core Data fetch
-        // that decodes every outbox row; evaluating it per recording inside the
-        // three loops below cost hundreds of fetches per pass for a queue that is
-        // almost always empty.
-        let pendingImportedAudioRecordingIds = Set(pendingImportedAudioRemovals.map(\.recordingId))
+        // Read once for the whole run. A failed outbox read is a sync failure, not
+        // an empty queue: proceeding would allow a locally deleted recording or
+        // imported asset to be published again. Keep the complete mutation
+        // snapshots so the final acknowledgement fences the exact operation that
+        // this run observed, including its local acknowledgement ID.
+        let pendingMutations = try readPendingCloudMutations()
+        let pendingImportedAudioMutations = pendingMutations.filter {
+            $0.kind == .importedAudioRemoval
+        }
+        let pendingImportedAudioRecordingIds = Set(
+            pendingImportedAudioMutations.map(\.targetId)
+        )
         if activeManifestMigrationCompleted,
            pendingImportedAudioRecordingIds.isEmpty,
            UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) == currentBackupStateSignature {
@@ -3829,22 +3887,16 @@ extension iCloudStorageManager {
         recorder?.endPhase()
 
         let settledRecordsByID = Dictionary(uniqueKeysWithValues: settledRecords.map { ($0.recordID, $0) })
-        for pendingRemoval in pendingImportedAudioRemovals {
+        for pendingMutation in pendingImportedAudioMutations {
             let recordID = CKRecord.ID(
                 recordName: makeBackupRecordName(
                     prefix: Self.backupRecordingRecordPrefix,
-                    id: pendingRemoval.recordingId
+                    id: pendingMutation.targetId
                 )
             )
             guard let settledRecord = settledRecordsByID[recordID],
                   !hasAudioBackupFields(settledRecord) else { continue }
-            acknowledgePendingCloudMutation(
-                PendingCloudMutation(
-                    kind: .importedAudioRemoval,
-                    targetId: pendingRemoval.recordingId,
-                    requestedAt: pendingRemoval.requestedAt
-                )
-            )
+            try acknowledgePendingCloudMutation(pendingMutation)
         }
 
         // The settled manifest, not this run's arithmetic on a snapshot that may
@@ -4157,7 +4209,10 @@ extension iCloudStorageManager {
         let deletionTargets = try await fetchDeletionTargets()
         let deletedRecordingIds = deletionTargets.recordings
 
-        let recordingRecords = try await fetchBackupRecords(recordType: Self.backupRecordingRecordType)
+        let recordingRecords = try await fetchBackupRecords(
+            recordType: Self.backupRecordingRecordType,
+            desiredKeys: Self.recordingMetadataKeys
+        )
         let transcriptRecords = try await fetchBackupRecords(recordType: Self.backupTranscriptRecordType)
         let summaryRecords = try await fetchBackupRecords(recordType: Self.backupSummaryRecordType)
         let legacySummaryRecords = try await fetchLegacySummarySyncRecords()
@@ -4712,7 +4767,9 @@ extension iCloudStorageManager {
                 // repair — the situations where a full scan is the right tool.
                 recorder?.begin(.fetchCloudSnapshot)
                 let scannedRecordings = try await fetchBackupRecords(
-                    recordType: Self.backupRecordingRecordType)
+                    recordType: Self.backupRecordingRecordType,
+                    desiredKeys: Self.recordingMetadataKeys
+                )
                 let scannedTranscripts = try await fetchBackupRecords(
                     recordType: Self.backupTranscriptRecordType)
                 let scannedSummaries = try await fetchBackupRecords(
@@ -5673,7 +5730,8 @@ extension iCloudStorageManager {
         recordingId: UUID,
         transcriptIds: [UUID],
         summaryIds: [UUID],
-        deletedAt: Date = Date()
+        deletedAt: Date = Date(),
+        pendingMutation: PendingCloudMutation? = nil
     ) async throws {
         guard isEnabled else {
             enqueueRecordingDeletionForiCloud(
@@ -5685,23 +5743,9 @@ extension iCloudStorageManager {
             return
         }
 
-        try await validateiCloudAccountAvailability()
-
-        try await saveDeletionMarker(
-            kind: .recording,
-            id: recordingId,
-            recordingId: nil,
-            deletedAt: deletedAt
-        )
-
-        let deletedCloudRecords = try await deleteCloudContentRecords(
-            recordingId: recordingId,
-            transcriptIds: transcriptIds,
-            summaryIds: summaryIds
-        )
-        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        acknowledgePendingCloudMutation(
-            PendingCloudMutation(
+        let acknowledgementMutation = try acknowledgementSnapshot(
+            pendingMutation: pendingMutation,
+            fallback: PendingCloudMutation(
                 kind: .recordingDeletion,
                 targetId: recordingId,
                 transcriptIds: transcriptIds,
@@ -5709,6 +5753,22 @@ extension iCloudStorageManager {
                 requestedAt: deletedAt
             )
         )
+        try await validateiCloudAccountAvailability()
+
+        try await saveDeletionMarker(
+            kind: .recording,
+            id: recordingId,
+            recordingId: nil,
+            deletedAt: acknowledgementMutation.requestedAt
+        )
+
+        let deletedCloudRecords = try await deleteCloudContentRecords(
+            recordingId: recordingId,
+            transcriptIds: acknowledgementMutation.transcriptIds,
+            summaryIds: acknowledgementMutation.summaryIds
+        )
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        try acknowledgePendingCloudMutation(acknowledgementMutation)
         await MainActor.run {
             self.lastMaintenanceMessage = "Deleted item removed from iCloud sync records."
         }
@@ -5718,7 +5778,8 @@ extension iCloudStorageManager {
     func markTranscriptDeletedIniCloud(
         transcriptId: UUID,
         recordingId: UUID? = nil,
-        deletedAt: Date = Date()
+        deletedAt: Date = Date(),
+        pendingMutation: PendingCloudMutation? = nil
     ) async throws {
         guard isEnabled else {
             enqueueTranscriptRemovalFromiCloud(
@@ -5729,25 +5790,27 @@ extension iCloudStorageManager {
             return
         }
 
-        try await validateiCloudAccountAvailability()
-        try await saveDeletionMarker(
-            kind: .transcript,
-            id: transcriptId,
-            recordingId: recordingId,
-            deletedAt: deletedAt
-        )
-        let deletedCloudRecords = try await deleteTranscriptContentRecords(
-            transcriptId: transcriptId
-        )
-        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        acknowledgePendingCloudMutation(
-            PendingCloudMutation(
+        let acknowledgementMutation = try acknowledgementSnapshot(
+            pendingMutation: pendingMutation,
+            fallback: PendingCloudMutation(
                 kind: .transcriptRemoval,
                 targetId: transcriptId,
                 recordingId: recordingId,
                 requestedAt: deletedAt
             )
         )
+        try await validateiCloudAccountAvailability()
+        try await saveDeletionMarker(
+            kind: .transcript,
+            id: transcriptId,
+            recordingId: acknowledgementMutation.recordingId,
+            deletedAt: acknowledgementMutation.requestedAt
+        )
+        let deletedCloudRecords = try await deleteTranscriptContentRecords(
+            transcriptId: transcriptId
+        )
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        try acknowledgePendingCloudMutation(acknowledgementMutation)
         await MainActor.run {
             self.lastMaintenanceMessage = "Deleted transcript removed from iCloud sync records."
         }
@@ -5760,7 +5823,8 @@ extension iCloudStorageManager {
     func markSummaryDeletedIniCloud(
         summaryId: UUID,
         recordingId: UUID? = nil,
-        deletedAt: Date = Date()
+        deletedAt: Date = Date(),
+        pendingMutation: PendingCloudMutation? = nil
     ) async throws {
         guard isEnabled else {
             enqueueSummaryRemovalFromiCloud(
@@ -5771,25 +5835,27 @@ extension iCloudStorageManager {
             return
         }
 
-        try await validateiCloudAccountAvailability()
-        try await saveDeletionMarker(
-            kind: .summary,
-            id: summaryId,
-            recordingId: recordingId,
-            deletedAt: deletedAt
-        )
-        let deletedCloudRecords = try await deleteSummaryContentRecords(
-            summaryIds: [summaryId]
-        )
-        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        acknowledgePendingCloudMutation(
-            PendingCloudMutation(
+        let acknowledgementMutation = try acknowledgementSnapshot(
+            pendingMutation: pendingMutation,
+            fallback: PendingCloudMutation(
                 kind: .summaryRemoval,
                 targetId: summaryId,
                 recordingId: recordingId,
                 requestedAt: deletedAt
             )
         )
+        try await validateiCloudAccountAvailability()
+        try await saveDeletionMarker(
+            kind: .summary,
+            id: summaryId,
+            recordingId: acknowledgementMutation.recordingId,
+            deletedAt: acknowledgementMutation.requestedAt
+        )
+        let deletedCloudRecords = try await deleteSummaryContentRecords(
+            summaryIds: [summaryId]
+        )
+        UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
+        try acknowledgePendingCloudMutation(acknowledgementMutation)
         await MainActor.run {
             self.lastMaintenanceMessage = "Deleted summary removed from iCloud sync records."
         }
@@ -5805,7 +5871,8 @@ extension iCloudStorageManager {
 
     func removeContentFromiCloud(
         recordingId: UUID,
-        appCoordinator: AppDataCoordinator
+        appCoordinator: AppDataCoordinator,
+        pendingMutation: PendingCloudMutation? = nil
     ) async throws {
         guard isEnabled else {
             enqueueLocalOnlyCloudRemoval(recordingId: recordingId)
@@ -5821,9 +5888,14 @@ extension iCloudStorageManager {
             ($0.recordingId ?? $0.recording?.id) == recordingId
         }
 
-        let pendingMutation = pendingCloudMutations().first {
-            $0.kind == .localOnlyRemoval && $0.targetId == recordingId
-        }
+        let acknowledgementMutation = try acknowledgementSnapshot(
+            pendingMutation: pendingMutation,
+            fallback: PendingCloudMutation(
+                kind: .localOnlyRemoval,
+                targetId: recordingId,
+                requestedAt: Date()
+            )
+        )
         let deletedCloudRecords = try await deleteCloudContentRecords(
             recordingId: recordingId,
             transcriptIds: transcripts.compactMap(\.id),
@@ -5831,13 +5903,7 @@ extension iCloudStorageManager {
         )
 
         UserDefaults.standard.removeObject(forKey: Self.backupStateSignatureKey)
-        acknowledgePendingCloudMutation(
-            pendingMutation ?? PendingCloudMutation(
-                kind: .localOnlyRemoval,
-                targetId: recordingId,
-                requestedAt: Date()
-            )
-        )
+        try acknowledgePendingCloudMutation(acknowledgementMutation)
         AppLog.shared.iCloudSync("Removed \(deletedCloudRecords) iCloud records for local-only recording \(recordingId.uuidString)", level: .debug)
     }
 
@@ -5914,11 +5980,24 @@ extension iCloudStorageManager {
         }
     }
 
+    /// Reads the outbox for a cloud decision. Migration and fetch failures remain
+    /// throwing here; the forgiving wrapper below is only for status/UI queries.
+    private func readPendingCloudMutations() throws -> [PendingCloudMutation] {
+        if PendingCloudMutationStore.hasLegacyQueues() {
+            _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: pendingMutationContext)
+            guard !PendingCloudMutationStore.hasLegacyQueues() else {
+                throw PendingCloudMutationReadError.legacyMigrationFailed
+            }
+        }
+        guard let context = outboxContext else {
+            throw PendingCloudMutationReadError.storeUnavailable
+        }
+        return try PendingCloudMutationStore.fetchAll(in: context)
+    }
+
     private func pendingCloudMutations() -> [PendingCloudMutation] {
-        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: pendingMutationContext)
-        guard let context = outboxContext else { return [] }
         do {
-            return try PendingCloudMutationStore.fetchAll(in: context)
+            return try readPendingCloudMutations()
         } catch {
             AppLog.shared.iCloudSync(
                 "Could not read pending iCloud mutation outbox: \(error)",
@@ -5933,7 +6012,14 @@ extension iCloudStorageManager {
     /// previews deliberately use an isolated in-memory store. Any rows queued on
     /// the manager's previous context are copied first so changing the binding
     /// cannot strand an already-durable mutation.
-    func bindPendingMutationContext(to context: NSManagedObjectContext) {
+    func bindPendingMutationContext(to context: NSManagedObjectContext) throws {
+        guard context.persistentStoreCoordinator != nil else {
+            throw PendingCloudMutationReadError.storeUnavailable
+        }
+        _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
+        guard !PendingCloudMutationStore.hasLegacyQueues() else {
+            throw PendingCloudMutationReadError.legacyMigrationFailed
+        }
         guard pendingMutationContext !== context else {
             _ = PendingCloudMutationStore.migrateLegacyQueuesIfNeeded(in: context)
             return
@@ -5952,7 +6038,16 @@ extension iCloudStorageManager {
         }
 
         let previousOutboxContext = outboxContext
-        let previousMutations = pendingCloudMutations()
+        let previousMutations: [PendingCloudMutation]
+        do {
+            previousMutations = try readPendingCloudMutations()
+        } catch {
+            AppLog.shared.iCloudSync(
+                "Could not move pending iCloud mutations because the source outbox could not be read: \(error)",
+                level: .error
+            )
+            throw error
+        }
 
         // Both sides are outbox-only contexts, so neither the copy nor its rollback
         // can touch a caller's unsaved work — no unrelated-changes guard is needed,
@@ -5962,15 +6057,22 @@ extension iCloudStorageManager {
                 "Could not move pending iCloud mutations: the destination has no persistent store coordinator",
                 level: .error
             )
-            return
+            throw PendingCloudMutationReadError.storeUnavailable
         }
 
         if !previousMutations.isEmpty {
             do {
                 for mutation in previousMutations {
-                    try PendingCloudMutationStore.enqueue(mutation, in: destination)
+                    try PendingCloudMutationStore.enqueue(
+                        mutation,
+                        in: destination,
+                        preservingAcknowledgementID: true
+                    )
                 }
                 if destination.hasChanges {
+                    #if DEBUG
+                    if let failure = pendingMutationSaveFailureForTesting { throw failure }
+                    #endif
                     try destination.save()
                 }
             } catch {
@@ -5979,7 +6081,7 @@ extension iCloudStorageManager {
                     "Could not move pending iCloud mutations to the active Core Data store: \(error)",
                     level: .error
                 )
-                return
+                throw error
             }
         }
 
@@ -6037,6 +6139,11 @@ extension iCloudStorageManager {
         do {
             try body(context)
             if context.hasChanges {
+                #if DEBUG
+                if let injectedFailure = pendingMutationSaveFailureForTesting {
+                    throw injectedFailure
+                }
+                #endif
                 try context.save()
             }
             return true
@@ -6066,9 +6173,31 @@ extension iCloudStorageManager {
         )
     }
 
-    private func acknowledgePendingCloudMutation(_ mutation: PendingCloudMutation) {
-        applyPendingCloudMutationChanges("acknowledge pending iCloud mutation") { context in
+    private func acknowledgementSnapshot(
+        pendingMutation: PendingCloudMutation?,
+        fallback: PendingCloudMutation
+    ) throws -> PendingCloudMutation {
+        if let pendingMutation {
+            guard pendingMutation.kind == fallback.kind, pendingMutation.targetId == fallback.targetId else {
+                throw PendingCloudMutationReadError.mutationIdentityMismatch
+            }
+            return pendingMutation
+        }
+        return try readPendingCloudMutations().first {
+            $0.kind == fallback.kind && $0.targetId == fallback.targetId
+        } ?? fallback
+    }
+
+    private func acknowledgePendingCloudMutation(_ mutation: PendingCloudMutation?) throws {
+        guard let mutation else { return }
+        let acknowledged = applyPendingCloudMutationChanges("acknowledge pending iCloud mutation") { context in
             _ = try PendingCloudMutationStore.removeIfUnchanged(mutation, from: context)
+        }
+        guard acknowledged else {
+            // CloudKit may already have accepted the operation. The row remains in
+            // the durable outbox and must be retried after the local store recovers;
+            // swallowing this result falsely turns cloud success into completion.
+            throw PendingCloudMutationAcknowledgementError.persistenceFailed
         }
     }
 
@@ -6239,12 +6368,16 @@ extension iCloudStorageManager {
     /// can be an ordinary device condition, while this queue is an intentional
     /// destructive action that must survive an offline period.
     private func markImportedAudioRemovedInCloud(
-        _ pendingRemoval: PendingImportedAudioRemoval
+        _ pendingRemoval: PendingImportedAudioRemoval,
+        pendingMutation: PendingCloudMutation? = nil
     ) async throws {
-        let mutation = PendingCloudMutation(
-            kind: .importedAudioRemoval,
-            targetId: pendingRemoval.recordingId,
-            requestedAt: pendingRemoval.requestedAt
+        let acknowledgementMutation = try acknowledgementSnapshot(
+            pendingMutation: pendingMutation,
+            fallback: PendingCloudMutation(
+                kind: .importedAudioRemoval,
+                targetId: pendingRemoval.recordingId,
+                requestedAt: pendingRemoval.requestedAt
+            )
         )
         let recordID = CKRecord.ID(
             recordName: makeBackupRecordName(
@@ -6263,7 +6396,7 @@ extension iCloudStorageManager {
             kind: .importedAudio,
             id: pendingRemoval.recordingId,
             recordingId: nil,
-            deletedAt: pendingRemoval.requestedAt
+            deletedAt: acknowledgementMutation.requestedAt
         )
 
         let fetchOutcome = try await cloudExecutor.fetch([recordID])
@@ -6273,7 +6406,7 @@ extension iCloudStorageManager {
         guard let record = fetchOutcome.records[recordID] else {
             // The recording was already removed from CloudKit. There is no asset
             // left for this intent to clear, so the durable work is complete.
-            acknowledgePendingCloudMutation(mutation)
+            try acknowledgePendingCloudMutation(acknowledgementMutation)
             return
         }
 
@@ -6318,7 +6451,7 @@ extension iCloudStorageManager {
         markBackupRecordActive(record, changed: &changed)
 
         guard changed else {
-            acknowledgePendingCloudMutation(mutation)
+            try acknowledgePendingCloudMutation(acknowledgementMutation)
             return
         }
 
@@ -6330,7 +6463,7 @@ extension iCloudStorageManager {
             throw CloudSyncUnsettledRecordsError(recordCount: 1)
         }
 
-        acknowledgePendingCloudMutation(mutation)
+        try acknowledgePendingCloudMutation(acknowledgementMutation)
         AppLog.shared.iCloudSync(
             "Recorded imported audio removal for \(pendingRemoval.recordingId.uuidString)",
             level: .debug
@@ -6363,7 +6496,7 @@ extension iCloudStorageManager {
 
     @discardableResult
     func flushPendingiCloudMutations(appCoordinator: AppDataCoordinator) async throws -> (deletions: Int, localOnlyRemovals: Int, summaryRemovals: Int) {
-        bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
+        try bindPendingMutationContext(to: appCoordinator.coreDataManager.managedObjectContext)
         guard isEnabled else {
             return (0, 0, 0)
         }
@@ -6374,16 +6507,18 @@ extension iCloudStorageManager {
         var flushedTranscriptRemovals = 0
         var flushedImportedAudioRemovals = 0
 
-        // Snapshot once. Each operation acknowledges the exact payload it sent;
-        // a later enqueue for the same target therefore remains for the next run.
-        for mutation in pendingCloudMutations() {
+        // Snapshot once. Each operation acknowledges the exact payload and local
+        // fence it sent; a later enqueue for the same target therefore remains for
+        // the next run. A failed outbox read throws before any CloudKit mutation.
+        for mutation in try readPendingCloudMutations() {
             switch mutation.kind {
             case .recordingDeletion:
                 try await markRecordingDeletedIniCloud(
                     recordingId: mutation.targetId,
                     transcriptIds: mutation.transcriptIds,
                     summaryIds: mutation.summaryIds,
-                    deletedAt: mutation.requestedAt
+                    deletedAt: mutation.requestedAt,
+                    pendingMutation: mutation
                 )
                 flushedDeletions += 1
 
@@ -6391,7 +6526,8 @@ extension iCloudStorageManager {
                 try await markTranscriptDeletedIniCloud(
                     transcriptId: mutation.targetId,
                     recordingId: mutation.recordingId,
-                    deletedAt: mutation.requestedAt
+                    deletedAt: mutation.requestedAt,
+                    pendingMutation: mutation
                 )
                 flushedTranscriptRemovals += 1
 
@@ -6399,23 +6535,25 @@ extension iCloudStorageManager {
                 try await markSummaryDeletedIniCloud(
                     summaryId: mutation.targetId,
                     recordingId: mutation.recordingId,
-                    deletedAt: mutation.requestedAt
+                    deletedAt: mutation.requestedAt,
+                    pendingMutation: mutation
                 )
                 flushedSummaryRemovals += 1
 
             case .localOnlyRemoval:
                 guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: mutation.targetId) else {
-                    acknowledgePendingCloudMutation(mutation)
+                    try acknowledgePendingCloudMutation(mutation)
                     continue
                 }
                 guard recording.isCloudSyncDisabled else {
-                    acknowledgePendingCloudMutation(mutation)
+                    try acknowledgePendingCloudMutation(mutation)
                     continue
                 }
 
                 try await removeContentFromiCloud(
                     recordingId: mutation.targetId,
-                    appCoordinator: appCoordinator
+                    appCoordinator: appCoordinator,
+                    pendingMutation: mutation
                 )
                 flushedLocalOnlyRemovals += 1
 
@@ -6424,7 +6562,8 @@ extension iCloudStorageManager {
                     PendingImportedAudioRemoval(
                         recordingId: mutation.targetId,
                         requestedAt: mutation.requestedAt
-                    )
+                    ),
+                    pendingMutation: mutation
                 )
                 flushedImportedAudioRemovals += 1
             }
@@ -6929,7 +7068,9 @@ extension iCloudStorageManager {
             // those records, and leaving that list empty meant every recording in
             // the cloud kept pointing at content this run had just deleted.
             workspace.manifestRecords.recordings = try await fetchBackupRecords(
-                recordType: Self.backupRecordingRecordType)
+                recordType: Self.backupRecordingRecordType,
+                desiredKeys: Self.deletionWorkspaceKeys
+            )
             workspace.manifestRecords.transcripts = try await fetchBackupRecords(
                 recordType: Self.backupTranscriptRecordType)
             workspace.manifestRecords.summaries = try await fetchBackupRecords(
@@ -7208,14 +7349,13 @@ extension iCloudStorageManager {
             record[CloudKitSummaryRecord.lastModifiedField] = syncClock.now
             legacyRecordsToSave.append(record)
         }
-        do {
+        if !legacyRecordsToSave.isEmpty {
+            // This is part of the same deletion contract as the indexed records.
+            // A failed reference clear must keep the caller's durable mutation
+            // queued; acknowledging the tombstone here would let restore recreate
+            // a legacy summary that still points at the deleted transcript.
             try await saveBackupRecords(legacyRecordsToSave)
             result.clearedReferences += legacyRecordsToSave.count
-        } catch {
-            AppLog.shared.iCloudSync(
-                "Could not clear deleted transcript references from \(legacyRecordsToSave.count) legacy summary record(s): \(error.localizedDescription)",
-                level: .error
-            )
         }
 
         return result
@@ -7951,7 +8091,10 @@ extension iCloudStorageManager {
     /// recovery, and schema diagnostics. Routine sync uses the manifest instead —
     /// a query walks every record in the zone and is what made an ordinary
     /// activation cost a full enumeration.
-    private func fetchBackupRecords(recordType: String) async throws -> [CKRecord] {
+    private func fetchBackupRecords(
+        recordType: String,
+        desiredKeys: [CKRecord.FieldKey]? = nil
+    ) async throws -> [CKRecord] {
         // A server-requested backoff covers queries too. Starting a scan during one
         // is exactly the traffic CloudKit asked us to stop sending — and returning
         // an empty list would let the caller read the backoff as an empty cloud.
@@ -7970,7 +8113,7 @@ extension iCloudStorageManager {
         // hole in the dataset that no fallback fixes and none of them should hide.
         let scan: QueryScanResult
         do {
-            scan = try await runQueryScan(recordType: recordType)
+            scan = try await runQueryScan(recordType: recordType, desiredKeys: desiredKeys)
         } catch let error as CKError {
             // A query does not run through the batch executor, so the retry policy
             // never sees this error. Falling straight into a zone scan would put
@@ -8005,7 +8148,10 @@ extension iCloudStorageManager {
             return scan.records
         }
 
-        let zoneQueryRecords = try await fetchBackupRecordsInDefaultZoneQuery(recordType: recordType)
+        let zoneQueryRecords = try await fetchBackupRecordsInDefaultZoneQuery(
+            recordType: recordType,
+            desiredKeys: desiredKeys
+        )
         if !zoneQueryRecords.isEmpty {
             return zoneQueryRecords
         }
@@ -8065,13 +8211,16 @@ extension iCloudStorageManager {
 
     /// Walks every page of a type query, keeping the records and the per-record
     /// failures apart so the caller can tell a smaller dataset from an incomplete read.
-    private func runQueryScan(recordType: String) async throws -> QueryScanResult {
+    private func runQueryScan(
+        recordType: String,
+        desiredKeys: [CKRecord.FieldKey]?
+    ) async throws -> QueryScanResult {
         let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
         var scan = QueryScanResult()
         var page = try await cloudTransport.records(
             matching: query,
             inZoneWith: nil,
-            desiredKeys: nil,
+            desiredKeys: desiredKeys,
             resultsLimit: CKQueryOperation.maximumResults
         )
 
@@ -8084,7 +8233,7 @@ extension iCloudStorageManager {
             }
             page = try await cloudTransport.records(
                 continuingMatchFrom: queryCursor,
-                desiredKeys: nil,
+                desiredKeys: desiredKeys,
                 resultsLimit: CKQueryOperation.maximumResults
             )
         }
@@ -8092,15 +8241,25 @@ extension iCloudStorageManager {
         return scan
     }
 
-    private func fetchBackupRecordsInDefaultZoneQuery(recordType: String) async throws -> [CKRecord] {
+    private func fetchBackupRecordsInDefaultZoneQuery(
+        recordType: String,
+        desiredKeys: [CKRecord.FieldKey]?
+    ) async throws -> [CKRecord] {
         let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
         let page = try await cloudTransport.records(
             matching: query,
             inZoneWith: CKRecordZone.default().zoneID,
-            desiredKeys: nil,
+            desiredKeys: desiredKeys,
             resultsLimit: 1000
         )
-        return try page.recordsOrThrow()
+        return try await CloudQueryPagination.collect(
+            firstPage: (try page.recordsOrThrow(), page.queryCursor)
+        ) { cursor in
+            let next = try await cloudTransport.records(
+                continuingMatchFrom: cursor, desiredKeys: desiredKeys, resultsLimit: 1000
+            )
+            return (try next.recordsOrThrow(), next.queryCursor)
+        }
     }
 
     private func fetchBackupRecordsUsingZoneChanges(recordType: String) async throws -> [CKRecord] {

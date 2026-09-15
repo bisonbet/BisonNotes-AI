@@ -52,9 +52,14 @@ class AppDataCoordinator: ObservableObject {
         // path because their initialization can read and migrate local state.
         self.workflowManager.setAppCoordinator(self)
         SummaryManager.shared.configure(with: self)
-        SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
-            to: coreDataManager.managedObjectContext
-        )
+        do {
+            try SummaryManager.shared.getiCloudManager().bindPendingMutationContext(
+                to: coreDataManager.managedObjectContext
+            )
+        } catch {
+            AppLog.shared.coreData("Cloud outbox binding failed; startup withheld: \(error)", level: .error)
+            return
+        }
 
         Task {
             await initializeSystem()
