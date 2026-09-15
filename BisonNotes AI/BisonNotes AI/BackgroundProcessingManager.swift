@@ -2100,22 +2100,13 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update recording name if the AI generated a better one.
         //
-        // Best-effort, and deliberately isolated: the replacement summary is
-        // already committed above, so letting a transient rename failure reach
-        // processNextJob's failure handler would mark the whole job failed. The
-        // user would then retry and pay for another provider request to
-        // reproduce a summary that already exists. Same reasoning as the two
-        // regeneration paths in SummaryRegenerationManager.
         if enhancedSummary.recordingName != job.recordingName {
             AppLog.shared.backgroundProcessing("Updating recording name from AI-generated title", level: .debug)
-            do {
+            afterCommit(
+                "Applying the AI-generated title to recording \(recordingId)",
+                category: .backgroundProcessing
+            ) {
                 try coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
-            } catch {
-                AppLog.shared.backgroundProcessing(
-                    "Summary saved, but the AI title could not be applied to recording "
-                        + "\(recordingId): \(error.localizedDescription)",
-                    level: .error
-                )
             }
         }
 

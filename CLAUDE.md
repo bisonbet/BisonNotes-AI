@@ -87,6 +87,24 @@ The app uses a sophisticated background processing system:
 ### Core Data Usage
 Always use `CoreDataManager` for data operations. Never access Core Data directly in views.
 
+### Post-Commit Work
+
+A `do` block must not span a durable commit. Once `saveContext`,
+`performIsolatedMutation`, `createRecording`, `createSummary`, `addTranscript`,
+or a media `publish` has returned, the operation has succeeded — and a later
+failure is a loose end, never a failure of the thing the caller was doing.
+
+Run anything after that point through `afterCommit(_:category:_:)`. It logs and
+returns the error rather than throwing, so it cannot reach a `catch` written for
+pre-commit failures. Five separate bugs in v3.0 reliability hardening were this
+exact shape: three re-billed an AI provider for a summary that already existed,
+one re-ran a transcription over a valid result, and one stranded a recording
+permanently behind a retry that died on an already-deleted id.
+
+Cleanup that must eventually happen needs a durable intent, not a retry in the
+same call. Cleanup the user can do themselves — a file in a folder they chose —
+needs to be *named to them*, not automated.
+
 ### iCloud Sync Arbitration
 
 `iCloudStorageManager` reconciles in a fixed order: flush queued deletions → apply deletion markers → back up (local → cloud) → restore (cloud → local) → prune superseded duplicates. Four rules decide who wins. All four are pure static functions on `iCloudStorageManager` and are covered by `ICloudBackupRegressionTests` — change them there, not inline in the sync legs.
