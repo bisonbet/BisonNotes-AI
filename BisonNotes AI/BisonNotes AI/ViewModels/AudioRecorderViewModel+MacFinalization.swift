@@ -120,9 +120,15 @@ extension AudioRecorderViewModel {
         case .usable:
             return true
         case .rejected(let rejection):
+            // Not a fault on its own. A capture-health rebuild deliberately
+            // abandons the segment it was recording into, so every recovered
+            // recording leaves one zero-length scratch file behind for this to
+            // reject. The finalization plan logged just below carries the real
+            // signal — how many segments survived — and a recording with none
+            // fails loudly through `.unavailable`.
             AppLog.shared.recording(
-                "Could not inspect captured audio \(url.lastPathComponent): \(rejection)",
-                level: .error
+                "Skipping unusable captured audio \(url.lastPathComponent): \(rejection)",
+                level: .debug
             )
             return false
         }

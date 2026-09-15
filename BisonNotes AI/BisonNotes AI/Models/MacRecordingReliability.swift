@@ -124,6 +124,68 @@ enum MacRecordingInputSelection {
     }
 }
 
+/// The two formats `AVAudioEngine` reports for its input node.
+///
+/// `inputFormat(forBus:)` describes the hardware the AUHAL is bound to;
+/// `outputFormat(forBus:)` describes what the node will actually hand a tap.
+/// They normally agree, and only disagree while the node is still catching up
+/// to a device reassignment.
+struct MacInputFormatSnapshot: Equatable, Sendable {
+    let hardwareSampleRate: Double
+    let hardwareChannelCount: UInt32
+    let nodeSampleRate: Double
+    let nodeChannelCount: UInt32
+}
+
+enum MacInputTapFormatReadiness: Equatable, Sendable {
+    /// Either format is missing, so no microphone input is enabled at all.
+    case unavailable
+    /// The node agrees with its hardware; its output format is safe to tap.
+    case settled
+    /// The node still describes a different device than the one it is bound to.
+    case unsettled
+}
+
+/// Decides whether `AVAudioEngine`'s input node is ready to be tapped.
+///
+/// Setting `kAudioOutputUnitProperty_CurrentDevice` rebinds the AUHAL, but the
+/// node keeps reporting the *previous* device's output format for a short window
+/// afterwards. Installing the tap during that window is what silently broke
+/// capture: AUHAL pulls buffers at the real hardware rate while the tap contract
+/// claims another, so the tap never fires, the segment records zero frames, and
+/// the capture watchdog only tears it down five seconds later. Every recording
+/// whose input did not already run at the graph's rate lost its first five
+/// seconds that way.
+///
+/// The node does reconcile — the watchdog's own rebuild succeeds within a
+/// hundred milliseconds — so the fix is to wait for these two formats to agree
+/// before reading the one the tap will use.
+enum MacInputTapFormatPolicy {
+    /// Sample rates are reported as doubles, so compare them with a tolerance
+    /// rather than exactly. Nothing in Core Audio distinguishes rates this close.
+    static let sampleRateTolerance: Double = 0.5
+
+    static func readiness(for snapshot: MacInputFormatSnapshot) -> MacInputTapFormatReadiness {
+        guard snapshot.hardwareSampleRate > 0, snapshot.hardwareChannelCount > 0,
+              snapshot.nodeSampleRate > 0, snapshot.nodeChannelCount > 0 else {
+            return .unavailable
+        }
+        guard abs(snapshot.hardwareSampleRate - snapshot.nodeSampleRate) <= sampleRateTolerance,
+              snapshot.hardwareChannelCount == snapshot.nodeChannelCount else {
+            return .unsettled
+        }
+        return .settled
+    }
+
+    /// Describes an unsettled node for the error a timed-out start throws.
+    /// Naming both rates is what makes the failure diagnosable from a log.
+    static func mismatchDescription(for snapshot: MacInputFormatSnapshot) -> String {
+        "The microphone did not settle on a capture format " +
+        "(hardware \(snapshot.hardwareSampleRate) Hz / \(snapshot.hardwareChannelCount) ch, " +
+        "engine \(snapshot.nodeSampleRate) Hz / \(snapshot.nodeChannelCount) ch)."
+    }
+}
+
 struct RecordingCaptureHealthSnapshot: Equatable, Sendable {
     let monitoringStartedAt: Date?
     let firstWriteAt: Date?

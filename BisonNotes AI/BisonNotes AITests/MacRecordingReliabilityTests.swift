@@ -342,4 +342,112 @@ final class MacRecordingReliabilityTests: XCTestCase {
         XCTAssertTrue(inventory.contains(result.directoryURL.lastPathComponent))
         XCTAssertTrue(inventory.contains("3 files"))
     }
+
+    // MARK: - Input tap format readiness
+
+    /// The shipping failure, in the shape the log recorded it: a C922 webcam
+    /// running at 16 kHz bound to an engine still reporting the previous 48 kHz
+    /// device. The tap was installed with the 48 kHz format, AUHAL delivered
+    /// nothing, and the segment recorded zero frames until the capture watchdog
+    /// rebuilt it five seconds later — losing the first five seconds of audio on
+    /// every recording whose input did not already run at the graph rate.
+    func testStaleNodeFormatIsNotTreatedAsReadyToTap() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 16_000,
+                    hardwareChannelCount: 2,
+                    nodeSampleRate: 48_000,
+                    nodeChannelCount: 2
+                )
+            ),
+            .unsettled
+        )
+    }
+
+    /// The same recording one rebuild later: once the node caught up to the
+    /// device it was bound to, the first buffer arrived within ~100 ms.
+    func testSettledNodeFormatIsReadyToTap() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 48_000,
+                    hardwareChannelCount: 2,
+                    nodeSampleRate: 48_000,
+                    nodeChannelCount: 2
+                )
+            ),
+            .settled
+        )
+    }
+
+    /// A channel-count disagreement strands a tap exactly as a rate
+    /// disagreement does, so it must not read as settled either.
+    func testChannelCountMismatchIsNotReadyToTap() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 48_000,
+                    hardwareChannelCount: 1,
+                    nodeSampleRate: 48_000,
+                    nodeChannelCount: 2
+                )
+            ),
+            .unsettled
+        )
+    }
+
+    /// An absent format means no input is enabled at all — a different failure
+    /// from a node that is merely behind, and one that must not be waited out.
+    func testMissingFormatReportsUnavailableRatherThanUnsettled() {
+        for snapshot in [
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 0,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            ),
+            MacInputFormatSnapshot(
+                hardwareSampleRate: 48_000,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 0
+            )
+        ] {
+            XCTAssertEqual(MacInputTapFormatPolicy.readiness(for: snapshot), .unavailable)
+        }
+    }
+
+    /// Sample rates arrive as doubles, so a rate that differs only by floating
+    /// point noise must not send a healthy start into the settle wait.
+    func testFloatingPointNoiseStillCountsAsSettled() {
+        XCTAssertEqual(
+            MacInputTapFormatPolicy.readiness(
+                for: MacInputFormatSnapshot(
+                    hardwareSampleRate: 44_100.000_001,
+                    hardwareChannelCount: 1,
+                    nodeSampleRate: 44_100,
+                    nodeChannelCount: 1
+                )
+            ),
+            .settled
+        )
+    }
+
+    /// A start that gives up must name both rates. Without them the log says
+    /// only that the microphone failed, which is what made the original bug
+    /// look like bad hardware for six weeks.
+    func testMismatchDescriptionNamesBothFormats() {
+        let description = MacInputTapFormatPolicy.mismatchDescription(
+            for: MacInputFormatSnapshot(
+                hardwareSampleRate: 16_000,
+                hardwareChannelCount: 2,
+                nodeSampleRate: 48_000,
+                nodeChannelCount: 2
+            )
+        )
+
+        XCTAssertTrue(description.contains("16000.0"))
+        XCTAssertTrue(description.contains("48000.0"))
+    }
 }

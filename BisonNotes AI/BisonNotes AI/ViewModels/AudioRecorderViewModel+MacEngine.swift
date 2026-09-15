@@ -65,6 +65,18 @@ extension AudioRecorderViewModel {
 	private static let microphoneMeetingMixGain: Float = 0.5
 	private static let systemMeetingMixGain: Float = 0.4
 	private static let systemAudioStartupGateTimeout: TimeInterval = 1.5
+	/// How long a start waits for the input node to catch up to the device it was
+	/// just bound to.
+	///
+	/// Deliberately short. This poll runs on the main actor, so it can only observe
+	/// a reconciliation Core Audio propagates on its own; one that needs a run-loop
+	/// turn cannot land while this waits, and no timeout would help. Generous for
+	/// the case it can fix, fast to give up on the case it cannot — and either way
+	/// far below the five seconds the capture watchdog used to spend reaching the
+	/// same conclusion. Giving up hands the device to the caller's fallback, which
+	/// retries on a fresh engine and does yield between passes.
+	private static let inputFormatSettleTimeout: TimeInterval = 0.15
+	private static let inputFormatSettlePollInterval: TimeInterval = 0.005
 
 	@MainActor
 	func setupMacRecording(at url: URL) async {
@@ -247,18 +259,11 @@ extension AudioRecorderViewModel {
 		let inputNode = engine.inputNode
 		// Apple documents the input-scope format as the hardware-availability
 		// check. The output format can remain populated while a USB input route
-		// is present but not actually delivering microphone buffers.
+		// is present but not actually delivering microphone buffers, and it keeps
+		// describing the previous device for a short window after the AUHAL is
+		// rebound above — tapping during that window captures nothing at all.
+		let (inputFormat, settleWait) = try Self.settledInputFormat(for: inputNode)
 		let hardwareInputFormat = inputNode.inputFormat(forBus: 0)
-		let inputFormat = inputNode.outputFormat(forBus: 0)
-
-		guard hardwareInputFormat.sampleRate > 0, hardwareInputFormat.channelCount > 0,
-		      inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
-			throw NSError(
-				domain: "AudioRecorderViewModel.Mac",
-				code: -1,
-				userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
-			)
-		}
 
 		let scratchURL = suppliedScratchURL ?? Self.macScratchURL(for: url)
 		registerRecordingAttemptArtifact(at: scratchURL)
@@ -296,8 +301,65 @@ extension AudioRecorderViewModel {
 			"(hardwareSampleRate=\(hardwareInputFormat.sampleRate), " +
 			"hardwareChannels=\(hardwareInputFormat.channelCount), " +
 			"sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount), " +
-			"interleaved=\(inputFormat.isInterleaved))"
+			"interleaved=\(inputFormat.isInterleaved), " +
+			"settleWait=\(String(format: "%.3f", settleWait))s)"
 		)
+	}
+
+	/// The tap format the input node is actually ready to deliver, plus how long
+	/// the node took to get there.
+	///
+	/// Rebinding the AUHAL in `configureInputDevice(for:deviceID:)` does not update
+	/// `outputFormat(forBus:)` synchronously, so reading it immediately can return
+	/// the format of the device the engine was previously bound to. A tap installed
+	/// with that stale format never fires — AUHAL pulls at the real hardware rate
+	/// while the tap claims another — and the segment sat at zero frames until the
+	/// capture watchdog rebuilt it five seconds later, costing the head of every
+	/// recording whose input did not already run at the graph rate.
+	///
+	/// The node reconciles in milliseconds, so wait for its two formats to agree
+	/// rather than tapping a format it has not caught up to yet. A node that never
+	/// settles throws instead of silently recording nothing: the caller's fallback
+	/// handles a throw immediately, where the watchdog costs five seconds first.
+	private static func settledInputFormat(
+		for inputNode: AVAudioInputNode
+	) throws -> (format: AVAudioFormat, settleWait: TimeInterval) {
+		let startedAt = Date()
+		let deadline = startedAt.addingTimeInterval(inputFormatSettleTimeout)
+
+		while true {
+			let hardwareFormat = inputNode.inputFormat(forBus: 0)
+			let nodeFormat = inputNode.outputFormat(forBus: 0)
+			let snapshot = MacInputFormatSnapshot(
+				hardwareSampleRate: hardwareFormat.sampleRate,
+				hardwareChannelCount: hardwareFormat.channelCount,
+				nodeSampleRate: nodeFormat.sampleRate,
+				nodeChannelCount: nodeFormat.channelCount
+			)
+
+			switch MacInputTapFormatPolicy.readiness(for: snapshot) {
+			case .settled:
+				return (nodeFormat, Date().timeIntervalSince(startedAt))
+			case .unavailable:
+				throw NSError(
+					domain: "AudioRecorderViewModel.Mac",
+					code: -1,
+					userInfo: [NSLocalizedDescriptionKey: "Microphone input is not enabled — check macOS Sound input settings."]
+				)
+			case .unsettled:
+				guard Date() < deadline else {
+					throw NSError(
+						domain: "AudioRecorderViewModel.Mac",
+						code: -21,
+						userInfo: [
+							NSLocalizedDescriptionKey:
+								MacInputTapFormatPolicy.mismatchDescription(for: snapshot)
+						]
+					)
+				}
+				usleep(UInt32(inputFormatSettlePollInterval * 1_000_000))
+			}
+		}
 	}
 
 	/// Pause Mac recording: remove the input tap so the file stops
