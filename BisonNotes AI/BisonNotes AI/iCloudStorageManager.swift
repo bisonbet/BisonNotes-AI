@@ -4349,7 +4349,12 @@ extension iCloudStorageManager {
         switch kind {
         case .recording:
             builder.hasRecording = true
-            builder.hasAudio = record[Self.fieldAudioAsset] is CKAsset
+            // The review scan fetches `recordingMetadataKeys`, which deliberately
+            // omits `audioAsset`, so testing that field reported every
+            // cloud-only recording as having no audio — right beside the
+            // destructive "Delete from iCloud" action. Derive it from the audio
+            // metadata that scan actually requests.
+            builder.hasAudio = hasAudioBackupFields(record)
             builder.title = builder.title ?? (record[Self.fieldRecordingName] as? String)
             builder.date = builder.date ?? (record[Self.fieldRecordingDate] as? Date)
         case .transcript:
@@ -8578,8 +8583,13 @@ extension iCloudStorageManager {
     /// Brings the audio assets down for records that are about to be written to
     /// disk. The snapshot deliberately arrives without them.
     private func recordingRecordsWithAudioAssets(_ records: [CKRecord]) async throws -> [CKRecord] {
+        // Requiring `audioSignature` skipped older backups: they carry an asset
+        // but predate that field, so a bootstrap scan — which omits `audioAsset`
+        // — handed them to the restore loop with no asset at all and they were
+        // silently restored as metadata-only entries. Any record whose audio
+        // metadata says an asset should be there is refetched.
         let recordsMissingAssets = records.filter { record in
-            record[Self.fieldAudioSignature] != nil && record[Self.fieldAudioAsset] == nil
+            record[Self.fieldAudioAsset] == nil && hasAudioBackupFields(record)
         }
         guard !recordsMissingAssets.isEmpty else { return records }
 

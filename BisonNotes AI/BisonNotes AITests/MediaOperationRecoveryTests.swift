@@ -686,6 +686,59 @@ final class CommittedReceiptReconciliationTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.published.path))
     }
 
+    /// A process killed between `stageCopy` writing the bytes and the receipt
+    /// reaching `.staged` leaves a `.prepared` receipt with a staging copy.
+    /// `pendingOperation` only matches `.staged` and later, so nothing can ever
+    /// resume or remove it — retaining it on age alone leaked a full media file
+    /// per affected import, permanently.
+    func testUnreachablePreparedStagingIsExpiredAfterTheGracePeriod() throws {
+        let root = try TestHelpers.createTemporaryDirectory()
+        defer { try? TestHelpers.cleanupTemporaryDirectory(root) }
+
+        let recoveryDirectory = root.appendingPathComponent("recovery", isDirectory: true)
+        let documentsDirectory = root.appendingPathComponent("documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documentsDirectory, withIntermediateDirectories: true)
+        let store = MediaOperationRecoveryStore(
+            recoveryDirectory: recoveryDirectory,
+            documentsDirectory: documentsDirectory
+        )
+
+        let source = root.appendingPathComponent("source.m4a")
+        try Data("borrowed media bytes".utf8).write(to: source)
+        let operation = try store.begin(
+            kind: .audioImport,
+            sourceName: source.lastPathComponent,
+            destinationURL: documentsDirectory.appendingPathComponent("imported.m4a"),
+            fileExtension: "m4a"
+        )
+        // The copy lands, but the receipt never advances past .prepared.
+        try FileManager.default.copyItem(at: source, to: operation.stagingURL)
+        let receiptURL = recoveryDirectory.appendingPathComponent(
+            "\(MediaOperationRecoveryStore.receiptFilePrefix)\(operation.receipt.operationID.uuidString).json"
+        )
+
+        // Inside the window it is still evidence and must be kept.
+        let early = store.reconcile(isPublishedArtifactReferenced: { _ in false })
+        XCTAssertEqual(early.retainedCount, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: operation.stagingURL.path))
+
+        let late = store.reconcile(
+            isPublishedArtifactReferenced: { _ in false },
+            now: Date().addingTimeInterval(MediaOperationRecoveryStore.defaultRetention + 60)
+        )
+
+        XCTAssertEqual(late.removedReceiptCount, 1)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: operation.stagingURL.path),
+            "The unreachable staging copy must not be leaked"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receiptURL.path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: source.path),
+            "The borrowed source is never the store's to remove"
+        )
+    }
+
     /// The published media is never touched by any of this — reconciliation
     /// tidies app-owned recovery state, never the user's recording.
     func testReconciliationNeverRemovesThePublishedMedia() throws {

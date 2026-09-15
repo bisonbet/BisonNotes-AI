@@ -85,7 +85,10 @@ final class RecordingMergeRecoveryTests: XCTestCase {
     func testIncompleteMergePreservesEveryInputAndReleasesNothing() {
         let result = disposition(mergeCompleted: false)
 
-        XCTAssertEqual(result.preserve, segments + [backupURL])
+        // The backup sits at the main segment's position, not at the end — see
+        // testBackupTakesTheMainSegmentPositionRatherThanBeingAppended.
+        XCTAssertEqual(result.preserve, [mainURL, backupURL, secondSegment, thirdSegment])
+        XCTAssertEqual(Set(result.preserve), Set(segments).union([backupURL]))
         XCTAssertNil(result.releaseBackup)
         XCTAssertTrue(result.releaseSegments.isEmpty)
     }
@@ -95,6 +98,54 @@ final class RecordingMergeRecoveryTests: XCTestCase {
     /// treated as litter.
     func testIncompleteMergePreservesTheBackupAsARecoveryInput() {
         XCTAssertTrue(disposition(mergeCompleted: false).preserve.contains(backupURL))
+    }
+
+    /// The backup holds whatever was at `mainURL`, which is the *first* segment.
+    /// Appending it meant that when the move aside succeeded and the move back
+    /// failed, the existence filter dropped the missing `mainURL` and left
+    /// [segment2, segment3, backup] — replaying the beginning of the recording
+    /// at the end. It has to occupy `mainURL`'s position instead.
+    func testBackupTakesTheMainSegmentPositionRatherThanBeingAppended() {
+        let preserve = disposition(mergeCompleted: false).preserve
+
+        guard let backupIndex = preserve.firstIndex(of: backupURL),
+              let secondIndex = preserve.firstIndex(of: secondSegment) else {
+            return XCTFail("Expected both the backup and the later segments: \(preserve)")
+        }
+        XCTAssertLessThan(
+            backupIndex, secondIndex,
+            "The backup stands in for the first segment and must precede later ones"
+        )
+    }
+
+    /// The surviving half of the pair keeps the first position either way, so
+    /// dropping whichever file is absent still yields the recording's real order.
+    func testEitherSurvivorOfTheSwapLeadsTheRecoveryOrder() {
+        let preserve = disposition(mergeCompleted: false).preserve
+
+        // The move-back succeeded: the backup is gone, mainURL survives.
+        XCTAssertEqual(
+            preserve.filter { $0 != backupURL },
+            [mainURL, secondSegment, thirdSegment]
+        )
+        // The move-back failed: mainURL is gone, the backup holds segment one.
+        XCTAssertEqual(
+            preserve.filter { $0 != mainURL },
+            [backupURL, secondSegment, thirdSegment]
+        )
+    }
+
+    /// A backup recorded for a merge whose segment list does not name `mainURL`
+    /// still has to survive, even though there is no position to substitute.
+    func testBackupIsStillPreservedWhenTheMainSegmentIsNotListed() {
+        let result = RecordingMergeRecoveryPolicy.disposition(
+            mergeCompleted: false,
+            segments: [secondSegment, thirdSegment],
+            mainURL: mainURL,
+            backupURL: backupURL
+        )
+
+        XCTAssertTrue(result.preserve.contains(backupURL))
     }
 
     // MARK: - Shapes the merge can actually produce

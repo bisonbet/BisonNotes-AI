@@ -51,11 +51,42 @@ enum RecordingMergeRecoveryPolicy {
         backupURL: URL?
     ) -> MergeFailureDisposition {
         guard mergeCompleted else {
-            // The export or the file swap failed. `mainURL` may hold the
-            // original first segment or nothing at all, and the backup may hold
-            // the only copy of it, so the complete input set has to be retried.
+            // The export or the file swap failed, so there is no finished output
+            // and every surviving input is still load-bearing.
+            guard let backupURL else {
+                return MergeFailureDisposition(
+                    preserve: segments,
+                    releaseBackup: nil,
+                    releaseSegments: []
+                )
+            }
+
+            // The backup stands in for `mainURL`, so it takes that position
+            // rather than being appended. `mainURL` is the *first* segment: if
+            // the move aside succeeded and the move back then failed, appending
+            // the backup left `preserveFailedMergeSegments` filtering out the
+            // now-missing `mainURL` and snapshotting the inputs in the order
+            // [segment2, segment3, backup] — which replays the beginning of the
+            // recording at the end.
+            //
+            // Keeping both entries is safe because at most one of them exists:
+            // the backup is created by *moving* `mainURL` aside and removed by
+            // moving it back, so the pair is never on disk together and the
+            // caller's existence filter selects whichever survived.
+            var preserve: [URL] = []
+            var didSubstitute = false
+            for segment in segments {
+                preserve.append(segment)
+                if segment.standardizedFileURL == mainURL.standardizedFileURL {
+                    preserve.append(backupURL)
+                    didSubstitute = true
+                }
+            }
+            if !didSubstitute {
+                preserve.append(backupURL)
+            }
             return MergeFailureDisposition(
-                preserve: segments + (backupURL.map { [$0] } ?? []),
+                preserve: preserve,
                 releaseBackup: nil,
                 releaseSegments: []
             )

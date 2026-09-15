@@ -551,6 +551,24 @@ extension MediaOperationRecoveryStore {
                     continue
                 }
 
+                // A `.prepared` receipt whose staging copy exists is a process
+                // killed between stageCopy writing the bytes and the receipt
+                // reaching `.staged`. Nothing can ever resume it — pendingOperation
+                // only matches `.staged` and later — so retaining it on age alone
+                // leaked a full media file per affected import, permanently.
+                // Publication never happened, so the staging copy is the only
+                // thing this receipt owns and the published path is never touched.
+                if receipt.phase == .prepared,
+                   now.timeIntervalSince(receipt.updatedAt) >= retention {
+                    if stagingExists {
+                        try fileManager.removeItem(at: stagingURL)
+                    }
+                    try fileManager.removeItem(at: receiptURL)
+                    result.removedReceiptCount += 1
+                    logReconciliation(receipt, disposition: "unreachable-staging-expired")
+                    continue
+                }
+
                 if publishedExists || stagingExists {
                     let age = now.timeIntervalSince(receipt.updatedAt)
                     let disposition = age >= retention ? "retained-after-grace" : "retained"
