@@ -1216,6 +1216,11 @@ class BackgroundProcessingManager: ObservableObject {
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
             var completionStatePersisted = false
+            // Whether the job's output is already durable. Distinct from
+            // `completionStatePersisted`, which is whether that success was
+            // acknowledged — the window between them is real work that must not
+            // be reported as a failure.
+            var outputCommitted = false
             do {
                 try Task.checkCancellation()
 
@@ -1232,6 +1237,8 @@ class BackgroundProcessingManager: ObservableObject {
                     AppLog.shared.backgroundProcessing("Processing summarization job with \(engine)")
                     try await processSummarizationJob(processingJob, engine: engine)
                 }
+
+                outputCommitted = true
 
                 try Task.checkCancellation()
 
@@ -1313,6 +1320,22 @@ class BackgroundProcessingManager: ObservableObject {
                 let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
                 if let currentStatus, currentStatus.isTerminal {
                     AppLog.shared.backgroundProcessing("Job already terminal (\(currentStatus.displayName)): \(nextJob.type.displayName), error was: \(error.localizedDescription)", level: .error)
+                } else if outputCommitted, !completionStatePersisted {
+                    // The transcript or summary is already durable and only its
+                    // acknowledgement failed. Marking the job failed here would
+                    // invite a retry that re-runs the transcription or issues
+                    // another billable provider request, and could replace a
+                    // result that is already valid — so record the pending
+                    // acknowledgement instead of running the failure path. The
+                    // job stays non-terminal and is quarantined for review on the
+                    // next cold load, and the source file is retained below.
+                    jobLoadError = "Processing finished for \(nextJob.recordingName), but the completed "
+                        + "state could not be saved. The result was kept; review it before retrying."
+                    AppLog.shared.backgroundProcessing(
+                        "Completed output retained but its terminal state could not be saved for "
+                            + "\(nextJob.type.displayName): \(error.localizedDescription)",
+                        level: .fault
+                    )
                 } else {
                     let failedJob = processingJob.withStatus(.failed(error.localizedDescription))
                     do {

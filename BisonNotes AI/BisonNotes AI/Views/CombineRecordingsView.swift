@@ -603,21 +603,31 @@ struct CombineRecordingsView: View {
     }
 
     private func deleteOriginalRecordings() {
-        do {
-            if let firstId = firstRecordingId {
-                try appCoordinator.deleteRecording(id: firstId)
+        // Each original is retired independently, and an id that is already gone
+        // counts as done. Sharing one do/catch stranded the second recording for
+        // good: when the first delete committed and the second threw, the retry
+        // hit `recordingNotFound` on the already-deleted first id and never
+        // reached the second.
+        var failures: [String] = []
+        for recordingId in [firstRecordingId, secondRecordingId].compactMap({ $0 }) {
+            do {
+                try appCoordinator.deleteRecording(id: recordingId)
+            } catch CoreDataDeletionError.recordingNotFound {
+                continue
+            } catch {
+                failures.append(error.localizedDescription)
             }
-            if let secondId = secondRecordingId {
-                try appCoordinator.deleteRecording(id: secondId)
-            }
-
-            // Post notification and dismiss only after both durable deletes succeed.
-            NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-            dismiss()
-        } catch {
-            errorMessage = "Could not delete the original recordings: \(error.localizedDescription)"
-            showingError = true
         }
+
+        // Post notification and dismiss only once every original is durably gone.
+        guard failures.isEmpty else {
+            errorMessage = "Could not delete the original recordings: "
+                + failures.joined(separator: "; ")
+            showingError = true
+            return
+        }
+        NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
+        dismiss()
     }
 
 }
