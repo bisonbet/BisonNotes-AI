@@ -621,7 +621,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					Task { @MainActor [weak self] in
 						guard let self else { return }
 						do {
-							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
+							// Stopping during the activation await clears this flag. Without it the
+							// manager commits an exclusive session the user no longer wants, and the
+							// stop path cannot undo that: `deactivateSession()` already returned early
+							// while this configuration was pending.
+							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
+								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+							)
 							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
@@ -632,6 +638,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 						}
 						guard self.isStartingRecording else {
 							AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
+							// `applySelectedInputToSession()` is a further suspension point, so the
+							// session can be live and unwanted by the time we get here. Hand it back:
+							// the stop path will not, having returned early while this was pending.
+							try? await self.enhancedAudioSessionManager.deactivateSession()
 							self.finishRecordingStartup()
 							return
 						}
@@ -737,7 +747,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					Task { @MainActor [weak self] in
 						guard let self else { return }
 						do {
-							try await self.enhancedAudioSessionManager.configureBackgroundRecording()
+							// Stopping during the activation await clears this flag. Without it the
+							// manager commits an exclusive session the user no longer wants, and the
+							// stop path cannot undo that: `deactivateSession()` already returned early
+							// while this configuration was pending.
+							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
+								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+							)
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
@@ -746,6 +762,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 						}
 						guard self.isStartingRecording else {
 							AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
+							// `applySelectedInputToSession()` is a further suspension point, so the
+							// session can be live and unwanted by the time we get here. Hand it back:
+							// the stop path will not, having returned early while this was pending.
+							try? await self.enhancedAudioSessionManager.deactivateSession()
 							self.finishRecordingStartup()
 							return
 						}
