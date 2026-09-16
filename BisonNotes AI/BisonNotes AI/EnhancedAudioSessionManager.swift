@@ -37,15 +37,12 @@ protocol AudioSessionControlling: AnyObject {
     func setPreferredSampleRate(_ sampleRate: Double) throws
     func setPreferredIOBufferDuration(_ duration: TimeInterval) throws
     func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws
-    /// Blocking form. `AVAudioSession.setActive` is a synchronous round-trip to
-    /// mediaserverd, so on the main thread it can stall the UI — which is what
-    /// AVAudioSession_iOS.mm warns about. Kept only for `activatePreparedSession()`,
-    /// whose ordering guarantees depend on there being no suspension point between
-    /// the recovery guard and the activation.
-    func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws
-    /// Off-main form, for callers that are already `async` and hold no guard
-    /// across the call. `.notifyOthersOnDeactivation` is the slowest of these:
-    /// it blocks while other apps are told they may resume.
+    /// `AVAudioSession.setActive` is a synchronous round-trip to mediaserverd, so
+    /// on the main thread it can stall the UI — which is what AVAudioSession_iOS.mm
+    /// warns about. There is deliberately no blocking form: every caller is `async`,
+    /// and `audioSessionActivationQueue` gives the ordering that the last synchronous
+    /// caller was really relying on. `.notifyOthersOnDeactivation` is the slowest of
+    /// these: it blocks while other apps are told they may resume.
     func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws
 }
 
@@ -84,12 +81,6 @@ final class SystemAudioSessionController: AudioSessionControlling {
 
     func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws {
         try session.setPreferredInput(input)
-    }
-
-    func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
-        try audioSessionActivationQueue.sync {
-            try AVAudioSession.sharedInstance().setActive(active, options: options)
-        }
     }
 
     func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws {
@@ -290,15 +281,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// This method intentionally throws the underlying session error unchanged;
     /// the recovery coordinator records its NSError domain and code before it
     /// applies a retry/defer/fail disposition.
-    func activatePreparedSession() throws {
-        try activatePreparedSession(expectedGeneration: nil)
+    func activatePreparedSession() async throws {
+        try await activatePreparedSession(expectedGeneration: nil)
     }
 
     /// Activate the exact configuration produced by a recovery preparation.
     /// The generation prevents a newer transition from being activated by a
     /// stale recovery continuation.
-    func activatePreparedSession(for generation: UInt64) throws {
-        try activatePreparedSession(expectedGeneration: generation)
+    func activatePreparedSession(for generation: UInt64) async throws {
+        try await activatePreparedSession(expectedGeneration: generation)
     }
 
     /// Discard a recovery preparation that was invalidated before activation.
@@ -311,7 +302,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         preparedConfigurationGeneration = nil
     }
 
-    private func activatePreparedSession(expectedGeneration: UInt64?) throws {
+    private func activatePreparedSession(expectedGeneration: UInt64?) async throws {
         if let expectedGeneration {
             guard preparedConfigurationGeneration == expectedGeneration,
                   preparedConfiguration != nil else {
@@ -327,8 +318,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         // Nothing below this line is reached when activation throws, which is the
         // point: the manager only claims the session once it actually holds it.
+        //
+        // The await is safe precisely because the generation is checked again on the
+        // far side of it. Anything that interleaves during the suspension advances
+        // the transition generation, so a superseded activation cannot go on to
+        // claim the session — which is what the old blocking call was really
+        // protecting, and it paid for that by stalling the main thread on every
+        // recovery.
         do {
-            try audioSessionController.setActive(true, options: [])
+            try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
         } catch {
             if audioSessionTransitionGeneration == generation,
@@ -539,7 +537,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
         try prepareConfiguration(config, generation: generation)
-        try activatePreparedSession(for: generation)
+        try await activatePreparedSession(for: generation)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()

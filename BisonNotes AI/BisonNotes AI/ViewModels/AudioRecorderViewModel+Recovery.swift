@@ -320,7 +320,7 @@ extension AudioRecorderViewModel {
 			enhancedAudioSessionManager.discardPreparedSession(for: preparationGeneration)
 			return false
 		}
-		try enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
+		try await enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
 		return true
 	}
 
