@@ -641,6 +641,18 @@ class CoreDataManager: ObservableObject {
         try existingIDs(in: ids, fetchRequest: SummaryEntry.fetchRequest(), operation: "summary ids")
     }
 
+    /// Every summary id, without materialising a single summary body.
+    ///
+    /// The first-run iCloud prompt built this set with `getAllSummaries()` and a
+    /// `compactMap`, which faults in every summary's text to read its UUID — on
+    /// every visit to the Summaries tab.
+    func allSummaryIDs() throws -> Set<UUID> {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.propertiesToFetch = ["id"]
+        let summaries = try fetchCollection(fetchRequest, operation: "summary ids")
+        return Set(summaries.compactMap { $0.value(forKey: "id") as? UUID })
+    }
+
     private func existingIDs<Entry: NSManagedObject>(
         in ids: Set<UUID>,
         fetchRequest: NSFetchRequest<Entry>,

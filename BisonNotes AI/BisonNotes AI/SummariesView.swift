@@ -434,7 +434,12 @@ struct SummariesView: View {
         .refreshable {
             loadRecordings()
         }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        // Deliberately excludes `searchText`. Identity is what SwiftUI uses to decide
+        // this is a *different* view, so having a keystroke change it tore down and
+        // rebuilt the whole list on every character — re-firing `onAppear` and the
+        // full reload behind it. Filter changes still reset the list; the `ForEach`
+        // already diffs rows by `objectID`, so search filters in place.
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)")
         .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
         #endif
     }
@@ -502,7 +507,12 @@ struct SummariesView: View {
         .refreshable {
             loadRecordings()
         }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        // Deliberately excludes `searchText`. Identity is what SwiftUI uses to decide
+        // this is a *different* view, so having a keystroke change it tore down and
+        // rebuilt the whole list on every character — re-firing `onAppear` and the
+        // full reload behind it. Filter changes still reset the list; the `ForEach`
+        // already diffs rows by `objectID`, so search filters in place.
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)")
         .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
     }
 
@@ -1113,9 +1123,9 @@ struct SummariesView: View {
                     cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
                 }
 
-                // Get local summary IDs from Core Data
-                let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
-                let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                // Ids only: this comparison never needed the summary bodies, and
+                // faulting all of them in ran on every visit to the tab.
+                let localSummaryIds = try appCoordinator.coreDataManager.allSummaryIDs()
 
                 let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 
