@@ -361,7 +361,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 try ensureTransitionIsCurrentAndWanted(generation)
             } catch {
                 // Live and unwanted: hand it back before anything is claimed.
-                await releaseAbandonedSession(generation: generation)
+                await releaseAbandonedSession(generation: generation, retainingOnFailure: prepared)
                 throw error
             }
         } catch {
@@ -590,7 +590,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             do {
                 try ensureTransitionIsCurrentAndWanted(generation)
             } catch {
-                await releaseAbandonedSession(generation: generation)
+                await releaseAbandonedSession(generation: generation, retainingOnFailure: config)
                 throw error
             }
         }
@@ -664,7 +664,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// to retry. Keeping it leaves the claim truthful and leaves a later
     /// `deactivateSession()` able to finish: by then the prepared and pending halves
     /// are clear, so its early return no longer applies.
-    private func releaseAbandonedSession(generation: UInt64) async {
+    /// - Parameter retainingOnFailure: the configuration the session was activated
+    ///   with. On a *first* start there is no previous `currentConfiguration` to
+    ///   fall back on — the new one is not committed until after the abandonment
+    ///   branch — so a failed release would leave every ownership field nil and
+    ///   `isOwnedByRecording` reporting false while the exclusive session may still
+    ///   be held. Recording it here keeps the claim truthful and keeps a later
+    ///   `deactivateSession()` able to finish: by then the prepared and pending
+    ///   halves are clear, so its early return no longer applies.
+    private func releaseAbandonedSession(
+        generation: UInt64,
+        retainingOnFailure retained: AudioSessionConfig?
+    ) async {
         do {
             try await audioSessionController.setActiveOffMainThread(
                 false,
@@ -676,6 +687,13 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     + "\(error.localizedDescription)",
                 level: .error
             )
+            if audioSessionTransitionGeneration == generation,
+               currentConfiguration == nil,
+               let retained {
+                currentConfiguration = retained
+                isMixedAudioEnabled = retained.allowMixedAudio
+                isBackgroundRecordingEnabled = retained.backgroundRecording
+            }
             return
         }
         guard audioSessionTransitionGeneration == generation else { return }
