@@ -44,37 +44,62 @@ final class PostCommitTests: XCTestCase {
         )
     }
 
-    func testThrowingBodyDoesNotPreventTheEnclosingScopeFromContinuing() {
-        var reachedAfterCommit = false
+    /// Non-propagation is a compile-time property — the helper is not `rethrows`.
+    /// What is worth pinning is that a failed loose end does not stop the *next*
+    /// one: each post-commit step has to be attempted on its own.
+    func testAFailedStepDoesNotSkipTheNextOne() {
+        var secondStepRan = false
 
-        afterCommit("non-propagating work", category: .general) {
+        let firstError = afterCommit("first loose end", category: .general) {
             throw TestError()
         }
-        reachedAfterCommit = true
+        let secondError = afterCommit("second loose end", category: .general) {
+            secondStepRan = true
+        }
 
-        XCTAssertTrue(reachedAfterCommit)
+        XCTAssertNotNil(firstError)
+        XCTAssertNil(secondError)
+        XCTAssertTrue(secondStepRan, "A failed post-commit step must not skip the one after it")
     }
 
-    func testDescriptionAppearsInLoggedContext() async {
+    /// Asserts the wording through the pure formatter the helper uses. Reading
+    /// `AppLog.shared.persistedErrorLog()` instead would assert against the app's
+    /// real rolling error log — the same file the troubleshooting export ships —
+    /// and leave a fabricated ERROR line in it on every run.
+    func testDescriptionAndErrorAppearInTheLoggedMessage() {
         let description = "PostCommitTests-\(UUID().uuidString)"
+        let error = TestError("the underlying failure")
 
-        _ = afterCommit(description, category: .general) {
-            throw TestError()
+        let message = PostCommitLog.message(description, error: error)
+
+        XCTAssertTrue(
+            message.contains(description),
+            "The post-commit description should be present in the logged message"
+        )
+        XCTAssertTrue(
+            message.contains("the underlying failure"),
+            "The underlying error should be present in the logged message"
+        )
+    }
+
+    func testAsyncOverloadReturnsTheExactErrorAndKeepsGoing() async {
+        let expectedError = TestError()
+        var secondStepRan = false
+
+        let firstError = await afterCommit("awaiting work", category: .general) {
+            try await Task.sleep(for: .milliseconds(1))
+            throw expectedError
         }
-
-        let deadline = Date().addingTimeInterval(1)
-        var persistedLog = ""
-        while Date() < deadline {
-            persistedLog = AppLog.shared.persistedErrorLog()
-            if persistedLog.contains(description) {
-                break
-            }
-            try? await Task.sleep(for: .milliseconds(10))
+        let secondError = await afterCommit("later awaiting work", category: .general) {
+            try await Task.sleep(for: .milliseconds(1))
+            secondStepRan = true
         }
 
         XCTAssertTrue(
-            persistedLog.contains(description),
-            "The post-commit description should be present in the persisted error log"
+            (firstError as AnyObject?) === expectedError,
+            "The async overload must return the exact error instance"
         )
+        XCTAssertNil(secondError)
+        XCTAssertTrue(secondStepRan, "A failed async post-commit step must not skip the one after it")
     }
 }

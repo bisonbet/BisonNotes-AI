@@ -1,6 +1,6 @@
 # Post-Commit Work: a convention to stop a recurring class of bug
 
-**Status:** planned, not started
+**Status:** implemented on `v3.0-post-commit-convention`
 **Branch:** `v3.0-post-commit-convention`, cut from `v3.0-reliability-hardening` at `e3ae604a`
 **Depends on:** PR #131 merging to `v3.0` first. Rebase onto `v3.0` before opening the PR.
 
@@ -106,6 +106,14 @@ and reconsider the helper's shape rather than forcing it.
 | 4 | `SummaryRegenerationManager.swift:~238` | `"Regeneration saved the summary but could not rename recording "` |
 | 5 | `Views/CombineRecordingsView.swift:~606` | comment `Each original is retired independently` |
 
+**Outcome:** sites 1, 3 and 4 migrated. Sites 2 and 5 stay hand-written — the
+reasons below held up, and are now also recorded in `CLAUDE.md` so a future
+session does not "fix" them by forcing the helper in. Review of the migration
+found one further site the original five missed: the 0.95 progress write in
+`processSummarizationJob` follows `createSummary` and is `async`, which is why
+`afterCommit` gained an `async` overload; the same review moved the no-content
+check in `processTranscriptionJob` above `saveTranscript`.
+
 **Site 2 is the exception — do not force it.** It is not an optional step in a
 `do` block; it is a *terminal acknowledgement*, and its fix needed two separate
 facts (`outputCommitted` = the work is durable, `completionStatePersisted` = that
@@ -179,18 +187,19 @@ Keep it short. The value is the rule plus the named helper, not the history.
 
 ## 6. Definition of done
 
-- [ ] `PostCommit.swift` added, with the doc comment explaining *why* it returns
+- [x] `PostCommit.swift` added, with the doc comment explaining *why* it returns
       rather than throws.
-- [ ] `PostCommitTests.swift` added; all cases pass.
-- [ ] Sites 1, 3, 4 migrated and shorter. Site 5 migrated or explicitly declined
-      in the PR body. Site 2 left hand-written, with the reason stated.
-- [ ] `CLAUDE.md` section added.
-- [ ] `xcodebuild build -scheme "BisonNotes AI macOS"` passes.
+- [x] `PostCommitTests.swift` added; all cases pass.
+- [x] Sites 1, 3, 4 migrated and shorter. Site 5 explicitly declined (see §3).
+      Site 2 left hand-written, with the reason stated.
+- [x] `CLAUDE.md` section added.
+- [x] `xcodebuild build -scheme "BisonNotes AI macOS"` passes.
 - [ ] Full suite passes with no net loss; it was **671 passing, 0 failed,
       0 skipped** at `e3ae604a`.
-- [ ] PR body states plainly that this is a refactor of already-fixed bugs — it
-      changes no behavior that a user can observe, and the tests it adds pin the
-      helper, not the original bugs. Those remain pinned by the fixes in #131.
+- [ ] PR body states plainly that this is mostly a refactor of already-fixed
+      bugs. Two fixes here are *not* refactors and are user-visible: the 0.95
+      progress write no longer fails a job whose summary is durable, and an
+      empty transcription no longer commits a transcript before failing.
 
 ## 7. Verification note
 

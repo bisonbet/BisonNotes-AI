@@ -94,12 +94,20 @@ A `do` block must not span a durable commit. Once `saveContext`,
 or a media `publish` has returned, the operation has succeeded — and a later
 failure is a loose end, never a failure of the thing the caller was doing.
 
-Run anything after that point through `afterCommit(_:category:_:)`. It logs and
-returns the error rather than throwing, so it cannot reach a `catch` written for
-pre-commit failures. Five separate bugs in v3.0 reliability hardening were this
-exact shape: three re-billed an AI provider for a summary that already existed,
-one re-ran a transcription over a valid result, and one stranded a recording
-permanently behind a retry that died on an already-deleted id.
+Run anything after that point through `afterCommit(_:category:_:)` — there is a
+sync and an `async` overload. It logs and returns the error rather than throwing,
+so it cannot reach a `catch` written for pre-commit failures. Five separate bugs
+in v3.0 reliability hardening were this exact shape: three re-billed an AI
+provider for a summary that already existed, one re-ran a transcription over a
+valid result, and one stranded a recording permanently behind a retry that died
+on an already-deleted id.
+
+Two shapes the helper cannot express stay hand-written, and are not bugs to
+"fix" by forcing it in: a *terminal acknowledgement* that needs two separate
+facts (`processNextJob`'s `outputCommitted` plus `completionStatePersisted`),
+and a loop that *retires items independently* and classifies each failure
+(`CombineRecordingsView.deleteOriginalRecordings`, where an already-absent id
+counts as done and the rest are reported to the user together).
 
 Cleanup that must eventually happen needs a durable intent, not a retry in the
 same call. Cleanup the user can do themselves — a file in a folder they chose —

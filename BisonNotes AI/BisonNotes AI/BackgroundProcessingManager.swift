@@ -1608,9 +1608,21 @@ class BackgroundProcessingManager: ObservableObject {
             finalTranscriptData = transcriptData
         }
 
+        // Validate the ASR result before anything is made durable. Running this
+        // after `saveTranscript` committed an empty transcript, fired
+        // `onTranscriptionCompleted`, and only then failed the job — leaving the
+        // recording showing a transcript the user was told had failed, and a
+        // retry that would overwrite the committed row.
+        let hasTranscriptContent = transcriptChunks.contains {
+            !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !hasTranscriptContent {
+            AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
+        }
+
         // Cleanup is a final-result operation. It runs once after reassembly and
         // any speaker labeling, never inside transcribeChunk.
-        if let finalTranscriptData {
+        if hasTranscriptContent, let finalTranscriptData {
             let cleanupConfiguration = TranscriptCleanupConfiguration(
                 enabled: job.transcriptCleanupEnabled,
                 mode: .automatic,
@@ -1667,13 +1679,9 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        // Complete the job - but validate we actually have transcript content
-        let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-        if !hasTranscriptContent {
-            AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
-
-            // Mark as failed instead of completed
+        // Nothing was saved above when there is no content, so this failure is
+        // raised on an uncommitted job — the chunk cleanup still runs first.
+        guard hasTranscriptContent else {
             throw BackgroundProcessingError.processingFailed("Transcription completed but generated no content")
         }
 
@@ -2110,9 +2118,20 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        // Update progress to near-complete (processNextJob sets final .completed status)
+        // Update progress to near-complete (processNextJob sets final .completed status).
+        //
+        // Progress is bookkeeping and the summary above is already durable, so a
+        // failed write here must not reach processNextJob: `outputCommitted` is
+        // only set once this function returns, so the throw would take the plain
+        // failure path and invite a retry that pays for the summary twice. The
+        // terminal save still runs, and its own failure is handled there.
         let nearCompleteJob = job.withProgress(0.95)
-        try await updateJob(nearCompleteJob)
+        await afterCommit(
+            "Recording near-complete progress for job \(job.id)",
+            category: .backgroundProcessing
+        ) {
+            try await updateJob(nearCompleteJob)
+        }
 
         AppLog.shared.backgroundProcessing("Summarization job completed")
     }
