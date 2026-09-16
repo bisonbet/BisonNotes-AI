@@ -362,18 +362,30 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             if !isStillWanted() {
                 // The session is live and nobody wants it. Hand it back rather than
                 // leaving an exclusive background-recording session with no recorder.
-                try? await audioSessionController.setActiveOffMainThread(
-                    false,
-                    options: .notifyOthersOnDeactivation
-                )
-                // The published state has to follow the physical session down, not
-                // just the prepared half the catch clears. `isOwnedByRecording` reads
-                // `currentConfiguration`, so leaving a previous recording config in
-                // place made the manager claim it still owned a session that no
-                // longer exists and no recorder is using — and background-processing
-                // audio setup is refused for exactly as long as that is true.
-                // Matches what a successful `deactivateSession()` leaves behind.
-                if audioSessionTransitionGeneration == generation {
+                var handedBack = true
+                do {
+                    try await audioSessionController.setActiveOffMainThread(
+                        false,
+                        options: .notifyOthersOnDeactivation
+                    )
+                } catch {
+                    handedBack = false
+                    AppLog.shared.audioSession(
+                        "Abandoned activation could not release the audio session: "
+                            + "\(error.localizedDescription)",
+                        level: .error
+                    )
+                }
+
+                // The published state follows the physical session, and only when the
+                // physical session actually went down. `isOwnedByRecording` reads
+                // `currentConfiguration`: clearing it after a *failed* release would
+                // report that nothing holds the session while an exclusive one may
+                // still be active, with the stop path already returned and nothing
+                // left to retry — other apps stay suppressed with no way back.
+                // Retaining it keeps the claim truthful and keeps a later
+                // `deactivateSession()` able to finish the job.
+                if handedBack, audioSessionTransitionGeneration == generation {
                     isConfigured = false
                     isMixedAudioEnabled = false
                     isBackgroundRecordingEnabled = false
