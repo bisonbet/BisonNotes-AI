@@ -7275,11 +7275,83 @@ extension iCloudStorageManager {
         }
     }
 
+    /// What a plan's content deletes are made of, counted the same way
+    /// `contentRecordIDsWorthDeleting` decides them.
+    ///
+    /// `deleted=91`, run after run, is either two devices trading uploads and
+    /// deletions forever or ninety-one tombstone replays costing nothing — opposite
+    /// problems behind one number. `alreadyGone=` was meant to separate them and
+    /// cannot: it only counts a delete CloudKit *failed* as missing, and CloudKit
+    /// reports deleting an absent record as success. The origin of each delete does
+    /// separate them, and it is known here without asking the server anything.
+    struct CloudDeleteComposition: Equatable {
+        var suppressedAsAlreadyGone = 0
+        var explicit = 0
+        var legacySummaries = 0
+        var retiredMarkers = 0
+        var untrustedManifest = 0
+    }
+
+    /// Takes the plan's data rather than the plan, so it stays a pure function the
+    /// tests can drive without the private planning types.
+    /// `indexedRecordNames` is nil when the manifest is not trusted.
+    static func deleteComposition(
+        recordIDsToDelete: Set<CKRecord.ID>,
+        explicitlyTargetedRecordIDs: Set<CKRecord.ID>,
+        expiredMarkerCount: Int,
+        indexedRecordNames: Set<String>?
+    ) -> CloudDeleteComposition {
+        var composition = CloudDeleteComposition()
+        composition.retiredMarkers = expiredMarkerCount
+
+        guard let indexed = indexedRecordNames else {
+            // Nothing was filtered, so nothing can be called provably gone.
+            composition.untrustedManifest = recordIDsToDelete.count
+            return composition
+        }
+
+        for recordID in recordIDsToDelete {
+            if explicitlyTargetedRecordIDs.contains(recordID) {
+                composition.explicit += 1
+                continue
+            }
+            let name = recordID.recordName
+            let isManifestManaged = manifestManagedRecordPrefixes.contains { name.hasPrefix($0) }
+            if !isManifestManaged {
+                // Legacy `CD_EnhancedSummary` ids were never indexed, so the filter
+                // waves them through on every run — which is exactly the shape that
+                // makes a steady `deleted=` look alarming when it is inert.
+                composition.legacySummaries += 1
+            } else if !indexed.contains(name) {
+                composition.suppressedAsAlreadyGone += 1
+            }
+        }
+        return composition
+    }
+
     private func applyDeletionPlan(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
     ) async throws -> CloudDeletionCommitResult {
         var result = CloudDeletionCommitResult()
+        let trustedManifest = workspace.flatMap { workspace -> Set<String>? in
+            guard workspace.manifestRecords.isTrusted else { return nil }
+            let manifest = workspace.manifestRecords.manifest
+            return manifest.recordings.union(manifest.transcripts).union(manifest.summaries)
+        }
+        let composition = Self.deleteComposition(
+            recordIDsToDelete: plan.recordIDsToDelete,
+            explicitlyTargetedRecordIDs: plan.explicitlyTargetedRecordIDs,
+            expiredMarkerCount: plan.expiredMarkerIDsToRetire.count,
+            indexedRecordNames: trustedManifest
+        )
+        activeRunRecorder?.addDeletePlan(
+            suppressedAsAlreadyGone: composition.suppressedAsAlreadyGone,
+            explicit: composition.explicit,
+            legacySummaries: composition.legacySummaries,
+            retiredMarkers: composition.retiredMarkers,
+            untrustedManifest: composition.untrustedManifest
+        )
         result.removedRecords = try await deleteExistingCloudRecords(
             Self.contentRecordIDsWorthDeleting(plan, workspace: workspace)
                 + Array(plan.markerIDsToWithdraw)

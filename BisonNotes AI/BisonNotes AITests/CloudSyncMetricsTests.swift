@@ -251,4 +251,101 @@ final class CloudSyncMetricsTests: XCTestCase {
         XCTAssertEqual(report.queueDelaySeconds, 3.5)
         XCTAssertTrue(report.logDescription.contains("queue=3.50s"))
     }
+
+    // MARK: - Reading `deleted=`
+
+    private func recordID(_ name: String) -> CKRecord.ID {
+        CKRecord.ID(recordName: name)
+    }
+
+    /// `deleted=91` every run is either two devices trading deletions forever or
+    /// ninety-one inert replays. `alreadyGone=` cannot separate them — it counts
+    /// only deletes CloudKit *failed* as missing, and CloudKit reports deleting an
+    /// absent record as success — so the origin has to.
+    func testAReplayTheManifestProvesIsGoneIsCountedAsSuppressed() {
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [recordID("backup_summary_A"), recordID("backup_summary_B")],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            indexedRecordNames: ["backup_summary_A"]
+        )
+
+        XCTAssertEqual(composition.suppressedAsAlreadyGone, 1)
+        XCTAssertEqual(composition.explicit, 0)
+        XCTAssertEqual(composition.legacySummaries, 0)
+    }
+
+    func testLegacySummaryIdsAreCountedApartBecauseNothingFiltersThem() {
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [recordID("CD_EnhancedSummary_1"), recordID("CD_EnhancedSummary_2")],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            indexedRecordNames: []
+        )
+
+        XCTAssertEqual(
+            composition.legacySummaries, 2,
+            "Legacy ids were never indexed, so they pass the filter on every run"
+        )
+        XCTAssertEqual(composition.suppressedAsAlreadyGone, 0)
+    }
+
+    func testAnExplicitlyTargetedIdIsNeverCalledAlreadyGone() {
+        let target = recordID("backup_recording_X")
+
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [target],
+            explicitlyTargetedRecordIDs: [target],
+            expiredMarkerCount: 0,
+            indexedRecordNames: []
+        )
+
+        XCTAssertEqual(composition.explicit, 1)
+        XCTAssertEqual(
+            composition.suppressedAsAlreadyGone, 0,
+            "Content and manifest writes are not atomic, so a stale manifest proves nothing here"
+        )
+    }
+
+    func testAnUntrustedManifestClaimsNothingAboutWhatIsGone() {
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [recordID("backup_recording_X"), recordID("backup_summary_Y")],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 3,
+            indexedRecordNames: nil
+        )
+
+        XCTAssertEqual(composition.untrustedManifest, 2)
+        XCTAssertEqual(composition.suppressedAsAlreadyGone, 0)
+        XCTAssertEqual(composition.retiredMarkers, 3)
+    }
+
+    // MARK: - Reading `total=`
+
+    func testUnaccountedTimeIsWhatThePhasesDoNotExplain() {
+        var report = CloudSyncRunReport(
+            runIdentifier: "test",
+            reason: .appBecameActive,
+            intent: .routineSnapshot
+        )
+        report.totalSeconds = 25.5
+        report.phaseSeconds = [.applyInboundTombstones: 2.4, .fetchCloudSnapshot: 0.6]
+
+        XCTAssertEqual(report.unaccountedSeconds, 22.5, accuracy: 0.001)
+        XCTAssertTrue(report.logDescription.contains("unaccounted="))
+    }
+
+    func testOverlappingPhasesNeverReportNegativeUnaccountedTime() {
+        var report = CloudSyncRunReport(
+            runIdentifier: "test",
+            reason: .appBecameActive,
+            intent: .routineSnapshot
+        )
+        report.totalSeconds = 1.0
+        report.phaseSeconds = [.applyInboundTombstones: 2.0]
+
+        XCTAssertEqual(report.unaccountedSeconds, 0)
+        XCTAssertFalse(report.logDescription.contains("unaccounted="))
+    }
+
 }

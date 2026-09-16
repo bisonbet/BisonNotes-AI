@@ -85,8 +85,34 @@ struct CloudSyncRunReport: Equatable, Sendable {
     /// sixty-two no-op deletes replayed from tombstones still inside their retention
     /// window. Those call for opposite responses, so they are counted apart.
     var recordsAlreadyAbsent = 0
+    /// Content deletes the manifest proved were already gone, so they were never
+    /// issued at all.
+    ///
+    /// `recordsAlreadyAbsent` cannot answer the question it was added for on its
+    /// own: it is only incremented when CloudKit *fails* a delete with a missing
+    /// record, and CloudKit reports deleting an absent record as plain success. So
+    /// the counter reads zero whether every delete was a no-op or none of them
+    /// were. What the run does know is which replays `contentRecordIDsWorthDeleting`
+    /// suppressed against a trusted manifest — that is a real already-gone count,
+    /// and it is the one worth reading next to `deleted=`.
+    var deletesSuppressedAsAlreadyGone = 0
+    /// Where the deletes that *were* issued came from. A steady `deleted=` is
+    /// harmless when it is legacy or explicit ids replaying, and a symptom when it
+    /// is indexed content going away every run — the origin is what separates them.
+    var deletesFromExplicitRequest = 0
+    var deletesFromLegacySummaries = 0
+    var deletesOfRetiredMarkers = 0
+    var deletesWithUntrustedManifest = 0
     var recordsFailed = 0
     var conflictCount = 0
+
+    /// What `recordsSaved` was made of, by record type.
+    ///
+    /// A run that uploads nothing still reported `saved=1`, and the backup leg's own
+    /// summary said `saved [records: 0]` — so the save was somewhere else and the
+    /// line could not say where. A quiet device rewriting its manifest on every pass
+    /// looks identical to one genuinely uploading an edit, until the type is named.
+    var savedRecordTypes: [String: Int] = [:]
 
     var audioFilesUploaded = 0
     var audioBytesUploaded: Int64 = 0
@@ -115,6 +141,25 @@ struct CloudSyncRunReport: Equatable, Sendable {
             // Only when it happened: a clean run should not carry a zero here.
             parts.append("alreadyGone=\(recordsAlreadyAbsent)")
         }
+        if deletesSuppressedAsAlreadyGone > 0 {
+            parts.append("deletesSkipped=\(deletesSuppressedAsAlreadyGone)")
+        }
+        let origins = [
+            ("explicit", deletesFromExplicitRequest),
+            ("legacy", deletesFromLegacySummaries),
+            ("markers", deletesOfRetiredMarkers),
+            ("untrustedManifest", deletesWithUntrustedManifest)
+        ].filter { $0.1 > 0 }
+        if !origins.isEmpty {
+            let breakdown = origins.map { "\($0.0)=\($0.1)" }.joined(separator: " ")
+            parts.append("deleteOrigin[\(breakdown)]")
+        }
+        if !savedRecordTypes.isEmpty {
+            let types = savedRecordTypes.sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: " ")
+            parts.append("savedTypes[\(types)]")
+        }
         if deferredItemCount > 0 {
             parts.append("deferredItems=\(deferredItemCount)")
         }
@@ -130,7 +175,24 @@ struct CloudSyncRunReport: Equatable, Sendable {
         if !phases.isEmpty {
             parts.append("phases[\(phases.joined(separator: " "))]")
         }
+        if unaccountedSeconds > 0.5 {
+            // A run whose phases explain almost none of its own wall clock cannot
+            // be tuned from this line, and that was the state it shipped in: eight
+            // spans over a run that also touches Core Data, audio staging, settings
+            // and the main actor. Reported only when it is worth chasing.
+            parts.append(String(format: "unaccounted=%.2fs", unaccountedSeconds))
+        }
         return parts.joined(separator: " ")
+    }
+
+    /// Wall clock the instrumented phases do not explain.
+    ///
+    /// `phaseSeconds` only covers marked spans, and the recorder holds one open
+    /// phase at a time, so every stretch between one closing and the next opening
+    /// is invisible. Clamped at zero: nested or overlapping spans could otherwise
+    /// sum past the total and report a negative.
+    var unaccountedSeconds: TimeInterval {
+        max(0, totalSeconds - phaseSeconds.values.reduce(0, +))
     }
 
     /// Audio is reported on its own line so it can never be mistaken for metadata
@@ -237,6 +299,9 @@ final class CloudSyncRunRecorder {
     func add(modify outcome: CloudKitModifyOutcome) {
         add(outcome.stats)
         report.recordsSaved += outcome.saved.count
+        for record in outcome.saved.values {
+            report.savedRecordTypes[record.recordType, default: 0] += 1
+        }
         report.recordsDeleted += outcome.deleted.count
         report.recordsAlreadyAbsent += outcome.alreadyAbsent.count
         report.recordsFailed += outcome.failures.count
@@ -244,6 +309,22 @@ final class CloudSyncRunRecorder {
         if let until = outcome.deferredUntil {
             report.deferredUntil = until
         }
+    }
+
+    /// Where a batch of issued deletes came from, and how many replays the manifest
+    /// let the run skip entirely. See `deletesSuppressedAsAlreadyGone`.
+    func addDeletePlan(
+        suppressedAsAlreadyGone: Int = 0,
+        explicit: Int = 0,
+        legacySummaries: Int = 0,
+        retiredMarkers: Int = 0,
+        untrustedManifest: Int = 0
+    ) {
+        report.deletesSuppressedAsAlreadyGone += suppressedAsAlreadyGone
+        report.deletesFromExplicitRequest += explicit
+        report.deletesFromLegacySummaries += legacySummaries
+        report.deletesOfRetiredMarkers += retiredMarkers
+        report.deletesWithUntrustedManifest += untrustedManifest
     }
 
     func addAudio(fileCount: Int, byteCount: Int64, seconds: TimeInterval) {
