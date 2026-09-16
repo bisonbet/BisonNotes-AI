@@ -323,7 +323,12 @@ extension AudioRecorderViewModel {
 		// Re-checked on the far side of the activation await, not just before it.
 		try await enhancedAudioSessionManager.activatePreparedSession(
 			for: preparationGeneration,
-			isStillWanted: { [self] in recoveryCoordinator.accepts(request) && recordingIntentActive }
+			// The full fence, not a subset of it: a second interruption beginning
+			// during the activation await leaves `accepts` true by design, while
+			// `isCurrentAudioRecovery` also rejects on `isInInterruption` and on a
+			// changed session id or URL. Using less here let the session be claimed
+			// for a recovery `startContinuationRecording` was about to refuse.
+			isStillWanted: { [self] in isCurrentAudioRecovery(request) }
 		)
 		return true
 	}

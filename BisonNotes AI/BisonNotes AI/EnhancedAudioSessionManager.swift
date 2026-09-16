@@ -366,6 +366,20 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                     false,
                     options: .notifyOthersOnDeactivation
                 )
+                // The published state has to follow the physical session down, not
+                // just the prepared half the catch clears. `isOwnedByRecording` reads
+                // `currentConfiguration`, so leaving a previous recording config in
+                // place made the manager claim it still owned a session that no
+                // longer exists and no recorder is using — and background-processing
+                // audio setup is refused for exactly as long as that is true.
+                // Matches what a successful `deactivateSession()` leaves behind.
+                if audioSessionTransitionGeneration == generation {
+                    isConfigured = false
+                    isMixedAudioEnabled = false
+                    isBackgroundRecordingEnabled = false
+                    currentConfiguration = nil
+                    pendingConfiguration = nil
+                }
                 throw AudioSessionTransitionError.superseded
             }
         } catch {
