@@ -691,6 +691,71 @@ class CoreDataManager: ObservableObject {
         }
     }
 
+    /// Row counts without materialising the rows.
+    ///
+    /// The Summaries tab compared `getAllRecordings().count` against
+    /// `getAllSummaries().count` on every appearance, which faulted in every
+    /// summary body to answer a question about cardinality.
+    func countRecordings() throws -> Int {
+        try count(RecordingEntry.fetchRequest(), operation: "recording count")
+    }
+
+    func countSummaries() throws -> Int {
+        try count(SummaryEntry.fetchRequest(), operation: "summary count")
+    }
+
+    private func count<Entry: NSManagedObject>(
+        _ fetchRequest: NSFetchRequest<Entry>,
+        operation: String
+    ) throws -> Int {
+        do {
+            return try context.count(for: fetchRequest)
+        } catch {
+            throw CoreDataCollectionReadError(
+                operation: operation,
+                failure: PersistenceStoreFailure(error: error)
+            )
+        }
+    }
+
+    /// Resolves many URLs against one read of the recordings table.
+    ///
+    /// `fetchRecording(url:)` reads every recording to resolve a single URL, which
+    /// is fine once and quadratic in a loop. The relationship refresh resolves
+    /// roughly one URL per audio file on every visit to the Summaries tab, so it
+    /// was paying that read ninety-odd times. Same resolution rules, same order:
+    /// an exact candidate match first, then the legacy filename fallback.
+    func fetchRecordings(urls: [URL]) throws -> [URL: RecordingEntry] {
+        guard !urls.isEmpty else { return [:] }
+        let recordings = try getAllRecordings()
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CoreDataCollectionReadError(
+                operation: "recording URL resolution",
+                failure: PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 3)
+            )
+        }
+
+        var byNormalizedPath: [String: RecordingEntry] = [:]
+        var byFileName: [String: RecordingEntry] = [:]
+        for recording in recordings {
+            guard let storedURL = recording.recordingURL else { continue }
+            for candidate in Self.storedURLCandidates(storedURL, documentsURL: documentsURL) {
+                // First writer wins, matching the original loop's `return` on the
+                // earliest recording that matched.
+                byNormalizedPath[normalizedURLPath(candidate)] = byNormalizedPath[normalizedURLPath(candidate)] ?? recording
+                byFileName[candidate.lastPathComponent] = byFileName[candidate.lastPathComponent] ?? recording
+            }
+        }
+
+        var resolved: [URL: RecordingEntry] = [:]
+        for url in urls {
+            if let match = byNormalizedPath[normalizedURLPath(url)] ?? byFileName[url.lastPathComponent] {
+                resolved[url] = match
+            }
+        }
+        return resolved
+    }
+
     private func normalizedURLPath(_ url: URL) -> String {
         url.standardizedFileURL.resolvingSymlinksInPath().path
     }
