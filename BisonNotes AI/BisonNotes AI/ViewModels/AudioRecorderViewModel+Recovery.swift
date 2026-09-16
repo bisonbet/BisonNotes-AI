@@ -320,7 +320,11 @@ extension AudioRecorderViewModel {
 			enhancedAudioSessionManager.discardPreparedSession(for: preparationGeneration)
 			return false
 		}
-		try await enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
+		// Re-checked on the far side of the activation await, not just before it.
+		try await enhancedAudioSessionManager.activatePreparedSession(
+			for: preparationGeneration,
+			isStillWanted: { [self] in recoveryCoordinator.accepts(request) && recordingIntentActive }
+		)
 		return true
 	}
 

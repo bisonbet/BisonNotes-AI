@@ -282,14 +282,28 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// the recovery coordinator records its NSError domain and code before it
     /// applies a retry/defer/fail disposition.
     func activatePreparedSession() async throws {
-        try await activatePreparedSession(expectedGeneration: nil)
+        try await activatePreparedSession(expectedGeneration: nil, isStillWanted: { true })
     }
 
     /// Activate the exact configuration produced by a recovery preparation.
     /// The generation prevents a newer transition from being activated by a
     /// stale recovery continuation.
-    func activatePreparedSession(for generation: UInt64) async throws {
-        try await activatePreparedSession(expectedGeneration: generation)
+    /// - Parameter isStillWanted: re-checked after the activation await, before any
+    ///   state is claimed. The transition generation cannot cover this on its own:
+    ///   it only advances through `beginAudioSessionTransition` and the media-services
+    ///   reset, so a recovery invalidated by the user stopping — or by the coordinator
+    ///   rejecting the request — leaves it untouched. Without this the post-await
+    ///   check passes, the manager claims an exclusive background-recording session,
+    ///   and nothing starts a recorder on it: other audio stays suppressed with no
+    ///   recording to show for it.
+    func activatePreparedSession(
+        for generation: UInt64,
+        isStillWanted: () -> Bool = { true }
+    ) async throws {
+        try await activatePreparedSession(
+            expectedGeneration: generation,
+            isStillWanted: isStillWanted
+        )
     }
 
     /// Discard a recovery preparation that was invalidated before activation.
@@ -302,7 +316,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         preparedConfigurationGeneration = nil
     }
 
-    private func activatePreparedSession(expectedGeneration: UInt64?) async throws {
+    private func activatePreparedSession(
+        expectedGeneration: UInt64?,
+        isStillWanted: () -> Bool
+    ) async throws {
         if let expectedGeneration {
             guard preparedConfigurationGeneration == expectedGeneration,
                   preparedConfiguration != nil else {
@@ -328,6 +345,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         do {
             try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
+            if !isStillWanted() {
+                // The session is live and nobody wants it. Hand it back rather than
+                // leaving an exclusive background-recording session with no recorder.
+                try? await audioSessionController.setActiveOffMainThread(
+                    false,
+                    options: .notifyOthersOnDeactivation
+                )
+                throw AudioSessionTransitionError.superseded
+            }
         } catch {
             if audioSessionTransitionGeneration == generation,
                preparedConfigurationGeneration == generation {

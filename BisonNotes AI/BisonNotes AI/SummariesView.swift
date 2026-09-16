@@ -947,7 +947,6 @@ struct SummariesView: View {
         // here meant every visit to the tab paid two more full fetches to answer a
         // question the rows in hand could answer.
         guard !hasCheckedForOrphanedSummaries else { return }
-        hasCheckedForOrphanedSummaries = true
 
         Task { @MainActor in
             do {
@@ -962,6 +961,11 @@ struct SummariesView: View {
                         loadRecordings()
                     }
                 }
+                // Only a check that actually completed retires the once-per-session
+                // guard. Setting it up front meant one transient storage failure
+                // silenced the integrity check for the rest of the view's life,
+                // while the alert told the user to try again.
+                hasCheckedForOrphanedSummaries = true
             } catch {
                 errorMessage = "Could not verify summary storage: \(error.localizedDescription)"
                 errorRecoverySuggestion = "Your existing on-screen data was retained."

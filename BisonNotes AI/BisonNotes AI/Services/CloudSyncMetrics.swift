@@ -99,6 +99,9 @@ struct CloudSyncRunReport: Equatable, Sendable {
     /// Where the deletes that *were* issued came from. A steady `deleted=` is
     /// harmless when it is legacy or explicit ids replaying, and a symptom when it
     /// is indexed content going away every run — the origin is what separates them.
+    /// Manifest-managed records the manifest still listed — content genuinely
+    /// being removed, as opposed to a replay of something already gone.
+    var deletesOfIndexedContent = 0
     var deletesFromExplicitRequest = 0
     var deletesFromLegacySummaries = 0
     var deletesOfRetiredMarkers = 0
@@ -145,6 +148,7 @@ struct CloudSyncRunReport: Equatable, Sendable {
             parts.append("deletesSkipped=\(deletesSuppressedAsAlreadyGone)")
         }
         let origins = [
+            ("indexedContent", deletesOfIndexedContent),
             ("explicit", deletesFromExplicitRequest),
             ("legacy", deletesFromLegacySummaries),
             ("markers", deletesOfRetiredMarkers),
@@ -315,12 +319,14 @@ final class CloudSyncRunRecorder {
     /// let the run skip entirely. See `deletesSuppressedAsAlreadyGone`.
     func addDeletePlan(
         suppressedAsAlreadyGone: Int = 0,
+        indexedContent: Int = 0,
         explicit: Int = 0,
         legacySummaries: Int = 0,
         retiredMarkers: Int = 0,
         untrustedManifest: Int = 0
     ) {
         report.deletesSuppressedAsAlreadyGone += suppressedAsAlreadyGone
+        report.deletesOfIndexedContent += indexedContent
         report.deletesFromExplicitRequest += explicit
         report.deletesFromLegacySummaries += legacySummaries
         report.deletesOfRetiredMarkers += retiredMarkers
