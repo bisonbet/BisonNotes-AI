@@ -653,18 +653,43 @@ class CoreDataManager: ObservableObject {
         return Set(summaries.compactMap { $0.value(forKey: "id") as? UUID })
     }
 
+    /// How many ids go into one `IN` predicate.
+    ///
+    /// An unbounded `IN` becomes an unbounded SQL parameter list, and past the
+    /// store's host-parameter limit the fetch fails outright rather than degrading.
+    /// The callers pass whole collections — every cloud child id in a restore, every
+    /// applicable tombstone target — and a library carrying deletion markers from
+    /// before the retention window existed can hold a great many. One oversized
+    /// request would fail reconciliation before a single marker was applied or
+    /// retired, and fail again identically on every sync. Well under any limit, and
+    /// the extra round trips only happen on sets large enough to need them.
+    private static let idPredicateChunkSize = 500
+
     private func existingIDs<Entry: NSManagedObject>(
         in ids: Set<UUID>,
         fetchRequest: NSFetchRequest<Entry>,
         operation: String
     ) throws -> Set<UUID> {
         guard !ids.isEmpty else { return [] }
-        fetchRequest.predicate = NSPredicate(format: "id IN %@", ids as NSSet)
-        // Only the ids are needed, so the rows themselves never have to be faulted in.
-        fetchRequest.propertiesToFetch = ["id"]
-        fetchRequest.resultType = .managedObjectResultType
-        let found = try fetchCollection(fetchRequest, operation: operation)
-        return Set(found.compactMap { $0.value(forKey: "id") as? UUID })
+
+        var found = Set<UUID>()
+        for chunk in Array(ids).chunked(into: Self.idPredicateChunkSize) {
+            // A fresh request per chunk: `NSFetchRequest` is a reference type, so
+            // reusing one across iterations would mutate a request already executed.
+            guard let chunkRequest = fetchRequest.copy() as? NSFetchRequest<Entry> else {
+                throw CoreDataCollectionReadError(
+                    operation: operation,
+                    failure: PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 4)
+                )
+            }
+            chunkRequest.predicate = NSPredicate(format: "id IN %@", chunk as NSArray)
+            // Only the ids are needed, so the rows are never faulted in.
+            chunkRequest.propertiesToFetch = ["id"]
+            chunkRequest.resultType = .managedObjectResultType
+            let rows = try fetchCollection(chunkRequest, operation: operation)
+            found.formUnion(rows.compactMap { $0.value(forKey: "id") as? UUID })
+        }
+        return found
     }
 
     /// Compatibility entry point for existing optional-lookup callers. New

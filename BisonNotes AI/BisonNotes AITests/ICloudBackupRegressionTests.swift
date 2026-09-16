@@ -2036,6 +2036,41 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+    // MARK: - Batched id lookups
+
+    /// The `IN` predicate is chunked, so a set larger than one chunk has to come
+    /// back whole. An unbounded predicate becomes an unbounded SQL parameter list,
+    /// and past the store's host-parameter limit the fetch fails outright — which
+    /// on a library carrying many old deletion markers would fail reconciliation
+    /// before a single marker was applied, identically on every sync.
+    ///
+    /// Padded with absent ids rather than real rows: the point is the number of
+    /// values in the predicate, not the size of the table.
+    func testIdLookupSpanningSeveralChunksReturnsEveryMatch() throws {
+        var presentRecordingIds = Set<UUID>()
+        for index in 0..<5 {
+            presentRecordingIds.insert(try createCompleteRecording(named: "Chunked \(index)"))
+        }
+
+        var query = presentRecordingIds
+        for _ in 0..<1_200 {
+            query.insert(UUID())
+        }
+
+        let found = try appCoordinator.coreDataManager.existingRecordingIDs(in: query)
+
+        XCTAssertEqual(
+            found, presentRecordingIds,
+            "Every present id must survive the chunking, and no absent id may be invented"
+        )
+    }
+
+    func testAnEmptyIdLookupIssuesNoFetch() throws {
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingRecordingIDs(in: []).isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingTranscriptIDs(in: []).isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingSummaryIDs(in: []).isEmpty)
+    }
+
     private func closePersistentStores(of controller: PersistenceController) throws {
         let coordinator = controller.container.persistentStoreCoordinator
         for store in coordinator.persistentStores {
