@@ -348,4 +348,55 @@ final class CloudSyncMetricsTests: XCTestCase {
         XCTAssertFalse(report.logDescription.contains("unaccounted="))
     }
 
+
+    // MARK: - A quiet device should send nothing
+
+    func testIdenticalSettingsAreNotUploadedAgain() {
+        let values = ["engine": Data("compatible".utf8), "detail": Data("full".utf8)]
+
+        XCTAssertTrue(
+            iCloudStorageManager.settingsBackupIsUnchanged(
+                existingValues: values,
+                existingIncludesSensitiveValues: false,
+                values: values,
+                includesSensitiveValues: false
+            ),
+            "A permanent saved=1 is indistinguishable from a device genuinely sending an edit"
+        )
+    }
+
+    func testAChangedValueOrSensitivityStillUploads() {
+        let values = ["engine": Data("compatible".utf8)]
+
+        XCTAssertFalse(
+            iCloudStorageManager.settingsBackupIsUnchanged(
+                existingValues: ["engine": Data("ollama".utf8)],
+                existingIncludesSensitiveValues: false,
+                values: values,
+                includesSensitiveValues: false
+            )
+        )
+        XCTAssertFalse(
+            iCloudStorageManager.settingsBackupIsUnchanged(
+                existingValues: values,
+                existingIncludesSensitiveValues: false,
+                values: values,
+                includesSensitiveValues: true
+            ),
+            "Adding sensitive values changes what is stored even when the visible keys match"
+        )
+    }
+
+    func testAnAbsentOrUndecodableCloudPayloadAlwaysUploads() {
+        XCTAssertFalse(
+            iCloudStorageManager.settingsBackupIsUnchanged(
+                existingValues: nil,
+                existingIncludesSensitiveValues: nil,
+                values: ["engine": Data("compatible".utf8)],
+                includesSensitiveValues: false
+            ),
+            "Nothing readable up there means the settings are not backed up"
+        )
+    }
+
 }

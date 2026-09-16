@@ -9334,6 +9334,23 @@ extension iCloudStorageManager {
             recordType: Self.backupSettingsRecordType,
             recordID: recordID)
 
+        // A quiet device used to upload this record on every routine pass, because
+        // the payload carries `createdAt` and the record carries `settingsUpdatedAt`
+        // — both stamped fresh each run, so nothing ever looked equal. That was the
+        // whole of a permanent `saved=1`, and it is indistinguishable in the metrics
+        // from a device genuinely sending an edit.
+        let existingPayload = (record[Self.fieldSettingsPayload] as? Data)
+            .flatMap { try? JSONDecoder().decode(CodableSettingsBackupPayload.self, from: $0) }
+        if intValue(from: record[Self.fieldSettingsSchemaVersion]) == Self.backupSchemaVersion,
+           Self.settingsBackupIsUnchanged(
+               existingValues: existingPayload?.values,
+               existingIncludesSensitiveValues: existingPayload?.includesSensitiveValues,
+               values: settingsValues.values,
+               includesSensitiveValues: settingsValues.includedSensitiveSettings
+           ) {
+            return (true, settingsValues.includedSensitiveSettings)
+        }
+
         record[Self.fieldSettingsPayload] = payloadData
         record[Self.fieldSettingsIncludesSensitive] = payload.includesSensitiveValues
         record[Self.fieldSettingsSchemaVersion] = Self.backupSchemaVersion
@@ -9342,6 +9359,25 @@ extension iCloudStorageManager {
 
         try await saveBackupRecord(record)
         return (true, payload.includesSensitiveValues)
+    }
+
+    /// Whether the cloud already holds exactly these settings.
+    ///
+    /// Compares the settings themselves and nothing else. `createdAt` and
+    /// `sourcePlatform` are deliberately excluded: the first changes on every run,
+    /// and the second would make two devices with identical settings overwrite each
+    /// other forever just for having different platforms.
+    /// Takes the decoded fields rather than the payload type, which is file-private,
+    /// so the rule stays a pure function the tests can drive.
+    static func settingsBackupIsUnchanged(
+        existingValues: [String: Data]?,
+        existingIncludesSensitiveValues: Bool?,
+        values: [String: Data],
+        includesSensitiveValues: Bool
+    ) -> Bool {
+        guard let existingValues, let existingIncludesSensitiveValues else { return false }
+        return existingIncludesSensitiveValues == includesSensitiveValues
+            && existingValues == values
     }
 
     private func restoreSettingsFromiCloud() async throws -> (restored: Bool, includedSensitiveSettings: Bool) {
