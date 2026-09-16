@@ -3103,6 +3103,18 @@ class BackgroundProcessingManager: ObservableObject {
             // Wait a moment for the audio session to be fully configured.
             try await Task.sleep(nanoseconds: 100_000_000)
 
+            // A recording may have taken ownership while the keep-alive
+            // configuration settled. Do not publish or start keep-alive audio
+            // after that handoff; this check and the following synchronous
+            // state/player setup are one MainActor turn.
+            guard !audioSessionManager.isOwnedByRecording else {
+                AppLog.shared.backgroundProcessing(
+                    "Recording took ownership while keep-alive audio settled; skipping keep-alive start",
+                    level: .debug
+                )
+                return
+            }
+
             backgroundAudioKeepAliveActive = true
             AppLog.shared.backgroundProcessing("Playback audio session configured for background processing")
 
@@ -3114,6 +3126,11 @@ class BackgroundProcessingManager: ObservableObject {
             }
 
             startKeepAliveAudio()
+        } catch is AudioSessionTransitionError {
+            AppLog.shared.backgroundProcessing(
+                "Keep-alive audio was superseded by a newer audio-session transition",
+                level: .debug
+            )
         } catch {
             AppLog.shared.backgroundProcessing("CRITICAL: Could not configure background audio session: \(error.localizedDescription). This will severely limit background processing time.", level: .error)
         }

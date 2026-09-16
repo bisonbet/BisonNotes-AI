@@ -16,6 +16,8 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
     var activeCalls: [Bool] = []
     var categoryCalls: [AVAudioSession.Category] = []
     var activationErrors: [Error] = []
+    var deactivationGate: RecoveryGate?
+    private(set) var deactivationStarted = false
 
     func setCategory(
         _ category: AVAudioSession.Category,
@@ -45,6 +47,10 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
     // Records into the same script, so a test asserting on `activeCalls` does not
     // care which form the manager reached for.
     func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws {
+        if !active, let deactivationGate {
+            deactivationStarted = true
+            await deactivationGate.wait()
+        }
         try setActive(active, options: options)
     }
 }
@@ -313,6 +319,32 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertThrowsError(try manager.activatePreparedSession())
         XCTAssertEqual(controller.activeCalls, [true])
         XCTAssertFalse(controller.activeCalls.contains(false))
+    }
+
+    func testStaleDeactivationCannotClearANewerAudioSessionConfiguration() async throws {
+        let controller = ScriptedAudioSessionController()
+        let deactivationGate = RecoveryGate()
+        controller.deactivationGate = deactivationGate
+        let manager = EnhancedAudioSessionManager(audioSessionController: controller)
+        manager.currentConfiguration = .backgroundRecording
+        manager.isConfigured = true
+        manager.isBackgroundRecordingEnabled = true
+
+        let deactivation = Task { @MainActor in
+            try? await manager.deactivateSession()
+        }
+        while !controller.deactivationStarted {
+            await Task.yield()
+        }
+
+        try await manager.configureStandardRecording()
+        deactivationGate.release()
+        await deactivation.value
+
+        XCTAssertTrue(manager.isConfigured)
+        XCTAssertEqual(manager.currentConfiguration?.mode.rawValue, AVAudioSession.Mode.voiceChat.rawValue)
+        XCTAssertFalse(manager.isBackgroundRecordingEnabled)
+        XCTAssertEqual(controller.activeCalls, [true, false])
     }
 
     func testActivationOrderingIsStopFinalizeThenActivateThenContinuation() async {
