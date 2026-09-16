@@ -4973,6 +4973,21 @@ extension iCloudStorageManager {
                 }
             }
 
+            // What this run actually has content for. Read from the resolved record
+            // sets rather than the recordings' own id fields; see
+            // `cloudRecordingHasNothingToRestore`.
+            let transcriptRecordingIds = Set(
+                transcriptRecords.compactMap { record in
+                    (record[Self.fieldRecordingId] as? String).flatMap(UUID.init(uuidString:))
+                }
+            )
+            let summaryRecordingIds = Set(
+                summaryRecords.compactMap { record in
+                    (record[Self.fieldRecordingId] as? String).flatMap(UUID.init(uuidString:))
+                }
+            )
+            var contentlessRecordingsSkipped = 0
+
             for record in recordingRecords {
                 guard let recordingId = decodeBackupRecordUUID(
                     recordName: record.recordID.recordName,
@@ -4985,6 +5000,17 @@ extension iCloudStorageManager {
                     if deletedRecordingIds.contains(recordingId) ||
                         !shouldRestoreCloudOnlyRecord(record, trustedRecordNames: trustedActiveManifest.recordings) {
                         holdBackupRecordForReview(record, recordingId: recordingId)
+                        continue
+                    }
+                    // Creating this row would only hand the next launch's orphan
+                    // cleanup something to delete again. Leave the cloud record alone.
+                    if Self.cloudRecordingHasNothingToRestore(
+                        record,
+                        recordingId: recordingId,
+                        transcriptRecordingIds: transcriptRecordingIds,
+                        summaryRecordingIds: summaryRecordingIds
+                    ) {
+                        contentlessRecordingsSkipped += 1
                         continue
                     }
                 }
@@ -5083,6 +5109,14 @@ extension iCloudStorageManager {
                 }
 
                 recordingsById[recordingId] = entry
+            }
+
+            if contentlessRecordingsSkipped > 0 {
+                AppLog.shared.iCloudSync(
+                    "Restore skipped \(contentlessRecordingsSkipped) cloud recording(s) with no audio, "
+                        + "transcript or summary; local orphan cleanup would delete them again",
+                    level: .debug
+                )
             }
 
             var transcriptsById = [UUID: TranscriptEntry]()
@@ -8411,6 +8445,70 @@ extension iCloudStorageManager {
 
     /// Posted when the network comes back and durable work is still queued.
     static let networkRestoredNotification = Notification.Name("iCloudNetworkRestored")
+
+    /// Whether a cloud recording carries nothing this device could keep.
+    ///
+    /// `CoreDataManager.cleanupOrphanedRecordings` deletes any local recording with
+    /// no audio, no transcript and no summary — deliberately without a tombstone,
+    /// because a tombstone would take a good recording and its audio down on every
+    /// device. Restore applied no equivalent test, so a cloud recording in that
+    /// shape was recreated on every pass and deleted again by the next launch's
+    /// cleanup: a loop with no exit. It also changed the local dataset on every
+    /// launch, which kept `localDataDiffersFromLastBackup` permanently true and
+    /// stopped the maintenance throttle from ever suppressing a routine sync.
+    ///
+    /// Deliberately narrow, and it must stay that way. A metadata-only cloud
+    /// recording is *not* enough on its own: a restore run with `includeAudioFiles`
+    /// off produces exactly that, and discovering those records is its own tested
+    /// requirement. Three things have to be absent together before this device
+    /// declines to materialize the row:
+    ///
+    /// - no `recordingURL`, so the record does not even name audio elsewhere,
+    /// - no audio backup fields, so there is no asset in the cloud to fetch later,
+    /// - no transcript and no summary record for it in this run's snapshot.
+    ///
+    /// Keyed on the transcript and summary *records* rather than the recording's own
+    /// `transcriptId`/`summaryId` fields, because those are what
+    /// `cleanupOrphanedRecordings` effectively tests: an id pointing at a record that
+    /// no longer exists is precisely the shape that kept regenerating the orphan.
+    ///
+    /// Skipping is never destructive: the cloud record is left untouched, so a pass
+    /// working from a partial snapshot simply restores it on a later, complete one.
+    static func cloudRecordingHasNothingToRestore(
+        _ record: CKRecord,
+        recordingId: UUID,
+        transcriptRecordingIds: Set<UUID>,
+        summaryRecordingIds: Set<UUID>
+    ) -> Bool {
+        if transcriptRecordingIds.contains(recordingId) || summaryRecordingIds.contains(recordingId) {
+            return false
+        }
+        if let url = record[fieldRecordingURL] as? String, !url.isEmpty {
+            return false
+        }
+        return !cloudRecordingNamesAudio(record)
+    }
+
+    /// Whether a recording record names audio, judged from metadata alone.
+    /// Recording records are fetched without `audioAsset` on the routine path, so
+    /// this must never depend on the asset being present. An empty string or a zero
+    /// count is a cleared field, not audio — treating it as audio would leave the
+    /// restore/cleanup loop running.
+    private static func cloudRecordingNamesAudio(_ record: CKRecord) -> Bool {
+        if let signature = record[fieldAudioSignature] as? String, !signature.isEmpty {
+            return true
+        }
+        if let fileName = record[fieldAudioFileName] as? String, !fileName.isEmpty {
+            return true
+        }
+        if let byteCount = record[fieldAudioByteCount] as? Int64, byteCount > 0 {
+            return true
+        }
+        if let byteCount = record[fieldAudioByteCount] as? Int, byteCount > 0 {
+            return true
+        }
+        return record[fieldAudioAsset] != nil
+    }
 
     /// True when this device should write its version over the cloud record.
     static func shouldUploadLocalVersion(localTimestamp: Date?, cloudTimestamp: Date?) -> Bool {
