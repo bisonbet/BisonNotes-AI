@@ -106,7 +106,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     private func setupNotificationObservers() {
         #if canImport(WatchKit)
-        NotificationCenter.default.publisher(for: WKExtension.applicationDidBecomeActiveNotification)
+        NotificationCenter.default.publisher(for: WKApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.handleWatchAppBecameActive()
@@ -114,7 +114,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
 
-        NotificationCenter.default.publisher(for: WKExtension.applicationWillResignActiveNotification)
+        NotificationCenter.default.publisher(for: WKApplication.willResignActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.handleWatchAppWillResignActive()

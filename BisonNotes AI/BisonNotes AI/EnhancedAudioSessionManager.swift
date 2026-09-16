@@ -16,6 +16,10 @@ import UIKit
 #endif
 
 #if os(iOS)
+private let audioSessionActivationQueue = DispatchQueue(
+    label: "com.bisonnotes.audio-session-activation"
+)
+
 @MainActor
 protocol AudioSessionControlling: AnyObject {
     var category: AVAudioSession.Category { get }
@@ -33,7 +37,16 @@ protocol AudioSessionControlling: AnyObject {
     func setPreferredSampleRate(_ sampleRate: Double) throws
     func setPreferredIOBufferDuration(_ duration: TimeInterval) throws
     func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws
+    /// Blocking form. `AVAudioSession.setActive` is a synchronous round-trip to
+    /// mediaserverd, so on the main thread it can stall the UI — which is what
+    /// AVAudioSession_iOS.mm warns about. Kept only for `activatePreparedSession()`,
+    /// whose ordering guarantees depend on there being no suspension point between
+    /// the recovery guard and the activation.
     func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws
+    /// Off-main form, for callers that are already `async` and hold no guard
+    /// across the call. `.notifyOthersOnDeactivation` is the slowest of these:
+    /// it blocks while other apps are told they may resume.
+    func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws
 }
 
 @MainActor
@@ -74,7 +87,24 @@ final class SystemAudioSessionController: AudioSessionControlling {
     }
 
     func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
-        try session.setActive(active, options: options)
+        try audioSessionActivationQueue.sync {
+            try AVAudioSession.sharedInstance().setActive(active, options: options)
+        }
+    }
+
+    func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws {
+        // Enqueue before the first suspension so a later synchronous recovery
+        // activation cannot overtake an earlier deactivation.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            audioSessionActivationQueue.async {
+                do {
+                    try AVAudioSession.sharedInstance().setActive(active, options: options)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 }
 
@@ -100,6 +130,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// not call it, so `BackgroundProcessingManager`'s keep-alive guard skipped
     /// itself for the rest of the session.
     private var preparedConfiguration: AudioSessionConfig?
+    private var preparedConfigurationGeneration: UInt64?
+    private var pendingConfiguration: AudioSessionConfig?
+    private var audioSessionTransitionGeneration: UInt64 = 0
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -150,9 +183,13 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Configure audio session for mixed audio recording (allows other apps to play audio simultaneously)
     func configureMixedAudioSession() async throws {
+        let config = AudioSessionConfig.mixedAudioRecording
+        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        defer { finishAudioSessionTransition(generation) }
+
         do {
-            let config = AudioSessionConfig.mixedAudioRecording
-            try await applyConfiguration(config)
+            try await applyConfiguration(config, generation: generation)
+            try ensureAudioSessionTransitionIsCurrent(generation)
 
             isMixedAudioEnabled = true
             isBackgroundRecordingEnabled = false
@@ -164,7 +201,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
 
+        } catch is AudioSessionTransitionError {
+            throw AudioSessionTransitionError.superseded
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Mixed audio configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -175,16 +215,19 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Recording should interrupt other audio so device playback does not bleed
     /// into the captured note, then deactivation lets other apps resume.
     func configureBackgroundRecording() async throws {
-        // First check if background audio permission is available
-        guard await checkBackgroundAudioPermission() else {
-            let error = AudioProcessingError.backgroundRecordingNotPermitted
-            lastError = error
-            throw error
-        }
+        let config = AudioSessionConfig.backgroundRecording
+        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        defer { finishAudioSessionTransition(generation) }
 
         do {
-            let config = AudioSessionConfig.backgroundRecording
-            try await applyConfiguration(config)
+            // First check if background audio permission is available.
+            guard await checkBackgroundAudioPermission() else {
+                try ensureAudioSessionTransitionIsCurrent(generation)
+                throw AudioProcessingError.backgroundRecordingNotPermitted
+            }
+            try ensureAudioSessionTransitionIsCurrent(generation)
+            try await applyConfiguration(config, generation: generation)
+            try ensureAudioSessionTransitionIsCurrent(generation)
 
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = true
@@ -196,7 +239,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             // Prefer Bluetooth HFP if available for recording input
             await autoSelectBestInput()
 
+        } catch is AudioSessionTransitionError {
+            throw AudioSessionTransitionError.superseded
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background recording configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -211,7 +257,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// recording discards the category that recovery's `activatePreparedSession()`
     /// needs, which surfaces as a bogus activation failure that stops the recording.
     var isOwnedByRecording: Bool {
-        (currentConfiguration ?? preparedConfiguration)?.backgroundRecording == true
+        currentConfiguration?.backgroundRecording == true
+            || preparedConfiguration?.backgroundRecording == true
+            || pendingConfiguration?.backgroundRecording == true
     }
 
     /// Reapply the recording category without activating it.
@@ -220,14 +268,21 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// segment has been finalized. Keeping preparation separate from activation
     /// lets the recovery coordinator classify the real activation error without
     /// deactivating the session as a retry prelude.
-    func prepareBackgroundRecordingForRecovery() async throws {
+    func prepareBackgroundRecordingForRecovery() async throws -> UInt64 {
+        let config = AudioSessionConfig.backgroundRecording
+        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        defer { finishAudioSessionTransition(generation) }
+
         guard await checkBackgroundAudioPermission() else {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let error = AudioProcessingError.backgroundRecordingNotPermitted
             lastError = error
             throw error
         }
 
-        try prepareConfiguration(AudioSessionConfig.backgroundRecording)
+        try ensureAudioSessionTransitionIsCurrent(generation)
+        try prepareConfiguration(config, generation: generation)
+        return generation
     }
 
     /// Activate the configuration prepared for recording recovery.
@@ -236,16 +291,56 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// the recovery coordinator records its NSError domain and code before it
     /// applies a retry/defer/fail disposition.
     func activatePreparedSession() throws {
-        // Falls back to `currentConfiguration` for a caller that re-activates an
-        // already-committed session without preparing a new one.
+        try activatePreparedSession(expectedGeneration: nil)
+    }
+
+    /// Activate the exact configuration produced by a recovery preparation.
+    /// The generation prevents a newer transition from being activated by a
+    /// stale recovery continuation.
+    func activatePreparedSession(for generation: UInt64) throws {
+        try activatePreparedSession(expectedGeneration: generation)
+    }
+
+    /// Discard a recovery preparation that was invalidated before activation.
+    func discardPreparedSession(for generation: UInt64) {
+        guard audioSessionTransitionGeneration == generation,
+              preparedConfigurationGeneration == generation else {
+            return
+        }
+        preparedConfiguration = nil
+        preparedConfigurationGeneration = nil
+    }
+
+    private func activatePreparedSession(expectedGeneration: UInt64?) throws {
+        if let expectedGeneration {
+            guard preparedConfigurationGeneration == expectedGeneration,
+                  preparedConfiguration != nil else {
+                throw AudioSessionTransitionError.superseded
+            }
+        }
+
         guard let prepared = preparedConfiguration ?? currentConfiguration else {
             throw AudioSessionRecoveryError.missingConfiguration
         }
+        let generation = expectedGeneration ?? preparedConfigurationGeneration ?? audioSessionTransitionGeneration
+        try ensureAudioSessionTransitionIsCurrent(generation)
 
         // Nothing below this line is reached when activation throws, which is the
         // point: the manager only claims the session once it actually holds it.
-        try audioSessionController.setActive(true, options: [])
+        do {
+            try audioSessionController.setActive(true, options: [])
+            try ensureAudioSessionTransitionIsCurrent(generation)
+        } catch {
+            if audioSessionTransitionGeneration == generation,
+               preparedConfigurationGeneration == generation {
+                preparedConfiguration = nil
+                preparedConfigurationGeneration = nil
+            }
+            throw error
+        }
         preparedConfiguration = nil
+        preparedConfigurationGeneration = nil
+        pendingConfiguration = nil
         currentConfiguration = prepared
         isMixedAudioEnabled = prepared.allowMixedAudio
         isBackgroundRecordingEnabled = prepared.backgroundRecording
@@ -257,18 +352,25 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// settings before activating; it never deactivates the shared session as
     /// a retry prelude.
     func resetPreparedSessionAfterMediaServicesReset() {
+        audioSessionTransitionGeneration &+= 1
         isConfigured = false
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
         preparedConfiguration = nil
+        preparedConfigurationGeneration = nil
+        pendingConfiguration = nil
     }
 
     /// Configure standard recording session (fallback for compatibility)
     func configureStandardRecording() async throws {
+        let config = AudioSessionConfig.standardRecording
+        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        defer { finishAudioSessionTransition(generation) }
+
         do {
-            let config = AudioSessionConfig.standardRecording
-            try await applyConfiguration(config)
+            try await applyConfiguration(config, generation: generation)
+            try ensureAudioSessionTransitionIsCurrent(generation)
 
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = false
@@ -277,7 +379,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
             AppLog.shared.audioSession("Standard recording session configured successfully")
 
+        } catch is AudioSessionTransitionError {
+            throw AudioSessionTransitionError.superseded
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Standard recording configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -288,10 +393,17 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Do not mix with other apps here: recording playback should take over,
     /// then `deactivateSession()` notifies interrupted audio apps to resume.
     func configurePlaybackSession() async throws {
+        let generation = beginAudioSessionTransition()
+        defer { finishAudioSessionTransition(generation) }
+
         do {
             try audioSessionController.setCategory(.playback, mode: .default, options: [])
-            try audioSessionController.setActive(true, options: [])
+            try await audioSessionController.setActiveOffMainThread(true, options: [])
+            try ensureAudioSessionTransitionIsCurrent(generation)
+        } catch is AudioSessionTransitionError {
+            throw AudioSessionTransitionError.superseded
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -307,16 +419,25 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Uses playback instead of playAndRecord so background jobs do not force
     /// microphone/HFP routing that degrades music from other apps.
     func configureBackgroundProcessingSession() async throws {
-        guard await checkBackgroundAudioPermission() else {
-            let error = AudioProcessingError.backgroundRecordingNotPermitted
-            lastError = error
-            throw error
+        guard !isOwnedByRecording else {
+            throw AudioSessionTransitionError.superseded
         }
+        let generation = beginAudioSessionTransition()
+        defer { finishAudioSessionTransition(generation) }
 
         do {
+            guard await checkBackgroundAudioPermission() else {
+                try ensureAudioSessionTransitionIsCurrent(generation)
+                throw AudioProcessingError.backgroundRecordingNotPermitted
+            }
+            try ensureAudioSessionTransitionIsCurrent(generation)
             try audioSessionController.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try audioSessionController.setActive(true, options: [])
+            try await audioSessionController.setActiveOffMainThread(true, options: [])
+            try ensureAudioSessionTransitionIsCurrent(generation)
+        } catch is AudioSessionTransitionError {
+            throw AudioSessionTransitionError.superseded
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background processing configuration failed: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -380,9 +501,27 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     /// Deactivate audio session
     func deactivateSession() async throws {
+        guard pendingConfiguration?.backgroundRecording != true,
+              preparedConfiguration?.backgroundRecording != true else {
+            AppLog.shared.audioSession(
+                "Recording configuration is pending; skipping stale audio session deactivation",
+                level: .debug
+            )
+            return
+        }
+
+        let generation = beginAudioSessionTransition()
+        defer { finishAudioSessionTransition(generation) }
+
         do {
-            try audioSessionController.setActive(false, options: .notifyOthersOnDeactivation)
+            try await audioSessionController.setActiveOffMainThread(false, options: .notifyOthersOnDeactivation)
+            try ensureAudioSessionTransitionIsCurrent(generation)
+        } catch is AudioSessionTransitionError {
+            // A newer configuration owns the transition now. Its activation is
+            // ordered after this deactivation by the controller queue.
+            return
         } catch {
+            try ensureAudioSessionTransitionIsCurrent(generation)
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError
             throw audioError
@@ -392,21 +531,24 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isBackgroundRecordingEnabled = false
         currentConfiguration = nil
         preparedConfiguration = nil
+        preparedConfigurationGeneration = nil
         AppLog.shared.audioSession("Audio session deactivated and reset")
     }
 
     // MARK: - Private Methods
 
-    private func applyConfiguration(_ config: AudioSessionConfig) async throws {
-        try prepareConfiguration(config)
-        try activatePreparedSession()
+    private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
+        try prepareConfiguration(config, generation: generation)
+        try activatePreparedSession(for: generation)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()
+            try ensureAudioSessionTransitionIsCurrent(generation)
         }
     }
 
-    private func prepareConfiguration(_ config: AudioSessionConfig) throws {
+    private func prepareConfiguration(_ config: AudioSessionConfig, generation: UInt64) throws {
+        try ensureAudioSessionTransitionIsCurrent(generation)
         try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
 
         if config.category == .playAndRecord {
@@ -417,6 +559,26 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // Held aside, not published: `activatePreparedSession()` commits it once
         // the session is actually active.
         preparedConfiguration = config
+        preparedConfigurationGeneration = generation
+    }
+
+    private func beginAudioSessionTransition(pendingConfiguration: AudioSessionConfig? = nil) -> UInt64 {
+        audioSessionTransitionGeneration &+= 1
+        preparedConfiguration = nil
+        preparedConfigurationGeneration = nil
+        self.pendingConfiguration = pendingConfiguration
+        return audioSessionTransitionGeneration
+    }
+
+    private func finishAudioSessionTransition(_ generation: UInt64) {
+        guard audioSessionTransitionGeneration == generation else { return }
+        pendingConfiguration = nil
+    }
+
+    private func ensureAudioSessionTransitionIsCurrent(_ generation: UInt64) throws {
+        guard audioSessionTransitionGeneration == generation else {
+            throw AudioSessionTransitionError.superseded
+        }
     }
 
     private func checkBackgroundAudioPermission() async -> Bool {
@@ -783,6 +945,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 #endif
 
 // MARK: - Error Types
+
+enum AudioSessionTransitionError: Error, LocalizedError {
+    case superseded
+
+    var errorDescription: String? {
+        "The audio session transition was superseded by a newer request."
+    }
+}
 
 enum AudioProcessingError: Error, LocalizedError {
     case audioSessionConfigurationFailed(String)

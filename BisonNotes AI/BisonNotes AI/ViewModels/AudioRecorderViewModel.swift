@@ -24,7 +24,10 @@ struct RecordingAttemptArtifact: Equatable {
 }
 
 @MainActor
-class AudioRecorderViewModel: NSObject, ObservableObject {
+// `AVAudioRecorderDelegate` refines `Sendable`, and a Sendable conformance has to
+// be declared in the same file as the class. The delegate methods themselves stay
+// in AudioRecorderViewModel+Utilities.swift.
+class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
 	// MARK: - Published Properties
 

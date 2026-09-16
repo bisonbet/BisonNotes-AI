@@ -248,6 +248,11 @@ extension AudioRecorderViewModel {
 					"Recovery \(request.id.uuidString) activated recording session on attempt \(attempt)"
 				)
 				return .activated
+			} catch is AudioSessionTransitionError {
+				// Another session owner superseded this recovery attempt; do not
+				// classify that coordination result as an AVAudioSession failure
+				// or spend another activation retry on stale work.
+				return .cancelled
 			} catch {
 				let failure = AudioActivationFailure(
 					error: error,
@@ -310,11 +315,12 @@ extension AudioRecorderViewModel {
 	private func attemptAudioSessionActivation(
 		for request: AudioRecoveryRequest
 	) async throws -> Bool {
-		try await enhancedAudioSessionManager.prepareBackgroundRecordingForRecovery()
+		let preparationGeneration = try await enhancedAudioSessionManager.prepareBackgroundRecordingForRecovery()
 		guard recoveryCoordinator.accepts(request), recordingIntentActive else {
+			enhancedAudioSessionManager.discardPreparedSession(for: preparationGeneration)
 			return false
 		}
-		try enhancedAudioSessionManager.activatePreparedSession()
+		try enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
 		return true
 	}
 

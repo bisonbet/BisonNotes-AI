@@ -336,8 +336,8 @@ class WyomingTCPClient: ObservableObject {
     }
 
     private func receiveNextMessage() {
-        Task {
-            guard let connection = await connectionActor.getConnection() else { return }
+        Task { [weak self] in
+            guard let connection = await self?.connectionActor.getConnection() else { return }
 
             connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
                 if let error = error {

@@ -1608,9 +1608,21 @@ class BackgroundProcessingManager: ObservableObject {
             finalTranscriptData = transcriptData
         }
 
+        // Validate the ASR result before anything is made durable. Running this
+        // after `saveTranscript` committed an empty transcript, fired
+        // `onTranscriptionCompleted`, and only then failed the job — leaving the
+        // recording showing a transcript the user was told had failed, and a
+        // retry that would overwrite the committed row.
+        let hasTranscriptContent = transcriptChunks.contains {
+            !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        if !hasTranscriptContent {
+            AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
+        }
+
         // Cleanup is a final-result operation. It runs once after reassembly and
         // any speaker labeling, never inside transcribeChunk.
-        if let finalTranscriptData {
+        if hasTranscriptContent, let finalTranscriptData {
             let cleanupConfiguration = TranscriptCleanupConfiguration(
                 enabled: job.transcriptCleanupEnabled,
                 mode: .automatic,
@@ -1667,13 +1679,9 @@ class BackgroundProcessingManager: ObservableObject {
             }
         }
 
-        // Complete the job - but validate we actually have transcript content
-        let hasTranscriptContent = transcriptChunks.contains { !$0.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-        if !hasTranscriptContent {
-            AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
-
-            // Mark as failed instead of completed
+        // Nothing was saved above when there is no content, so this failure is
+        // raised on an uncommitted job — the chunk cleanup still runs first.
+        guard hasTranscriptContent else {
             throw BackgroundProcessingError.processingFailed("Transcription completed but generated no content")
         }
 
@@ -2100,28 +2108,30 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Update recording name if the AI generated a better one.
         //
-        // Best-effort, and deliberately isolated: the replacement summary is
-        // already committed above, so letting a transient rename failure reach
-        // processNextJob's failure handler would mark the whole job failed. The
-        // user would then retry and pay for another provider request to
-        // reproduce a summary that already exists. Same reasoning as the two
-        // regeneration paths in SummaryRegenerationManager.
         if enhancedSummary.recordingName != job.recordingName {
             AppLog.shared.backgroundProcessing("Updating recording name from AI-generated title", level: .debug)
-            do {
+            afterCommit(
+                "Applying the AI-generated title to recording \(recordingId)",
+                category: .backgroundProcessing
+            ) {
                 try coreDataManager.updateRecordingName(for: recordingId, newName: enhancedSummary.recordingName)
-            } catch {
-                AppLog.shared.backgroundProcessing(
-                    "Summary saved, but the AI title could not be applied to recording "
-                        + "\(recordingId): \(error.localizedDescription)",
-                    level: .error
-                )
             }
         }
 
-        // Update progress to near-complete (processNextJob sets final .completed status)
+        // Update progress to near-complete (processNextJob sets final .completed status).
+        //
+        // Progress is bookkeeping and the summary above is already durable, so a
+        // failed write here must not reach processNextJob: `outputCommitted` is
+        // only set once this function returns, so the throw would take the plain
+        // failure path and invite a retry that pays for the summary twice. The
+        // terminal save still runs, and its own failure is handled there.
         let nearCompleteJob = job.withProgress(0.95)
-        try await updateJob(nearCompleteJob)
+        await afterCommit(
+            "Recording near-complete progress for job \(job.id)",
+            category: .backgroundProcessing
+        ) {
+            try await updateJob(nearCompleteJob)
+        }
 
         AppLog.shared.backgroundProcessing("Summarization job completed")
     }
@@ -3093,6 +3103,18 @@ class BackgroundProcessingManager: ObservableObject {
             // Wait a moment for the audio session to be fully configured.
             try await Task.sleep(nanoseconds: 100_000_000)
 
+            // A recording may have taken ownership while the keep-alive
+            // configuration settled. Do not publish or start keep-alive audio
+            // after that handoff; this check and the following synchronous
+            // state/player setup are one MainActor turn.
+            guard !audioSessionManager.isOwnedByRecording else {
+                AppLog.shared.backgroundProcessing(
+                    "Recording took ownership while keep-alive audio settled; skipping keep-alive start",
+                    level: .debug
+                )
+                return
+            }
+
             backgroundAudioKeepAliveActive = true
             AppLog.shared.backgroundProcessing("Playback audio session configured for background processing")
 
@@ -3104,6 +3126,11 @@ class BackgroundProcessingManager: ObservableObject {
             }
 
             startKeepAliveAudio()
+        } catch is AudioSessionTransitionError {
+            AppLog.shared.backgroundProcessing(
+                "Keep-alive audio was superseded by a newer audio-session transition",
+                level: .debug
+            )
         } catch {
             AppLog.shared.backgroundProcessing("CRITICAL: Could not configure background audio session: \(error.localizedDescription). This will severely limit background processing time.", level: .error)
         }

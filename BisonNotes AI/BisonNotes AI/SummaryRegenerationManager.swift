@@ -125,25 +125,16 @@ class SummaryRegenerationManager: ObservableObject {
                 )
 
                 if newSummaryId != nil {
-                    // The summary is the primary durable result. Apply the
-                    // optional AI title only after that save succeeds.
+                    // The summary is durable; the AI title is optional enrichment.
                     if newEnhancedSummary.recordingName != summary.recordingName {
                         AppLog.shared.summarization("Bulk regeneration: Recording name was updated by AI")
-                    // The replacement summary is already durable. A failed
-                    // rename is an optional cosmetic step, so it must not be
-                    // reported as a failed regeneration: the user would retry and
-                    // pay for another provider request to reproduce a result that
-                    // already exists.
-                        do {
+                        afterCommit(
+                            "Applying the bulk-regeneration title to recording \(recordingId)",
+                            category: .summarization
+                        ) {
                             try appCoordinator.coreDataManager.updateRecordingName(
                                 for: recordingId,
                                 newName: newEnhancedSummary.recordingName
-                            )
-                        } catch {
-                            AppLog.shared.summarization(
-                                "Bulk regeneration saved the summary but could not rename recording "
-                                    + "\(recordingId): \(error.localizedDescription)",
-                                level: .error
                             )
                         }
                     } else {
@@ -225,19 +216,13 @@ class SummaryRegenerationManager: ObservableObject {
                 // summary has been durably saved.
                 if newEnhancedSummary.recordingName != summary.recordingName {
                     AppLog.shared.summarization("Recording name was updated by AI for recording \(recordingId)")
-                    // Same isolation as the bulk path: the summary is durable, so
-                    // an optional rename failure must not turn a saved result into
-                    // a reported failure the user pays to regenerate.
-                    do {
+                    afterCommit(
+                        "Applying the regeneration title to recording \(recordingId)",
+                        category: .summarization
+                    ) {
                         try appCoordinator.coreDataManager.updateRecordingName(
                             for: recordingId,
                             newName: newEnhancedSummary.recordingName
-                        )
-                    } catch {
-                        AppLog.shared.summarization(
-                            "Regeneration saved the summary but could not rename recording "
-                                + "\(recordingId): \(error.localizedDescription)",
-                            level: .error
                         )
                     }
                 } else {
