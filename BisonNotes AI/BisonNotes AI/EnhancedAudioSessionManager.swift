@@ -124,6 +124,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     private var preparedConfigurationGeneration: UInt64?
     private var pendingConfiguration: AudioSessionConfig?
     private var audioSessionTransitionGeneration: UInt64 = 0
+    /// Whether the caller that opened the current transition still wants it. Reset
+    /// by `finishAudioSessionTransition`; see `ensureTransitionIsCurrentAndWanted`.
+    private var transitionIntent: () -> Bool = { true }
 
     // MARK: - Configuration Structures
     struct AudioSessionConfig {
@@ -173,9 +176,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Public Methods
 
     /// Configure audio session for mixed audio recording (allows other apps to play audio simultaneously)
-    func configureMixedAudioSession() async throws {
+    func configureMixedAudioSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
         let config = AudioSessionConfig.mixedAudioRecording
-        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        let generation = beginAudioSessionTransition(
+            pendingConfiguration: config,
+            isStillWanted: isStillWanted
+        )
         defer { finishAudioSessionTransition(generation) }
 
         do {
@@ -217,7 +225,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isStillWanted: @escaping () -> Bool = { true }
     ) async throws {
         let config = AudioSessionConfig.backgroundRecording
-        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        let generation = beginAudioSessionTransition(
+            pendingConfiguration: config,
+            isStillWanted: isStillWanted
+        )
         defer { finishAudioSessionTransition(generation) }
 
         do {
@@ -226,13 +237,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 try ensureAudioSessionTransitionIsCurrent(generation)
                 throw AudioProcessingError.backgroundRecordingNotPermitted
             }
-            try ensureAudioSessionTransitionIsCurrent(generation)
-            try await applyConfiguration(
-                config,
-                generation: generation,
-                isStillWanted: isStillWanted
-            )
-            try ensureAudioSessionTransitionIsCurrent(generation)
+            try ensureTransitionIsCurrentAndWanted(generation)
+            try await applyConfiguration(config, generation: generation)
+            try ensureTransitionIsCurrentAndWanted(generation)
 
             isMixedAudioEnabled = false
             isBackgroundRecordingEnabled = true
@@ -273,9 +280,17 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// segment has been finalized. Keeping preparation separate from activation
     /// lets the recovery coordinator classify the real activation error without
     /// deactivating the session as a retry prelude.
-    func prepareBackgroundRecordingForRecovery() async throws -> UInt64 {
+    /// - Parameter isStillWanted: the recovery's own liveness test. It is registered
+    ///   here rather than at the activation because the transition spans both, so
+    ///   every suspension point from this call to the commit is covered by it.
+    func prepareBackgroundRecordingForRecovery(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws -> UInt64 {
         let config = AudioSessionConfig.backgroundRecording
-        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        let generation = beginAudioSessionTransition(
+            pendingConfiguration: config,
+            isStillWanted: isStillWanted
+        )
         defer { finishAudioSessionTransition(generation) }
 
         guard await checkBackgroundAudioPermission() else {
@@ -296,28 +311,16 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// the recovery coordinator records its NSError domain and code before it
     /// applies a retry/defer/fail disposition.
     func activatePreparedSession() async throws {
-        try await activatePreparedSession(expectedGeneration: nil, isStillWanted: { true })
+        try await activatePreparedSession(expectedGeneration: nil)
     }
 
     /// Activate the exact configuration produced by a recovery preparation.
     /// The generation prevents a newer transition from being activated by a
     /// stale recovery continuation.
-    /// - Parameter isStillWanted: re-checked after the activation await, before any
-    ///   state is claimed. The transition generation cannot cover this on its own:
-    ///   it only advances through `beginAudioSessionTransition` and the media-services
-    ///   reset, so a recovery invalidated by the user stopping — or by the coordinator
-    ///   rejecting the request — leaves it untouched. Without this the post-await
-    ///   check passes, the manager claims an exclusive background-recording session,
-    ///   and nothing starts a recorder on it: other audio stays suppressed with no
-    ///   recording to show for it.
-    func activatePreparedSession(
-        for generation: UInt64,
-        isStillWanted: () -> Bool = { true }
-    ) async throws {
-        try await activatePreparedSession(
-            expectedGeneration: generation,
-            isStillWanted: isStillWanted
-        )
+    /// Liveness comes from the intent registered when the transition was opened; see
+    /// `ensureTransitionIsCurrentAndWanted`.
+    func activatePreparedSession(for generation: UInt64) async throws {
+        try await activatePreparedSession(expectedGeneration: generation)
     }
 
     /// Discard a recovery preparation that was invalidated before activation.
@@ -330,10 +333,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         preparedConfigurationGeneration = nil
     }
 
-    private func activatePreparedSession(
-        expectedGeneration: UInt64?,
-        isStillWanted: () -> Bool
-    ) async throws {
+    private func activatePreparedSession(expectedGeneration: UInt64?) async throws {
         if let expectedGeneration {
             guard preparedConfigurationGeneration == expectedGeneration,
                   preparedConfiguration != nil else {
@@ -350,49 +350,19 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // Nothing below this line is reached when activation throws, which is the
         // point: the manager only claims the session once it actually holds it.
         //
-        // The await is safe precisely because the generation is checked again on the
-        // far side of it. Anything that interleaves during the suspension advances
-        // the transition generation, so a superseded activation cannot go on to
-        // claim the session — which is what the old blocking call was really
-        // protecting, and it paid for that by stalling the main thread on every
-        // recovery.
+        // The await is safe because `ensureTransitionIsCurrentAndWanted` runs on the
+        // far side of it: a newer transition moves the generation, and a caller that
+        // has given up fails the stored intent. Either way the session is released
+        // before anything is claimed. The old blocking call bought the same
+        // guarantee by stalling the main thread on every recovery.
         do {
             try await audioSessionController.setActiveOffMainThread(true, options: [])
-            try ensureAudioSessionTransitionIsCurrent(generation)
-            if !isStillWanted() {
-                // The session is live and nobody wants it. Hand it back rather than
-                // leaving an exclusive background-recording session with no recorder.
-                var handedBack = true
-                do {
-                    try await audioSessionController.setActiveOffMainThread(
-                        false,
-                        options: .notifyOthersOnDeactivation
-                    )
-                } catch {
-                    handedBack = false
-                    AppLog.shared.audioSession(
-                        "Abandoned activation could not release the audio session: "
-                            + "\(error.localizedDescription)",
-                        level: .error
-                    )
-                }
-
-                // The published state follows the physical session, and only when the
-                // physical session actually went down. `isOwnedByRecording` reads
-                // `currentConfiguration`: clearing it after a *failed* release would
-                // report that nothing holds the session while an exclusive one may
-                // still be active, with the stop path already returned and nothing
-                // left to retry — other apps stay suppressed with no way back.
-                // Retaining it keeps the claim truthful and keeps a later
-                // `deactivateSession()` able to finish the job.
-                if handedBack, audioSessionTransitionGeneration == generation {
-                    isConfigured = false
-                    isMixedAudioEnabled = false
-                    isBackgroundRecordingEnabled = false
-                    currentConfiguration = nil
-                    pendingConfiguration = nil
-                }
-                throw AudioSessionTransitionError.superseded
+            do {
+                try ensureTransitionIsCurrentAndWanted(generation)
+            } catch {
+                // Live and unwanted: hand it back before anything is claimed.
+                await releaseAbandonedSession(generation: generation)
+                throw error
             }
         } catch {
             if audioSessionTransitionGeneration == generation,
@@ -427,9 +397,14 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     }
 
     /// Configure standard recording session (fallback for compatibility)
-    func configureStandardRecording() async throws {
+    func configureStandardRecording(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
         let config = AudioSessionConfig.standardRecording
-        let generation = beginAudioSessionTransition(pendingConfiguration: config)
+        let generation = beginAudioSessionTransition(
+            pendingConfiguration: config,
+            isStillWanted: isStillWanted
+        )
         defer { finishAudioSessionTransition(generation) }
 
         do {
@@ -456,8 +431,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Configure audio session for in-app recording playback.
     /// Do not mix with other apps here: recording playback should take over,
     /// then `deactivateSession()` notifies interrupted audio apps to resume.
-    func configurePlaybackSession() async throws {
-        let generation = beginAudioSessionTransition()
+    func configurePlaybackSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
+        let generation = beginAudioSessionTransition(isStillWanted: isStillWanted)
         defer { finishAudioSessionTransition(generation) }
 
         do {
@@ -482,11 +459,13 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Configure audio session for silent background processing keep-alive.
     /// Uses playback instead of playAndRecord so background jobs do not force
     /// microphone/HFP routing that degrades music from other apps.
-    func configureBackgroundProcessingSession() async throws {
+    func configureBackgroundProcessingSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
         guard !isOwnedByRecording else {
             throw AudioSessionTransitionError.superseded
         }
-        let generation = beginAudioSessionTransition()
+        let generation = beginAudioSessionTransition(isStillWanted: isStillWanted)
         defer { finishAudioSessionTransition(generation) }
 
         do {
@@ -601,25 +580,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Private Methods
 
-    private func applyConfiguration(
-        _ config: AudioSessionConfig,
-        generation: UInt64,
-        isStillWanted: () -> Bool = { true }
-    ) async throws {
+    private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
         try prepareConfiguration(config, generation: generation)
-        try await activatePreparedSession(for: generation, isStillWanted: isStillWanted)
+        try await activatePreparedSession(for: generation)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()
-            try ensureAudioSessionTransitionIsCurrent(generation)
-            guard isStillWanted() else {
-                // The capability request is another suspension point, and the
-                // session is exclusive by now.
-                try? await audioSessionController.setActiveOffMainThread(
-                    false,
-                    options: .notifyOthersOnDeactivation
-                )
-                throw AudioSessionTransitionError.superseded
+            // Another suspension point, and the session is exclusive by now.
+            do {
+                try ensureTransitionIsCurrentAndWanted(generation)
+            } catch {
+                await releaseAbandonedSession(generation: generation)
+                throw error
             }
         }
     }
@@ -639,23 +611,79 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         preparedConfigurationGeneration = generation
     }
 
-    private func beginAudioSessionTransition(pendingConfiguration: AudioSessionConfig? = nil) -> UInt64 {
+    private func beginAudioSessionTransition(
+        pendingConfiguration: AudioSessionConfig? = nil,
+        isStillWanted: @escaping () -> Bool = { true }
+    ) -> UInt64 {
         audioSessionTransitionGeneration &+= 1
         preparedConfiguration = nil
         preparedConfigurationGeneration = nil
         self.pendingConfiguration = pendingConfiguration
+        transitionIntent = isStillWanted
         return audioSessionTransitionGeneration
     }
 
     private func finishAudioSessionTransition(_ generation: UInt64) {
         guard audioSessionTransitionGeneration == generation else { return }
         pendingConfiguration = nil
+        transitionIntent = { true }
     }
 
     private func ensureAudioSessionTransitionIsCurrent(_ generation: UInt64) throws {
         guard audioSessionTransitionGeneration == generation else {
             throw AudioSessionTransitionError.superseded
         }
+    }
+
+    /// The single fence for every resumption point inside a transition.
+    ///
+    /// Two things can invalidate work in flight and only one of them moves the
+    /// generation. A newer transition does; the *caller's* intent going away — the
+    /// user stopping, a second interruption, the recovery coordinator dropping the
+    /// request — does not, and cannot be made to, because the stop path returns
+    /// early while a configuration is pending precisely so a stale deactivation
+    /// cannot tear down a newer one. Checking only the generation is what let an
+    /// abandoned start claim an exclusive session with no recorder behind it.
+    ///
+    /// Every `await` between `beginAudioSessionTransition` and the point the
+    /// configuration is committed must be followed by this, and by
+    /// `releaseAbandonedSession` if the session is already live by then.
+    private func ensureTransitionIsCurrentAndWanted(_ generation: UInt64) throws {
+        try ensureAudioSessionTransitionIsCurrent(generation)
+        guard transitionIntent() else {
+            throw AudioSessionTransitionError.superseded
+        }
+    }
+
+    /// Hands a live session back after its transition was abandoned, and brings the
+    /// published state down with it — but only if the release actually succeeded.
+    ///
+    /// `isOwnedByRecording` reads `currentConfiguration`, so clearing it after a
+    /// failed release would report that nothing holds the session while an exclusive
+    /// one may still be active, with the stop path already returned and nothing left
+    /// to retry. Keeping it leaves the claim truthful and leaves a later
+    /// `deactivateSession()` able to finish: by then the prepared and pending halves
+    /// are clear, so its early return no longer applies.
+    private func releaseAbandonedSession(generation: UInt64) async {
+        do {
+            try await audioSessionController.setActiveOffMainThread(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        } catch {
+            AppLog.shared.audioSession(
+                "Abandoned activation could not release the audio session: "
+                    + "\(error.localizedDescription)",
+                level: .error
+            )
+            return
+        }
+        guard audioSessionTransitionGeneration == generation else { return }
+        isConfigured = false
+        isMixedAudioEnabled = false
+        isBackgroundRecordingEnabled = false
+        currentConfiguration = nil
+        pendingConfiguration = nil
     }
 
     private func checkBackgroundAudioPermission() async -> Bool {
@@ -741,25 +769,45 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         // deinitializer; the main-actor manager cannot call into it here.
     }
 
-    func configureMixedAudioSession() async throws {
+    func configureMixedAudioSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
+        // macOS has no AVAudioSession; the parameter exists so shared call sites
+        // compile, and there is no suspension point here for it to guard.
+        _ = isStillWanted
         isConfigured = true
         isMixedAudioEnabled = true
         isBackgroundRecordingEnabled = false
     }
 
-    func configureBackgroundRecording() async throws {
+    func configureBackgroundRecording(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
+        // macOS has no AVAudioSession; the parameter exists so shared call sites
+        // compile, and there is no suspension point here for it to guard.
+        _ = isStillWanted
         isConfigured = true
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = true
     }
 
-    func configurePlaybackSession() async throws {
+    func configurePlaybackSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
+        // macOS has no AVAudioSession; the parameter exists so shared call sites
+        // compile, and there is no suspension point here for it to guard.
+        _ = isStillWanted
         isConfigured = true
         isMixedAudioEnabled = false
         isBackgroundRecordingEnabled = false
     }
 
-    func configureBackgroundProcessingSession() async throws {
+    func configureBackgroundProcessingSession(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
+        // macOS has no AVAudioSession; the parameter exists so shared call sites
+        // compile, and there is no suspension point here for it to guard.
+        _ = isStillWanted
         isConfigured = true
         isMixedAudioEnabled = true
         isBackgroundRecordingEnabled = false
