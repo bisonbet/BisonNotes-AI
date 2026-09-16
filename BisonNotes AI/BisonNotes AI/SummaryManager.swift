@@ -190,7 +190,7 @@ class SummaryManager: ObservableObject {
 
             do {
                 let transcriptId = legacySummary.transcriptId ?? recording.transcriptId
-                try coordinator.coreDataManager.upsertSummary(
+                _ = try coordinator.coreDataManager.upsertSummary(
                     legacySummary,
                     for: recordingId,
                     transcriptId: transcriptId

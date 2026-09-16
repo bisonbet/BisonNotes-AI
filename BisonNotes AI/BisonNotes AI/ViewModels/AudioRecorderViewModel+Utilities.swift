@@ -15,7 +15,7 @@ private struct RecordingTimestampMetadata: Codable {
 
 // MARK: - AVAudioRecorderDelegate
 
-extension AudioRecorderViewModel: AVAudioRecorderDelegate {
+extension AudioRecorderViewModel {
 	nonisolated func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
 		let errorDescription = error?.localizedDescription
 		Task { @MainActor [weak self] in

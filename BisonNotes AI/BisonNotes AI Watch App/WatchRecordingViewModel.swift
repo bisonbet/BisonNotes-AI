@@ -211,7 +211,7 @@ class WatchRecordingViewModel: ObservableObject {
     private func setupAppLifecycleObservers() {
         #if canImport(WatchKit)
         // Listen for app lifecycle events to protect recording sessions
-        NotificationCenter.default.publisher(for: WKExtension.applicationWillResignActiveNotification)
+        NotificationCenter.default.publisher(for: WKApplication.willResignActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.handleAppWillResignActive()
@@ -219,7 +219,7 @@ class WatchRecordingViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        NotificationCenter.default.publisher(for: WKExtension.applicationDidBecomeActiveNotification)
+        NotificationCenter.default.publisher(for: WKApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.handleAppDidBecomeActive()
@@ -227,7 +227,7 @@ class WatchRecordingViewModel: ObservableObject {
             }
             .store(in: &cancellables)
         
-        NotificationCenter.default.publisher(for: WKExtension.applicationDidEnterBackgroundNotification)
+        NotificationCenter.default.publisher(for: WKApplication.didEnterBackgroundNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
                     self?.handleAppDidEnterBackground()
