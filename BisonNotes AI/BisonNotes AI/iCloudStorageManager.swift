@@ -7358,6 +7358,9 @@ extension iCloudStorageManager {
         // is updated, and the surviving record is still indexed — so the next sync
         // restores data the user deleted, with no marker left to say otherwise. A
         // marker that lives one cycle longer costs a single extra delete.
+        if !plan.expiredMarkerIDsToRetire.isEmpty {
+            activeRunRecorder?.addDeletePlan(retiredMarkers: plan.expiredMarkerIDsToRetire.count)
+        }
         result.removedRecords += try await deleteExistingCloudRecords(
             Array(plan.expiredMarkerIDsToRetire)
         )
@@ -7483,13 +7486,17 @@ extension iCloudStorageManager {
             withdrawnMarkerCount: plan.markerIDsToWithdraw.count,
             indexedRecordNames: trustedManifest
         )
+        // Everything below rides in the batch issued on the next line.
+        // `composition.retiredMarkers` deliberately does not: those go out in a
+        // second batch from `commitDeletionPlan`, after stages that can throw, and
+        // reporting them here let a failed run claim `deleteOrigin[markers=N]` for
+        // a delete that was never issued.
         activeRunRecorder?.addDeletePlan(
             suppressedAsAlreadyGone: composition.suppressedAsAlreadyGone,
             indexedContent: composition.indexedContent,
             withdrawnMarkers: composition.withdrawnMarkers,
             explicit: composition.explicit,
             legacySummaries: composition.legacySummaries,
-            retiredMarkers: composition.retiredMarkers,
             untrustedManifest: composition.untrustedManifest
         )
         result.removedRecords = try await deleteExistingCloudRecords(

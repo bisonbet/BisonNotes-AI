@@ -267,6 +267,7 @@ final class CloudSyncMetricsTests: XCTestCase {
             recordIDsToDelete: [recordID("backup_summary_A"), recordID("backup_summary_B")],
             explicitlyTargetedRecordIDs: [],
             expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
             indexedRecordNames: ["backup_summary_A"]
         )
 
@@ -280,6 +281,7 @@ final class CloudSyncMetricsTests: XCTestCase {
             recordIDsToDelete: [recordID("CD_EnhancedSummary_1"), recordID("CD_EnhancedSummary_2")],
             explicitlyTargetedRecordIDs: [],
             expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
             indexedRecordNames: []
         )
 
@@ -297,6 +299,7 @@ final class CloudSyncMetricsTests: XCTestCase {
             recordIDsToDelete: [target],
             explicitlyTargetedRecordIDs: [target],
             expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
             indexedRecordNames: []
         )
 
@@ -312,6 +315,7 @@ final class CloudSyncMetricsTests: XCTestCase {
             recordIDsToDelete: [recordID("backup_recording_X"), recordID("backup_summary_Y")],
             explicitlyTargetedRecordIDs: [],
             expiredMarkerCount: 3,
+            withdrawnMarkerCount: 0,
             indexedRecordNames: nil
         )
 
@@ -397,6 +401,38 @@ final class CloudSyncMetricsTests: XCTestCase {
             ),
             "Nothing readable up there means the settings are not backed up"
         )
+    }
+
+
+    func testWithdrawnMarkersAreCountedAsTheirOwnOrigin() {
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 2,
+            indexedRecordNames: []
+        )
+
+        XCTAssertEqual(
+            composition.withdrawnMarkers, 2,
+            "Withdrawals ride in the same batch as the content deletes, so they need an origin"
+        )
+    }
+
+    func testAnIssuedIndexedDeleteIsAttributedRatherThanSuppressed() {
+        let composition = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [recordID("backup_recording_LIVE")],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
+            indexedRecordNames: ["backup_recording_LIVE"]
+        )
+
+        XCTAssertEqual(
+            composition.indexedContent, 1,
+            "Content the manifest still lists is genuinely going away and must show an origin"
+        )
+        XCTAssertEqual(composition.suppressedAsAlreadyGone, 0)
     }
 
 }
