@@ -33,7 +33,16 @@ protocol AudioSessionControlling: AnyObject {
     func setPreferredSampleRate(_ sampleRate: Double) throws
     func setPreferredIOBufferDuration(_ duration: TimeInterval) throws
     func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws
+    /// Blocking form. `AVAudioSession.setActive` is a synchronous round-trip to
+    /// mediaserverd, so on the main thread it can stall the UI — which is what
+    /// AVAudioSession_iOS.mm warns about. Kept only for `activatePreparedSession()`,
+    /// whose ordering guarantees depend on there being no suspension point between
+    /// the recovery guard and the activation.
     func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws
+    /// Off-main form, for callers that are already `async` and hold no guard
+    /// across the call. `.notifyOthersOnDeactivation` is the slowest of these:
+    /// it blocks while other apps are told they may resume.
+    func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws
 }
 
 @MainActor
@@ -75,6 +84,14 @@ final class SystemAudioSessionController: AudioSessionControlling {
 
     func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
         try session.setActive(active, options: options)
+    }
+
+    func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws {
+        // Deliberately does not capture `session`: the shared instance is the only
+        // one this type is ever built with, and AVAudioSession is thread-safe.
+        try await Task.detached(priority: .userInitiated) {
+            try AVAudioSession.sharedInstance().setActive(active, options: options)
+        }.value
     }
 }
 
@@ -290,7 +307,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     func configurePlaybackSession() async throws {
         do {
             try audioSessionController.setCategory(.playback, mode: .default, options: [])
-            try audioSessionController.setActive(true, options: [])
+            try await audioSessionController.setActiveOffMainThread(true, options: [])
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Playback configuration failed: \(error.localizedDescription)")
             lastError = audioError
@@ -315,7 +332,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         do {
             try audioSessionController.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try audioSessionController.setActive(true, options: [])
+            try await audioSessionController.setActiveOffMainThread(true, options: [])
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Background processing configuration failed: \(error.localizedDescription)")
             lastError = audioError
@@ -381,7 +398,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Deactivate audio session
     func deactivateSession() async throws {
         do {
-            try audioSessionController.setActive(false, options: .notifyOthersOnDeactivation)
+            try await audioSessionController.setActiveOffMainThread(false, options: .notifyOthersOnDeactivation)
         } catch {
             let audioError = AudioProcessingError.audioSessionConfigurationFailed("Failed to deactivate session: \(error.localizedDescription)")
             lastError = audioError

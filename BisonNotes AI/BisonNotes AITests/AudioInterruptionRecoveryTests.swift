@@ -41,6 +41,12 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
             throw activationErrors.removeFirst()
         }
     }
+
+    // Records into the same script, so a test asserting on `activeCalls` does not
+    // care which form the manager reached for.
+    func setActiveOffMainThread(_ active: Bool, options: AVAudioSession.SetActiveOptions) async throws {
+        try setActive(active, options: options)
+    }
 }
 
 @MainActor
