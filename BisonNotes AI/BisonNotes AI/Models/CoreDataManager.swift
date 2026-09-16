@@ -621,6 +621,40 @@ class CoreDataManager: ObservableObject {
         return try fetchCollection(fetchRequest, operation: "recording").first
     }
 
+    /// Which of these recording ids exist, in one fetch.
+    ///
+    /// The inbound-tombstone pass used to ask `fetchRecording(id:)` once per
+    /// marker just to learn whether there was anything left to delete. A marker
+    /// replays on every sync for its whole retention window, so the overwhelmingly
+    /// common answer is "nothing" — and each of those answers cost a round trip on
+    /// the main-actor view context while the user was tapping. The cloud side of
+    /// that phase was batched long ago; this is the local half.
+    func existingRecordingIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: RecordingEntry.fetchRequest(), operation: "recording ids")
+    }
+
+    func existingTranscriptIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: TranscriptEntry.fetchRequest(), operation: "transcript ids")
+    }
+
+    func existingSummaryIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: SummaryEntry.fetchRequest(), operation: "summary ids")
+    }
+
+    private func existingIDs<Entry: NSManagedObject>(
+        in ids: Set<UUID>,
+        fetchRequest: NSFetchRequest<Entry>,
+        operation: String
+    ) throws -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
+        fetchRequest.predicate = NSPredicate(format: "id IN %@", ids as NSSet)
+        // Only the ids are needed, so the rows themselves never have to be faulted in.
+        fetchRequest.propertiesToFetch = ["id"]
+        fetchRequest.resultType = .managedObjectResultType
+        let found = try fetchCollection(fetchRequest, operation: operation)
+        return Set(found.compactMap { $0.value(forKey: "id") as? UUID })
+    }
+
     /// Compatibility entry point for existing optional-lookup callers. New
     /// read-dependent operations use fetchRecording(url:) and propagate failure.
     func getRecording(url: URL) -> RecordingEntry? {

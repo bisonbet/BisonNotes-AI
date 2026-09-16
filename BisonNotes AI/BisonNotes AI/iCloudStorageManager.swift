@@ -6780,12 +6780,18 @@ extension iCloudStorageManager {
             workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: needsLegacyRecords)
         }
 
+        let localPresence = try makeLocalDeletionTargetPresence(
+            for: applicableMarkers.map(\.target),
+            appCoordinator: appCoordinator
+        )
+
         if let workspace {
             for marker in applicableMarkers {
                 try applyDeletionMarker(
                     marker.target,
                     appCoordinator: appCoordinator,
                     workspace: workspace,
+                    localPresence: localPresence,
                     plan: &plan,
                     application: &application
                 )
@@ -6802,7 +6808,7 @@ extension iCloudStorageManager {
         for marker in applicableMarkers {
             guard let deletedAt = marker.deletedAt,
                   syncClock.now.timeIntervalSince(deletedAt) > Self.deletionMarkerRetentionInterval,
-                  !(try deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator)) else {
+                  !localPresence.holds(marker.target) else {
                 continue
             }
             plan.expiredMarkerIDsToRetire.insert(marker.recordID)
@@ -6909,9 +6915,15 @@ extension iCloudStorageManager {
         _ target: CloudDeletionTarget,
         appCoordinator: AppDataCoordinator,
         workspace: CloudDeletionWorkspace,
+        localPresence: LocalDeletionTargetPresence,
         plan: inout CloudDeletionPlan,
         application: inout DeletionMarkerApplication
     ) throws {
+        // The cloud half of the plan is recorded for every marker; only a target
+        // this device still holds is worth a row fetch. A replayed marker whose
+        // target went away weeks ago is the common case, and it used to pay one
+        // anyway.
+        let holdsTargetLocally = localPresence.holds(target)
         switch target.kind {
         case .recording:
             planRecordingContentDeletion(
@@ -6922,7 +6934,8 @@ extension iCloudStorageManager {
                 into: &plan
             )
 
-            guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
+            guard holdsTargetLocally,
+                  let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
                   recording.isCloudSyncDisabled == false else {
                 return
             }
@@ -6943,7 +6956,8 @@ extension iCloudStorageManager {
         case .transcript:
             planTranscriptContentDeletion(transcriptId: target.id, into: &plan)
 
-            guard let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
+            guard holdsTargetLocally,
+                  let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
                   try parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
@@ -6964,7 +6978,8 @@ extension iCloudStorageManager {
         case .summary:
             planSummaryContentDeletion(summaryIds: [target.id], into: &plan)
 
-            guard let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
+            guard holdsTargetLocally,
+                  let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
                   try parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
@@ -7014,23 +7029,66 @@ extension iCloudStorageManager {
         }
     }
 
-    private func deletionTargetExistsLocally(
-        _ target: CloudDeletionTarget,
-        appCoordinator: AppDataCoordinator
-    ) throws -> Bool {
-        switch target.kind {
-        case .recording:
-            return try appCoordinator.coreDataManager.fetchRecording(id: target.id) != nil
-        case .transcript:
-            return try appCoordinator.coreDataManager.fetchTranscript(id: target.id) != nil
-        case .summary:
-            return try appCoordinator.coreDataManager.fetchSummary(id: target.id) != nil
-        case .importedAudio:
-            // The marker's target is the audio link, not the row: it has done its
-            // job here once the recording no longer points at a file, and only then
-            // is it eligible to be retired.
-            return try appCoordinator.coreDataManager.fetchRecording(id: target.id)?.recordingURL != nil
+    /// Which of a marker set's targets this device still holds, read in three
+    /// fetches rather than two per marker.
+    ///
+    /// A marker replays on every sync until its retention window closes, so the
+    /// common case by far is a target that went away weeks ago. Both the apply pass
+    /// and the retirement pass asked Core Data about each one individually, on the
+    /// main-actor view context, every run — the same per-tombstone shape that was
+    /// already fixed on the cloud side of this phase and never on the local side.
+    struct LocalDeletionTargetPresence {
+        var recordings: Set<UUID> = []
+        var transcripts: Set<UUID> = []
+        var summaries: Set<UUID> = []
+        /// Recordings that still point at an audio file. Only `.importedAudio`
+        /// markers read this, and they care about the link, not the row.
+        var recordingsWithAudio: Set<UUID> = []
+
+        func holds(_ target: CloudDeletionTarget) -> Bool {
+            switch target.kind {
+            case .recording: return recordings.contains(target.id)
+            case .transcript: return transcripts.contains(target.id)
+            case .summary: return summaries.contains(target.id)
+            case .importedAudio: return recordingsWithAudio.contains(target.id)
+            }
         }
+    }
+
+    private func makeLocalDeletionTargetPresence(
+        for targets: [CloudDeletionTarget],
+        appCoordinator: AppDataCoordinator
+    ) throws -> LocalDeletionTargetPresence {
+        var presence = LocalDeletionTargetPresence()
+        guard !targets.isEmpty else { return presence }
+
+        let coreDataManager = appCoordinator.coreDataManager
+        var recordingIds = Set<UUID>()
+        var transcriptIds = Set<UUID>()
+        var summaryIds = Set<UUID>()
+        for target in targets {
+            switch target.kind {
+            case .recording, .importedAudio: recordingIds.insert(target.id)
+            case .transcript: transcriptIds.insert(target.id)
+            case .summary: summaryIds.insert(target.id)
+            }
+        }
+
+        presence.recordings = try coreDataManager.existingRecordingIDs(in: recordingIds)
+        presence.transcripts = try coreDataManager.existingTranscriptIDs(in: transcriptIds)
+        presence.summaries = try coreDataManager.existingSummaryIDs(in: summaryIds)
+
+        // Only the handful that both exist and are named by an `.importedAudio`
+        // marker need the row itself, to read `recordingURL`.
+        let importedAudioIds = Set(
+            targets.filter { $0.kind == .importedAudio }.map(\.id)
+        ).intersection(presence.recordings)
+        for recordingId in importedAudioIds {
+            if try coreDataManager.fetchRecording(id: recordingId)?.recordingURL != nil {
+                presence.recordingsWithAudio.insert(recordingId)
+            }
+        }
+        return presence
     }
 
     private func parentRecording(
