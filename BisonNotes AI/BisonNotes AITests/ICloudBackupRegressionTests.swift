@@ -2071,6 +2071,45 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertTrue(try appCoordinator.coreDataManager.existingSummaryIDs(in: []).isEmpty)
     }
 
+    // MARK: - Cloud-audio placeholders
+
+    /// The loop this closes, from the other side. With audio backup off — the
+    /// default — a cloud recording that names audio restores with no local URL. If
+    /// it also has no transcript or summary it looks exactly like an abandoned
+    /// orphan, so cleanup deleted it and the next restore recreated it, changing
+    /// the backup signature every launch and holding the sync throttle open.
+    func testARestoredCloudAudioPlaceholderSurvivesOrphanCleanup() throws {
+        let recordingId = try createRecordingOnly(named: "Audio lives in iCloud")
+        let recording = try XCTUnwrap(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+        // The shape the restore leg leaves behind when it cannot fetch the asset.
+        recording.recordingURL = nil
+        recording.hasCloudAudio = true
+        try appCoordinator.coreDataManager.saveContext()
+
+        let cleaned = try appCoordinator.coreDataManager.cleanupOrphanedRecordings()
+
+        XCTAssertEqual(cleaned, 0)
+        XCTAssertNotNil(
+            try appCoordinator.coreDataManager.fetchRecording(id: recordingId),
+            "A placeholder the restore leg created deliberately is not an orphan"
+        )
+    }
+
+    /// The exemption has to stay narrow: a row with nothing at all and no cloud
+    /// audio behind it is still an orphan, and still goes.
+    func testARowWithNoCloudAudioIsStillCleanedUp() throws {
+        let recordingId = try createRecordingOnly(named: "Genuinely orphaned")
+        let recording = try XCTUnwrap(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+        recording.recordingURL = nil
+        recording.hasCloudAudio = false
+        try appCoordinator.coreDataManager.saveContext()
+
+        let cleaned = try appCoordinator.coreDataManager.cleanupOrphanedRecordings()
+
+        XCTAssertEqual(cleaned, 1)
+        XCTAssertNil(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+    }
+
     private func closePersistentStores(of controller: PersistenceController) throws {
         let coordinator = controller.container.persistentStoreCoordinator
         for store in coordinator.persistentStores {

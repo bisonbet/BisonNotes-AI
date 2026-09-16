@@ -2475,8 +2475,13 @@ class CoreDataManager: ObservableObject {
             let hasNoTranscript = recording.transcript == nil
             let hasNoSummary = recording.summary == nil
 
+            // A row whose audio is in iCloud but not on this device is not an
+            // orphan: it is a placeholder the restore leg created deliberately,
+            // and deleting it only invites the next restore to recreate it.
+            let isCloudAudioPlaceholder = recording.hasCloudAudio
+
             // Only clean up recordings that have absolutely no content
-            if hasNoURL && hasNoTranscript && hasNoSummary {
+            if hasNoURL && hasNoTranscript && hasNoSummary && !isCloudAudioPlaceholder {
                 AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 // Deliberately local-only. A deletion marker records that the *user*
                 // deleted something, and this is automatic housekeeping. Restoring a

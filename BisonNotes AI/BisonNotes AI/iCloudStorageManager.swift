@@ -5131,6 +5131,8 @@ extension iCloudStorageManager {
                             from: assetURL, to: destinationURL, fileManager: fileManager
                         )
                         entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
+                        // The audio is local now, so the row stands on its own.
+                        entry.hasCloudAudio = false
                         result.audioFilesRestored += 1
                     } catch {
                         result.audioFilesFailedToRestore += 1
@@ -5142,6 +5144,13 @@ extension iCloudStorageManager {
                 } else if existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
                     entry.recordingURL = nil
+                    // Mark *why* the URL is absent. Without this the row is
+                    // indistinguishable from an abandoned local orphan, so
+                    // `cleanupOrphanedRecordings` deleted it on the next launch and
+                    // restore recreated it on the one after — forever, and with the
+                    // backup signature changing each time so the sync throttle never
+                    // closed. The audio exists; this device simply has not fetched it.
+                    entry.hasCloudAudio = Self.cloudRecordingNamesAudio(record)
                 } else if applyCloudRecording,
                           deletionTargets.importedAudioRecordings.contains(recordingId),
                           !importedAudioRemovalFailures.contains(recordingId),
