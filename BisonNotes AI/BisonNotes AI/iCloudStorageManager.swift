@@ -7411,6 +7411,10 @@ extension iCloudStorageManager {
         var suppressedAsAlreadyGone = 0
         /// Manifest-managed records the manifest still lists: a real removal.
         var indexedContent = 0
+        /// Markers a later local edit withdrew. They ride in the same batched
+        /// delete as the content ids, so leaving them out let a withdrawal-only run
+        /// report `deleted=N` with no origin at all.
+        var withdrawnMarkers = 0
         var explicit = 0
         var legacySummaries = 0
         var retiredMarkers = 0
@@ -7424,10 +7428,12 @@ extension iCloudStorageManager {
         recordIDsToDelete: Set<CKRecord.ID>,
         explicitlyTargetedRecordIDs: Set<CKRecord.ID>,
         expiredMarkerCount: Int,
+        withdrawnMarkerCount: Int,
         indexedRecordNames: Set<String>?
     ) -> CloudDeleteComposition {
         var composition = CloudDeleteComposition()
         composition.retiredMarkers = expiredMarkerCount
+        composition.withdrawnMarkers = withdrawnMarkerCount
 
         guard let indexed = indexedRecordNames else {
             // Nothing was filtered, so nothing can be called provably gone.
@@ -7474,11 +7480,13 @@ extension iCloudStorageManager {
             recordIDsToDelete: plan.recordIDsToDelete,
             explicitlyTargetedRecordIDs: plan.explicitlyTargetedRecordIDs,
             expiredMarkerCount: plan.expiredMarkerIDsToRetire.count,
+            withdrawnMarkerCount: plan.markerIDsToWithdraw.count,
             indexedRecordNames: trustedManifest
         )
         activeRunRecorder?.addDeletePlan(
             suppressedAsAlreadyGone: composition.suppressedAsAlreadyGone,
             indexedContent: composition.indexedContent,
+            withdrawnMarkers: composition.withdrawnMarkers,
             explicit: composition.explicit,
             legacySummaries: composition.legacySummaries,
             retiredMarkers: composition.retiredMarkers,

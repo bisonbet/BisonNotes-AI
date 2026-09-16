@@ -205,7 +205,17 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// Configure audio session for active recording.
     /// Recording should interrupt other audio so device playback does not bleed
     /// into the captured note, then deactivation lets other apps resume.
-    func configureBackgroundRecording() async throws {
+    /// - Parameter isStillWanted: re-checked after the activation await. The stop
+    ///   path cannot be relied on to advance the transition generation here:
+    ///   `deactivateSession()` returns *before* `beginAudioSessionTransition` while a
+    ///   background configuration is pending, which is deliberate — a stale
+    ///   deactivation must not tear down a newer configuration. So a stop landing
+    ///   during the await leaves the generation untouched, and without this the
+    ///   session is committed and the caller goes on to open the microphone after
+    ///   the user has already stopped.
+    func configureBackgroundRecording(
+        isStillWanted: @escaping () -> Bool = { true }
+    ) async throws {
         let config = AudioSessionConfig.backgroundRecording
         let generation = beginAudioSessionTransition(pendingConfiguration: config)
         defer { finishAudioSessionTransition(generation) }
@@ -217,7 +227,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 throw AudioProcessingError.backgroundRecordingNotPermitted
             }
             try ensureAudioSessionTransitionIsCurrent(generation)
-            try await applyConfiguration(config, generation: generation)
+            try await applyConfiguration(
+                config,
+                generation: generation,
+                isStillWanted: isStillWanted
+            )
             try ensureAudioSessionTransitionIsCurrent(generation)
 
             isMixedAudioEnabled = false
@@ -561,13 +575,26 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Private Methods
 
-    private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
+    private func applyConfiguration(
+        _ config: AudioSessionConfig,
+        generation: UInt64,
+        isStillWanted: () -> Bool = { true }
+    ) async throws {
         try prepareConfiguration(config, generation: generation)
-        try await activatePreparedSession(for: generation)
+        try await activatePreparedSession(for: generation, isStillWanted: isStillWanted)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()
             try ensureAudioSessionTransitionIsCurrent(generation)
+            guard isStillWanted() else {
+                // The capability request is another suspension point, and the
+                // session is exclusive by now.
+                try? await audioSessionController.setActiveOffMainThread(
+                    false,
+                    options: .notifyOthersOnDeactivation
+                )
+                throw AudioSessionTransitionError.superseded
+            }
         }
     }
 

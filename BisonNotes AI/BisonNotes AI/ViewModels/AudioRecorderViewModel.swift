@@ -630,6 +630,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 							self.finishRecordingStartup()
 							return
 						}
+						guard self.isStartingRecording else {
+							AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
+							self.finishRecordingStartup()
+							return
+						}
 						self.setupRecording()
 					}
 				} else {
@@ -736,6 +741,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 							await self.applySelectedInputToSession()
 						} catch {
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
+							self.finishRecordingStartup()
+							return
+						}
+						guard self.isStartingRecording else {
+							AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
 							self.finishRecordingStartup()
 							return
 						}

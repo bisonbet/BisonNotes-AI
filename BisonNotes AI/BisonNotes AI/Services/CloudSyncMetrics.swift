@@ -105,6 +105,8 @@ struct CloudSyncRunReport: Equatable, Sendable {
     var deletesFromExplicitRequest = 0
     var deletesFromLegacySummaries = 0
     var deletesOfRetiredMarkers = 0
+    /// Tombstones a later local edit withdrew, issued alongside the content deletes.
+    var deletesOfWithdrawnMarkers = 0
     var deletesWithUntrustedManifest = 0
     var recordsFailed = 0
     var conflictCount = 0
@@ -152,6 +154,7 @@ struct CloudSyncRunReport: Equatable, Sendable {
             ("explicit", deletesFromExplicitRequest),
             ("legacy", deletesFromLegacySummaries),
             ("markers", deletesOfRetiredMarkers),
+            ("withdrawnMarkers", deletesOfWithdrawnMarkers),
             ("untrustedManifest", deletesWithUntrustedManifest)
         ].filter { $0.1 > 0 }
         if !origins.isEmpty {
@@ -320,6 +323,7 @@ final class CloudSyncRunRecorder {
     func addDeletePlan(
         suppressedAsAlreadyGone: Int = 0,
         indexedContent: Int = 0,
+        withdrawnMarkers: Int = 0,
         explicit: Int = 0,
         legacySummaries: Int = 0,
         retiredMarkers: Int = 0,
@@ -327,6 +331,7 @@ final class CloudSyncRunRecorder {
     ) {
         report.deletesSuppressedAsAlreadyGone += suppressedAsAlreadyGone
         report.deletesOfIndexedContent += indexedContent
+        report.deletesOfWithdrawnMarkers += withdrawnMarkers
         report.deletesFromExplicitRequest += explicit
         report.deletesFromLegacySummaries += legacySummaries
         report.deletesOfRetiredMarkers += retiredMarkers
