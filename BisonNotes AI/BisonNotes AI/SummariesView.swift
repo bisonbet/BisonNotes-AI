@@ -44,6 +44,9 @@ struct SummariesView: View {
     @State private var isSummaryCandidatesExpanded = false
     @State private var isSummaryArchiveExpanded = false
     @State private var hasStartedInitialiCloudPromptCheck = false
+    /// The orphan-summary repair is a once-per-session integrity check, not
+    /// something every tab visit needs to re-answer.
+    @State private var hasCheckedForOrphanedSummaries = false
 
     @AppStorage("hasSeeniCloudPrompt") private var hasSeeniCloudPrompt = false
 
@@ -63,13 +66,12 @@ struct SummariesView: View {
                     }
                 }
                 .onAppear {
-                    // First refresh file relationships
+                    // Load first. The relationship refresh does not feed this list —
+                    // it maintains a separate cache — and waiting on it behind a
+                    // fixed delay is what made the tab show its empty state before
+                    // showing any summaries.
+                    loadRecordings()
                     enhancedFileManager.refreshAllRelationships()
-
-                    // Then load recordings after a brief delay to ensure relationships are established
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        loadRecordings()
-                    }
 
                     // Configure the transcription manager with the selected engine
                     let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
@@ -432,7 +434,12 @@ struct SummariesView: View {
         .refreshable {
             loadRecordings()
         }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        // Deliberately excludes `searchText`. Identity is what SwiftUI uses to decide
+        // this is a *different* view, so having a keystroke change it tore down and
+        // rebuilt the whole list on every character — re-firing `onAppear` and the
+        // full reload behind it. Filter changes still reset the list; the `ForEach`
+        // already diffs rows by `objectID`, so search filters in place.
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)")
         .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
         #endif
     }
@@ -500,7 +507,12 @@ struct SummariesView: View {
         .refreshable {
             loadRecordings()
         }
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        // Deliberately excludes `searchText`. Identity is what SwiftUI uses to decide
+        // this is a *different* view, so having a keystroke change it tore down and
+        // rebuilt the whole list on every character — re-firing `onAppear` and the
+        // full reload behind it. Filter changes still reset the list; the `ForEach`
+        // already diffs rows by `objectID`, so search filters in place.
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)")
         .accessibilityIdentifier(BisonNotesAccessibilityID.summaryList)
     }
 
@@ -931,32 +943,35 @@ struct SummariesView: View {
             return
         }
 
-        // Debug Core Data state check (logging removed)
+        // Orphan repair, from counts this load already has. Re-reading both tables
+        // here meant every visit to the tab paid two more full fetches to answer a
+        // question the rows in hand could answer.
+        guard !hasCheckedForOrphanedSummaries else { return }
+
         Task { @MainActor in
             do {
-                // Check what's actually in Core Data
-                let allRecordings = try appCoordinator.coreDataManager.getAllRecordings()
-                let allSummaries = try appCoordinator.coreDataManager.getAllSummaries()
+                let recordingCount = try appCoordinator.coreDataManager.countRecordings()
+                let summaryCount = try appCoordinator.coreDataManager.countSummaries()
 
-                if allSummaries.count > 0 && allRecordings.count < allSummaries.count {
-                    // Attempt to repair orphaned summaries if needed
+                if summaryCount > 0, recordingCount < summaryCount {
                     let repairedCount = try appCoordinator.coreDataManager.repairOrphanedSummaries()
 
                     if repairedCount > 0 {
                         AppLog.shared.summarization("Repaired \(repairedCount) orphaned summaries")
-                        // Reload the view after repair
-                        DispatchQueue.main.async {
-                            self.loadRecordings()
-                        }
+                        loadRecordings()
                     }
                 }
+                // Only a check that actually completed retires the once-per-session
+                // guard. Setting it up front meant one transient storage failure
+                // silenced the integrity check for the rest of the view's life,
+                // while the alert told the user to try again.
+                hasCheckedForOrphanedSummaries = true
             } catch {
                 errorMessage = "Could not verify summary storage: \(error.localizedDescription)"
                 errorRecoverySuggestion = "Your existing on-screen data was retained."
                 showErrorAlert = true
             }
         }
-
     }
 
     private func generateSummary(for recording: RecordingEntry) {
@@ -1112,9 +1127,9 @@ struct SummariesView: View {
                     cloudSummaries = try await iCloudManager.fetchAllSummariesFromCloud()
                 }
 
-                // Get local summary IDs from Core Data
-                let localSummaries = try appCoordinator.coreDataManager.getAllSummaries()
-                let localSummaryIds = Set(localSummaries.compactMap { $0.id })
+                // Ids only: this comparison never needed the summary bodies, and
+                // faulting all of them in ran on every visit to the tab.
+                let localSummaryIds = try appCoordinator.coreDataManager.allSummaryIDs()
 
                 let cloudOnlySummaries = cloudSummaries.filter { !localSummaryIds.contains($0.id) }
 

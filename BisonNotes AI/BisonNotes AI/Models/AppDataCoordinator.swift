@@ -450,19 +450,34 @@ extension AppDataCoordinator {
         }
         let iCloudManager = SummaryManager.shared.getiCloudManager()
         guard iCloudManager.isEnabled else { return }
-        do {
-            guard try iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else {
-                return
-            }
-        } catch {
-            AppLog.shared.coreData(
-                "iCloud reconcile withheld because local collection reads failed: \(error.localizedDescription)",
-                level: .error
-            )
-            return
-        }
 
         Task {
+            // Deliberately inside the task. Both this type and the sync manager are
+            // `@MainActor`, and on the unforced path the gate reads every recording,
+            // transcript and summary and hashes their bodies to decide whether
+            // anything changed. Running that straight from the activation
+            // notification handler put the whole cost in front of the first frame,
+            // growing with the size of the library, whether or not a sync followed.
+            //
+            // The task alone is not enough: it inherits this actor, so it can simply
+            // be the next main-actor job and still land before SwiftUI renders.
+            // Yielding puts it behind whatever is already queued. This is a
+            // mitigation, not a cure — the real fix is to stop computing the backup
+            // signature on the main actor at all, which needs the reads moved to an
+            // isolated context.
+            await Task.yield()
+            do {
+                guard try iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else {
+                    return
+                }
+            } catch {
+                AppLog.shared.coreData(
+                    "iCloud reconcile withheld because local collection reads failed: \(error.localizedDescription)",
+                    level: .error
+                )
+                return
+            }
+
             do {
                 let result = try await iCloudManager.reconcileAllDataWithiCloud(
                     appCoordinator: self,

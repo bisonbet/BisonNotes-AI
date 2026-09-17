@@ -301,10 +301,13 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         )
     }
 
-    func testManagerMissingConfigurationFailsAndRecoveryNeverDeactivatesAsRetryPrelude() {
+    func testManagerMissingConfigurationFailsAndRecoveryNeverDeactivatesAsRetryPrelude() async {
         let missingController = ScriptedAudioSessionController()
         let missingManager = EnhancedAudioSessionManager(audioSessionController: missingController)
-        XCTAssertThrowsError(try missingManager.activatePreparedSession()) { error in
+        do {
+            try await missingManager.activatePreparedSession()
+            XCTFail("A manager with no configuration must not claim the session")
+        } catch {
             XCTAssertEqual(error as? AudioSessionRecoveryError, .missingConfiguration)
         }
         XCTAssertTrue(missingController.activeCalls.isEmpty)
@@ -316,7 +319,12 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         let manager = EnhancedAudioSessionManager(audioSessionController: controller)
         manager.currentConfiguration = .backgroundRecording
 
-        XCTAssertThrowsError(try manager.activatePreparedSession())
+        do {
+            try await manager.activatePreparedSession()
+            XCTFail("A failed activation must be reported, not swallowed")
+        } catch {
+            // The underlying session error reaches the recovery coordinator unchanged.
+        }
         XCTAssertEqual(controller.activeCalls, [true])
         XCTAssertFalse(controller.activeCalls.contains(false))
     }

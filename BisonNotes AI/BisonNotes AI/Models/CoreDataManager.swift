@@ -621,6 +621,77 @@ class CoreDataManager: ObservableObject {
         return try fetchCollection(fetchRequest, operation: "recording").first
     }
 
+    /// Which of these recording ids exist, in one fetch.
+    ///
+    /// The inbound-tombstone pass used to ask `fetchRecording(id:)` once per
+    /// marker just to learn whether there was anything left to delete. A marker
+    /// replays on every sync for its whole retention window, so the overwhelmingly
+    /// common answer is "nothing" — and each of those answers cost a round trip on
+    /// the main-actor view context while the user was tapping. The cloud side of
+    /// that phase was batched long ago; this is the local half.
+    func existingRecordingIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: RecordingEntry.fetchRequest(), operation: "recording ids")
+    }
+
+    func existingTranscriptIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: TranscriptEntry.fetchRequest(), operation: "transcript ids")
+    }
+
+    func existingSummaryIDs(in ids: Set<UUID>) throws -> Set<UUID> {
+        try existingIDs(in: ids, fetchRequest: SummaryEntry.fetchRequest(), operation: "summary ids")
+    }
+
+    /// Every summary id, without materialising a single summary body.
+    ///
+    /// The first-run iCloud prompt built this set with `getAllSummaries()` and a
+    /// `compactMap`, which faults in every summary's text to read its UUID — on
+    /// every visit to the Summaries tab.
+    func allSummaryIDs() throws -> Set<UUID> {
+        let fetchRequest: NSFetchRequest<SummaryEntry> = SummaryEntry.fetchRequest()
+        fetchRequest.propertiesToFetch = ["id"]
+        let summaries = try fetchCollection(fetchRequest, operation: "summary ids")
+        return Set(summaries.compactMap { $0.value(forKey: "id") as? UUID })
+    }
+
+    /// How many ids go into one `IN` predicate.
+    ///
+    /// An unbounded `IN` becomes an unbounded SQL parameter list, and past the
+    /// store's host-parameter limit the fetch fails outright rather than degrading.
+    /// The callers pass whole collections — every cloud child id in a restore, every
+    /// applicable tombstone target — and a library carrying deletion markers from
+    /// before the retention window existed can hold a great many. One oversized
+    /// request would fail reconciliation before a single marker was applied or
+    /// retired, and fail again identically on every sync. Well under any limit, and
+    /// the extra round trips only happen on sets large enough to need them.
+    private static let idPredicateChunkSize = 500
+
+    private func existingIDs<Entry: NSManagedObject>(
+        in ids: Set<UUID>,
+        fetchRequest: NSFetchRequest<Entry>,
+        operation: String
+    ) throws -> Set<UUID> {
+        guard !ids.isEmpty else { return [] }
+
+        var found = Set<UUID>()
+        for chunk in Array(ids).chunked(into: Self.idPredicateChunkSize) {
+            // A fresh request per chunk: `NSFetchRequest` is a reference type, so
+            // reusing one across iterations would mutate a request already executed.
+            guard let chunkRequest = fetchRequest.copy() as? NSFetchRequest<Entry> else {
+                throw CoreDataCollectionReadError(
+                    operation: operation,
+                    failure: PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 4)
+                )
+            }
+            chunkRequest.predicate = NSPredicate(format: "id IN %@", chunk as NSArray)
+            // Only the ids are needed, so the rows are never faulted in.
+            chunkRequest.propertiesToFetch = ["id"]
+            chunkRequest.resultType = .managedObjectResultType
+            let rows = try fetchCollection(chunkRequest, operation: operation)
+            found.formUnion(rows.compactMap { $0.value(forKey: "id") as? UUID })
+        }
+        return found
+    }
+
     /// Compatibility entry point for existing optional-lookup callers. New
     /// read-dependent operations use fetchRecording(url:) and propagate failure.
     func getRecording(url: URL) -> RecordingEntry? {
@@ -655,6 +726,71 @@ class CoreDataManager: ObservableObject {
             return Self.storedURLCandidates(storedURL, documentsURL: documentsURL)
                 .contains { $0.lastPathComponent == url.lastPathComponent }
         }
+    }
+
+    /// Row counts without materialising the rows.
+    ///
+    /// The Summaries tab compared `getAllRecordings().count` against
+    /// `getAllSummaries().count` on every appearance, which faulted in every
+    /// summary body to answer a question about cardinality.
+    func countRecordings() throws -> Int {
+        try count(RecordingEntry.fetchRequest(), operation: "recording count")
+    }
+
+    func countSummaries() throws -> Int {
+        try count(SummaryEntry.fetchRequest(), operation: "summary count")
+    }
+
+    private func count<Entry: NSManagedObject>(
+        _ fetchRequest: NSFetchRequest<Entry>,
+        operation: String
+    ) throws -> Int {
+        do {
+            return try context.count(for: fetchRequest)
+        } catch {
+            throw CoreDataCollectionReadError(
+                operation: operation,
+                failure: PersistenceStoreFailure(error: error)
+            )
+        }
+    }
+
+    /// Resolves many URLs against one read of the recordings table.
+    ///
+    /// `fetchRecording(url:)` reads every recording to resolve a single URL, which
+    /// is fine once and quadratic in a loop. The relationship refresh resolves
+    /// roughly one URL per audio file on every visit to the Summaries tab, so it
+    /// was paying that read ninety-odd times. Same resolution rules, same order:
+    /// an exact candidate match first, then the legacy filename fallback.
+    func fetchRecordings(urls: [URL]) throws -> [URL: RecordingEntry] {
+        guard !urls.isEmpty else { return [:] }
+        let recordings = try getAllRecordings()
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            throw CoreDataCollectionReadError(
+                operation: "recording URL resolution",
+                failure: PersistenceStoreFailure(domain: "BisonNotes.Persistence", code: 3)
+            )
+        }
+
+        var byNormalizedPath: [String: RecordingEntry] = [:]
+        var byFileName: [String: RecordingEntry] = [:]
+        for recording in recordings {
+            guard let storedURL = recording.recordingURL else { continue }
+            for candidate in Self.storedURLCandidates(storedURL, documentsURL: documentsURL) {
+                // First writer wins, matching the original loop's `return` on the
+                // earliest recording that matched.
+                byNormalizedPath[normalizedURLPath(candidate)] = byNormalizedPath[normalizedURLPath(candidate)] ?? recording
+                byFileName[candidate.lastPathComponent] = byFileName[candidate.lastPathComponent] ?? recording
+            }
+        }
+
+        var resolved: [URL: RecordingEntry] = [:]
+        for url in urls {
+            if let match = byNormalizedPath[normalizedURLPath(url)] ?? byFileName[url.lastPathComponent] {
+                resolved[url] = match
+            }
+        }
+        return resolved
     }
 
     private func normalizedURLPath(_ url: URL) -> String {
@@ -2339,8 +2475,13 @@ class CoreDataManager: ObservableObject {
             let hasNoTranscript = recording.transcript == nil
             let hasNoSummary = recording.summary == nil
 
+            // A row whose audio is in iCloud but not on this device is not an
+            // orphan: it is a placeholder the restore leg created deliberately,
+            // and deleting it only invites the next restore to recreate it.
+            let isCloudAudioPlaceholder = recording.hasCloudAudio
+
             // Only clean up recordings that have absolutely no content
-            if hasNoURL && hasNoTranscript && hasNoSummary {
+            if hasNoURL && hasNoTranscript && hasNoSummary && !isCloudAudioPlaceholder {
                 AppLog.shared.coreData("Cleaning up orphaned recording ID: \(recording.id?.uuidString ?? "nil")", level: .debug)
                 // Deliberately local-only. A deletion marker records that the *user*
                 // deleted something, and this is automatic housekeeping. Restoring a

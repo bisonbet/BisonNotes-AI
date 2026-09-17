@@ -218,7 +218,9 @@ final class EnhancedFileManager: ObservableObject {
     func refreshRelationships(for url: URL) async throws {
         try appCoordinator?.syncRecordingURLs()
         let normalizedURL = normalizeURL(url)
-        let relationship = try makeRelationship(for: normalizedURL)
+        // One URL, so the snapshot is scoped to it rather than the whole library.
+        let store = try makeRelationshipStoreSnapshot(for: [normalizedURL])
+        let relationship = makeRelationship(for: normalizedURL, store: store)
         fileRelationships[normalizedURL] = relationship
         saveFileRelationships()
     }
@@ -236,15 +238,57 @@ final class EnhancedFileManager: ObservableObject {
     }
 
     /// Stage the entire refresh before publishing or saving relationship changes.
+    ///
+    /// Everything the loop needs is read once, up front. Each iteration used to
+    /// resolve its URL against a fresh read of every recording and then fetch
+    /// *every* transcript and *every* summary to answer two existence questions —
+    /// so a library of ninety-odd audio files paid roughly two hundred and eighty
+    /// full-table reads, with a relationship fault per row, on every visit to the
+    /// Summaries tab. v2.5 asked the same two questions with an indexed
+    /// single-row predicate per URL; this restores that cost profile while keeping
+    /// the staged-then-published update the rewrite was after.
     func refreshAllRelationshipsFromStore() throws {
         try appCoordinator?.syncRecordingURLs()
         let urls = try relationshipURLs()
+        let store = try makeRelationshipStoreSnapshot(for: Array(urls))
         var updated: [URL: FileRelationships] = [:]
         for url in urls {
-            updated[url] = try makeRelationship(for: url)
+            updated[url] = makeRelationship(for: url, store: store)
         }
         fileRelationships = updated
         saveFileRelationships()
+    }
+
+    /// The whole-store reads the relationship loop depends on, taken once.
+    private struct RelationshipStoreSnapshot {
+        var recordingsByURL: [URL: RecordingEntry] = [:]
+        var recordingIDsWithTranscript: Set<UUID> = []
+        var recordingIDsWithSummary: Set<UUID> = []
+        var iCloudEnabled = false
+    }
+
+    private func makeRelationshipStoreSnapshot(
+        for urls: [URL]
+    ) throws -> RelationshipStoreSnapshot {
+        var snapshot = RelationshipStoreSnapshot()
+        guard let coordinator = appCoordinator else { return snapshot }
+        let manager = coordinator.coreDataManager
+
+        snapshot.recordingsByURL = try manager.fetchRecordings(urls: urls)
+        // Both reads complete before anything is published, which is the property
+        // the per-URL version was protecting.
+        let transcripts = try manager.getAllTranscripts()
+        let summaries = try manager.getAllSummaries()
+        // The `recording?.id` fallback faults a related object, so it is resolved
+        // once per row here rather than once per row per URL.
+        snapshot.recordingIDsWithTranscript = Set(
+            transcripts.compactMap { $0.recordingId ?? $0.recording?.id }
+        )
+        snapshot.recordingIDsWithSummary = Set(
+            summaries.compactMap { $0.recordingId ?? $0.recording?.id }
+        )
+        snapshot.iCloudEnabled = SummaryManager.shared.getiCloudManager().isEnabled
+        return snapshot
     }
 
     // MARK: - Selective Deletion
@@ -556,24 +600,20 @@ extension EnhancedFileManager {
         return urls
     }
 
-    private func makeRelationship(for url: URL) throws -> FileRelationships? {
+    private func makeRelationship(
+        for url: URL,
+        store: RelationshipStoreSnapshot
+    ) -> FileRelationships? {
         let recordingExists = FileManager.default.fileExists(atPath: url.path)
         var transcriptExists = false
         var summaryExists = false
         var recordingDate: Date?
         var cloudEligible = false
-        if let coordinator = appCoordinator {
-            let manager = coordinator.coreDataManager
-            let recording = try manager.fetchRecording(url: url)
-            // Complete both reads before changing the relationship cache.
-            let transcripts = try manager.getAllTranscripts()
-            let summaries = try manager.getAllSummaries()
-            if let recording, let id = recording.id {
-                transcriptExists = transcripts.contains { ($0.recordingId ?? $0.recording?.id) == id }
-                summaryExists = summaries.contains { ($0.recordingId ?? $0.recording?.id) == id }
-                recordingDate = recording.recordingDate
-                cloudEligible = SummaryManager.shared.getiCloudManager().isEnabled && !recording.isCloudSyncDisabled
-            }
+        if let recording = store.recordingsByURL[url], let id = recording.id {
+            transcriptExists = store.recordingIDsWithTranscript.contains(id)
+            summaryExists = store.recordingIDsWithSummary.contains(id)
+            recordingDate = recording.recordingDate
+            cloudEligible = store.iCloudEnabled && !recording.isCloudSyncDisabled
         }
         guard recordingExists || transcriptExists || summaryExists else { return nil }
         return FileRelationships(

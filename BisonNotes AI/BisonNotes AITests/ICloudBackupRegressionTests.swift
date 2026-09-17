@@ -1897,6 +1897,219 @@ final class ICloudBackupRegressionTests: XCTestCase {
         return container
     }
 
+    // MARK: - Contentless cloud recordings
+
+    private func makeCloudRecordingRecord(
+        id: UUID,
+        recordingURL: String? = nil,
+        audioSignature: String? = nil,
+        audioFileName: String? = nil,
+        audioByteCount: Int64? = nil
+    ) -> CKRecord {
+        let record = CKRecord(
+            recordType: "CD_BackupRecording",
+            recordID: CKRecord.ID(recordName: "backup_recording_\(id.uuidString)")
+        )
+        if let recordingURL { record["recordingURL"] = recordingURL as CKRecordValue }
+        if let audioSignature { record["audioSignature"] = audioSignature as CKRecordValue }
+        if let audioFileName { record["audioFileName"] = audioFileName as CKRecordValue }
+        if let audioByteCount { record["audioByteCount"] = audioByteCount as CKRecordValue }
+        return record
+    }
+
+    /// The case that must never be swept up: a recording from another device,
+    /// restored with audio excluded. It names audio even though no asset came down,
+    /// and discovering it is its own tested requirement in
+    /// `ICloudSyncOrchestrationTests`.
+    func testAMetadataOnlyRecordingThatStillNamesAudioIsRestored() {
+        let recordingId = UUID()
+
+        XCTAssertFalse(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                makeCloudRecordingRecord(id: recordingId, recordingURL: "elsewhere.m4a"),
+                recordingId: recordingId,
+                transcriptRecordingIds: [],
+                summaryRecordingIds: []
+            ),
+            "Restoring with includeAudioFiles off produces exactly this shape"
+        )
+    }
+
+    /// The loop this closes: restore recreated a contentless cloud recording, the
+    /// next launch's `cleanupOrphanedRecordings` deleted it again without a
+    /// tombstone, and around it went — changing the local dataset every launch and
+    /// keeping the maintenance throttle permanently open.
+    func testARecordingWithNoAudioTranscriptOrSummaryIsNotRestored() {
+        let recordingId = UUID()
+
+        XCTAssertTrue(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                makeCloudRecordingRecord(id: recordingId),
+                recordingId: recordingId,
+                transcriptRecordingIds: [],
+                summaryRecordingIds: []
+            )
+        )
+    }
+
+    func testARecordingKeepingOnlyATranscriptOrSummaryStillRestores() {
+        let withTranscript = UUID()
+        let withSummary = UUID()
+
+        XCTAssertFalse(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                makeCloudRecordingRecord(id: withTranscript),
+                recordingId: withTranscript,
+                transcriptRecordingIds: [withTranscript],
+                summaryRecordingIds: []
+            ),
+            "A recording that lost only its audio is exactly what the orphan cleanup preserves"
+        )
+        XCTAssertFalse(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                makeCloudRecordingRecord(id: withSummary),
+                recordingId: withSummary,
+                transcriptRecordingIds: [],
+                summaryRecordingIds: [withSummary]
+            )
+        )
+    }
+
+    func testAnyAudioMetadataFieldIsEnoughToRestore() {
+        let bySignature = UUID()
+        let byFileName = UUID()
+        let byByteCount = UUID()
+
+        for (id, record) in [
+            (bySignature, makeCloudRecordingRecord(id: bySignature, audioSignature: "1024-1700000000")),
+            (byFileName, makeCloudRecordingRecord(id: byFileName, audioFileName: "memo.m4a")),
+            (byByteCount, makeCloudRecordingRecord(id: byByteCount, audioByteCount: 2048))
+        ] {
+            XCTAssertFalse(
+                iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                    record,
+                    recordingId: id,
+                    transcriptRecordingIds: [],
+                    summaryRecordingIds: []
+                ),
+                "Recording records are fetched without audioAsset, so metadata alone has to answer this"
+            )
+        }
+    }
+
+    func testEmptyAudioMetadataCountsAsNoAudio() {
+        let recordingId = UUID()
+
+        XCTAssertTrue(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                makeCloudRecordingRecord(
+                    id: recordingId,
+                    recordingURL: "",
+                    audioSignature: "",
+                    audioFileName: "",
+                    audioByteCount: 0
+                ),
+                recordingId: recordingId,
+                transcriptRecordingIds: [],
+                summaryRecordingIds: []
+            ),
+            "A cleared field is not audio; treating it as audio would keep the loop alive"
+        )
+    }
+
+    /// The decision is keyed on the records present in the run, not on the
+    /// recording's own id fields — an id pointing at a record that no longer exists
+    /// is precisely the shape that kept regenerating the orphan.
+    func testADanglingTranscriptIdDoesNotCountAsContent() {
+        let recordingId = UUID()
+        let record = makeCloudRecordingRecord(id: recordingId)
+        record["transcriptId"] = UUID().uuidString as CKRecordValue
+        record["summaryId"] = UUID().uuidString as CKRecordValue
+
+        XCTAssertTrue(
+            iCloudStorageManager.cloudRecordingHasNothingToRestore(
+                record,
+                recordingId: recordingId,
+                transcriptRecordingIds: [],
+                summaryRecordingIds: []
+            )
+        )
+    }
+
+    // MARK: - Batched id lookups
+
+    /// The `IN` predicate is chunked, so a set larger than one chunk has to come
+    /// back whole. An unbounded predicate becomes an unbounded SQL parameter list,
+    /// and past the store's host-parameter limit the fetch fails outright — which
+    /// on a library carrying many old deletion markers would fail reconciliation
+    /// before a single marker was applied, identically on every sync.
+    ///
+    /// Padded with absent ids rather than real rows: the point is the number of
+    /// values in the predicate, not the size of the table.
+    func testIdLookupSpanningSeveralChunksReturnsEveryMatch() throws {
+        var presentRecordingIds = Set<UUID>()
+        for index in 0..<5 {
+            presentRecordingIds.insert(try createCompleteRecording(named: "Chunked \(index)"))
+        }
+
+        var query = presentRecordingIds
+        for _ in 0..<1_200 {
+            query.insert(UUID())
+        }
+
+        let found = try appCoordinator.coreDataManager.existingRecordingIDs(in: query)
+
+        XCTAssertEqual(
+            found, presentRecordingIds,
+            "Every present id must survive the chunking, and no absent id may be invented"
+        )
+    }
+
+    func testAnEmptyIdLookupIssuesNoFetch() throws {
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingRecordingIDs(in: []).isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingTranscriptIDs(in: []).isEmpty)
+        XCTAssertTrue(try appCoordinator.coreDataManager.existingSummaryIDs(in: []).isEmpty)
+    }
+
+    // MARK: - Cloud-audio placeholders
+
+    /// The loop this closes, from the other side. With audio backup off — the
+    /// default — a cloud recording that names audio restores with no local URL. If
+    /// it also has no transcript or summary it looks exactly like an abandoned
+    /// orphan, so cleanup deleted it and the next restore recreated it, changing
+    /// the backup signature every launch and holding the sync throttle open.
+    func testARestoredCloudAudioPlaceholderSurvivesOrphanCleanup() throws {
+        let recordingId = try createRecordingOnly(named: "Audio lives in iCloud")
+        let recording = try XCTUnwrap(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+        // The shape the restore leg leaves behind when it cannot fetch the asset.
+        recording.recordingURL = nil
+        recording.hasCloudAudio = true
+        try appCoordinator.coreDataManager.saveContext()
+
+        let cleaned = try appCoordinator.coreDataManager.cleanupOrphanedRecordings()
+
+        XCTAssertEqual(cleaned, 0)
+        XCTAssertNotNil(
+            try appCoordinator.coreDataManager.fetchRecording(id: recordingId),
+            "A placeholder the restore leg created deliberately is not an orphan"
+        )
+    }
+
+    /// The exemption has to stay narrow: a row with nothing at all and no cloud
+    /// audio behind it is still an orphan, and still goes.
+    func testARowWithNoCloudAudioIsStillCleanedUp() throws {
+        let recordingId = try createRecordingOnly(named: "Genuinely orphaned")
+        let recording = try XCTUnwrap(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+        recording.recordingURL = nil
+        recording.hasCloudAudio = false
+        try appCoordinator.coreDataManager.saveContext()
+
+        let cleaned = try appCoordinator.coreDataManager.cleanupOrphanedRecordings()
+
+        XCTAssertEqual(cleaned, 1)
+        XCTAssertNil(try appCoordinator.coreDataManager.fetchRecording(id: recordingId))
+    }
+
     private func closePersistentStores(of controller: PersistenceController) throws {
         let coordinator = controller.container.persistentStoreCoordinator
         for store in coordinator.persistentStores {

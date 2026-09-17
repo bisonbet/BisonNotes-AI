@@ -315,12 +315,19 @@ extension AudioRecorderViewModel {
 	private func attemptAudioSessionActivation(
 		for request: AudioRecoveryRequest
 	) async throws -> Bool {
-		let preparationGeneration = try await enhancedAudioSessionManager.prepareBackgroundRecordingForRecovery()
+		// The full fence, registered on the transition so it covers every suspension
+		// point from here to the commit. A second interruption beginning mid-flight
+		// leaves `accepts` true by design, while `isCurrentAudioRecovery` also
+		// rejects on `isInInterruption` and on a changed session id or URL.
+		let preparationGeneration = try await enhancedAudioSessionManager.prepareBackgroundRecordingForRecovery(
+			isStillWanted: { [self] in isCurrentAudioRecovery(request) }
+		)
 		guard recoveryCoordinator.accepts(request), recordingIntentActive else {
 			enhancedAudioSessionManager.discardPreparedSession(for: preparationGeneration)
 			return false
 		}
-		try enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
+		// Re-checked on the far side of the activation await, not just before it.
+		try await enhancedAudioSessionManager.activatePreparedSession(for: preparationGeneration)
 		return true
 	}
 

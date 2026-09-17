@@ -4973,6 +4973,74 @@ extension iCloudStorageManager {
                 }
             }
 
+            // What this run will actually materialize content for. Counting every
+            // record in the snapshot was wrong: a child the loops below reject —
+            // quarantined, inactive, or with an undecodable name — would still mark
+            // its parent as having content, so an audio-less parent got created with
+            // nothing attached and the next launch's orphan cleanup deleted it
+            // again. That is the very churn `cloudRecordingHasNothingToRestore`
+            // exists to stop, so the eligibility test has to match the child loops'.
+            func recordingIdsWithRestorableChildren(
+                _ records: [CKRecord],
+                prefix: String,
+                trustedRecordNames: Set<String>,
+                locallyPresentIds: Set<UUID>
+            ) -> Set<UUID> {
+                Set(
+                    records.compactMap { record -> UUID? in
+                        guard let childId = decodeBackupRecordUUID(
+                            recordName: record.recordID.recordName,
+                            prefix: prefix
+                        ),
+                            let recordingId = (record[Self.fieldRecordingId] as? String)
+                                .flatMap(UUID.init(uuidString:))
+                        else {
+                            return nil
+                        }
+                        // An existing local row restores unconditionally; only a
+                        // cloud-only child has to earn its place.
+                        guard locallyPresentIds.contains(childId)
+                                || shouldRestoreCloudOnlyRecord(
+                                    record,
+                                    trustedRecordNames: trustedRecordNames
+                                )
+                        else {
+                            return nil
+                        }
+                        return recordingId
+                    }
+                )
+            }
+
+            let coreDataManager = appCoordinator.coreDataManager
+            let transcriptRecordingIds = recordingIdsWithRestorableChildren(
+                transcriptRecords,
+                prefix: Self.backupTranscriptRecordPrefix,
+                trustedRecordNames: trustedActiveManifest.transcripts,
+                locallyPresentIds: try coreDataManager.existingTranscriptIDs(
+                    in: Set(transcriptRecords.compactMap {
+                        decodeBackupRecordUUID(
+                            recordName: $0.recordID.recordName,
+                            prefix: Self.backupTranscriptRecordPrefix
+                        )
+                    })
+                )
+            )
+            let summaryRecordingIds = recordingIdsWithRestorableChildren(
+                summaryRecords,
+                prefix: Self.backupSummaryRecordPrefix,
+                trustedRecordNames: trustedActiveManifest.summaries,
+                locallyPresentIds: try coreDataManager.existingSummaryIDs(
+                    in: Set(summaryRecords.compactMap {
+                        decodeBackupRecordUUID(
+                            recordName: $0.recordID.recordName,
+                            prefix: Self.backupSummaryRecordPrefix
+                        )
+                    })
+                )
+            )
+            var contentlessRecordingsSkipped = 0
+
             for record in recordingRecords {
                 guard let recordingId = decodeBackupRecordUUID(
                     recordName: record.recordID.recordName,
@@ -4985,6 +5053,17 @@ extension iCloudStorageManager {
                     if deletedRecordingIds.contains(recordingId) ||
                         !shouldRestoreCloudOnlyRecord(record, trustedRecordNames: trustedActiveManifest.recordings) {
                         holdBackupRecordForReview(record, recordingId: recordingId)
+                        continue
+                    }
+                    // Creating this row would only hand the next launch's orphan
+                    // cleanup something to delete again. Leave the cloud record alone.
+                    if Self.cloudRecordingHasNothingToRestore(
+                        record,
+                        recordingId: recordingId,
+                        transcriptRecordingIds: transcriptRecordingIds,
+                        summaryRecordingIds: summaryRecordingIds
+                    ) {
+                        contentlessRecordingsSkipped += 1
                         continue
                     }
                 }
@@ -5052,6 +5131,8 @@ extension iCloudStorageManager {
                             from: assetURL, to: destinationURL, fileManager: fileManager
                         )
                         entry.recordingURL = appCoordinator.coreDataManager.urlToRelativePath(destinationURL) ?? uniqueFileName
+                        // The audio is local now, so the row stands on its own.
+                        entry.hasCloudAudio = false
                         result.audioFilesRestored += 1
                     } catch {
                         result.audioFilesFailedToRestore += 1
@@ -5063,6 +5144,13 @@ extension iCloudStorageManager {
                 } else if existing == nil {
                     // Keep metadata-only records when audio backup is disabled or unavailable.
                     entry.recordingURL = nil
+                    // Mark *why* the URL is absent. Without this the row is
+                    // indistinguishable from an abandoned local orphan, so
+                    // `cleanupOrphanedRecordings` deleted it on the next launch and
+                    // restore recreated it on the one after — forever, and with the
+                    // backup signature changing each time so the sync throttle never
+                    // closed. The audio exists; this device simply has not fetched it.
+                    entry.hasCloudAudio = Self.cloudRecordingNamesAudio(record)
                 } else if applyCloudRecording,
                           deletionTargets.importedAudioRecordings.contains(recordingId),
                           !importedAudioRemovalFailures.contains(recordingId),
@@ -5083,6 +5171,14 @@ extension iCloudStorageManager {
                 }
 
                 recordingsById[recordingId] = entry
+            }
+
+            if contentlessRecordingsSkipped > 0 {
+                AppLog.shared.iCloudSync(
+                    "Restore skipped \(contentlessRecordingsSkipped) cloud recording(s) with no audio, "
+                        + "transcript or summary; local orphan cleanup would delete them again",
+                    level: .debug
+                )
             }
 
             var transcriptsById = [UUID: TranscriptEntry]()
@@ -6746,12 +6842,18 @@ extension iCloudStorageManager {
             workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: needsLegacyRecords)
         }
 
+        let localPresence = try makeLocalDeletionTargetPresence(
+            for: applicableMarkers.map(\.target),
+            appCoordinator: appCoordinator
+        )
+
         if let workspace {
             for marker in applicableMarkers {
                 try applyDeletionMarker(
                     marker.target,
                     appCoordinator: appCoordinator,
                     workspace: workspace,
+                    localPresence: localPresence,
                     plan: &plan,
                     application: &application
                 )
@@ -6765,13 +6867,25 @@ extension iCloudStorageManager {
         // replayed on every sync and this phase grew without bound. Past the
         // retention window, with the target already gone from this device, replaying
         // a marker buys nothing.
-        for marker in applicableMarkers {
-            guard let deletedAt = marker.deletedAt,
-                  syncClock.now.timeIntervalSince(deletedAt) > Self.deletionMarkerRetentionInterval,
-                  !(try deletionTargetExistsLocally(marker.target, appCoordinator: appCoordinator)) else {
-                continue
+        //
+        // Presence is re-read for the aged candidates only. `localPresence` is the
+        // state from *before* the apply pass, so a marker whose target this very
+        // pass deleted would still look present and miss its retirement — and with
+        // the throttle advanced by the completed run, it could then sit unretired
+        // for a maintenance interval, replaying on every other device. Re-reading
+        // is three fetches, and only when something is actually old enough to go.
+        let agedMarkers = applicableMarkers.filter { marker in
+            guard let deletedAt = marker.deletedAt else { return false }
+            return syncClock.now.timeIntervalSince(deletedAt) > Self.deletionMarkerRetentionInterval
+        }
+        if !agedMarkers.isEmpty {
+            let presenceAfterApplying = try makeLocalDeletionTargetPresence(
+                for: agedMarkers.map(\.target),
+                appCoordinator: appCoordinator
+            )
+            for marker in agedMarkers where !presenceAfterApplying.holds(marker.target) {
+                plan.expiredMarkerIDsToRetire.insert(marker.recordID)
             }
-            plan.expiredMarkerIDsToRetire.insert(marker.recordID)
         }
 
         let commit = try await commitDeletionPlan(plan, workspace: workspace)
@@ -6875,9 +6989,15 @@ extension iCloudStorageManager {
         _ target: CloudDeletionTarget,
         appCoordinator: AppDataCoordinator,
         workspace: CloudDeletionWorkspace,
+        localPresence: LocalDeletionTargetPresence,
         plan: inout CloudDeletionPlan,
         application: inout DeletionMarkerApplication
     ) throws {
+        // The cloud half of the plan is recorded for every marker; only a target
+        // this device still holds is worth a row fetch. A replayed marker whose
+        // target went away weeks ago is the common case, and it used to pay one
+        // anyway.
+        let holdsTargetLocally = localPresence.holds(target)
         switch target.kind {
         case .recording:
             planRecordingContentDeletion(
@@ -6888,7 +7008,8 @@ extension iCloudStorageManager {
                 into: &plan
             )
 
-            guard let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
+            guard holdsTargetLocally,
+                  let recording = try appCoordinator.coreDataManager.fetchRecording(id: target.id),
                   recording.isCloudSyncDisabled == false else {
                 return
             }
@@ -6909,7 +7030,8 @@ extension iCloudStorageManager {
         case .transcript:
             planTranscriptContentDeletion(transcriptId: target.id, into: &plan)
 
-            guard let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
+            guard holdsTargetLocally,
+                  let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
                   try parentRecording(of: transcript, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
@@ -6930,7 +7052,8 @@ extension iCloudStorageManager {
         case .summary:
             planSummaryContentDeletion(summaryIds: [target.id], into: &plan)
 
-            guard let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
+            guard holdsTargetLocally,
+                  let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
                   try parentRecording(of: summary, appCoordinator: appCoordinator)?.isCloudSyncDisabled != true else {
                 return
             }
@@ -6980,23 +7103,66 @@ extension iCloudStorageManager {
         }
     }
 
-    private func deletionTargetExistsLocally(
-        _ target: CloudDeletionTarget,
-        appCoordinator: AppDataCoordinator
-    ) throws -> Bool {
-        switch target.kind {
-        case .recording:
-            return try appCoordinator.coreDataManager.fetchRecording(id: target.id) != nil
-        case .transcript:
-            return try appCoordinator.coreDataManager.fetchTranscript(id: target.id) != nil
-        case .summary:
-            return try appCoordinator.coreDataManager.fetchSummary(id: target.id) != nil
-        case .importedAudio:
-            // The marker's target is the audio link, not the row: it has done its
-            // job here once the recording no longer points at a file, and only then
-            // is it eligible to be retired.
-            return try appCoordinator.coreDataManager.fetchRecording(id: target.id)?.recordingURL != nil
+    /// Which of a marker set's targets this device still holds, read in three
+    /// fetches rather than two per marker.
+    ///
+    /// A marker replays on every sync until its retention window closes, so the
+    /// common case by far is a target that went away weeks ago. Both the apply pass
+    /// and the retirement pass asked Core Data about each one individually, on the
+    /// main-actor view context, every run — the same per-tombstone shape that was
+    /// already fixed on the cloud side of this phase and never on the local side.
+    struct LocalDeletionTargetPresence {
+        var recordings: Set<UUID> = []
+        var transcripts: Set<UUID> = []
+        var summaries: Set<UUID> = []
+        /// Recordings that still point at an audio file. Only `.importedAudio`
+        /// markers read this, and they care about the link, not the row.
+        var recordingsWithAudio: Set<UUID> = []
+
+        func holds(_ target: CloudDeletionTarget) -> Bool {
+            switch target.kind {
+            case .recording: return recordings.contains(target.id)
+            case .transcript: return transcripts.contains(target.id)
+            case .summary: return summaries.contains(target.id)
+            case .importedAudio: return recordingsWithAudio.contains(target.id)
+            }
         }
+    }
+
+    private func makeLocalDeletionTargetPresence(
+        for targets: [CloudDeletionTarget],
+        appCoordinator: AppDataCoordinator
+    ) throws -> LocalDeletionTargetPresence {
+        var presence = LocalDeletionTargetPresence()
+        guard !targets.isEmpty else { return presence }
+
+        let coreDataManager = appCoordinator.coreDataManager
+        var recordingIds = Set<UUID>()
+        var transcriptIds = Set<UUID>()
+        var summaryIds = Set<UUID>()
+        for target in targets {
+            switch target.kind {
+            case .recording, .importedAudio: recordingIds.insert(target.id)
+            case .transcript: transcriptIds.insert(target.id)
+            case .summary: summaryIds.insert(target.id)
+            }
+        }
+
+        presence.recordings = try coreDataManager.existingRecordingIDs(in: recordingIds)
+        presence.transcripts = try coreDataManager.existingTranscriptIDs(in: transcriptIds)
+        presence.summaries = try coreDataManager.existingSummaryIDs(in: summaryIds)
+
+        // Only the handful that both exist and are named by an `.importedAudio`
+        // marker need the row itself, to read `recordingURL`.
+        let importedAudioIds = Set(
+            targets.filter { $0.kind == .importedAudio }.map(\.id)
+        ).intersection(presence.recordings)
+        for recordingId in importedAudioIds {
+            if try coreDataManager.fetchRecording(id: recordingId)?.recordingURL != nil {
+                presence.recordingsWithAudio.insert(recordingId)
+            }
+        }
+        return presence
     }
 
     private func parentRecording(
@@ -7201,6 +7367,9 @@ extension iCloudStorageManager {
         // is updated, and the surviving record is still indexed — so the next sync
         // restores data the user deleted, with no marker left to say otherwise. A
         // marker that lives one cycle longer costs a single extra delete.
+        if !plan.expiredMarkerIDsToRetire.isEmpty {
+            activeRunRecorder?.addDeletePlan(retiredMarkers: plan.expiredMarkerIDsToRetire.count)
+        }
         result.removedRecords += try await deleteExistingCloudRecords(
             Array(plan.expiredMarkerIDsToRetire)
         )
@@ -7241,11 +7410,104 @@ extension iCloudStorageManager {
         }
     }
 
+    /// What a plan's content deletes are made of, counted the same way
+    /// `contentRecordIDsWorthDeleting` decides them.
+    ///
+    /// `deleted=91`, run after run, is either two devices trading uploads and
+    /// deletions forever or ninety-one tombstone replays costing nothing — opposite
+    /// problems behind one number. `alreadyGone=` was meant to separate them and
+    /// cannot: it only counts a delete CloudKit *failed* as missing, and CloudKit
+    /// reports deleting an absent record as success. The origin of each delete does
+    /// separate them, and it is known here without asking the server anything.
+    struct CloudDeleteComposition: Equatable {
+        var suppressedAsAlreadyGone = 0
+        /// Manifest-managed records the manifest still lists: a real removal.
+        var indexedContent = 0
+        /// Markers a later local edit withdrew. They ride in the same batched
+        /// delete as the content ids, so leaving them out let a withdrawal-only run
+        /// report `deleted=N` with no origin at all.
+        var withdrawnMarkers = 0
+        var explicit = 0
+        var legacySummaries = 0
+        var retiredMarkers = 0
+        var untrustedManifest = 0
+    }
+
+    /// Takes the plan's data rather than the plan, so it stays a pure function the
+    /// tests can drive without the private planning types.
+    /// `indexedRecordNames` is nil when the manifest is not trusted.
+    static func deleteComposition(
+        recordIDsToDelete: Set<CKRecord.ID>,
+        explicitlyTargetedRecordIDs: Set<CKRecord.ID>,
+        expiredMarkerCount: Int,
+        withdrawnMarkerCount: Int,
+        indexedRecordNames: Set<String>?
+    ) -> CloudDeleteComposition {
+        var composition = CloudDeleteComposition()
+        composition.retiredMarkers = expiredMarkerCount
+        composition.withdrawnMarkers = withdrawnMarkerCount
+
+        guard let indexed = indexedRecordNames else {
+            // Nothing was filtered, so nothing can be called provably gone.
+            composition.untrustedManifest = recordIDsToDelete.count
+            return composition
+        }
+
+        for recordID in recordIDsToDelete {
+            if explicitlyTargetedRecordIDs.contains(recordID) {
+                composition.explicit += 1
+                continue
+            }
+            let name = recordID.recordName
+            let isManifestManaged = manifestManagedRecordPrefixes.contains { name.hasPrefix($0) }
+            if !isManifestManaged {
+                // Legacy `CD_EnhancedSummary` ids were never indexed, so the filter
+                // waves them through on every run — which is exactly the shape that
+                // makes a steady `deleted=` look alarming when it is inert.
+                composition.legacySummaries += 1
+            } else if indexed.contains(name) {
+                // Issued, and the manifest says the record is live. This is the one
+                // origin that means content is genuinely going away, so leaving it
+                // out made `deleted=` rise with no `deleteOrigin[...]` to explain it
+                // — hiding exactly the case the breakdown exists to expose.
+                composition.indexedContent += 1
+            } else {
+                composition.suppressedAsAlreadyGone += 1
+            }
+        }
+        return composition
+    }
+
     private func applyDeletionPlan(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
     ) async throws -> CloudDeletionCommitResult {
         var result = CloudDeletionCommitResult()
+        let trustedManifest = workspace.flatMap { workspace -> Set<String>? in
+            guard workspace.manifestRecords.isTrusted else { return nil }
+            let manifest = workspace.manifestRecords.manifest
+            return manifest.recordings.union(manifest.transcripts).union(manifest.summaries)
+        }
+        let composition = Self.deleteComposition(
+            recordIDsToDelete: plan.recordIDsToDelete,
+            explicitlyTargetedRecordIDs: plan.explicitlyTargetedRecordIDs,
+            expiredMarkerCount: plan.expiredMarkerIDsToRetire.count,
+            withdrawnMarkerCount: plan.markerIDsToWithdraw.count,
+            indexedRecordNames: trustedManifest
+        )
+        // Everything below rides in the batch issued on the next line.
+        // `composition.retiredMarkers` deliberately does not: those go out in a
+        // second batch from `commitDeletionPlan`, after stages that can throw, and
+        // reporting them here let a failed run claim `deleteOrigin[markers=N]` for
+        // a delete that was never issued.
+        activeRunRecorder?.addDeletePlan(
+            suppressedAsAlreadyGone: composition.suppressedAsAlreadyGone,
+            indexedContent: composition.indexedContent,
+            withdrawnMarkers: composition.withdrawnMarkers,
+            explicit: composition.explicit,
+            legacySummaries: composition.legacySummaries,
+            untrustedManifest: composition.untrustedManifest
+        )
         result.removedRecords = try await deleteExistingCloudRecords(
             Self.contentRecordIDsWorthDeleting(plan, workspace: workspace)
                 + Array(plan.markerIDsToWithdraw)
@@ -8412,6 +8674,70 @@ extension iCloudStorageManager {
     /// Posted when the network comes back and durable work is still queued.
     static let networkRestoredNotification = Notification.Name("iCloudNetworkRestored")
 
+    /// Whether a cloud recording carries nothing this device could keep.
+    ///
+    /// `CoreDataManager.cleanupOrphanedRecordings` deletes any local recording with
+    /// no audio, no transcript and no summary — deliberately without a tombstone,
+    /// because a tombstone would take a good recording and its audio down on every
+    /// device. Restore applied no equivalent test, so a cloud recording in that
+    /// shape was recreated on every pass and deleted again by the next launch's
+    /// cleanup: a loop with no exit. It also changed the local dataset on every
+    /// launch, which kept `localDataDiffersFromLastBackup` permanently true and
+    /// stopped the maintenance throttle from ever suppressing a routine sync.
+    ///
+    /// Deliberately narrow, and it must stay that way. A metadata-only cloud
+    /// recording is *not* enough on its own: a restore run with `includeAudioFiles`
+    /// off produces exactly that, and discovering those records is its own tested
+    /// requirement. Three things have to be absent together before this device
+    /// declines to materialize the row:
+    ///
+    /// - no `recordingURL`, so the record does not even name audio elsewhere,
+    /// - no audio backup fields, so there is no asset in the cloud to fetch later,
+    /// - no transcript and no summary record for it in this run's snapshot.
+    ///
+    /// Keyed on the transcript and summary *records* rather than the recording's own
+    /// `transcriptId`/`summaryId` fields, because those are what
+    /// `cleanupOrphanedRecordings` effectively tests: an id pointing at a record that
+    /// no longer exists is precisely the shape that kept regenerating the orphan.
+    ///
+    /// Skipping is never destructive: the cloud record is left untouched, so a pass
+    /// working from a partial snapshot simply restores it on a later, complete one.
+    static func cloudRecordingHasNothingToRestore(
+        _ record: CKRecord,
+        recordingId: UUID,
+        transcriptRecordingIds: Set<UUID>,
+        summaryRecordingIds: Set<UUID>
+    ) -> Bool {
+        if transcriptRecordingIds.contains(recordingId) || summaryRecordingIds.contains(recordingId) {
+            return false
+        }
+        if let url = record[fieldRecordingURL] as? String, !url.isEmpty {
+            return false
+        }
+        return !cloudRecordingNamesAudio(record)
+    }
+
+    /// Whether a recording record names audio, judged from metadata alone.
+    /// Recording records are fetched without `audioAsset` on the routine path, so
+    /// this must never depend on the asset being present. An empty string or a zero
+    /// count is a cleared field, not audio — treating it as audio would leave the
+    /// restore/cleanup loop running.
+    private static func cloudRecordingNamesAudio(_ record: CKRecord) -> Bool {
+        if let signature = record[fieldAudioSignature] as? String, !signature.isEmpty {
+            return true
+        }
+        if let fileName = record[fieldAudioFileName] as? String, !fileName.isEmpty {
+            return true
+        }
+        if let byteCount = record[fieldAudioByteCount] as? Int64, byteCount > 0 {
+            return true
+        }
+        if let byteCount = record[fieldAudioByteCount] as? Int, byteCount > 0 {
+            return true
+        }
+        return record[fieldAudioAsset] != nil
+    }
+
     /// True when this device should write its version over the cloud record.
     static func shouldUploadLocalVersion(localTimestamp: Date?, cloudTimestamp: Date?) -> Bool {
         guard let localTimestamp, let cloudTimestamp else { return true }
@@ -9164,6 +9490,23 @@ extension iCloudStorageManager {
             recordType: Self.backupSettingsRecordType,
             recordID: recordID)
 
+        // A quiet device used to upload this record on every routine pass, because
+        // the payload carries `createdAt` and the record carries `settingsUpdatedAt`
+        // — both stamped fresh each run, so nothing ever looked equal. That was the
+        // whole of a permanent `saved=1`, and it is indistinguishable in the metrics
+        // from a device genuinely sending an edit.
+        let existingPayload = (record[Self.fieldSettingsPayload] as? Data)
+            .flatMap { try? JSONDecoder().decode(CodableSettingsBackupPayload.self, from: $0) }
+        if intValue(from: record[Self.fieldSettingsSchemaVersion]) == Self.backupSchemaVersion,
+           Self.settingsBackupIsUnchanged(
+               existingValues: existingPayload?.values,
+               existingIncludesSensitiveValues: existingPayload?.includesSensitiveValues,
+               values: settingsValues.values,
+               includesSensitiveValues: settingsValues.includedSensitiveSettings
+           ) {
+            return (true, settingsValues.includedSensitiveSettings)
+        }
+
         record[Self.fieldSettingsPayload] = payloadData
         record[Self.fieldSettingsIncludesSensitive] = payload.includesSensitiveValues
         record[Self.fieldSettingsSchemaVersion] = Self.backupSchemaVersion
@@ -9172,6 +9515,25 @@ extension iCloudStorageManager {
 
         try await saveBackupRecord(record)
         return (true, payload.includesSensitiveValues)
+    }
+
+    /// Whether the cloud already holds exactly these settings.
+    ///
+    /// Compares the settings themselves and nothing else. `createdAt` and
+    /// `sourcePlatform` are deliberately excluded: the first changes on every run,
+    /// and the second would make two devices with identical settings overwrite each
+    /// other forever just for having different platforms.
+    /// Takes the decoded fields rather than the payload type, which is file-private,
+    /// so the rule stays a pure function the tests can drive.
+    static func settingsBackupIsUnchanged(
+        existingValues: [String: Data]?,
+        existingIncludesSensitiveValues: Bool?,
+        values: [String: Data],
+        includesSensitiveValues: Bool
+    ) -> Bool {
+        guard let existingValues, let existingIncludesSensitiveValues else { return false }
+        return existingIncludesSensitiveValues == includesSensitiveValues
+            && existingValues == values
     }
 
     private func restoreSettingsFromiCloud() async throws -> (restored: Bool, includedSensitiveSettings: Bool) {

@@ -688,7 +688,12 @@ struct RecordingsListView: View {
             .padding(.bottom, 24)
         }
         .background(Color(.systemGroupedBackground))
-        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)-\(searchText)")
+        // Deliberately excludes `searchText`. Identity is what SwiftUI uses to decide
+        // this is a *different* view, so having a keystroke change it tore down and
+        // rebuilt the whole list on every character — re-firing `onAppear` and the
+        // full reload behind it. Filter changes still reset the list; the `ForEach`
+        // already diffs rows by `objectID`, so search filters in place.
+        .id("list-\(isDateFilterActive)-\(dateFilterStart)-\(dateFilterEnd)")
         .accessibilityIdentifier(BisonNotesAccessibilityID.recordingsList)
     }
 
