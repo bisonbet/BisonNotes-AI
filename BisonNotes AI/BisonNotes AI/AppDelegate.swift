@@ -41,46 +41,60 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
     // This will be set by the main app
     @MainActor static weak var recorderViewModel: AudioRecorderViewModel?
 
+    /// Kept alive only for OS versions that provide the modern async MetricKit
+    /// stream. Older supported systems use the legacy subscriber below.
+    private var modernMetricKitAdapter: AnyObject?
+
     func completeLaunchSetup() {
         // Set notification delegate
         UNUserNotificationCenter.current().delegate = self
 
-        // Subscribe to MetricKit crash/hang diagnostics
+        // Exactly one MetricKit collection path is active in a process. The
+        // modern stream is availability-gated; older systems retain the
+        // existing subscriber path.
+        #if os(iOS) || os(macOS)
+        if #available(iOS 27.0, macOS 27.0, *) {
+            modernMetricKitAdapter = ModernMetricKitStreamAdapter { report in
+                let input = ModernMetricKitDiagnosticProjector.input(from: report)
+                let rawPayload = try? DiagnosticPolicy.jsonEncoder().encode(report)
+                if let rawPayload {
+                    ManualMetricKitPayloadStore.shared.append([rawPayload])
+                }
+                Task {
+                    await DiagnosticReportingService.shared.ingest(input)
+                }
+            }
+        } else {
+            MXMetricManager.shared.add(self)
+        }
+        #else
         MXMetricManager.shared.add(self)
+        #endif
 
         // Mark launch for crash detection
         AppLog.shared.markLaunch()
+        let previousSessionEndedUnexpectedly = AppLog.shared.previousSessionEndedUnexpectedly
+        Task {
+            await DiagnosticReportingService.shared.startSession()
+            if previousSessionEndedUnexpectedly {
+                await DiagnosticReportingService.shared.recordUnexpectedTerminationHeuristic()
+            }
+        }
     }
 
     // MARK: - MetricKit
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
-        // Apple delivers these on the next launch after a crash/hang (within 24h).
-        // Persist the JSON so LogExporter can include it.
+        // Apple delivers these on a later launch. Keep raw payloads only for the
+        // explicit detailed-export path; the automatic path receives typed
+        // projections and never reads this store.
         guard !payloads.isEmpty else { return }
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let fileURL = dir.appendingPathComponent("metrickit_diagnostics.json")
-
-        var allDiagnostics: [[String: Any]] = []
-        // Load existing diagnostics if present
-        if let existingData = try? Data(contentsOf: fileURL),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [[String: Any]] {
-            allDiagnostics = existing
-        }
-
-        for payload in payloads {
-            if let json = try? JSONSerialization.jsonObject(with: payload.jsonRepresentation()) as? [String: Any] {
-                allDiagnostics.append(json)
+        ManualMetricKitPayloadStore.shared.append(payloads.map { $0.jsonRepresentation() })
+        let inputs = MetricKitDiagnosticAdapter.inputs(from: payloads)
+        Task {
+            for input in inputs {
+                await DiagnosticReportingService.shared.ingest(input)
             }
-        }
-
-        // Keep only the last 5 diagnostic payloads
-        if allDiagnostics.count > 5 {
-            allDiagnostics = Array(allDiagnostics.suffix(5))
-        }
-
-        if let data = try? JSONSerialization.data(withJSONObject: allDiagnostics, options: .prettyPrinted) {
-            try? data.write(to: fileURL, options: .atomic)
         }
 
         AppLog.shared.info("Received \(payloads.count) MetricKit diagnostic payload(s)", category: .general)

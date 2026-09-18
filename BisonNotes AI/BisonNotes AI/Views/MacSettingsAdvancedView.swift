@@ -9,6 +9,7 @@ struct MacAdvancedSettingsPane: View {
     @State private var showingAcknowledgements = false
     @State private var isPreparingLogs = false
     @State private var logExportError: String?
+    @State private var showingDiagnosticDisclosure = false
 
     var body: some View {
         MacSettingsPaneScroll(
@@ -32,8 +33,10 @@ struct MacAdvancedSettingsPane: View {
             }
 
             MacSettingsCard(title: "Diagnostics", systemImage: "stethoscope", tint: .orange) {
+                DiagnosticConsentSettingsView()
+
                 Button {
-                    exportDiagnosticLogs()
+                    requestDiagnosticExport()
                 } label: {
                     HStack(spacing: 12) {
                         Label("Export Diagnostic Logs", systemImage: "envelope")
@@ -96,6 +99,10 @@ struct MacAdvancedSettingsPane: View {
                 .buttonStyle(.bordered)
             }
         }
+        .diagnosticExportDisclosure(
+            isPresented: $showingDiagnosticDisclosure,
+            onConfirm: exportDiagnosticLogs
+        )
         .sheet(isPresented: $showingAdvancedTroubleshooting) {
             AdvancedTroubleshootingView()
                 .environmentObject(appCoordinator)
@@ -154,6 +161,10 @@ struct MacAdvancedSettingsPane: View {
                 }
             }
         }
+    }
+
+    private func requestDiagnosticExport() {
+        showingDiagnosticDisclosure = true
     }
 }
 

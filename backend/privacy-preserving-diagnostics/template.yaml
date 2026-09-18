@@ -1,0 +1,248 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Review-only BisonNotes privacy-preserving diagnostic receiver.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - staging
+      - production
+    Description: Logical environment used to isolate storage and monitoring.
+
+  ReceiverReady:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'false'
+      - 'true'
+    Description: Keep false until staging checks and retention monitoring are green.
+
+  DiagnosticPath:
+    Type: String
+    Default: /v1/diagnostics
+    AllowedPattern: ^/[A-Za-z0-9/_-]+$
+
+  DiagnosticDomainName:
+    Type: String
+    Default: staging.diagnostics.bisonnetworking.com
+    Description: ACM-backed custom domain for this environment.
+
+  CertificateArn:
+    Type: String
+    Description: ACM certificate ARN in us-east-1 covering the diagnostic hostname.
+
+  ThrottleRateLimit:
+    Type: Number
+    Default: 2
+    MinValue: 0.1
+    Description: Best-effort API Gateway steady-state requests per second.
+
+  ThrottleBurstLimit:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    Description: Best-effort API Gateway burst request limit.
+
+  AlarmTopicArn:
+    Type: String
+    Description: Existing SNS topic ARN for cleanup failure and missed-heartbeat alarms.
+
+Resources:
+  DiagnosticApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Domain:
+        DomainName: !Ref DiagnosticDomainName
+        CertificateArn: !Ref CertificateArn
+        EndpointConfiguration: REGIONAL
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ThrottleRateLimit
+        ThrottlingBurstLimit: !Ref ThrottleBurstLimit
+
+  DiagnosticBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub bisonnotes-diagnostics-${EnvironmentName}-${AWS::AccountId}-${AWS::Region}
+      Tags:
+        - Key: BisonNotesEnvironment
+          Value: !Ref EnvironmentName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Suspended
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireDiagnosticReportsBeforeFourteenDays
+            Status: Enabled
+            Prefix: diagnostics/
+            ExpirationInDays: 13
+            NoncurrentVersionExpirationInDays: 1
+
+  DiagnosticBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DiagnosticBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt DiagnosticBucket.Arn
+              - !Sub ${DiagnosticBucket.Arn}/diagnostics/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  DiagnosticFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_handler.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 5
+      ReservedConcurrentExecutions: 5
+      Tracing: PassThrough
+      Environment:
+        Variables:
+          DIAGNOSTIC_BUCKET: !Ref DiagnosticBucket
+          DIAGNOSTIC_PATH: !Ref DiagnosticPath
+          ENVIRONMENT_NAME: !Ref EnvironmentName
+          RECEIVER_READY: !Ref ReceiverReady
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub ${DiagnosticBucket.Arn}/diagnostics/*
+      Events:
+        Ingest:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DiagnosticApi
+            Path: !Ref DiagnosticPath
+            Method: POST
+            PayloadFormatVersion: '2.0'
+            TimeoutInMillis: 5000
+
+  DiagnosticCleanupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: lambda_handler.cleanup_handler
+      Runtime: python3.12
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 30
+      ReservedConcurrentExecutions: 1
+      Tracing: PassThrough
+      Environment:
+        Variables:
+          DIAGNOSTIC_BUCKET: !Ref DiagnosticBucket
+          ENVIRONMENT_NAME: !Ref EnvironmentName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt DiagnosticBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix:
+                    - diagnostics/*
+            - Effect: Allow
+              Action: s3:DeleteObject
+              Resource: !Sub ${DiagnosticBucket.Arn}/diagnostics/*
+            - Effect: Allow
+              Action: cloudwatch:PutMetricData
+              Resource: '*'
+      Events:
+        HourlyCleanup:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Enabled: true
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 3600
+              MaximumRetryAttempts: 2
+
+  DiagnosticCleanupFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Cleanup Lambda failed; no successful completion heartbeat is assumed.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DiagnosticCleanupFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopicArn
+
+  DiagnosticCleanupHeartbeatAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Cleanup Lambda has not published a successful heartbeat in two hours.
+      Namespace: BisonNotes/Diagnostics
+      MetricName: CleanupHeartbeat
+      Dimensions:
+        - Name: Environment
+          Value: !Ref EnvironmentName
+      Statistic: Sum
+      Period: 7200
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions:
+        - !Ref AlarmTopicArn
+
+  DiagnosticFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DiagnosticFunction}
+      RetentionInDays: 7
+
+  DiagnosticCleanupLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DiagnosticCleanupFunction}
+      RetentionInDays: 7
+
+Outputs:
+  EnvironmentName:
+    Description: Environment selected for this stack.
+    Value: !Ref EnvironmentName
+
+  DiagnosticBucketName:
+    Description: Private S3 bucket for this environment's diagnostic objects.
+    Value: !Ref DiagnosticBucket
+
+  DiagnosticIngestUrl:
+    Description: HTTPS endpoint for the versioned diagnostic ingest route.
+    Value: !Sub https://${DiagnosticDomainName}${DiagnosticPath}

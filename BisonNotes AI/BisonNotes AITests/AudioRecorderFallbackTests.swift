@@ -74,7 +74,7 @@ final class AudioRecorderFallbackTests: XCTestCase {
             XCTAssertEqual(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: status,
-                    previousSessionCrashed: true
+                    previousSessionEndedUnexpectedly: true
                 ),
                 .failed(message)
             )
@@ -89,7 +89,7 @@ final class AudioRecorderFallbackTests: XCTestCase {
             XCTAssertEqual(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: status,
-                    previousSessionCrashed: true
+                    previousSessionEndedUnexpectedly: true
                 ),
                 status
             )
@@ -98,7 +98,7 @@ final class AudioRecorderFallbackTests: XCTestCase {
         XCTAssertEqual(
             BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                 status: .processing,
-                previousSessionCrashed: false
+                previousSessionEndedUnexpectedly: false
             ),
             .processing
         )
@@ -111,7 +111,7 @@ final class AudioRecorderFallbackTests: XCTestCase {
             XCTAssertEqual(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: status,
-                    previousSessionCrashed: false
+                    previousSessionEndedUnexpectedly: false
                 ),
                 status
             )

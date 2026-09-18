@@ -28,6 +28,7 @@ struct SettingsView: View {
     @State private var showingAcknowledgements = false
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
+    @State private var showingDiagnosticDisclosure = false
     @State private var showingICloudComplianceNotice = false
     @State private var showingCloudReview = false
     @State private var macSystemAudioPermissionAlert: MacSystemAudioPermissionAlert?
@@ -124,6 +125,10 @@ struct SettingsView: View {
                 )
             }
         }
+        .diagnosticExportDisclosure(
+            isPresented: $showingDiagnosticDisclosure,
+            onConfirm: exportDiagnosticLogs
+        )
         #if !os(macOS)
         .sheet(isPresented: $showingCloudReview) {
             CloudReviewItemsView()
@@ -536,8 +541,10 @@ struct SettingsView: View {
                 action: { presentBackgroundProcessing() }
             )
 
+            DiagnosticConsentSettingsView()
+
             Button {
-                exportDiagnosticLogs()
+                requestDiagnosticExport()
             } label: {
                 HStack(spacing: 14) {
                     ModernIcon(systemName: "envelope", tint: .orange)
@@ -970,32 +977,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
 
             Button {
-                logExportError = nil
-                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = true }
-
-                Task {
-                    do {
-                        let url = try await Task.detached(priority: .userInitiated) {
-                            try await LogExporter.exportLogs()
-                        }.value
-
-                        await MainActor.run {
-                            LogEmailPresenter.shared.presentLogEmail(
-                                logFileURL: url,
-                                onPresented: {
-                                    withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                                }
-                            ) {
-                                withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                            }
-                        }
-                    } catch {
-                        await MainActor.run {
-                            withAnimation(.easeInOut(duration: 0.2)) { isPreparingLogs = false }
-                            logExportError = error.localizedDescription
-                        }
-                    }
-                }
+                requestDiagnosticExport()
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -1358,6 +1340,10 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private func requestDiagnosticExport() {
+        showingDiagnosticDisclosure = true
     }
 
     private func refreshEngineStatuses() {

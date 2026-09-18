@@ -50,14 +50,14 @@ struct LogExporter {
         #endif
         let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
-        let previousCrash = AppLog.shared.previousSessionCrashed
+        let previousCrash = AppLog.shared.previousSessionEndedUnexpectedly
 
         let header = """
         BisonNotes AI Diagnostic Log
         App Version: \(appVersion) (\(buildNumber))
         Device: \(deviceModel), \(platformName) \(systemVersion)
         Exported: \(formatter.string(from: Date()))
-        Previous session crashed: \(previousCrash ? "YES" : "No")
+        Previous session ended unexpectedly: \(previousCrash ? "YES" : "No")
         """
         sections.append(header)
 
@@ -97,13 +97,19 @@ struct LogExporter {
         }
 
         // ── Section 4: MetricKit Crash/Hang Diagnostics ──
-        let metricKitURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("metrickit_diagnostics.json")
-        if let data = try? Data(contentsOf: metricKitURL),
-           let json = try? JSONSerialization.jsonObject(with: data),
-           let prettyData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
-           let prettyString = String(data: prettyData, encoding: .utf8) {
-            sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\n" + prettyString)
+        let metricKitPayloads = ManualMetricKitPayloadStore.shared.payloadData()
+        let prettyPayloads = metricKitPayloads.compactMap { data -> String? in
+            guard let json = try? JSONSerialization.jsonObject(with: data),
+                  let prettyData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) else {
+                return nil
+            }
+            return String(data: prettyData, encoding: .utf8)
+        }
+        if !prettyPayloads.isEmpty {
+            sections.append(
+                "\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\n" +
+                    prettyPayloads.joined(separator: "\n")
+            )
         } else {
             sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\nNo MetricKit diagnostics available yet. iOS may deliver crash and hang payloads on a later launch.")
         }

@@ -224,19 +224,26 @@ final class AppLog: Sendable {
     private static let cleanShutdownKey = "AppLog_CleanShutdown"
     private let sessionId = UUID().uuidString
     private struct LifecycleState {
-        var previousSessionCrashed = false
+        var previousSessionEndedUnexpectedly = false
         var launchWasMarked = false
     }
     private let lifecycleState = OSAllocatedUnfairLock(initialState: LifecycleState())
 
-    /// Captured once at launch before the shutdown marker is reset. This
-    /// diagnostic fact remains stable for the lifetime of the process.
-    var previousSessionCrashed: Bool {
-        lifecycleState.withLock { $0.previousSessionCrashed }
+    /// Captured once at launch before the lifecycle marker is reset. This is a
+    /// heuristic: it does not prove that the previous process crashed.
+    var previousSessionEndedUnexpectedly: Bool {
+        lifecycleState.withLock { $0.previousSessionEndedUnexpectedly }
     }
 
-    /// Call on app launch. Reads the previous session's shutdown state, then resets the flag.
-    /// Must be called before anything checks `previousSessionCrashed`.
+    /// Compatibility accessor for recovery callers that still use the old
+    /// name. The value is intentionally a heuristic, not a confirmed crash.
+    @available(*, deprecated, message: "Use previousSessionEndedUnexpectedly")
+    var previousSessionCrashed: Bool {
+        previousSessionEndedUnexpectedly
+    }
+
+    /// Call on app launch. Reads the previous session's lifecycle state, then
+    /// resets the flag. Must be called before checking the heuristic.
     func markLaunch() {
         let shouldMarkLaunch = lifecycleState.withLock { state -> Bool in
             guard !state.launchWasMarked else { return false }
@@ -245,7 +252,7 @@ final class AppLog: Sendable {
             // On very first install the key doesn't exist — UserDefaults returns false,
             // which would look like a crash. Treat missing key as clean.
             let hasKey = UserDefaults.standard.object(forKey: Self.cleanShutdownKey) != nil
-            state.previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
+            state.previousSessionEndedUnexpectedly = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
             return true
         }
         guard shouldMarkLaunch else { return }
@@ -253,7 +260,7 @@ final class AppLog: Sendable {
         // Reset for this session — if we crash, it stays false
         UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
 
-        lifecycleBreadcrumb("launch session=\(sessionId) previousSessionCrashed=\(previousSessionCrashed)")
+        lifecycleBreadcrumb("launch session=\(sessionId) previousSessionEndedUnexpectedly=\(previousSessionEndedUnexpectedly)")
     }
 
     /// Call when app becomes active. A later foreground crash should not inherit a
@@ -263,10 +270,17 @@ final class AppLog: Sendable {
         lifecycleBreadcrumb("active session=\(sessionId)")
     }
 
-    /// Call when app enters background or terminates — marks this session as clean.
-    func markCleanShutdown() {
+    /// Records the lifecycle checkpoint used by the recovery heuristic. A
+    /// background transition is not proof of a clean process exit because the
+    /// OS may later terminate the suspended app without another callback.
+    func markLifecycleCheckpoint() {
         UserDefaults.standard.set(true, forKey: Self.cleanShutdownKey)
-        lifecycleBreadcrumb("clean-shutdown-marker session=\(sessionId)")
+        lifecycleBreadcrumb("lifecycle-checkpoint session=\(sessionId)")
+    }
+
+    @available(*, deprecated, message: "Use markLifecycleCheckpoint")
+    func markCleanShutdown() {
+        markLifecycleCheckpoint()
     }
 
     /// Returns the contents of the persistent error log (survives crashes).

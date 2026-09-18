@@ -178,10 +178,10 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
                 ("Contrast failed", "Import Transcripts"),
                 ("Contrast failed", "Add text files"),
                 ("Dynamic Type font sizes are partially unsupported", "(null)"),
-                ("Dynamic Type font sizes are partially unsupported", "Unexpected Shutdown"),
+                ("Dynamic Type font sizes are partially unsupported", "Previous Session Ended Unexpectedly"),
                 (
                     "Dynamic Type font sizes are partially unsupported",
-                    "It looks like BisonNotes AI didn't shut down properly last time. Would you like to send a diagnostic report to help us fix this?"
+                    "A previous session did not exit normally. The detailed report may contain recording identifiers, file information, technical logs, recovery inventory, and raw Apple diagnostic data. Review it before sharing; no report is sent automatically."
                 )
             ],
             "Recordings list": [

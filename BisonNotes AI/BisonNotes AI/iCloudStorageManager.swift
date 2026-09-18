@@ -714,6 +714,11 @@ class iCloudStorageManager: ObservableObject {
         pendingSyncQueue.removeAll()
 
         AppLog.shared.iCloudSync("Starting batch sync of \(batch.count) summaries", level: .debug)
+        await DiagnosticReportingService.shared.beginOperation(
+            .icloudSync,
+            isSyncing: true,
+            operationCount: batch.count
+        )
 
         await updateSyncStatus(.syncing)
         await MainActor.run {
@@ -751,6 +756,11 @@ class iCloudStorageManager: ObservableObject {
                 self.lastSyncDate = Date()
                 UserDefaults.standard.set(self.lastSyncDate, forKey: "lastSyncDate")
             }
+            await DiagnosticReportingService.shared.finishOperation(
+                .icloudSync,
+                result: .success,
+                isSyncing: false
+            )
             AppLog.shared.iCloudSync("Successfully synced batch: \(syncedCount) summaries")
         } catch {
             // The queue was drained before the upload; without this the whole batch
@@ -764,6 +774,11 @@ class iCloudStorageManager: ObservableObject {
             await MainActor.run {
                 self.pendingSyncCount = self.pendingSyncQueue.count
             }
+            await DiagnosticReportingService.shared.finishOperation(
+                .icloudSync,
+                result: .failure,
+                isSyncing: false
+            )
             AppLog.shared.iCloudSync(
                 "Batch sync failed, returning \(batch.count) summaries to the queue: \(error.localizedDescription)",
                 level: .error
@@ -1043,6 +1058,11 @@ class iCloudStorageManager: ObservableObject {
         }
 
         await updateSyncStatus(.syncing)
+        await DiagnosticReportingService.shared.beginOperation(
+            .icloudSync,
+            isSyncing: true,
+            operationCount: localSummaries.count
+        )
 
         do {
             // Fetch all summaries from iCloud
@@ -1089,14 +1109,29 @@ class iCloudStorageManager: ObservableObject {
 
             if conflictCount == 0 {
                 await updateSyncStatus(.completed)
+                await DiagnosticReportingService.shared.finishOperation(
+                    .icloudSync,
+                    result: .success,
+                    isSyncing: false
+                )
                 AppLog.shared.iCloudSync("Bidirectional sync completed: \(syncedCount) synced")
             } else {
                 await updateSyncStatus(.failed("Synced \(syncedCount), \(conflictCount) conflicts pending"))
+                await DiagnosticReportingService.shared.finishOperation(
+                    .icloudSync,
+                    result: .failure,
+                    isSyncing: false
+                )
                 AppLog.shared.iCloudSync("Bidirectional sync completed with conflicts: \(syncedCount) synced, \(conflictCount) conflicts", level: .error)
             }
 
         } catch {
             await updateSyncStatus(.failed(error.localizedDescription))
+            await DiagnosticReportingService.shared.finishOperation(
+                .icloudSync,
+                result: .failure,
+                isSyncing: false
+            )
             throw error
         }
     }
@@ -2020,9 +2055,23 @@ class iCloudStorageManager: ObservableObject {
 
         do {
             // Perform battery-aware sync (only in periodic mode)
+            await DiagnosticReportingService.shared.beginOperation(
+                .icloudSync,
+                isSyncing: true
+            )
             try await performBatteryAwareSync()
+            await DiagnosticReportingService.shared.finishOperation(
+                .icloudSync,
+                result: .success,
+                isSyncing: false
+            )
         } catch {
             AppLog.shared.iCloudSync("Periodic sync failed: \(error.localizedDescription)", level: .error)
+            await DiagnosticReportingService.shared.finishOperation(
+                .icloudSync,
+                result: .failure,
+                isSyncing: false
+            )
             await updateSyncStatus(.failed(error.localizedDescription))
         }
     }

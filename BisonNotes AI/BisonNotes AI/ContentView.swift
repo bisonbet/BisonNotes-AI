@@ -69,10 +69,10 @@ struct ContentView: View {
             // lifecycle callbacks. Do not present a false crash report over the next
             // deterministic UI-test launch.
             #if DEBUG
-            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+            let shouldShowCrashReport = AppLog.shared.previousSessionEndedUnexpectedly
                 && !BisonNotesUITestSupport.isUITesting
             #else
-            let shouldShowCrashReport = AppLog.shared.previousSessionCrashed
+            let shouldShowCrashReport = AppLog.shared.previousSessionEndedUnexpectedly
             #endif
             if shouldShowCrashReport {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -289,8 +289,8 @@ struct ContentView: View {
         } message: {
             Text("This file type cannot be imported as a recording or transcript.")
         }
-        .alert("Unexpected Shutdown", isPresented: $showingCrashReport) {
-            Button("Send Report") {
+        .alert("Previous Session Ended Unexpectedly", isPresented: $showingCrashReport) {
+            Button("Review & Share") {
                 Task {
                     do {
                         let url = try await LogExporter.exportLogs()
@@ -302,7 +302,11 @@ struct ContentView: View {
             }
             Button("Dismiss", role: .cancel) { }
         } message: {
-            Text("It looks like BisonNotes AI didn't shut down properly last time. Would you like to send a diagnostic report to help us fix this?")
+            Text(
+                "A previous session did not exit normally. The detailed report may contain recording "
+                    + "identifiers, file information, technical logs, recovery inventory, and raw "
+                    + "Apple diagnostic data. Review it before sharing; no report is sent automatically."
+            )
         }
     }
 

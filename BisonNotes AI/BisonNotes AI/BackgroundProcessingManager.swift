@@ -584,13 +584,13 @@ enum JobRecoveryIssueMessage {
 }
 
 enum BackgroundProcessingCrashRecoveryPolicy {
-    static let failureMessage = "Not restarted because the previous app session crashed."
+    static let failureMessage = "Not restarted because the previous app session ended unexpectedly."
 
     static func statusAfterLaunch(
         status: JobProcessingStatus,
-        previousSessionCrashed: Bool
+        previousSessionEndedUnexpectedly: Bool
     ) -> JobProcessingStatus {
-        guard previousSessionCrashed, !status.isTerminal else { return status }
+        guard previousSessionEndedUnexpectedly, !status.isTerminal else { return status }
         return .failed(failureMessage)
     }
 }
@@ -659,7 +659,7 @@ class BackgroundProcessingManager: ObservableObject {
     private let coreDataManager: CoreDataManager
     private var keepAlivePlayer: AVAudioPlayer?
     private var backgroundAudioKeepAliveActive = false
-    private let previousSessionCrashed: Bool
+    private let previousSessionEndedUnexpectedly: Bool
     /// Jobs that were in flight when the previous session died. No automatic path
     /// may resume them for the rest of this session; the user can still retry one.
     private var crashProtectedJobIDs = Set<UUID>()
@@ -691,7 +691,7 @@ class BackgroundProcessingManager: ObservableObject {
     ) {
         self.audioSessionManager = audioSessionManager
         self.coreDataManager = coreDataManager
-        self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
+        self.previousSessionEndedUnexpectedly = AppLog.shared.previousSessionEndedUnexpectedly
 
         guard coreDataManager.persistenceState.isOperational else {
             jobLoadError = "Background processing is unavailable because local storage is unavailable."
@@ -717,7 +717,7 @@ class BackgroundProcessingManager: ObservableObject {
         Task {
             await cleanupStaleJobs()
         }
-        if previousSessionCrashed {
+        if previousSessionEndedUnexpectedly {
             // Captured before the sweep below rewrites their statuses, so the
             // resume paths can still tell a pre-crash job from a fresh one.
             crashProtectedJobIDs = Set(activeJobs.map(\.id))
@@ -729,7 +729,7 @@ class BackgroundProcessingManager: ObservableObject {
 
         // Resume interrupted jobs and start processing queued jobs on initialization
         Task {
-            if previousSessionCrashed {
+            if previousSessionEndedUnexpectedly {
                 AppLog.shared.backgroundProcessing(
                     "Crash reconciliation completed; pre-crash jobs will not resume automatically",
                     level: .info
@@ -1135,7 +1135,7 @@ class BackgroundProcessingManager: ObservableObject {
             let failedJob = job.withStatus(
                 BackgroundProcessingCrashRecoveryPolicy.statusAfterLaunch(
                     status: job.status,
-                    previousSessionCrashed: previousSessionCrashed
+                    previousSessionEndedUnexpectedly: previousSessionEndedUnexpectedly
                 )
             )
 
@@ -1212,9 +1212,14 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
+        await DiagnosticReportingService.shared.beginOperation(
+            .backgroundProcessing,
+            operationCount: 1
+        )
 
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
+            var diagnosticResult: DiagnosticOperationResult = .failure
             var completionStatePersisted = false
             // Whether the job's output is already durable. Distinct from
             // `completionStatePersisted`, which is whether that success was
@@ -1246,6 +1251,7 @@ class BackgroundProcessingManager: ObservableObject {
                 let completedJob = processingJob.withStatus(.completed).withProgress(1.0)
                 try await updateJob(completedJob)
                 completionStatePersisted = true
+                diagnosticResult = .success
 
                 AppLog.shared.backgroundProcessing("Job completed: \(nextJob.type.displayName)")
 
@@ -1266,6 +1272,7 @@ class BackgroundProcessingManager: ObservableObject {
                 await updateFileMetadata(for: processingJob)
 
             } catch is CancellationError {
+                diagnosticResult = .cancelled
                 // If the job was already moved to a terminal state (e.g., timed out by the
                 // stale job monitor), don't overwrite it — just clear the cancellation reason.
                 let currentStatus = activeJobs.first(where: { $0.id == nextJob.id })?.status
@@ -1312,6 +1319,7 @@ class BackgroundProcessingManager: ObservableObject {
                 }
 
             } catch {
+                diagnosticResult = .failure
                 // Clear any stale cancellation reason so it doesn't leak to the next job.
                 cancellationReason = nil
 
@@ -1366,6 +1374,11 @@ class BackgroundProcessingManager: ObservableObject {
             if completionStatePersisted {
                 cleanupSourceAudio(for: nextJob)
             }
+
+            await DiagnosticReportingService.shared.finishOperation(
+                .backgroundProcessing,
+                result: diagnosticResult
+            )
 
             // Clear current job and task handle
             regenerationSummaryIds.removeValue(forKey: nextJob.id)

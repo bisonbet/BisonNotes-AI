@@ -889,6 +889,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		#endif
 		isRecording = true
 		recordingState = .recording
+		Task {
+			await DiagnosticReportingService.shared.updateRecordingState(true)
+		}
 		recordingTime = 0
 		lastCheckpointTime = Date()
 
@@ -999,6 +1002,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		audioRecorder?.stop()
 		isRecording = false
 		recordingState = .idle
+		Task {
+			await DiagnosticReportingService.shared.updateRecordingState(false)
+		}
 		stopRecordingTimer()
 		audioRecorder = nil
 

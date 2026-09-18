@@ -858,14 +858,26 @@ struct BisonNotesAIApp: App {
                 // which is NOT a shutdown — a crash while hidden must still be detected — so
                 // macOS relies on willTerminate below instead.
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
-                    AppLog.shared.markCleanShutdown()
+                    AppLog.shared.markLifecycleCheckpoint()
+                    Task {
+                        await DiagnosticReportingService.shared.updateLifecycle(.background)
+                    }
                 }
                 #endif
+                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willResignActiveNotification)) { _ in
+                    Task {
+                        await DiagnosticReportingService.shared.updateLifecycle(.inactive)
+                    }
+                }
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willTerminateNotification)) { _ in
-                    AppLog.shared.markCleanShutdown()
+                    AppLog.shared.markLifecycleCheckpoint()
                 }
                 .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didBecomeActiveNotification)) { _ in
                     AppLog.shared.markSessionActive()
+                    Task {
+                        await DiagnosticReportingService.shared.updateLifecycle(.foreground)
+                        await DiagnosticReportingService.shared.processPending()
+                    }
                     // Clear badge when the user actively opens the app. Using the
                     // scene-phase notification here (rather than AppDelegate
                     // applicationDidBecomeActive) ensures this fires reliably in
