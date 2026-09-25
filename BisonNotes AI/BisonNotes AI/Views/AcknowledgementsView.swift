@@ -218,6 +218,20 @@ struct AcknowledgementsView: View {
             .fixedSize(horizontal: false, vertical: true)
 
             Link(
+                "Nemotron 3 Diarization Core ML assets — NVIDIA, OpenMDW License 1.1",
+                destination: URL(string: "https://huggingface.co/FluidInference/nemotron-3-diarization-coreml")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Link(
+                "Nemotron 3 Diarization model card — NVIDIA",
+                destination: URL(string: "https://huggingface.co/nvidia/Nemotron-3-Diarization")!
+            )
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Link(
                 "LS-EEND DIHARD3 Core ML assets — MIT; upstream dataset terms remain",
                 destination: URL(string: "https://huggingface.co/FluidInference/ls-eend-coreml")!
             )

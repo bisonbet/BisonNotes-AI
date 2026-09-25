@@ -8,6 +8,7 @@ import Foundation
 public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
     case offlineVBx
     case experimentalLSEEND
+    case betaNemotron3
 
     public static let defaultMethod: LocalDiarizationMethod = .offlineVBx
 
@@ -17,6 +18,8 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return "Offline VBx"
         case .experimentalLSEEND:
             return "LS-EEND"
+        case .betaNemotron3:
+            return "Nemotron 3"
         }
     }
 
@@ -24,25 +27,36 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
         self == .experimentalLSEEND
     }
 
-    /// LS-EEND's completed-file contract is limited to one hour. VBx has no
-    /// app-imposed speaker-count or duration cap in this layer.
+    public var isBeta: Bool {
+        self == .betaNemotron3
+    }
+
+    /// LS-EEND's completed-file contract is limited to one hour. VBx and
+    /// Nemotron 3 have no app-imposed duration cap in this layer.
     public var maximumSupportedDuration: TimeInterval? {
         switch self {
-        case .offlineVBx:
+        case .offlineVBx, .betaNemotron3:
             return nil
         case .experimentalLSEEND:
             return 60 * 60
         }
     }
 
-    /// The initial LS-EEND DIHARD3 model exposes up to ten speaker tracks.
-    /// Offline VBx leaves speaker count estimation to the SDK.
+    /// The initial LS-EEND DIHARD3 model exposes up to ten speaker tracks and
+    /// Nemotron 3 exactly eight. Offline VBx leaves speaker count estimation
+    /// to the SDK.
+    ///
+    /// Nemotron 3's limit is structural rather than detectable: its output has
+    /// eight arrival-ordered channels, so a ninth voice is attributed to an
+    /// existing channel instead of being reported as over the limit.
     public var maximumSupportedSpeakerCount: Int? {
         switch self {
         case .offlineVBx:
             return nil
         case .experimentalLSEEND:
             return 10
+        case .betaNemotron3:
+            return 8
         }
     }
 }

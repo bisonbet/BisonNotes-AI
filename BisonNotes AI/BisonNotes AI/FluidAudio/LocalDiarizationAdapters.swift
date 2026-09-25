@@ -64,6 +64,12 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             return Self.offlineVBxAssetsExist(at: directory, fileManager: fileManager)
         case .experimentalLSEEND:
             return Self.lseendAssetsExist(at: directory, fileManager: fileManager)
+        case .betaNemotron3:
+            guard let config = Self.nemotron3Config else { return false }
+            return LocalDiarizationAssetValidator.nemotron3AssetsAreValid(
+                Self.nemotron3Layout(at: directory, config: config),
+                fileManager: fileManager
+            )
         }
     }
 
@@ -87,6 +93,12 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                 )
             case .experimentalLSEEND:
                 try await prepareLSEEND(
+                    at: directory,
+                    forceRedownload: forceRedownload,
+                    progressHandler: progressHandler
+                )
+            case .betaNemotron3:
+                try await prepareNemotron3(
                     at: directory,
                     forceRedownload: forceRedownload,
                     progressHandler: progressHandler
@@ -126,6 +138,19 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                 let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
                 let diarizer = try LSEENDDiarizer(model: model)
                 return LSEENDRunner(diarizer: diarizer)
+            case .betaNemotron3:
+                guard let config = Self.nemotron3Config else {
+                    throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+                }
+                // Built from the verified cache by hand rather than through
+                // `Nemotron3Models.loadFromHuggingFace`, which deletes and
+                // re-downloads a cache whose weights marker has changed. That is
+                // right for the explicit download, never for a transcription.
+                let models = try Self.loadNemotron3ModelsFromCache(
+                    Self.nemotron3Layout(at: directory, config: config),
+                    config: config
+                )
+                return Nemotron3Runner(diarizer: Nemotron3Diarizer(config: config, models: models))
             }
         }
     }
@@ -180,6 +205,100 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             progressHandler: { _ in }
         )
         try Task.checkCancellation()
+    }
+
+    private func prepareNemotron3(
+        at directory: URL,
+        forceRedownload: Bool,
+        progressHandler: @escaping LocalDiarizationProgressHandler
+    ) async throws {
+        guard let config = Self.nemotron3Config else {
+            throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+        }
+        if forceRedownload {
+            try FluidAudioModelInfo.deleteCacheDirectory(at: directory)
+        }
+
+        // Loads with the same compute units inference uses, so the one-time
+        // Neural Engine compile happens during the explicit download rather
+        // than at the start of someone's first labeled transcription.
+        _ = try await Nemotron3Models.loadFromHuggingFace(
+            config: config,
+            cacheDirectory: directory,
+            computeUnits: Self.nemotron3ComputeUnits,
+            progressHandler: { progress in
+                progressHandler(Self.localProgress(from: progress, method: .betaNemotron3))
+            }
+        )
+        try Task.checkCancellation()
+    }
+
+    /// The 10.24 s-chunk, W8A8, split-graph preset: 95 MB, fully Neural
+    /// Engine-resident, and the best speaker counting in FluidInference's AMI
+    /// runs. The monolithic `offline` preset cannot compile for the Neural
+    /// Engine and falls back to the GPU, which iOS denies to background work.
+    private static let nemotron3PresetName = "c128-split-w8a8"
+    private static let nemotron3ComputeUnits: MLComputeUnits = .cpuAndNeuralEngine
+
+    private static var nemotron3Config: Nemotron3Config? {
+        Nemotron3Config.preset(named: nemotron3PresetName)
+    }
+
+    /// Mirrors the layout `Nemotron3Models.loadFromHuggingFace` writes under
+    /// its `cacheDirectory`.
+    private static func nemotron3Layout(
+        at directory: URL,
+        config: Nemotron3Config
+    ) -> Nemotron3AssetLayout {
+        let repoDirectory = directory.appendingPathComponent(
+            Repo.nemotron3Diarization.folderName,
+            isDirectory: true
+        )
+        return Nemotron3AssetLayout(
+            repoDirectory: repoDirectory,
+            modelBundle: repoDirectory
+                .appendingPathComponent(config.hubSubdirectory, isDirectory: true)
+                .appendingPathComponent(config.modelFileName, isDirectory: true),
+            silenceEmbedding: repoDirectory.appendingPathComponent(
+                ModelNames.Nemotron3.silenceEmbeddingFile
+            ),
+            preEncodeProjection: repoDirectory.appendingPathComponent(
+                ModelNames.Nemotron3.preEncodeProjectionFile
+            ),
+            weightsVersionMarker: repoDirectory.appendingPathComponent(
+                ModelNames.Nemotron3.weightsVersionFile
+            ),
+            expectedWeightsVersion: ModelNames.Nemotron3.weightsVersion
+        )
+    }
+
+    private nonisolated static func loadNemotron3ModelsFromCache(
+        _ layout: Nemotron3AssetLayout,
+        config: Nemotron3Config
+    ) throws -> Nemotron3Models {
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = nemotron3ComputeUnits
+        let model = try MLModel(contentsOf: layout.modelBundle, configuration: configuration)
+        return try Nemotron3Models(
+            config: config,
+            model: model,
+            silenceEmbedding: try floats(
+                at: layout.silenceEmbedding,
+                byteCount: Nemotron3AssetLayout.silenceEmbeddingByteCount
+            ),
+            preEncodeProjection: try floats(
+                at: layout.preEncodeProjection,
+                byteCount: Nemotron3AssetLayout.preEncodeProjectionByteCount
+            )
+        )
+    }
+
+    private nonisolated static func floats(at url: URL, byteCount: Int) throws -> [Float] {
+        let data = try Data(contentsOf: url)
+        guard data.count == byteCount else {
+            throw LocalDiarizationError.downloadRequired(.betaNemotron3)
+        }
+        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
     }
 
     private nonisolated static func loadOfflineVBxModelsFromCache(
@@ -401,6 +520,73 @@ private actor LSEENDRunner: LocalDiarizationRunner {
 
     func cleanup() async {
         diarizer?.cleanup()
+        diarizer = nil
+    }
+}
+
+private actor Nemotron3Runner: LocalDiarizationRunner {
+    /// `Nemotron3Diarizer` is not thread-safe; this actor is its only owner.
+    private var diarizer: Nemotron3Diarizer?
+
+    init(diarizer: Nemotron3Diarizer) {
+        self.diarizer = diarizer
+    }
+
+    func process(
+        audioURL: URL,
+        method: LocalDiarizationMethod,
+        progressHandler: @escaping LocalDiarizationProgressHandler
+    ) async throws -> LocalDiarizationResult {
+        try Task.checkCancellation()
+        guard let diarizer else { throw LocalDiarizationError.runnerUnavailable }
+        diarizer.reset()
+
+        // Stream from disk rather than `processComplete`, which needs the whole
+        // recording and its spectrogram in memory at once. The SDK documents
+        // the two paths as frame-exact.
+        let reader = try LocalDiarizationAudioReader(url: audioURL)
+        var probabilities: [Float] = []
+        var frameCount = 0
+        func collect(_ chunks: [Nemotron3ChunkResult]) {
+            for chunk in chunks {
+                probabilities.append(contentsOf: chunk.probabilities)
+                frameCount += chunk.frameCount
+            }
+        }
+
+        while let samples = try reader.nextBlock() {
+            try Task.checkCancellation()
+            diarizer.appendAudio(samples)
+            collect(try diarizer.processBufferedAudio())
+            progressHandler(
+                LocalDiarizationProgress(
+                    method: method,
+                    phase: .processing,
+                    fractionCompleted: reader.fractionRead
+                )
+            )
+            // Inference is synchronous; let cancellation and other work on
+            // this executor through between blocks.
+            await Task.yield()
+        }
+        collect(try diarizer.finishStream())
+        try Task.checkCancellation()
+
+        let intervals = Nemotron3Diarizer.segments(
+            probabilities: probabilities,
+            frameCount: frameCount,
+            numSpeakers: diarizer.config.numSpeakers
+        ).map { segment in
+            LocalDiarizationInterval(
+                speakerID: "speaker_\(segment.speakerIndex)",
+                startTime: TimeInterval(segment.startSeconds),
+                endTime: TimeInterval(segment.endSeconds)
+            )
+        }
+        return LocalDiarizationResult(intervals: intervals)
+    }
+
+    func cleanup() async {
         diarizer = nil
     }
 }

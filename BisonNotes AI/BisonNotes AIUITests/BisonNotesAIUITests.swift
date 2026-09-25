@@ -13,6 +13,7 @@ final class BisonNotesAIUITests: XCTestCase {
         static let help = "bisonnotes.settings.local-speaker-labels.help"
         static let offlineVBx = "bisonnotes.settings.local-speaker-labels.method.offline-vbx"
         static let lsEEND = "bisonnotes.settings.local-speaker-labels.method.ls-eend"
+        static let nemotron3 = "bisonnotes.settings.local-speaker-labels.method.nemotron3"
         static let modelStatus = "bisonnotes.settings.local-speaker-labels.model-status"
         static let modelProgress = "bisonnotes.settings.local-speaker-labels.model-progress"
         static let modelError = "bisonnotes.settings.local-speaker-labels.model-error"
@@ -113,6 +114,36 @@ final class BisonNotesAIUITests: XCTestCase {
         XCTAssertEqual(
             localSpeakerElement(LocalSpeakerLabelsTestID.modelStatus, in: app).value as? String,
             "LS-EEND: Download Required"
+        )
+        XCTAssertFalse(
+            app.descendants(matching: .any)[LocalSpeakerLabelsTestID.cancelModel].exists
+        )
+    }
+
+    @MainActor
+    func testNemotron3BetaSelectionPersistsWithoutPreparation() throws {
+        let app = launchSeededApp()
+        openFluidAudioSettings(in: app)
+
+        localSpeakerElement(LocalSpeakerLabelsTestID.toggle, in: app).setSwitch(on: true)
+
+        let betaMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
+        XCTAssertTrue(betaMethod.waitForExistence(timeout: 5))
+        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("Beta"))
+        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("up to 8 speakers"))
+        betaMethod.tap()
+
+        let doneButtons = app.buttons.matching(identifier: "Done")
+        XCTAssertTrue(doneButtons.element(boundBy: 0).waitForExistence(timeout: 5))
+        doneButtons.element(boundBy: max(0, doneButtons.count - 1)).tap()
+        app.reachableButton(named: "Configure On Device").tap()
+
+        let reopenedBetaMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
+        XCTAssertTrue(reopenedBetaMethod.waitForExistence(timeout: 5))
+        XCTAssertEqual(reopenedBetaMethod.value as? String, "Selected")
+        XCTAssertEqual(
+            localSpeakerElement(LocalSpeakerLabelsTestID.modelStatus, in: app).value as? String,
+            "Nemotron 3: Download Required"
         )
         XCTAssertFalse(
             app.descendants(matching: .any)[LocalSpeakerLabelsTestID.cancelModel].exists
@@ -342,10 +373,12 @@ extension BisonNotesAIUITests {
 
         let offlineMethod = localSpeakerElement(LocalSpeakerLabelsTestID.offlineVBx, in: app)
         let experimentalMethod = localSpeakerElement(LocalSpeakerLabelsTestID.lsEEND, in: app)
+        let betaMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
         XCTAssertTrue(offlineMethod.label.localizedCaseInsensitiveContains("Offline VBx"))
         XCTAssertTrue(experimentalMethod.label.localizedCaseInsensitiveContains("LS-EEND"))
+        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("Nemotron 3"))
 
-        for copy in ["Recommended", "Experimental", "up to 10 speakers"] {
+        for copy in ["Recommended", "Beta", "Experimental", "up to 8 speakers", "up to 10 speakers"] {
             XCTAssertTrue(
                 app.descendants(matching: .any)
                     .matching(NSPredicate(format: "label CONTAINS[c] %@", copy))

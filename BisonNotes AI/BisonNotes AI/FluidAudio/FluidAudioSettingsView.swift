@@ -278,6 +278,7 @@ private extension FluidAudioSettingsView {
                     .accessibilityAddTraits(.isHeader)
 
                 localMethodButton(.offlineVBx)
+                localMethodButton(.betaNemotron3)
                 localMethodButton(.experimentalLSEEND)
             }
 
@@ -391,11 +392,7 @@ private extension FluidAudioSettingsView {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier(
-            method == .offlineVBx
-                ? BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
-                : BisonNotesAccessibilityID.localSpeakerMethodLSEEND
-        )
+        .accessibilityIdentifier(localMethodAccessibilityIdentifier(method))
         .accessibilityLabel(localSpeakerMethodAccessibilityLabel(method))
         .accessibilityValue(selectedLocalSpeakerMethod == method ? "Selected" : "Not selected")
         .accessibilityHint(
@@ -420,19 +417,33 @@ private extension FluidAudioSettingsView {
     }
 
     private func localMethodBadge(_ method: LocalDiarizationMethod) -> some View {
-        Text(method == .offlineVBx ? "Recommended" : "Experimental")
+        Text(localMethodBadgeText(method))
             .font(.subheadline.weight(.semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    private func localMethodBadgeText(_ method: LocalDiarizationMethod) -> String {
+        switch method {
+        case .offlineVBx:
+            return "Recommended"
+        case .betaNemotron3:
+            return "Beta"
+        case .experimentalLSEEND:
+            return "Experimental"
+        }
+    }
+
     private func localMethodSpeakerCount(_ method: LocalDiarizationMethod) -> some View {
-        Text(
-            method == .experimentalLSEEND
-                ? "up to 10 speakers"
-                : "speaker count estimated"
-        )
-        .font(.subheadline)
-        .fixedSize(horizontal: false, vertical: true)
+        Text(localMethodSpeakerCountText(method))
+            .font(.subheadline)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func localMethodSpeakerCountText(_ method: LocalDiarizationMethod) -> String {
+        guard let maximum = method.maximumSupportedSpeakerCount else {
+            return "speaker count estimated"
+        }
+        return "up to \(maximum) speakers"
     }
 
     private var localSpeakerMethodDescription: String {
@@ -440,6 +451,9 @@ private extension FluidAudioSettingsView {
         case .offlineVBx:
             return "Recommended for normal use. Offline VBx estimates the number of speakers "
                 + "and does not impose a two- or three-speaker cap."
+        case .betaNemotron3:
+            return "Beta NVIDIA Nemotron 3 Diarization model for up to 8 speakers. A ninth voice is "
+                + "merged into another speaker rather than reported, so choose Offline VBx for larger groups."
         case .experimentalLSEEND:
             return "Experimental DIHARD3 model for up to 10 speakers. It processes complete files "
                 + "up to one hour and may over-segment or produce less-stable labels."
@@ -447,11 +461,17 @@ private extension FluidAudioSettingsView {
     }
 
     private func localSpeakerMethodAccessibilityLabel(_ method: LocalDiarizationMethod) -> String {
+        "\(method.displayName), \(localMethodBadgeText(method)), \(localMethodSpeakerCountText(method))"
+    }
+
+    private func localMethodAccessibilityIdentifier(_ method: LocalDiarizationMethod) -> String {
         switch method {
         case .offlineVBx:
-            return "Offline VBx, Recommended, speaker count estimated"
+            return BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
+        case .betaNemotron3:
+            return BisonNotesAccessibilityID.localSpeakerMethodNemotron3
         case .experimentalLSEEND:
-            return "LS-EEND, Experimental, up to 10 speakers"
+            return BisonNotesAccessibilityID.localSpeakerMethodLSEEND
         }
     }
 

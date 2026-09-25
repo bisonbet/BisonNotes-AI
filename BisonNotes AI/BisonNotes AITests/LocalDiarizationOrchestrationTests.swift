@@ -378,6 +378,23 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
         XCTAssertEqual(snapshot, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalLSEEND))
     }
 
+    func testBetaMethodChoiceIsReadBackRatherThanRevertedToDefault() {
+        let suiteName = "LocalDiarizationOrchestrationTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
+        defaults.set(
+            LocalDiarizationMethod.betaNemotron3.rawValue,
+            forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
+        )
+
+        XCTAssertEqual(
+            LocalSpeakerLabelsConfiguration.currentUserChoice(from: defaults),
+            LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3)
+        )
+    }
+
     private func makeResult(
         timedWords: [TimedTranscriptWord]? = [
             TimedTranscriptWord(text: "hello", startTime: 0, endTime: 0.5, hasLeadingSpace: false),

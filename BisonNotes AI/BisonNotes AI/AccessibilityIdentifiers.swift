@@ -50,6 +50,7 @@ enum BisonNotesAccessibilityID {
     static let localSpeakerLabelsHelp = "bisonnotes.settings.local-speaker-labels.help"
     static let localSpeakerMethodOfflineVBx = "bisonnotes.settings.local-speaker-labels.method.offline-vbx"
     static let localSpeakerMethodLSEEND = "bisonnotes.settings.local-speaker-labels.method.ls-eend"
+    static let localSpeakerMethodNemotron3 = "bisonnotes.settings.local-speaker-labels.method.nemotron3"
     static let localSpeakerRecommendedBadge = "bisonnotes.settings.local-speaker-labels.badge.recommended"
     static let localSpeakerExperimentalBadge = "bisonnotes.settings.local-speaker-labels.badge.experimental"
     static let localSpeakerModelStatus = "bisonnotes.settings.local-speaker-labels.model-status"

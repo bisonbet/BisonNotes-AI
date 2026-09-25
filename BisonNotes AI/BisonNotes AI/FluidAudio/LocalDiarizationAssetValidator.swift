@@ -1,17 +1,37 @@
 import Foundation
 
+/// Where the Nemotron 3 preset's files must sit inside its method cache, and
+/// what they must contain. Built from the SDK's constants in production and
+/// from literals in tests, so the validator itself stays SDK-independent.
+struct Nemotron3AssetLayout: Equatable, Sendable {
+    let repoDirectory: URL
+    let modelBundle: URL
+    let silenceEmbedding: URL
+    let preEncodeProjection: URL
+    let weightsVersionMarker: URL
+    let expectedWeightsVersion: String
+
+    /// 512 fp32 values.
+    static let silenceEmbeddingByteCount = 512 * MemoryLayout<Float>.size
+    /// The [1024, 512] fp32 FeatureStacking projection split-graph presets need.
+    static let preEncodeProjectionByteCount = 1024 * 512 * MemoryLayout<Float>.size
+}
+
 enum LocalDiarizationAssetValidator {
     // These are the required artifacts emitted by Core ML for the pinned
     // FluidAudio compiled models. A partially populated bundle must not report
     // Ready merely because its directory contains one nonempty file.
     private static let requiredCompiledModelFiles = [
         "model.mil",
-        "metadata.json",
         "coremldata.bin"
     ]
 
+    /// `requiresMetadata` is false only for bundles published without a
+    /// `metadata.json` (the Nemotron 3 conversions); every other check still
+    /// applies to them.
     static func compiledModelBundleIsValid(
         at url: URL,
+        requiresMetadata: Bool = true,
         fileManager: FileManager = .default
     ) -> Bool {
         var isDirectory: ObjCBool = false
@@ -28,7 +48,7 @@ enum LocalDiarizationAssetValidator {
                 fileManager: fileManager
             )
         }),
-        metadataJSONIsValid(
+        !requiresMetadata || metadataJSONIsValid(
             at: url.appendingPathComponent("metadata.json", isDirectory: false),
             fileManager: fileManager
         ),
@@ -56,6 +76,43 @@ enum LocalDiarizationAssetValidator {
             return false
         }
         return true
+    }
+
+    /// Ready only when the compiled preset, both fp32 assets at their exact
+    /// sizes, and a weights marker naming the checkpoint the pinned SDK expects
+    /// are all present. A cache from a superseded checkpoint reports Download
+    /// Required rather than feeding old weights to newer inference code.
+    static func nemotron3AssetsAreValid(
+        _ layout: Nemotron3AssetLayout,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        guard compiledModelBundleIsValid(
+            at: layout.modelBundle,
+            requiresMetadata: false,
+            fileManager: fileManager
+        ),
+        regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
+            == Nemotron3AssetLayout.silenceEmbeddingByteCount,
+        regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager)
+            == Nemotron3AssetLayout.preEncodeProjectionByteCount,
+        let marker = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
+        else {
+            return false
+        }
+        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == layout.expectedWeightsVersion
+    }
+
+    /// Read through the file manager rather than `URL.resourceValues`, which
+    /// caches per URL instance and would keep reporting a size the file no
+    /// longer has when a stored layout is checked again after a download.
+    private static func regularFileSize(at url: URL, fileManager: FileManager) -> Int? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber
+        else {
+            return nil
+        }
+        return size.intValue
     }
 
     private static func isNonEmptyRegularFile(

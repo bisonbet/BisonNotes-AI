@@ -11,11 +11,14 @@ struct FluidAudioModelInfo {
         static let defaultMethodRawValue = "offlineVBx"
         static let recommendedMethodRawValue = "offlineVBx"
         static let experimentalMethodRawValue = "experimentalLSEEND"
+        static let betaMethodRawValue = "betaNemotron3"
         static let maximumExperimentalDuration: TimeInterval = 60 * 60
 
         static func normalizedMethodRawValue(_ rawValue: String?) -> String {
             switch rawValue {
-            case let value? where value == recommendedMethodRawValue || value == experimentalMethodRawValue:
+            case let value? where value == recommendedMethodRawValue
+                || value == experimentalMethodRawValue
+                || value == betaMethodRawValue:
                 return value
             default:
                 return defaultMethodRawValue
@@ -111,6 +114,8 @@ struct FluidAudioModelInfo {
             return root.appendingPathComponent("offline-vbx", isDirectory: true)
         case LocalSpeakerLabels.experimentalMethodRawValue:
             return root.appendingPathComponent("ls-eend-dihard3-500ms", isDirectory: true)
+        case LocalSpeakerLabels.betaMethodRawValue:
+            return root.appendingPathComponent("nemotron3-c128-split-w8a8", isDirectory: true)
         default:
             return nil
         }
