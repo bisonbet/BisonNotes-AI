@@ -150,10 +150,26 @@ enum SummaryThinkingModelCatalog { // swiftlint:disable:this type_body_length
         baseURL: String? = nil,
         level: SummaryThinkingLevel = .current
     ) -> SummaryThinkingRequestOptions {
-        guard level == .light else { return .none }
-
         let profile = profile(modelName: modelName, engine: engine, baseURL: baseURL)
         guard case .controllable(let transport) = profile.support else {
+            return .none
+        }
+
+        // llama.cpp and vLLM default Qwen3 hybrids to thinking ON and ignore
+        // `thinking_budget`, so at `.none` "send nothing" free-runs the whole
+        // completion budget as reasoning. They need an explicit off-switch.
+        // (Hosted Qwen APIs default OFF and keep the no-override behavior.)
+        if level == .none {
+            if case .qwenChatTemplate = transport {
+                return SummaryThinkingRequestOptions(
+                    reasoningEffort: nil,
+                    enableThinking: nil,
+                    thinkingBudget: nil,
+                    thinkingLevel: nil,
+                    chatTemplateKwargs: ["enable_thinking": false],
+                    ollamaThinkLevel: nil
+                )
+            }
             return .none
         }
 

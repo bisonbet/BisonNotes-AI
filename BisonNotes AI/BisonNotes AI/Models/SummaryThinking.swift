@@ -4,9 +4,8 @@ import Foundation
 
 /// The only user-selectable thinking level for summaries.
 ///
-/// `.none` deliberately means that the request contains no thinking-related
-/// field. This lets each provider keep its own default behavior and avoids
-/// turning thinking on for models that do not support it.
+/// `.none` preserves provider defaults except for self-hosted Qwen hybrids,
+/// which receive an explicit chat-template switch to disable thinking.
 public enum SummaryThinkingLevel: Int, CaseIterable, Identifiable, Equatable, Sendable {
     case none = 0
     case light = 1
@@ -36,7 +35,7 @@ public enum SummaryThinkingLevel: Int, CaseIterable, Identifiable, Equatable, Se
     var userDescription: String {
         switch self {
         case .none:
-            return "Use the model's normal response mode. No thinking override is sent."
+            return "Disable thinking for supported self-hosted Qwen models. Other models use their normal response mode."
         case .light:
             return "Ask supported models for a short reasoning pass, not heavy or maximum thinking."
         }

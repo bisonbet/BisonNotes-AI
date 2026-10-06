@@ -140,6 +140,25 @@ final class SummaryThinkingTests: XCTestCase {
         XCTAssertEqual(mlxProfile.support, .controllable(.mlx))
     }
 
+    func testSelfHostedQwenGetsExplicitThinkingOffAtNoneLevel() {
+        defaults.removeObject(forKey: SummaryThinkingLevel.storageKey)
+
+        let local = SummaryThinkingModelCatalog.requestOptions(
+            modelName: "qwen3.8-flash-next",
+            engine: .openAICompatible,
+            baseURL: "https://litellm.example.com/v1"
+        )
+        XCTAssertEqual(local.chatTemplateKwargs, ["enable_thinking": false],
+                       "llama.cpp defaults Qwen3 hybrids to thinking ON; sending nothing free-runs the budget as reasoning")
+
+        let hosted = SummaryThinkingModelCatalog.requestOptions(
+            modelName: "qwen3.6-plus",
+            engine: .openAICompatible,
+            baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
+        XCTAssertTrue(hosted.isEmpty, "Hosted Qwen APIs default OFF and must stay un-overridden")
+    }
+
     func testUnsetCompatibleRequestOmitsEveryThinkingField() throws {
         let request = ChatCompletionRequest(
             model: "llama3.2:instruct",
