@@ -316,7 +316,8 @@ actor OpenAICompatibleService {
     }
 
     /// Translates the shared summary preference into the request contract for
-    /// the selected compatible model family. `.none` returns all nil fields.
+    /// the selected compatible model family. `.none` explicitly disables thinking
+    /// for self-hosted Qwen hybrids and otherwise preserves provider defaults.
     private var thinkingOptions: SummaryThinkingRequestOptions {
         SummaryThinkingModelCatalog.requestOptions(
             modelName: config.effectiveModelId,
