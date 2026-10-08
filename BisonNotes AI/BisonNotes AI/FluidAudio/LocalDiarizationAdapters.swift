@@ -231,6 +231,22 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             }
         )
         try Task.checkCancellation()
+        try Self.ensureNemotron3WeightsMarker(Self.nemotron3Layout(at: directory, config: config))
+    }
+
+    /// The SDK writes its weights marker with `try?`, so a failed write (most
+    /// likely a full disk) is invisible: the files load, readiness then fails on
+    /// the missing marker, and the retry's stale-cache check deletes the whole
+    /// ~95 MB download. The SDK has just loaded these files at the version it
+    /// expects, so writing the marker here is truthful — and a failure now
+    /// surfaces as the real file-system error instead of a generic one.
+    private static func ensureNemotron3WeightsMarker(_ layout: Nemotron3AssetLayout) throws {
+        let current = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
+        guard current?.trimmingCharacters(in: .whitespacesAndNewlines) != layout.expectedWeightsVersion else {
+            return
+        }
+        try Data((layout.expectedWeightsVersion + "\n").utf8)
+            .write(to: layout.weightsVersionMarker, options: .atomic)
     }
 
     /// The 10.24 s-chunk, W8A8, split-graph preset: 95 MB, fully Neural
@@ -268,7 +284,15 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             weightsVersionMarker: repoDirectory.appendingPathComponent(
                 ModelNames.Nemotron3.weightsVersionFile
             ),
-            expectedWeightsVersion: ModelNames.Nemotron3.weightsVersion
+            expectedWeightsVersion: ModelNames.Nemotron3.weightsVersion,
+            // The same sizes `Nemotron3Models` checks when it loads: one
+            // `preEncoderDims` embedding, and for split-graph presets the
+            // stacked-mel (melFeatures × subsampling) → preEncoderDims projection.
+            silenceEmbeddingByteCount: config.preEncoderDims * MemoryLayout<Float>.size,
+            preEncodeProjectionByteCount: config.splitGraph
+                ? config.melFeatures * config.subsamplingFactor * config.preEncoderDims
+                    * MemoryLayout<Float>.size
+                : nil
         )
     }
 
@@ -284,12 +308,11 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             model: model,
             silenceEmbedding: try floats(
                 at: layout.silenceEmbedding,
-                byteCount: Nemotron3AssetLayout.silenceEmbeddingByteCount
+                byteCount: layout.silenceEmbeddingByteCount
             ),
-            preEncodeProjection: try floats(
-                at: layout.preEncodeProjection,
-                byteCount: Nemotron3AssetLayout.preEncodeProjectionByteCount
-            )
+            preEncodeProjection: try layout.preEncodeProjectionByteCount.map {
+                try floats(at: layout.preEncodeProjection, byteCount: $0)
+            }
         )
     }
 
@@ -527,6 +550,10 @@ private actor LSEENDRunner: LocalDiarizationRunner {
 private actor Nemotron3Runner: LocalDiarizationRunner {
     /// `Nemotron3Diarizer` is not thread-safe; this actor is its only owner.
     private var diarizer: Nemotron3Diarizer?
+    /// The yield between blocks is an actor reentrancy point. A second
+    /// `process` arriving there would `reset()` the diarizer under the first
+    /// stream and quietly corrupt its speaker timeline, so it is refused.
+    private var isProcessing = false
 
     init(diarizer: Nemotron3Diarizer) {
         self.diarizer = diarizer
@@ -538,51 +565,53 @@ private actor Nemotron3Runner: LocalDiarizationRunner {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws -> LocalDiarizationResult {
         try Task.checkCancellation()
-        guard let diarizer else { throw LocalDiarizationError.runnerUnavailable }
+        guard let diarizer, !isProcessing else { throw LocalDiarizationError.runnerUnavailable }
+        isProcessing = true
+        defer { isProcessing = false }
         diarizer.reset()
 
         // Stream from disk rather than `processComplete`, which needs the whole
         // recording and its spectrogram in memory at once. The SDK documents
-        // the two paths as frame-exact.
+        // the two paths as frame-exact. Segments are built as chunks arrive for
+        // the same reason: holding every probability grows without bound.
         let reader = try LocalDiarizationAudioReader(url: audioURL)
-        var probabilities: [Float] = []
-        var frameCount = 0
+        var segmenter = StreamingSpeakerActivitySegmenter(numSpeakers: diarizer.config.numSpeakers)
         func collect(_ chunks: [Nemotron3ChunkResult]) {
             for chunk in chunks {
-                probabilities.append(contentsOf: chunk.probabilities)
-                frameCount += chunk.frameCount
+                segmenter.append(probabilities: chunk.probabilities, frameCount: chunk.frameCount)
             }
+        }
+        // Progress follows audio the model has finished, not audio decoded:
+        // decoding runs up to a chunk plus right context ahead of inference,
+        // so the read position reaches the end while work remains. Held below
+        // 1 until the tail is flushed.
+        func reportProgress() {
+            let fraction = reader.sourceDuration.map { duration in
+                min(segmenter.processedSeconds / duration, 0.99)
+            }
+            progressHandler(
+                LocalDiarizationProgress(method: method, phase: .processing, fractionCompleted: fraction)
+            )
         }
 
         while let samples = try reader.nextBlock() {
             try Task.checkCancellation()
             diarizer.appendAudio(samples)
             collect(try diarizer.processBufferedAudio())
-            progressHandler(
-                LocalDiarizationProgress(
-                    method: method,
-                    phase: .processing,
-                    fractionCompleted: reader.fractionRead
-                )
-            )
+            reportProgress()
             // Inference is synchronous; let cancellation and other work on
             // this executor through between blocks.
             await Task.yield()
+            // `cleanup()` may have run during the yield.
+            guard self.diarizer != nil else { throw LocalDiarizationError.runnerUnavailable }
         }
         collect(try diarizer.finishStream())
         try Task.checkCancellation()
 
-        let intervals = Nemotron3Diarizer.segments(
-            probabilities: probabilities,
-            frameCount: frameCount,
-            numSpeakers: diarizer.config.numSpeakers
-        ).map { segment in
-            LocalDiarizationInterval(
-                speakerID: "speaker_\(segment.speakerIndex)",
-                startTime: TimeInterval(segment.startSeconds),
-                endTime: TimeInterval(segment.endSeconds)
-            )
-        }
+        let intervals = segmenter.finish()
+        progressHandler(
+            LocalDiarizationProgress(method: method, phase: .processing, fractionCompleted: 1)
+        )
         return LocalDiarizationResult(intervals: intervals)
     }
 

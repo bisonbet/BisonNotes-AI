@@ -23,6 +23,20 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Each method's models live in their own folder under the local
+    /// speaker-labels root. These names are on users' disks: renaming one
+    /// orphans every existing download of that method.
+    var cacheFolderName: String {
+        switch self {
+        case .offlineVBx:
+            return "offline-vbx"
+        case .experimentalLSEEND:
+            return "ls-eend-dihard3-500ms"
+        case .betaNemotron3:
+            return "nemotron3-c128-split-w8a8"
+        }
+    }
+
     public var isExperimental: Bool {
         self == .experimentalLSEEND
     }
