@@ -177,6 +177,41 @@ struct PersistentLogFile: Sendable {
     }
 }
 
+// MARK: - Clean Shutdown Marker
+
+/// Decides whether the previous process crashed, from one persisted flag.
+///
+/// The flag is armed only once a session becomes active. iOS launches the app
+/// in the background to deliver Watch transfers and background tasks, then
+/// suspends and later kills it without ever sending `didEnterBackground` or
+/// `willTerminate`. Arming at launch made every such session look like a crash:
+/// the user saw a crash report on most opens, and crash reconciliation failed
+/// jobs that should have resumed. A crash in a session that never became active
+/// is therefore not reported here; MetricKit still captures it.
+enum CleanShutdownMarker {
+    static let key = "AppLog_CleanShutdown"
+
+    /// Reads the previous session's state, then disarms for the new session so a
+    /// background launch that is silently killed reads as clean next time.
+    /// A missing key (first install) is clean.
+    static func consumeLaunch(in defaults: UserDefaults) -> Bool {
+        let hasKey = defaults.object(forKey: key) != nil
+        let previousSessionCrashed = hasKey && !defaults.bool(forKey: key)
+        defaults.set(true, forKey: key)
+        return previousSessionCrashed
+    }
+
+    /// The session is in front of the user: from here until it backgrounds or
+    /// terminates, losing the process is a crash.
+    static func arm(in defaults: UserDefaults) {
+        defaults.set(false, forKey: key)
+    }
+
+    static func markClean(in defaults: UserDefaults) {
+        defaults.set(true, forKey: key)
+    }
+}
+
 // MARK: - App Logger
 
 final class AppLog: Sendable {
@@ -221,7 +256,6 @@ final class AppLog: Sendable {
     private static let maxErrorLogBytes = 512 * 1024
     private static let maxBreadcrumbLogBytes = 256 * 1024
     private static let maxPersistedLineBytes = 8 * 1024
-    private static let cleanShutdownKey = "AppLog_CleanShutdown"
     private let sessionId = UUID().uuidString
     private struct LifecycleState {
         var previousSessionCrashed = false
@@ -241,31 +275,24 @@ final class AppLog: Sendable {
         let shouldMarkLaunch = lifecycleState.withLock { state -> Bool in
             guard !state.launchWasMarked else { return false }
             state.launchWasMarked = true
-
-            // On very first install the key doesn't exist — UserDefaults returns false,
-            // which would look like a crash. Treat missing key as clean.
-            let hasKey = UserDefaults.standard.object(forKey: Self.cleanShutdownKey) != nil
-            state.previousSessionCrashed = hasKey && !UserDefaults.standard.bool(forKey: Self.cleanShutdownKey)
+            state.previousSessionCrashed = CleanShutdownMarker.consumeLaunch(in: .standard)
             return true
         }
         guard shouldMarkLaunch else { return }
 
-        // Reset for this session — if we crash, it stays false
-        UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
-
         lifecycleBreadcrumb("launch session=\(sessionId) previousSessionCrashed=\(previousSessionCrashed)")
     }
 
-    /// Call when app becomes active. A later foreground crash should not inherit a
-    /// previous clean background transition from the same launch.
+    /// Call when app becomes active. This is what arms crash detection, so a
+    /// background launch that never becomes active is never reported as a crash.
     func markSessionActive() {
-        UserDefaults.standard.set(false, forKey: Self.cleanShutdownKey)
+        CleanShutdownMarker.arm(in: .standard)
         lifecycleBreadcrumb("active session=\(sessionId)")
     }
 
     /// Call when app enters background or terminates — marks this session as clean.
     func markCleanShutdown() {
-        UserDefaults.standard.set(true, forKey: Self.cleanShutdownKey)
+        CleanShutdownMarker.markClean(in: .standard)
         lifecycleBreadcrumb("clean-shutdown-marker session=\(sessionId)")
     }
 
