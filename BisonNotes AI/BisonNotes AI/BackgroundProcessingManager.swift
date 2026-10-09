@@ -1246,6 +1246,9 @@ class BackgroundProcessingManager: ObservableObject {
                 switch nextJob.type {
                 case .transcription(let engine):
                     AppLog.shared.backgroundProcessing("Processing transcription job with \(engine.rawValue)")
+                    // Setting `currentJob` paused any transcript cleanup; let
+                    // it unwind and release its model before ASR loads.
+                    await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
                     try await processTranscriptionJob(processingJob, engine: engine)
                 case .summarization(let engine):
                     AppLog.shared.backgroundProcessing("Processing summarization job with \(engine)")

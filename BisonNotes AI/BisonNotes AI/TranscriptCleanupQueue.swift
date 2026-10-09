@@ -278,10 +278,12 @@ enum TranscriptCleanupCheckpointStore {
 
 /// One recording whose saved transcript should be cleaned. `source` is the
 /// transcript as it was saved; an intent whose transcript has changed since is
-/// dropped, because its result would describe text that no longer exists.
+/// dropped, because its result would describe text that no longer exists. It
+/// is nil when the saved transcript could not be reread after its commit; the
+/// run then takes the transcript it first reads as the source.
 struct TranscriptCleanupIntent: Codable, Equatable, Sendable {
     let recordingId: UUID
-    let source: TranscriptCleanupSourceSnapshot
+    let source: TranscriptCleanupSourceSnapshot?
     let languageCode: String?
     let enqueuedAt: Date
 }
@@ -458,7 +460,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         kick()
     }
 
-    func enqueue(recordingId: UUID, source: TranscriptCleanupSourceSnapshot, languageCode: String?) {
+    func enqueue(recordingId: UUID, source: TranscriptCleanupSourceSnapshot?, languageCode: String?) {
         // An intent queued before `start` — a job that finished early in launch
         // — must merge with the saved queue, not overwrite it.
         loadIntentsIfNeeded()
@@ -486,19 +488,23 @@ final class TranscriptCleanupQueue: ObservableObject {
     }
 
     /// Queues cleanup of a transcript that has just been saved, reading it back
-    /// so the intent records exactly what was committed. Runs after the commit:
-    /// a failure is logged and the transcript simply stays uncleaned.
+    /// so the intent records exactly what was committed. Runs after the commit.
+    /// A failed reread is logged and still queues the intent, with no source:
+    /// dropping it left the transcript uncleaned for good, while the run's own
+    /// read is retried like any other transient failure.
     func enqueueSavedTranscript(recordingId: UUID, languageCode: String?) {
-        afterCommit("Queueing transcript cleanup", category: .transcription) {
-            guard let saved = try store.transcript(for: recordingId) else {
+        var saved: TranscriptData?
+        afterCommit("Rereading the saved transcript for cleanup", category: .transcription) {
+            saved = try store.transcript(for: recordingId)
+            if saved == nil {
                 throw BackgroundProcessingError.processingFailed("The saved transcript could not be reread")
             }
-            enqueue(
-                recordingId: recordingId,
-                source: TranscriptCleanupSourceSnapshot(transcript: saved),
-                languageCode: languageCode
-            )
         }
+        enqueue(
+            recordingId: recordingId,
+            source: saved.map { TranscriptCleanupSourceSnapshot(transcript: $0) },
+            languageCode: languageCode
+        )
     }
 
     /// Call after a new raw transcript commits. The previous transcript's
@@ -656,7 +662,9 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
-        guard intent.source.matches(transcript) else {
+        // An intent queued without a source cleans what is saved now.
+        let source = intent.source ?? TranscriptCleanupSourceSnapshot(transcript: transcript)
+        guard source.matches(transcript) else {
             // Edited or replaced since it was queued; its cleanup would
             // describe text that no longer exists.
             AppLog.shared.transcription(
@@ -735,7 +743,7 @@ final class TranscriptCleanupQueue: ObservableObject {
             )
             return
         }
-        guard let current, intent.source.matches(current) else {
+        guard let current, source.matches(current) else {
             await finish(intent, checkpoint: checkpoint, removeCheckpoint: true, warning: .staleResult)
             return
         }

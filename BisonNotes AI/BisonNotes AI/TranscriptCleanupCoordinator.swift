@@ -146,6 +146,26 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
 
         let report = RunReport(segmentCount: segments.count)
+        await TranscriptCleanupActivity.shared.runDidStart()
+        let outcome = await cleanReadySegments(segments, checkpoint: checkpoint, progress: progress, report: report)
+        await TranscriptCleanupActivity.shared.runDidEnd()
+        return outcome
+    }
+
+    /// Waits until no cleanup run — queued or manual — is executing, so its
+    /// model and GPU memory are released. A transcription calls this after
+    /// pausing cleanup; cancellation is cooperative, so a run in the middle of
+    /// a generation takes a moment to unwind.
+    static func waitUntilNoRunIsActive() async {
+        await TranscriptCleanupActivity.shared.waitUntilIdle()
+    }
+
+    private func cleanReadySegments(
+        _ segments: [TranscriptSegment],
+        checkpoint: (any TranscriptCleanupCheckpointing)?,
+        progress: (@Sendable (TranscriptCleanupProgress) -> Void)?,
+        report: RunReport
+    ) async -> TranscriptCleanupResult {
         do {
             let result = try await MLXModelResourceCoordinator.shared.withExclusive {
                 do {
@@ -788,6 +808,32 @@ struct TranscriptCleanupCoordinator: Sendable {
             guard let best = hypotheses.max(by: { $0.value < $1.value }) else { return false }
             return best.key != .english && best.value >= Self.englishConfidenceThreshold
         }
+    }
+}
+
+/// Counts cleanup runs that are past preflight, so a transcription can wait
+/// for every one of them to unwind and release its model.
+private actor TranscriptCleanupActivity {
+    static let shared = TranscriptCleanupActivity()
+
+    private var activeRuns = 0
+    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func runDidStart() {
+        activeRuns += 1
+    }
+
+    func runDidEnd() {
+        activeRuns = max(activeRuns - 1, 0)
+        guard activeRuns == 0 else { return }
+        let waiters = idleWaiters
+        idleWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilIdle() async {
+        guard activeRuns > 0 else { return }
+        await withCheckedContinuation { idleWaiters.append($0) }
     }
 }
 

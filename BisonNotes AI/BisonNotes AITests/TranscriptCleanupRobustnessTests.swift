@@ -620,6 +620,53 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertEqual(requests, [segments[0].text, segments[1].text, segments[1].text])
     }
 
+    /// A transcription waits for an active cleanup run to unwind — releasing
+    /// its model — before it loads its own, not just for the run to be told.
+    @MainActor
+    func testTranscriptionWaitsForTheActiveCleanupRunToEnd() async throws {
+        let normalizer = ScriptedNormalizer(blockingPieces: [0])
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")], normalizer: normalizer)
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await waitUntil { await normalizer.isBlocked }
+
+        let idle = IdleFlag()
+        let waiter = Task {
+            await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
+            await idle.set()
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let idleWhileRunning = await idle.value
+        XCTAssertFalse(idleWhileRunning, "A generating run is still active")
+
+        harness.queue.transcriptionDidBegin()
+        await waiter.value
+        let idleAfterPause = await idle.value
+        XCTAssertTrue(idleAfterPause)
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertEqual(harness.queue.intents.count, 1)
+        harness.queue.transcriptionDidEnd()
+        await normalizer.unblock()
+        await harness.queue.waitForCurrentRun()
+    }
+
+    /// A failed reread right after the raw transcript commits still leaves a
+    /// durable intent; the run takes its source from its own read.
+    @MainActor
+    func testFailedRereadAfterSaveStillQueuesTheCleanup() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.queue.start()
+        harness.store.failingReads = 1
+
+        harness.queue.enqueueSavedTranscript(recordingId: harness.recordingId, languageCode: "en")
+        XCTAssertNil(harness.queue.intents.first?.source)
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 1)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
     /// A job that finishes before the queue is started must not overwrite the
     /// saved queue — the earlier recordings would never be cleaned.
     @MainActor
@@ -1041,6 +1088,11 @@ private final class ProgressRecorder: @unchecked Sendable {
         defer { lock.unlock() }
         return updates
     }
+}
+
+private actor IdleFlag {
+    private(set) var value = false
+    func set() { value = true }
 }
 
 @MainActor
