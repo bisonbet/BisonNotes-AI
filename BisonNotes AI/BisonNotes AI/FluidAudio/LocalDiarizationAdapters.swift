@@ -50,7 +50,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
 
     func cacheDirectory(for method: LocalDiarizationMethod) async -> URL? {
         FluidAudioModelInfo.localSpeakerModelCacheDirectory(
-            methodRawValue: method.rawValue,
+            for: method,
             appSupportDirectory: appSupportDirectory
         )
     }

@@ -28,7 +28,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         let directories = LocalDiarizationMethod.allCases.map { method in
             FluidAudioModelInfo.localSpeakerModelCacheDirectory(
-                methodRawValue: method.rawValue,
+                for: method,
                 appSupportDirectory: appSupport
             )
         }
@@ -125,9 +125,35 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertEqual(LocalDiarizationMethod.offlineVBx.cacheFolderName, "offline-vbx")
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.cacheFolderName, "ls-eend-dihard3-500ms")
         XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.cacheFolderName, "nemotron3-c128-split-w8a8")
-        XCTAssertNil(
-            FluidAudioModelInfo.localSpeakerModelCacheDirectory(methodRawValue: "corrupt"),
-            "An unknown method must not be handed another method's cache"
+    }
+
+    /// A job saved by a build with a method this build lacks must still decode,
+    /// failing closed (labels off) rather than throwing.
+    func testUnknownMethodInSavedConfigurationDecodesWithLabelsOff() throws {
+        let json = Data(#"{"isEnabled":true,"method":"futureMethod"}"#.utf8)
+        let configuration = try JSONDecoder().decode(LocalSpeakerLabelsConfiguration.self, from: json)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration())
+
+        let roundTripped = try JSONDecoder().decode(
+            LocalSpeakerLabelsConfiguration.self,
+            from: JSONEncoder().encode(LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+        )
+        XCTAssertEqual(roundTripped, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+    }
+
+    func testUnknownMethodInSettingsRunsAsTheDefault() {
+        let suiteName = "LocalSpeakerLabelsSettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
+        defaults.set("futureMethod", forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
+
+        let configuration = LocalSpeakerLabelsConfiguration.currentUserChoice(from: defaults)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .defaultMethod))
+        XCTAssertEqual(
+            defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod),
+            "futureMethod",
+            "Reading the setting must not overwrite the user's stored choice"
         )
     }
 

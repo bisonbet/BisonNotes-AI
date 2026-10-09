@@ -87,6 +87,33 @@ public struct LocalSpeakerLabelsConfiguration: Codable, Equatable, Sendable {
         self.isEnabled = isEnabled
         self.method = method
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case method
+    }
+
+    /// A saved job whose method this build does not know — written by a build
+    /// with a newer method, or one since removed — fails closed: labels off,
+    /// rather than running a method nobody chose for that job. It decodes
+    /// instead of throwing, because a throw here discarded the whole persisted
+    /// envelope on the Core Data restore path, taking the job's model name and
+    /// transcript-cleanup choice with it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawMethod = try container.decodeIfPresent(String.self, forKey: .method)
+        let knownMethod = rawMethod.flatMap(LocalDiarizationMethod.init(rawValue:))
+        let wantsLabels = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        isEnabled = wantsLabels && knownMethod != nil
+        method = knownMethod ?? .defaultMethod
+        if wantsLabels, knownMethod == nil {
+            AppLog.shared.transcription(
+                "Unknown speaker-label method \"\(rawMethod ?? "none")\" in a saved job; "
+                    + "transcribing without speaker labels",
+                level: .default
+            )
+        }
+    }
 }
 
 /// A Foundation-only copy of the token timing data needed by the app. The

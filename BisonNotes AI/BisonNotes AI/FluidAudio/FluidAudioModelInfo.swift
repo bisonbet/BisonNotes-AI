@@ -92,16 +92,14 @@ struct FluidAudioModelInfo {
         return base?.appendingPathComponent("FluidAudio/Models/LocalSpeakerLabels", isDirectory: true)
     }
 
+    /// Takes the method itself, not a raw string, so an unknown value cannot
+    /// reach a cache path. nil only when Application Support is unavailable.
     static func localSpeakerModelCacheDirectory(
-        methodRawValue: String,
+        for method: LocalDiarizationMethod,
         appSupportDirectory: URL? = nil
     ) -> URL? {
-        guard let root = localSpeakerLabelsRoot(appSupportDirectory: appSupportDirectory),
-              let method = LocalDiarizationMethod(rawValue: methodRawValue)
-        else {
-            return nil
-        }
-        return root.appendingPathComponent(method.cacheFolderName, isDirectory: true)
+        localSpeakerLabelsRoot(appSupportDirectory: appSupportDirectory)?
+            .appendingPathComponent(method.cacheFolderName, isDirectory: true)
     }
 
     static func deleteCacheDirectory(
