@@ -67,16 +67,30 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     private var isInvalidated = false
     private var unwrittenCount = 0
     private var lastWrite = Date.distantPast
+    /// The invalidation of a discarded instance for the same file. Until it
+    /// finishes, that instance's delayed delete could remove this one's writes,
+    /// or its last write could hand this one the deleted text, so every file
+    /// access waits for it first.
+    private var predecessor: Task<Void, Never>?
 
-    init(url: URL) {
+    init(url: URL, after predecessor: Task<Void, Never>? = nil) {
         self.url = url
+        self.predecessor = predecessor
+    }
+
+    private func awaitPredecessor() async {
+        guard let predecessor else { return }
+        await predecessor.value
+        self.predecessor = nil
     }
 
     func outcome(forPiece key: String) async -> TranscriptCleanupPieceOutcome? {
-        loadedPayload().pieces[key]
+        await awaitPredecessor()
+        return loadedPayload().pieces[key]
     }
 
     func record(_ outcome: TranscriptCleanupPieceOutcome, forPiece key: String) async {
+        await awaitPredecessor()
         guard !isInvalidated else { return }
         var current = loadedPayload()
         current.pieces[key] = outcome
@@ -89,6 +103,7 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     }
 
     func flush() async {
+        await awaitPredecessor()
         guard !isInvalidated else { return }
         if unwrittenCount > 0 { write() }
     }
@@ -102,9 +117,11 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
 
     var hasBeenInvalidated: Bool { isInvalidated }
 
-    /// Number of finished passages on record, for tests and logging.
-    func recordedPieceCount() -> Int {
-        loadedPayload().pieces.count
+    /// Number of finished passages on record. The queue compares it across a
+    /// time-limited run to tell progress from a stall.
+    func recordedPieceCount() async -> Int {
+        await awaitPredecessor()
+        return loadedPayload().pieces.count
     }
 
     func remove() {
@@ -173,6 +190,9 @@ enum TranscriptCleanupCheckpointStore {
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var instances: [URL: WeakCheckpoint] = [:]
+    /// Invalidations of discarded instances still running, by file. A new
+    /// instance for the same file waits for its entry before touching it.
+    nonisolated(unsafe) private static var invalidations: [URL: Task<Void, Never>] = [:]
 
     static func url(for recordingId: UUID, in directory: URL = directory) -> URL {
         directory.appendingPathComponent("\(recordingId.uuidString).json", isDirectory: false)
@@ -185,7 +205,7 @@ enum TranscriptCleanupCheckpointStore {
         defer { lock.unlock() }
         if let existing = instances[url]?.value { return existing }
         instances = instances.filter { $0.value.value != nil }
-        let created = TranscriptCleanupFileCheckpoint(url: url)
+        let created = TranscriptCleanupFileCheckpoint(url: url, after: invalidations[url])
         instances[url] = WeakCheckpoint(created)
         return created
     }
@@ -196,16 +216,34 @@ enum TranscriptCleanupCheckpointStore {
     ///
     /// The invalidation runs on the checkpoint's actor after any write already
     /// in progress, and itself deletes the file; whatever order the two land
-    /// in, no file survives.
+    /// in, no file survives. A replacement transcript is often queued at once,
+    /// so a new instance for the same file waits for that invalidation before
+    /// its first read or write — the delayed delete cannot remove its work.
     static func discard(for recordingId: UUID, in directory: URL = directory) {
         let url = url(for: recordingId, in: directory)
         lock.lock()
-        let instance = instances.removeValue(forKey: url)?.value
-        lock.unlock()
-        if let instance {
-            Task { await instance.invalidate() }
+        if let instance = instances.removeValue(forKey: url)?.value {
+            let earlier = invalidations[url]
+            let invalidation = Task {
+                await earlier?.value
+                await instance.invalidate()
+            }
+            invalidations[url] = invalidation
+            Task {
+                await invalidation.value
+                forget(invalidation, for: url)
+            }
         }
+        lock.unlock()
         try? FileManager.default.removeItem(at: url)
+    }
+
+    private static func forget(_ invalidation: Task<Void, Never>, for url: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        if invalidations[url] == invalidation {
+            invalidations[url] = nil
+        }
     }
 
     /// Removes checkpoints nobody has touched for `maximumAge`, except those

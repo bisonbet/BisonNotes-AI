@@ -431,6 +431,34 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.url.path))
     }
 
+    /// A replacement transcript is queued straight after the old checkpoint is
+    /// discarded. The new checkpoint for the same file must not lose its work
+    /// to the old instance's delayed invalidation, nor read the deleted text.
+    @MainActor
+    func testReplacementCheckpointSurvivesTheDiscardedInstancesInvalidation() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingId = UUID()
+
+        let old = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: directory)
+        await old.record(.cleaned("Deleted text."), forPiece: "old")
+        await old.flush()
+
+        TranscriptCleanupCheckpointStore.discard(for: recordingId, in: directory)
+        let fresh = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: directory)
+        XCTAssertFalse(fresh === old)
+        await fresh.record(.cleaned("New."), forPiece: "new")
+        await fresh.flush()
+        try await waitUntil { await old.hasBeenInvalidated }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.url.path))
+        let reread = TranscriptCleanupFileCheckpoint(url: fresh.url)
+        let kept = await reread.outcome(forPiece: "new")
+        let deleted = await reread.outcome(forPiece: "old")
+        XCTAssertEqual(kept, .cleaned("New."))
+        XCTAssertNil(deleted)
+    }
+
     /// A queued cleanup's checkpoint survives an age-based prune; only
     /// abandoned checkpoints are removed.
     func testCheckpointPruneKeepsPendingRecordings() throws {
