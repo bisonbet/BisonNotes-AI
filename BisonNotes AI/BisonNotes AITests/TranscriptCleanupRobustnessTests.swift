@@ -148,19 +148,21 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
     }
 
     /// Hesitation-only turns clean to empty text without a model call. Short
-    /// turns of words that can be a complete answer still go to the model.
+    /// turns of words that can be a complete answer — including "Mhm.", which
+    /// is often a yes — still go to the model.
     func testHesitationOnlyTurnsSkipTheModelButShortAnswersDoNot() async {
-        let hesitation = makeSegment(text: "Um... uh, hmm.")
+        let hesitation = makeSegment(text: "Um... uh, er.")
         let answer = makeSegment(text: "You know.")
+        let affirmative = makeSegment(text: "Mhm.")
         let normalizer = ScriptedNormalizer()
 
         let result = await makeCoordinator(normalizer).clean(
-            segments: [hesitation, answer],
+            segments: [hesitation, answer, affirmative],
             configuration: englishConfiguration()
         )
 
         let requests = await normalizer.normalizationRequests
-        XCTAssertEqual(requests, [answer.text])
+        XCTAssertEqual(requests, [answer.text, affirmative.text])
         XCTAssertEqual(result.segments[0].cleanup?.normalizedText, "")
         XCTAssertNil(result.warning)
     }

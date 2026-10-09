@@ -67,11 +67,16 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// cleanup pass; longer substantive empty output remains invalid.
     private static let maxConservativeFallbackWords = 3
     private static let englishConfidenceThreshold = 0.9
+    /// How long one run may hold the process-wide MLX permit. A run that
+    /// reaches it stops with `.timeLimitReached`, keeping its checkpoint, so a
+    /// waiting summary gets the permit; the next run resumes where it stopped.
+    static let maximumRunDuration: TimeInterval = 10 * 60
     /// Pure hesitation sounds. A segment made only of these cleans to empty
     /// text without a model call — the outcome the model is already allowed to
     /// produce for them. Deliberately narrower than `isFillerOnly`'s list:
-    /// words like "you", "well" or "like" can be a complete spoken answer.
-    private static let hesitationWords: Set<String> = ["um", "uh", "erm", "er", "hmm", "mm", "mhm", "umm", "uhm"]
+    /// words like "you", "well" or "like" — and "mhm", "mm" or "hmm", which
+    /// are often a yes — can be a complete spoken answer.
+    private static let hesitationWords: Set<String> = ["um", "uh", "erm", "er", "umm", "uhm"]
 
     let normalizer: any TranscriptCleanupNormalizing
     private let availabilityProvider: @Sendable () -> TranscriptCleanupAvailability
@@ -169,23 +174,28 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
     }
 
+    /// Thrown when a run reaches `maximumRunDuration`.
+    private struct RunTimeLimitReached: Error {}
+
     /// Maps a run- or piece-ending error to the warning the user sees.
     private static func warning(for error: Error) -> TranscriptCleanupWarning {
         if error is CancellationError { return .cancelled }
+        if error is RunTimeLimitReached { return .timeLimitReached }
         switch error as? TranscriptCleanupNormalizerError {
         case .cancelled: return .cancelled
         case .modelUnavailable: return .missingModel
-        case .templateUnavailable, .generationFailed, .invalidRequest: return .resourceFailure
+        case .templateUnavailable, .generationFailed, .invalidRequest, .outputTruncated: return .resourceFailure
         case .invalidOutput, .none: return .invalidOutput
         }
     }
 
     /// Failures the same model would produce again for the same passage:
-    /// output it rejected, or a request that cannot be built. Timeouts and
-    /// generation errors are transient.
+    /// output it rejected, output that ran to the token cap at temperature 0,
+    /// or a request that cannot be built. Timeouts and generation errors are
+    /// transient.
     private static func isDeterministic(_ error: Error) -> Bool {
         switch error as? TranscriptCleanupNormalizerError {
-        case .invalidOutput, .invalidRequest: return true
+        case .invalidOutput, .invalidRequest, .outputTruncated: return true
         default: return false
         }
     }
@@ -233,6 +243,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         progress: (@Sendable (TranscriptCleanupProgress) -> Void)?,
         report: RunReport
     ) async throws -> TranscriptCleanupResult {
+        let deadline = Date().addingTimeInterval(Self.maximumRunDuration)
         let counter = TokenCounter(normalizer: normalizer)
         // The system prompt, control line and chat-template markup are a fixed
         // cost on every rendered request. Measuring it once lets both the
@@ -303,6 +314,10 @@ struct TranscriptCleanupCoordinator: Sendable {
                         outcome = saved
                         report.piecesResumed += 1
                     } else {
+                        // Resumed passages cost nothing; only new model work
+                        // is bounded. Finished passages are already in the
+                        // checkpoint, so the next run continues from here.
+                        guard Date() < deadline else { throw RunTimeLimitReached() }
                         do {
                             outcome = .cleaned(
                                 try await normalizedText(for: piece, overhead: overhead, counter: counter, report: report)
@@ -548,7 +563,7 @@ struct TranscriptCleanupCoordinator: Sendable {
 
         let retryPieces = try await whitespacePiecesForRetry(piece, counter: counter)
         guard retryPieces.count > 1 else {
-            throw TranscriptCleanupNormalizerError.generationFailed
+            throw TranscriptCleanupNormalizerError.outputTruncated
         }
 
         report.splitRetries += 1
@@ -610,6 +625,9 @@ struct TranscriptCleanupCoordinator: Sendable {
         guard generation.finishReason == .stop else {
             if generation.finishReason == .cancelled {
                 throw TranscriptCleanupNormalizerError.cancelled
+            }
+            if generation.finishReason == .length {
+                throw TranscriptCleanupNormalizerError.outputTruncated
             }
             throw TranscriptCleanupNormalizerError.generationFailed
         }

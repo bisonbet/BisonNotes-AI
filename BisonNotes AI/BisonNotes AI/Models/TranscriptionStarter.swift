@@ -275,10 +275,7 @@ final class TranscriptionStarter: ObservableObject {
                             languageCode: result.languageCode
                         )
                     )
-                    var cleanupWarning: TranscriptCleanupWarning?
-                    if case .blocked(let warning) = cleanupPreflight {
-                        cleanupWarning = warning
-                    }
+                    let cleanupWarning = cleanupPreflight.warning
 
                     lastTranscriptionWarning = result.speakerLabelWarning
                     lastTranscriptCleanupWarning = cleanupWarning
@@ -311,13 +308,11 @@ final class TranscriptionStarter: ObservableObject {
                             )
                         }
                         AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId)")
-                        TranscriptCleanupQueue.shared.transcriptReplaced(recordingId: recordingId)
-                        if cleanupPreflight == .ready {
-                            TranscriptCleanupQueue.shared.enqueueSavedTranscript(
-                                recordingId: recordingId,
-                                languageCode: result.languageCode
-                            )
-                        }
+                        TranscriptCleanupQueue.shared.transcriptSaved(
+                            recordingId: recordingId,
+                            preflight: cleanupPreflight,
+                            languageCode: result.languageCode
+                        )
 
                         let warnings = [
                             result.speakerLabelWarning?.userVisibleMessage,

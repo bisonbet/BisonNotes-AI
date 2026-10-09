@@ -887,9 +887,6 @@ class CoreDataManager: ObservableObject {
     /// another device — see `deleteRecording(id:enqueueCloudDeletion:)`.
     func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
         do {
-            // Read before the delete: afterwards there is no row to ask.
-            let transcriptRecordingId = try id.flatMap { try fetchTranscript(id: $0) }
-                .flatMap { $0.recordingId ?? $0.recording?.id }
             var effects = DeferredDeletionEffects()
             let didDelete = try performIsolatedMutation(operation: "transcript deletion") { isolatedContext in
                 guard try stageTranscriptDeletion(
@@ -911,12 +908,6 @@ class CoreDataManager: ObservableObject {
                 effects.commitLocalOnly()
             }
             AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
-            // Post-commit, for the user's own delete and another device's
-            // tombstone alike: withdraw any cleanup of this transcript and
-            // delete its checkpoint, which holds the deleted text.
-            if let transcriptRecordingId {
-                TranscriptCleanupQueue.shared.discard(recordingId: transcriptRecordingId)
-            }
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
             throw error
@@ -1043,8 +1034,6 @@ class CoreDataManager: ObservableObject {
             effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
             try effects.stageCloudMutations(in: isolatedContext)
         }
-        // Post-commit: the transcript is gone, so is any cleanup of it.
-        TranscriptCleanupQueue.shared.discard(recordingId: recordingId)
     }
 
     /// Applies another device's imported-audio tombstone: unlinks the recording from
@@ -1976,9 +1965,6 @@ class CoreDataManager: ObservableObject {
             context.delete(recording)
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
             AppLog.shared.coreData("Recording deleted: \(id)")
-            // Post-commit: a queued cleanup has nothing left to clean, and its
-            // checkpoint holds the deleted recording's text.
-            TranscriptCleanupQueue.shared.discard(recordingId: id)
         } catch {
             AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
             throw error
@@ -2070,6 +2056,9 @@ class CoreDataManager: ObservableObject {
         }
         #endif
 
+        // Read before the save: afterwards deleted rows have nothing to ask.
+        let deletedCleanupRecordingIds = Self.transcriptCleanupRecordingIds(deletedIn: saveContext)
+
         do {
             try saveContext.save()
         } catch let error as CoreDataSaveError {
@@ -2085,6 +2074,46 @@ class CoreDataManager: ObservableObject {
             )
             throw wrappedError
         }
+
+        // Post-commit, for every delete path — the user's, another device's
+        // tombstone, orphan and missing-file cleanup alike: withdraw cleanup of
+        // the deleted content and delete its checkpoint, which holds that text.
+        if !deletedCleanupRecordingIds.isEmpty {
+            afterCommit("Discarding transcript cleanup of deleted content", category: .coreData) {
+                for recordingId in deletedCleanupRecordingIds {
+                    TranscriptCleanupQueue.shared.discard(recordingId: recordingId)
+                }
+            }
+        }
+    }
+
+    /// Recordings whose transcript cleanup state describes content this save
+    /// deletes: a deleted recording, or a deleted transcript the recording
+    /// pointed at before the save. A superseded duplicate transcript is not the
+    /// one a queued cleanup or checkpoint describes, so it leaves them alone.
+    private static func transcriptCleanupRecordingIds(deletedIn context: NSManagedObjectContext) -> Set<UUID> {
+        var recordingIds = Set<UUID>()
+        for object in context.deletedObjects {
+            if let recording = object as? RecordingEntry, let recordingId = recording.id {
+                recordingIds.insert(recordingId)
+            } else if let transcript = object as? TranscriptEntry,
+                      let transcriptId = transcript.id,
+                      let recordingId = transcript.recordingId ?? transcript.recording?.id {
+                let recording = transcript.recording ?? {
+                    let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+                    request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
+                    request.fetchLimit = 1
+                    return (try? context.fetch(request))?.first
+                }()
+                // The committed value: the same save may already have unlinked it.
+                let currentTranscriptId = recording?.committedValues(forKeys: ["transcriptId"])["transcriptId"] as? UUID
+                    ?? recording?.transcript?.id
+                if currentTranscriptId == nil || currentTranscriptId == transcriptId {
+                    recordingIds.insert(recordingId)
+                }
+            }
+        }
+        return recordingIds
     }
 
     /// Performs a mutation in a sibling context so a failed save cannot roll

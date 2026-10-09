@@ -629,7 +629,19 @@ class BackgroundProcessingManager: ObservableObject {
 
     @Published var activeJobs: [ProcessingJob] = []
     @Published var processingStatus: JobProcessingStatus = .ready
-    @Published var currentJob: ProcessingJob?
+    @Published var currentJob: ProcessingJob? {
+        didSet {
+            guard oldValue?.id != currentJob?.id else { return }
+            // Queued transcript cleanup (S1-mini on the GPU) never runs beside
+            // a transcription job's ASR and speaker-label models: it pauses,
+            // keeping its checkpoint, and resumes when the job ends.
+            if currentJob?.type.isTranscription == true {
+                TranscriptCleanupQueue.shared.pause()
+            } else {
+                TranscriptCleanupQueue.shared.kick()
+            }
+        }
+    }
     @Published private(set) var jobLoadError: String? = nil
     @Published private(set) var recoveryIssues: [JobRecoveryIssue] = []
 
@@ -1631,7 +1643,7 @@ class BackgroundProcessingManager: ObservableObject {
                 segments: finalTranscriptData.segments,
                 configuration: cleanupConfiguration
             )
-            if case .blocked(let warning) = cleanupPreflight {
+            if let warning = cleanupPreflight.warning {
                 transcriptCleanupWarning = warning
                 AppLog.shared.backgroundProcessing(
                     "Transcript cleanup not queued: recording=\(recordingId.uuidString), category=\(warning.logCategory)",
@@ -1662,13 +1674,11 @@ class BackgroundProcessingManager: ObservableObject {
 
             // Post-commit: the previous transcript's cleanup state is stale
             // whether or not this one is cleaned.
-            TranscriptCleanupQueue.shared.transcriptReplaced(recordingId: recordingId)
-            if cleanupPreflight == .ready {
-                TranscriptCleanupQueue.shared.enqueueSavedTranscript(
-                    recordingId: recordingId,
-                    languageCode: detectedLanguageCode
-                )
-            }
+            TranscriptCleanupQueue.shared.transcriptSaved(
+                recordingId: recordingId,
+                preflight: cleanupPreflight,
+                languageCode: detectedLanguageCode
+            )
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {

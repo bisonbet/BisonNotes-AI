@@ -137,6 +137,10 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
     /// Cleanup was paused because the app left the foreground. Finished
     /// passages are kept and the run resumes from them.
     case paused
+    /// The run reached `TranscriptCleanupCoordinator.maximumRunDuration` and
+    /// stopped so other on-device model work could run. Finished passages are
+    /// kept and the next run resumes from them.
+    case timeLimitReached
 
     var errorDescription: String? { userVisibleMessage }
 
@@ -176,6 +180,9 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .paused:
             return "Transcript cleanup paused when the app left the foreground. "
                 + "Finished passages are kept; clean up again to continue from where it stopped."
+        case .timeLimitReached:
+            return "Transcript cleanup paused after 10 minutes so other on-device work could run. "
+                + "Finished passages are kept; clean up again to continue from where it stopped."
         }
     }
 
@@ -191,6 +198,7 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .cancelled: return "cancelled"
         case .partiallyCleaned: return "partially-cleaned"
         case .paused: return "paused"
+        case .timeLimitReached: return "time-limit"
         }
     }
 }
@@ -215,6 +223,9 @@ enum TranscriptCleanupNormalizerError: Error, Equatable, Sendable {
     case invalidRequest
     case invalidOutput
     case cancelled
+    /// The output ran to the token cap even after the split retry. At
+    /// temperature 0 the same passage does so every time.
+    case outputTruncated
 }
 
 /// Progress through one cleanup run, in passages (model-sized pieces of the
@@ -254,6 +265,12 @@ enum TranscriptCleanupPreflight: Sendable, Equatable {
     /// Cleanup cannot run; the warning says why. The original transcript stands.
     case blocked(TranscriptCleanupWarning)
     case ready
+
+    /// The warning to report with the raw transcript, if cleanup is blocked.
+    var warning: TranscriptCleanupWarning? {
+        if case .blocked(let warning) = self { return warning }
+        return nil
+    }
 }
 
 /// Normalization is injected so all chunking, validation, stale-result, and

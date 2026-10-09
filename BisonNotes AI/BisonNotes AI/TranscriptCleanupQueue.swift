@@ -163,21 +163,30 @@ enum TranscriptCleanupCheckpointStore {
         return base.appendingPathComponent("TranscriptCleanup/Checkpoints", isDirectory: true)
     }
 
+    /// Held weakly: an instance lives only while a run or editor holds it, so
+    /// a finished recording's cleaned passages do not stay in memory for the
+    /// life of the process. The next caller reloads the file.
+    private final class WeakCheckpoint {
+        weak var value: TranscriptCleanupFileCheckpoint?
+        init(_ value: TranscriptCleanupFileCheckpoint) { self.value = value }
+    }
+
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var instances: [URL: TranscriptCleanupFileCheckpoint] = [:]
+    nonisolated(unsafe) private static var instances: [URL: WeakCheckpoint] = [:]
 
     static func url(for recordingId: UUID, in directory: URL = directory) -> URL {
         directory.appendingPathComponent("\(recordingId.uuidString).json", isDirectory: false)
     }
 
-    /// The one checkpoint instance for this recording's file.
+    /// The one live checkpoint instance for this recording's file.
     static func checkpoint(for recordingId: UUID, in directory: URL = directory) -> TranscriptCleanupFileCheckpoint {
         let url = url(for: recordingId, in: directory)
         lock.lock()
         defer { lock.unlock() }
-        if let existing = instances[url] { return existing }
+        if let existing = instances[url]?.value { return existing }
+        instances = instances.filter { $0.value.value != nil }
         let created = TranscriptCleanupFileCheckpoint(url: url)
-        instances[url] = created
+        instances[url] = WeakCheckpoint(created)
         return created
     }
 
@@ -191,7 +200,7 @@ enum TranscriptCleanupCheckpointStore {
     static func discard(for recordingId: UUID, in directory: URL = directory) {
         let url = url(for: recordingId, in: directory)
         lock.lock()
-        let instance = instances.removeValue(forKey: url)
+        let instance = instances.removeValue(forKey: url)?.value
         lock.unlock()
         if let instance {
             Task { await instance.invalidate() }
@@ -322,7 +331,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         store: any TranscriptCleanupQueueStore = AppTranscriptCleanupQueueStore(),
         queueFileURL: URL = TranscriptCleanupQueue.defaultQueueFileURL,
         checkpointDirectory: URL = TranscriptCleanupCheckpointStore.directory,
-        canRunNow: @escaping @MainActor () -> Bool = TranscriptCleanupQueue.isAppInForeground,
+        canRunNow: @escaping @MainActor () -> Bool = TranscriptCleanupQueue.canRunByDefault,
         isCleanupEnabled: @escaping @MainActor () -> Bool = { TranscriptCleanupSettings.isEnabled() },
         notifyUser: @escaping @MainActor (String) -> Void = TranscriptCleanupQueue.postUserNotification,
         transientRetryDelay: TimeInterval = 30,
@@ -359,6 +368,14 @@ final class TranscriptCleanupQueue: ObservableObject {
         #else
         return true
         #endif
+    }
+
+    /// Foreground only, and never alongside a transcription job: S1-mini and
+    /// that job's ASR and speaker-label models would otherwise be resident
+    /// together. `BackgroundProcessingManager` pauses the queue when such a
+    /// job starts and kicks it when the job ends.
+    static func canRunByDefault() -> Bool {
+        isAppInForeground() && BackgroundProcessingManager.shared.currentJob?.type.isTranscription != true
     }
 
     /// Loads pending intents and begins running them. Call once app data is
@@ -427,20 +444,54 @@ final class TranscriptCleanupQueue: ObservableObject {
         }
     }
 
+    /// Call after a new raw transcript commits. The previous transcript's
+    /// cleanup state is discarded, and the new one is queued when its preflight
+    /// allows. Every path that saves a fresh transcript goes through here.
+    func transcriptSaved(recordingId: UUID, preflight: TranscriptCleanupPreflight, languageCode: String?) {
+        transcriptReplaced(recordingId: recordingId)
+        if preflight == .ready {
+            enqueueSavedTranscript(recordingId: recordingId, languageCode: languageCode)
+        }
+    }
+
     /// Withdraws a queued or running cleanup — for example when the user starts
     /// one by hand. The checkpoint is kept, so the manual run starts from it.
-    func cancel(recordingId: UUID) {
+    /// Returns the withdrawn intent so a manual run that does not finish can
+    /// hand it back with `restore`.
+    @discardableResult
+    func cancel(recordingId: UUID) -> TranscriptCleanupIntent? {
         loadIntentsIfNeeded()
-        let hadIntent = intents.contains { $0.recordingId == recordingId }
+        let withdrawn = intents.first { $0.recordingId == recordingId }
         intents.removeAll { $0.recordingId == recordingId }
-        if hadIntent { persistIntents() }
+        if withdrawn != nil { persistIntents() }
         if activeRecordingId == recordingId {
             runTask?.cancel()
         }
+        return withdrawn
+    }
+
+    /// Re-queues an intent withdrawn by `cancel`. Its source snapshot is kept,
+    /// so it is dropped as stale if the transcript changed in the meantime.
+    func restore(_ intent: TranscriptCleanupIntent) {
+        guard !hasPendingCleanup(for: intent.recordingId) else { return }
+        enqueue(recordingId: intent.recordingId, source: intent.source, languageCode: intent.languageCode)
     }
 
     func hasPendingCleanup(for recordingId: UUID) -> Bool {
         intents.contains { $0.recordingId == recordingId }
+    }
+
+    /// What the transcript editor shows for one recording's queued cleanup.
+    struct RecordingStatus: Equatable {
+        let isActive: Bool
+        let progress: TranscriptCleanupProgress?
+    }
+
+    /// Nil when nothing is queued or running for the recording.
+    func status(for recordingId: UUID) -> RecordingStatus? {
+        let isActive = activeRecordingId == recordingId
+        guard isActive || hasPendingCleanup(for: recordingId) else { return nil }
+        return RecordingStatus(isActive: isActive, progress: progress[recordingId])
     }
 
     /// The recording was deleted: withdraw its cleanup and delete its
@@ -558,6 +609,7 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
+        let finishedBefore = await checkpoint.recordedPieceCount()
         let result = await coordinator.clean(
             segments: transcript.segments,
             configuration: TranscriptCleanupConfiguration(
@@ -577,21 +629,43 @@ final class TranscriptCleanupQueue: ObservableObject {
         // A pause or withdrawal can land after the coordinator's last
         // cancellation check, leaving a complete result with no `.cancelled`
         // warning. It must still not be saved: Cancel, a superseding manual
-        // cleanup and backgrounding all mean "do not publish this". Every
-        // finished passage is already in the checkpoint, so resuming is cheap.
+        // cleanup and backgrounding all mean "do not publish this". Paused, or
+        // withdrawn by `cancel` — which already removed the intent — either way
+        // the checkpoint keeps every finished passage for whoever resumes.
         if Task.isCancelled {
             return
         }
 
         if result.warning == .cancelled {
-            if Task.isCancelled {
-                // Paused, or withdrawn by `cancel` — which already removed the
-                // intent. Either way the checkpoint stays for whoever resumes.
-                return
-            }
             // Cancelled by something other than this queue. Keeping the
             // intent would restart it at once from `kick`, in a loop.
             await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: .resourceFailure)
+            return
+        }
+
+        if result.warning == .timeLimitReached {
+            // The run stopped so other on-device model work could take the
+            // permit. If it finished new passages, go to the back of the queue
+            // and continue later; if it finished none, count it as a transient
+            // failure so a run that never progresses is eventually given up.
+            let finishedAfter = await checkpoint.recordedPieceCount()
+            if Task.isCancelled { return }
+            if finishedAfter > finishedBefore {
+                transientFailures[recordingId] = nil
+                intents.removeAll { $0 == intent }
+                intents.append(intent)
+                persistIntents()
+                AppLog.shared.transcription(
+                    "[TranscriptCleanup] Run reached its time limit; \(finishedAfter) passage(s) kept, continuing later"
+                )
+            } else {
+                await deferAfterTransientFailure(
+                    intent,
+                    checkpoint: checkpoint,
+                    reason: "finish a passage within the run time limit",
+                    error: TranscriptCleanupWarning.timeLimitReached
+                )
+            }
             return
         }
 
@@ -612,13 +686,28 @@ final class TranscriptCleanupQueue: ObservableObject {
         let keepsResult = result.cleanedSegmentCount > 0
             && (result.warning == nil || result.warning?.keepsCleanedResult == true)
         guard keepsResult else {
+            if result.warning == .resourceFailure {
+                // Every passage failed for a reason that may pass — a timeout,
+                // a GPU or memory error. Retry like a store failure instead of
+                // giving the cleanup up after one attempt; repeatable failures
+                // are in the checkpoint, so a retry does not redo them.
+                await deferAfterTransientFailure(
+                    intent,
+                    checkpoint: checkpoint,
+                    reason: "clean the transcript",
+                    error: TranscriptCleanupWarning.resourceFailure
+                )
+                return
+            }
             // Nothing usable. Keep the checkpoint: a later manual run — after
             // downloading the model, say — reuses whatever did finish.
             await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: result.warning)
             return
         }
 
-        // The re-read above is another point a pause or withdrawal can land.
+        // Nothing has suspended since the check above, but the synchronous
+        // store re-read can re-enter the queue — a notification observer that
+        // withdraws or pauses this run — so check once more before saving.
         if Task.isCancelled {
             return
         }
