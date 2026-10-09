@@ -423,14 +423,7 @@ private extension FluidAudioSettingsView {
     }
 
     private func localMethodBadgeText(_ method: LocalDiarizationMethod) -> String {
-        switch method {
-        case .offlineVBx:
-            return "Recommended"
-        case .betaNemotron3:
-            return "Beta"
-        case .experimentalLSEEND:
-            return "Experimental"
-        }
+        method.tier.badgeText
     }
 
     private func localMethodSpeakerCount(_ method: LocalDiarizationMethod) -> some View {

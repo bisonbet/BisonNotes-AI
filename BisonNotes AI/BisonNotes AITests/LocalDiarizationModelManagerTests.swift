@@ -8,8 +8,9 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.maximumSupportedSpeakerCount, 10)
         XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.maximumSupportedSpeakerCount, 8)
         XCTAssertNil(LocalDiarizationMethod.betaNemotron3.maximumSupportedDuration)
-        XCTAssertTrue(LocalDiarizationMethod.betaNemotron3.isBeta)
-        XCTAssertFalse(LocalDiarizationMethod.betaNemotron3.isExperimental)
+        XCTAssertEqual(LocalDiarizationMethod.offlineVBx.tier.badgeText, "Recommended")
+        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.tier.badgeText, "Beta")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.tier.badgeText, "Experimental")
         XCTAssertEqual(
             FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue("corrupt"),
             LocalDiarizationMethod.offlineVBx.rawValue
@@ -117,6 +118,41 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: layout.preEncodeProjection.path))
         XCTAssertTrue(LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout))
+    }
+
+    /// Every way a cached fp32 asset can be bad reports Download Required,
+    /// which the user can act on, rather than a raw Cocoa error.
+    func testUnreadableOrMissizedAssetsReportDownloadRequired() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("float-asset-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let valid = root.appendingPathComponent("valid.bin")
+        let values: [Float] = [0.5, -1, 2]
+        try values.withUnsafeBytes { Data($0) }.write(to: valid)
+        XCTAssertEqual(
+            try LocalDiarizationAssetValidator.readFloatAsset(at: valid, byteCount: 12, method: .betaNemotron3),
+            values
+        )
+
+        let missized = root.appendingPathComponent("missized.bin")
+        try Data(count: 8).write(to: missized)
+        // A directory where the file should be: present, but not readable as data.
+        let unreadable = root.appendingPathComponent("unreadable.bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        let missing = root.appendingPathComponent("missing.bin")
+
+        for url in [missized, unreadable, missing] {
+            XCTAssertThrowsError(
+                try LocalDiarizationAssetValidator.readFloatAsset(at: url, byteCount: 12, method: .betaNemotron3),
+                url.lastPathComponent
+            ) { error in
+                guard case LocalDiarizationError.downloadRequired(.betaNemotron3) = error else {
+                    return XCTFail("\(url.lastPathComponent): expected downloadRequired, got \(error)")
+                }
+            }
+        }
     }
 
     /// These folder names are on users' disks. A rename here orphans every

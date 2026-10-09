@@ -37,12 +37,17 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    public var isExperimental: Bool {
-        self == .experimentalLSEEND
-    }
-
-    public var isBeta: Bool {
-        self == .betaNemotron3
+    /// The single source for how a method is presented: the settings badge
+    /// reads this rather than keeping its own switch.
+    public var tier: LocalDiarizationMethodTier {
+        switch self {
+        case .offlineVBx:
+            return .recommended
+        case .betaNemotron3:
+            return .beta
+        case .experimentalLSEEND:
+            return .experimental
+        }
     }
 
     /// LS-EEND's completed-file contract is limited to one hour. VBx and
@@ -71,6 +76,23 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return 10
         case .betaNemotron3:
             return 8
+        }
+    }
+}
+
+public enum LocalDiarizationMethodTier: Sendable {
+    case recommended
+    case beta
+    case experimental
+
+    public var badgeText: String {
+        switch self {
+        case .recommended:
+            return "Recommended"
+        case .beta:
+            return "Beta"
+        case .experimental:
+            return "Experimental"
         }
     }
 }

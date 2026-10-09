@@ -37,8 +37,8 @@ final class LocalDiarizationAudioReader {
     private let file: AVAudioFile
     private let converter: AVAudioConverter
     private let inputBuffer: AVAudioPCMBuffer
-    private let outputFormat: AVAudioFormat
-    private let outputCapacity: AVAudioFrameCount
+    /// Allocated once and reused: a multi-hour file is thousands of blocks.
+    private let outputBuffer: AVAudioPCMBuffer
     private var inputExhausted = false
     private var finished = false
 
@@ -56,7 +56,14 @@ final class LocalDiarizationAudioReader {
             interleaved: false
         ),
         let converter = AVAudioConverter(from: inputFormat, to: outputFormat),
-        let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: sourceBlockFrames)
+        let inputBuffer = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: sourceBlockFrames),
+        // Headroom for the resampler's filter tail on the final block.
+        let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: outputFormat,
+            frameCapacity: AVAudioFrameCount(
+                (Double(sourceBlockFrames) * sampleRate / inputFormat.sampleRate).rounded(.up)
+            ) + 1_024
+        )
         else {
             throw ReaderError.unsupportedFormat
         }
@@ -67,12 +74,9 @@ final class LocalDiarizationAudioReader {
         self.file = file
         self.converter = converter
         self.inputBuffer = inputBuffer
-        self.outputFormat = outputFormat
+        self.outputBuffer = outputBuffer
         self.sourceFrameCount = file.length
         self.sourceSampleRate = inputFormat.sampleRate
-        let ratio = sampleRate / inputFormat.sampleRate
-        // Headroom for the resampler's filter tail on the final block.
-        self.outputCapacity = AVAudioFrameCount((Double(sourceBlockFrames) * ratio).rounded(.up)) + 1_024
     }
 
     /// The source's length in seconds, or nil when the file reports no length.
@@ -91,9 +95,8 @@ final class LocalDiarizationAudioReader {
     /// converter's buffered tail are both drained.
     func nextBlock() throws -> [Float]? {
         guard !finished else { return nil }
-        guard let output = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: outputCapacity) else {
-            throw ReaderError.conversionFailed
-        }
+        let output = outputBuffer
+        output.frameLength = 0
 
         var readError: Error?
         var conversionError: NSError?

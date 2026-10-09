@@ -121,6 +121,21 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             throw LocalDiarizationError.downloadRequired(method)
         }
 
+        // Nemotron 3 is built from the verified cache by hand and never touches
+        // `ModelHub`, so it does not take the process-wide hub gate. A Neural
+        // Engine recompile after an OS update can take several seconds, and
+        // holding the gate through it stalled every Parakeet, VBx and LS-EEND
+        // prepare or load queued behind it.
+        if method == .betaNemotron3 {
+            guard let config = Self.nemotron3Config else {
+                throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+            }
+            return try await Self.makeNemotron3Runner(
+                layout: Self.nemotron3Layout(at: directory, config: config),
+                config: config
+            )
+        }
+
         return try await FluidAudioModelHubGate.shared.withExclusiveAccess(mode: .offline) {
             switch method {
             case .offlineVBx:
@@ -139,18 +154,8 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                 let diarizer = try LSEENDDiarizer(model: model)
                 return LSEENDRunner(diarizer: diarizer)
             case .betaNemotron3:
-                guard let config = Self.nemotron3Config else {
-                    throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
-                }
-                // Built from the verified cache by hand rather than through
-                // `Nemotron3Models.loadFromHuggingFace`, which deletes and
-                // re-downloads a cache whose weights marker has changed. That is
-                // right for the explicit download, never for a transcription.
-                let models = try Self.loadNemotron3ModelsFromCache(
-                    Self.nemotron3Layout(at: directory, config: config),
-                    config: config
-                )
-                return Nemotron3Runner(diarizer: Nemotron3Diarizer(config: config, models: models))
+                // Handled above, outside the gate.
+                throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
             }
         }
     }
@@ -296,32 +301,54 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         )
     }
 
-    private nonisolated static func loadNemotron3ModelsFromCache(
-        _ layout: Nemotron3AssetLayout,
+    /// Built from the verified cache by hand rather than through
+    /// `Nemotron3Models.loadFromHuggingFace`, which deletes and re-downloads a
+    /// cache whose weights marker has changed. That is right for the explicit
+    /// download, never for a transcription.
+    ///
+    /// Everything a cache can do wrong — an asset that cannot be read, has the
+    /// wrong size, or a compiled bundle Core ML rejects — is reported as
+    /// Download Required, the one condition the user can act on. The underlying
+    /// error is logged rather than shown.
+    private nonisolated static func makeNemotron3Runner(
+        layout: Nemotron3AssetLayout,
         config: Nemotron3Config
-    ) throws -> Nemotron3Models {
+    ) async throws -> Nemotron3Runner {
+        let silenceEmbedding = try LocalDiarizationAssetValidator.readFloatAsset(
+            at: layout.silenceEmbedding,
+            byteCount: layout.silenceEmbeddingByteCount,
+            method: .betaNemotron3
+        )
+        let preEncodeProjection = try layout.preEncodeProjectionByteCount.map {
+            try LocalDiarizationAssetValidator.readFloatAsset(
+                at: layout.preEncodeProjection,
+                byteCount: $0,
+                method: .betaNemotron3
+            )
+        }
+
         let configuration = MLModelConfiguration()
         configuration.computeUnits = nemotron3ComputeUnits
-        let model = try MLModel(contentsOf: layout.modelBundle, configuration: configuration)
-        return try Nemotron3Models(
-            config: config,
-            model: model,
-            silenceEmbedding: try floats(
-                at: layout.silenceEmbedding,
-                byteCount: layout.silenceEmbeddingByteCount
-            ),
-            preEncodeProjection: try layout.preEncodeProjectionByteCount.map {
-                try floats(at: layout.preEncodeProjection, byteCount: $0)
-            }
-        )
-    }
-
-    private nonisolated static func floats(at url: URL, byteCount: Int) throws -> [Float] {
-        let data = try Data(contentsOf: url)
-        guard data.count == byteCount else {
+        let model: MLModel
+        do {
+            // Async so a Neural Engine recompile does not block a cooperative thread.
+            model = try await MLModel.load(contentsOf: layout.modelBundle, configuration: configuration)
+        } catch {
+            try Task.checkCancellation()
+            AppLog.shared.transcription(
+                "Nemotron 3 model bundle failed to load: \(error.localizedDescription)",
+                level: .error
+            )
             throw LocalDiarizationError.downloadRequired(.betaNemotron3)
         }
-        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+
+        let models = try Nemotron3Models(
+            config: config,
+            model: model,
+            silenceEmbedding: silenceEmbedding,
+            preEncodeProjection: preEncodeProjection
+        )
+        return Nemotron3Runner(diarizer: Nemotron3Diarizer(config: config, models: models))
     }
 
     private nonisolated static func loadOfflineVBxModelsFromCache(
