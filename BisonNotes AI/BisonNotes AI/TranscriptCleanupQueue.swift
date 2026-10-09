@@ -61,6 +61,10 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
 
     nonisolated let url: URL
     private var payload: Payload?
+    /// Set when the checkpoint's transcript or recording is deleted. A run
+    /// holding this instance can still be finishing a passage; without this,
+    /// its `record` and `flush` re-created the file with the deleted text.
+    private var isInvalidated = false
     private var unwrittenCount = 0
     private var lastWrite = Date.distantPast
 
@@ -73,6 +77,7 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     }
 
     func record(_ outcome: TranscriptCleanupPieceOutcome, forPiece key: String) async {
+        guard !isInvalidated else { return }
         var current = loadedPayload()
         current.pieces[key] = outcome
         current.updatedAt = Date()
@@ -84,8 +89,18 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     }
 
     func flush() async {
+        guard !isInvalidated else { return }
         if unwrittenCount > 0 { write() }
     }
+
+    /// Deletes the file and ignores every later write, permanently. For a
+    /// deleted transcript or recording, whose text must not come back.
+    func invalidate() {
+        isInvalidated = true
+        remove()
+    }
+
+    var hasBeenInvalidated: Bool { isInvalidated }
 
     /// Number of finished passages on record, for tests and logging.
     func recordedPieceCount() -> Int {
@@ -126,6 +141,7 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     }
 
     private func loadedPayload() -> Payload {
+        if isInvalidated { return .empty() }
         if let payload { return payload }
         let loaded: Payload
         if let data = try? Data(contentsOf: url),
@@ -166,14 +182,19 @@ enum TranscriptCleanupCheckpointStore {
     }
 
     /// Deletes a recording's checkpoint — it holds that recording's cleaned
-    /// text — and forgets the instance so nothing writes it back.
+    /// text — and invalidates the instance, so a run still holding it cannot
+    /// write it back. A later cleanup of the same recording gets a new one.
+    ///
+    /// The invalidation runs on the checkpoint's actor after any write already
+    /// in progress, and itself deletes the file; whatever order the two land
+    /// in, no file survives.
     static func discard(for recordingId: UUID, in directory: URL = directory) {
         let url = url(for: recordingId, in: directory)
         lock.lock()
         let instance = instances.removeValue(forKey: url)
         lock.unlock()
         if let instance {
-            Task { await instance.remove() }
+            Task { await instance.invalidate() }
         }
         try? FileManager.default.removeItem(at: url)
     }

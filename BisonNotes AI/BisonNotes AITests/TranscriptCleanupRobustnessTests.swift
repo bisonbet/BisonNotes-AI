@@ -368,6 +368,44 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(result.segments.allSatisfy { $0.cleanup == nil })
     }
 
+    /// A run still holding a discarded checkpoint — its transcript was deleted
+    /// mid-passage — must not write it back, whether its write lands after the
+    /// discard or just before it.
+    @MainActor
+    func testDiscardedCheckpointCannotBeWrittenBackByARunStillHoldingIt() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        // The run's write lands after the discard.
+        let late = UUID()
+        let lateCheckpoint = TranscriptCleanupCheckpointStore.checkpoint(for: late, in: directory)
+        await lateCheckpoint.record(.cleaned("Deleted text."), forPiece: "a")
+        await lateCheckpoint.flush()
+        TranscriptCleanupCheckpointStore.discard(for: late, in: directory)
+        try await waitUntil { await lateCheckpoint.hasBeenInvalidated }
+        await lateCheckpoint.record(.cleaned("More deleted text."), forPiece: "b")
+        await lateCheckpoint.flush()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: lateCheckpoint.url.path))
+        let afterDiscard = await lateCheckpoint.outcome(forPiece: "a")
+        XCTAssertNil(afterDiscard)
+
+        // The run's write lands just before the invalidation runs.
+        let early = UUID()
+        let earlyCheckpoint = TranscriptCleanupCheckpointStore.checkpoint(for: early, in: directory)
+        TranscriptCleanupCheckpointStore.discard(for: early, in: directory)
+        await earlyCheckpoint.record(.cleaned("Deleted text."), forPiece: "a")
+        await earlyCheckpoint.flush()
+        try await waitUntil { await earlyCheckpoint.hasBeenInvalidated }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: earlyCheckpoint.url.path))
+
+        // A later cleanup of the same recording starts a fresh, writable one.
+        let fresh = TranscriptCleanupCheckpointStore.checkpoint(for: early, in: directory)
+        XCTAssertFalse(fresh === earlyCheckpoint)
+        await fresh.record(.cleaned("New."), forPiece: "a")
+        await fresh.flush()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.url.path))
+    }
+
     /// A queued cleanup's checkpoint survives an age-based prune; only
     /// abandoned checkpoints are removed.
     func testCheckpointPruneKeepsPendingRecordings() throws {
