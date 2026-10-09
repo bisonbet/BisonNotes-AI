@@ -425,16 +425,31 @@ final class TranscriptCleanupQueue: ObservableObject {
         runTask?.cancel()
     }
 
+    /// Call when the cleanup setting may have changed. Turning cleanup off
+    /// withdraws every queued cleanup and cancels the one that is running —
+    /// checking only before the next run let an active run keep generating and
+    /// save cleaned text after the user had turned the feature off. Finished
+    /// passages stay in their checkpoints in case it is turned back on.
+    func cleanupSettingDidChange() {
+        guard !isCleanupEnabled(), !intents.isEmpty || runTask != nil else { return }
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Cleanup was turned off; withdrawing \(intents.count) queued cleanup(s)"
+        )
+        // Withdraw first, so the cancelled run ends as withdrawn — not paused,
+        // which would leave its intent to run again.
+        if !intents.isEmpty {
+            intents.removeAll()
+            persistIntents()
+        }
+        runTask?.cancel()
+    }
+
     /// Starts the next intent if nothing is running and the app may use the GPU.
     func kick() {
         guard started, runTask == nil else { return }
-        if !intents.isEmpty, !isCleanupEnabled() {
+        if !isCleanupEnabled() {
             // Turning cleanup off stops work already queued, not just new work.
-            AppLog.shared.transcription(
-                "[TranscriptCleanup] Cleanup was turned off; dropping \(intents.count) queued cleanup(s)"
-            )
-            intents.removeAll()
-            persistIntents()
+            cleanupSettingDidChange()
             return
         }
         guard store.isAvailable, canRunNow(), let next = intents.first else {
@@ -545,6 +560,14 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
+        guard isCleanupEnabled() else {
+            // Turned off while this run was generating, by a path the settings
+            // observer did not see. Do not save text the user opted out of.
+            AppLog.shared.transcription("[TranscriptCleanup] Cleanup was turned off during a run; result not saved")
+            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false)
+            return
+        }
+
         do {
             try store.saveCleanedSegments(result.segments, for: current, recordingId: recordingId)
         } catch {
@@ -588,6 +611,17 @@ final class TranscriptCleanupQueue: ObservableObject {
 
     private func observeLifecycle() {
         let center = NotificationCenter.default
+        // The toggle, Reset to Defaults and a settings restore all write the
+        // same UserDefaults key; observing the store catches every one of them.
+        observers.append(
+            center.addObserver(
+                forName: UserDefaults.didChangeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.cleanupSettingDidChange() }
+            }
+        )
         observers.append(
             center.addObserver(
                 forName: PlatformLifecycle.didBecomeActiveNotification,

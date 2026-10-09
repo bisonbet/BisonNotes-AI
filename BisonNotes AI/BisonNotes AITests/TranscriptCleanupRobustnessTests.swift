@@ -502,6 +502,53 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(harness.queue.intents.isEmpty)
     }
 
+    /// Turning cleanup off must stop a run that is already generating, not
+    /// only runs that have not started.
+    @MainActor
+    func testTurningCleanupOffCancelsTheActiveRun() async throws {
+        let normalizer = ScriptedNormalizer(blockingPieces: [1])
+        let harness = try QueueHarness(
+            segments: [makeSegment(text: "first segment text"), makeSegment(text: "second segment text")],
+            normalizer: normalizer
+        )
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await waitUntil { await normalizer.isBlocked }
+
+        harness.isCleanupEnabled = false
+        harness.queue.cleanupSettingDidChange()
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertTrue(harness.queue.intents.isEmpty, "A withdrawn run must not stay queued as if paused")
+        harness.queue.kick()
+        await harness.queue.waitForCurrentRun()
+        let requests = await normalizer.normalizationRequests
+        XCTAssertEqual(requests.count, 2, "Nothing runs again while cleanup is off")
+    }
+
+    /// If the setting changes by a path the observer misses, a run that
+    /// finishes afterwards still must not save cleaned text.
+    @MainActor
+    func testRunThatFinishesAfterCleanupWasTurnedOffDoesNotSave() async throws {
+        let normalizer = ScriptedNormalizer(blockingPieces: [0])
+        let harness = try QueueHarness(
+            segments: [makeSegment(text: "the deadline is Friday")],
+            normalizer: normalizer
+        )
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await waitUntil { await normalizer.isBlocked }
+
+        harness.isCleanupEnabled = false
+        await normalizer.unblock()
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertNil(harness.store.transcript?.segments.first?.cleanup)
+    }
+
     /// A cancellation the queue did not ask for is a failure, not a pause;
     /// keeping the intent would restart it in a loop.
     @MainActor
