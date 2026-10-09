@@ -258,57 +258,35 @@ final class TranscriptionStarter: ObservableObject {
                     guard let recordingId = recording.id else {
                         throw BackgroundProcessingError.recordingIdentityUnavailable(transcriptionURL)
                     }
-                    let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
-                        transcript: try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
-                    )
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(
                         at: transcriptionURL,
                         using: selectedEngine,
-                        recordingId: recordingId,
-                        performTranscriptCleanup: cleanupConfiguration.enabled,
-                        transcriptCleanupConfiguration: cleanupConfiguration
+                        recordingId: recordingId
                     )
                     try Task.checkCancellation()
 
-                    // Only the derived cleanup can go stale here; the ASR result
-                    // is still saved below. Returning early discarded a completed
-                    // transcription and skipped the temporary-audio cleanup at
-                    // the end of this method.
-                    let isCleanupSourceStale: Bool
-                    if cleanupConfiguration.enabled {
-                        guard try appCoordinator.coreDataManager.fetchRecording(id: recordingId) != nil else {
-                            isCleanupSourceStale = true
-                            throw BackgroundProcessingError.recordingDeletedDuringProcessing
-                        }
-                        isCleanupSourceStale = !cleanupSourceSnapshot.matches(
-                            try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
+                    // Model-free checks only; the cleanup itself is queued
+                    // after the raw transcript below is saved.
+                    let cleanupPreflight = await TranscriptCleanupCoordinator.shared.preflight(
+                        segments: result.segments,
+                        configuration: TranscriptCleanupConfiguration(
+                            enabled: cleanupConfiguration.enabled,
+                            mode: .automatic,
+                            languageCode: result.languageCode
                         )
-                    } else {
-                        isCleanupSourceStale = false
-                    }
-                    if isCleanupSourceStale {
-                        AppLog.shared.transcription(
-                            "Discarded stale direct transcription cleanup result, keeping uncleaned transcript: "
-                                + "recording=\(recordingId.uuidString)",
-                            level: .info
-                        )
+                    )
+                    var cleanupWarning: TranscriptCleanupWarning?
+                    if case .blocked(let warning) = cleanupPreflight {
+                        cleanupWarning = warning
                     }
 
-                    let cleanupWarning = isCleanupSourceStale
-                        ? TranscriptCleanupWarning.staleResult
-                        : result.transcriptCleanupWarning
                     lastTranscriptionWarning = result.speakerLabelWarning
                     lastTranscriptCleanupWarning = cleanupWarning
                     AppLog.shared.transcription("Transcription result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
                         let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
-                        // The warning above says the cleaned result was
-                        // discarded, so it must not be persisted with the ASR
-                        // segments it was derived alongside.
-                        let segmentsToSave = isCleanupSourceStale
-                            ? result.segments.map { $0.withCleanup(nil) }
-                            : result.segments
+                        let segmentsToSave = result.segments.map { $0.withCleanup(nil) }
                         let transcriptData = TranscriptData(
                             recordingId: recordingId,
                             recordingURL: identityURL,
@@ -333,6 +311,12 @@ final class TranscriptionStarter: ObservableObject {
                             )
                         }
                         AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId)")
+                        if cleanupPreflight == .ready {
+                            TranscriptCleanupQueue.shared.enqueueSavedTranscript(
+                                recordingId: recordingId,
+                                languageCode: result.languageCode
+                            )
+                        }
 
                         let warnings = [
                             result.speakerLabelWarning?.userVisibleMessage,

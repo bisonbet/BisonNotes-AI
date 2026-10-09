@@ -36,12 +36,15 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
 
     private static let generationTimeoutNanoseconds: UInt64 = 120_000_000_000
     /// MLX's default cache limit scales with host memory and can retain several
-    /// GB of reusable Metal buffers during a long transcript cleanup pass.
-    /// Keep enough room for normal buffer reuse without making the cache the
-    /// dominant part of the app's memory footprint.
-    private static let memoryCacheLimitBytes = 32 * 1024 * 1024
+    /// GB of reusable Metal buffers during a long cleanup pass. 32 MB — the
+    /// summary engine's value, which this used to share — is too small for
+    /// S1-mini's per-step temporaries, so buffers were freed and reallocated on
+    /// every token. 128 MB keeps reuse working while staying a small fraction
+    /// of the ~650 MB model. The previous limit is restored on release.
+    private static let memoryCacheLimitBytes = 128 * 1024 * 1024
 
     private var modelContainer: ModelContainer?
+    private var previousCacheLimit: Int?
 
     var isReady: Bool {
         TranscriptCleanupSettings.availability.isAvailable
@@ -77,25 +80,18 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
         }
 
         let messages = TranscriptCleanupSettings.messages(for: rawText)
-        let promptTokens = try tokenizer.applyChatTemplate(
-            messages: messages,
-            chatTemplate: nil,
-            addGenerationPrompt: true,
-            truncation: false,
-            maxLength: nil,
-            tools: nil,
-            additionalContext: ["enable_thinking": false]
-        )
-        guard promptTokens.count <= TranscriptCleanupCoordinator.maxRenderedInputTokens else {
-            throw TranscriptCleanupNormalizerError.invalidRequest
-        }
-
+        // `prepare` renders the chat template; its token count is the request
+        // size, so the template is rendered once here rather than once to
+        // measure and again to prepare.
         let input = try await container.prepare(
             input: UserInput(
                 messages: messages,
                 additionalContext: ["enable_thinking": false]
             )
         )
+        guard input.text.tokens.size <= TranscriptCleanupCoordinator.maxRenderedInputTokens else {
+            throw TranscriptCleanupNormalizerError.invalidRequest
+        }
         // This deliberately does not call
         // `SummaryThinkingModelCatalog.completionTokenBudget(...)`. That rule
         // sizes a *summary* request whose cap has to cover a model's reasoning
@@ -153,6 +149,10 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
         let before = Memory.snapshot()
         modelContainer = nil
         Memory.clearCache()
+        if let previousCacheLimit {
+            Memory.cacheLimit = previousCacheLimit
+            self.previousCacheLimit = nil
+        }
         let after = Memory.snapshot()
         let beforeTotal = before.activeMemory + before.cacheMemory
         let afterTotal = after.activeMemory + after.cacheMemory
@@ -175,6 +175,9 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
 
         // This is intentionally the directory overload. It cannot silently
         // fetch a missing model during transcription.
+        if previousCacheLimit == nil {
+            previousCacheLimit = Memory.cacheLimit
+        }
         Memory.cacheLimit = Self.memoryCacheLimitBytes
         Memory.clearCache()
         let beforeLoad = Memory.snapshot()
@@ -219,8 +222,9 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
                 return values
             }
             group.addTask {
-                // Bounds one model call. The whole cleanup pass is bounded
-                // separately by `TranscriptCleanupCoordinator.maximumRunDuration`.
+                // Bounds one model call. A piece that hits it keeps its
+                // original text and the run continues; the run as a whole is
+                // bounded by its piece count, and pauses in the background.
                 try await Task.sleep(nanoseconds: Self.generationTimeoutNanoseconds)
                 throw TranscriptCleanupNormalizerError.generationFailed
             }

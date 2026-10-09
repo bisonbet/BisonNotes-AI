@@ -59,6 +59,8 @@ The optional, experimental **Clean up transcripts (English only)** setting runs 
 
 Cleanup preserves the original transcript, segment timing, speaker labels, and raw text. Existing editors open on **Original** and can switch to **Cleaned** when a revision exists. Copy, share, and ordinary text export follow the selected representation. The one-time **Clean up English transcript** action also works for imported text without enabling automatic cleanup or rerunning ASR/diarization. Automatic summaries continue to use original text.
 
+Automatic cleanup never holds up the transcript: the raw transcript is saved first, and cleanup runs afterwards from a durable queue while the app is in the foreground. iOS does not allow on-device GPU work in the background, so cleanup pauses when the app leaves the foreground and resumes when it returns, continuing from the passages it already finished. The transcript editor shows progress ("Cleaning… 12 of 40 passages") for both automatic and manual cleanup. A passage S1-mini cannot clean keeps its original text and the rest of the transcript is still cleaned; the editor says how many passages were kept. Unsupported devices, a missing model, and non-English transcripts are reported immediately, without queuing anything.
+
 The model is English-only and runs locally. Unsupported targets and simulators show an availability reason. An older app may ignore or drop the optional cleaned fields if it rewrites a transcript; the original text remains usable.
 
 ## v2.4 Highlights

@@ -201,6 +201,7 @@ For AI-generated content display:
 - `BackgroundProcessingManager.swift`: Background job management
 - `FutureAIEngines.swift`: AI engine implementations
 - `Models/SummaryThinkingModelCatalog.swift`: Model thinking capabilities and reasoning output budgets
+- `TranscriptCleanupCoordinator.swift`, `TranscriptCleanupQueue.swift`: S1-mini transcript cleanup. The raw transcript is always saved first; automatic cleanup runs afterwards from a durable, foreground-only queue that pauses when iOS backgrounds the app (no GPU in the background) and resumes from a per-recording checkpoint. A passage the model cannot clean keeps its original text instead of failing the run
 - `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
 

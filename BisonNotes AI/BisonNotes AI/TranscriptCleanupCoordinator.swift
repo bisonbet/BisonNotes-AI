@@ -11,7 +11,7 @@ import CryptoKit
 import Foundation
 import NaturalLanguage
 
-struct TranscriptCleanupSourceSnapshot: Equatable, Sendable {
+struct TranscriptCleanupSourceSnapshot: Codable, Equatable, Sendable {
     let transcriptId: UUID?
     let lastModified: Date?
     let sourceFingerprint: String?
@@ -66,9 +66,12 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// Retaining a short source fragment is safer than rejecting the entire
     /// cleanup pass; longer substantive empty output remains invalid.
     private static let maxConservativeFallbackWords = 3
-    /// Ceiling for one whole cleanup pass, however many segments it covers.
-    static let maximumRunDuration: TimeInterval = 10 * 60
     private static let englishConfidenceThreshold = 0.9
+    /// Pure hesitation sounds. A segment made only of these cleans to empty
+    /// text without a model call — the outcome the model is already allowed to
+    /// produce for them. Deliberately narrower than `isFillerOnly`'s list:
+    /// words like "you", "well" or "like" can be a complete spoken answer.
+    private static let hesitationWords: Set<String> = ["um", "uh", "erm", "er", "hmm", "mm", "mhm", "umm", "uhm"]
 
     let normalizer: any TranscriptCleanupNormalizing
     private let availabilityProvider: @Sendable () -> TranscriptCleanupAvailability
@@ -83,30 +86,22 @@ struct TranscriptCleanupCoordinator: Sendable {
         self.availabilityProvider = availabilityProvider
     }
 
-    /// Cleans all segments in memory and returns either a completely assembled
-    /// result or the untouched input. No caller should persist individual
-    /// segments returned from an in-flight operation.
-    func clean(
+    /// The checks that need no model: whether cleanup is wanted, possible on
+    /// this device, downloaded, and applicable to this transcript's language.
+    /// Callers that save the raw transcript first use this to report a
+    /// blocking warning immediately and to queue only runnable work.
+    func preflight(
         segments: [TranscriptSegment],
         configuration: TranscriptCleanupConfiguration
-    ) async -> TranscriptCleanupResult {
-        guard configuration.enabled else {
-            return TranscriptCleanupResult(segments: segments, warning: nil, cleanedSegmentCount: 0)
-        }
-
-        guard !segments.isEmpty else {
-            return TranscriptCleanupResult(segments: segments, warning: nil, cleanedSegmentCount: 0)
-        }
+    ) async -> TranscriptCleanupPreflight {
+        guard configuration.enabled, !segments.isEmpty else { return .notNeeded }
 
         let availability = availabilityProvider()
         guard availability.isAvailable else {
-            return TranscriptCleanupResult(
-                segments: segments,
-                warning: .unsupportedPlatform(
-                    availability.explanation
-                        ?? "Transcript cleanup is unavailable on this device."
-                ),
-                cleanedSegmentCount: 0
+            return .blocked(
+                .unsupportedPlatform(
+                    availability.explanation ?? "Transcript cleanup is unavailable on this device."
+                )
             )
         }
 
@@ -116,21 +111,45 @@ struct TranscriptCleanupCoordinator: Sendable {
             mode: configuration.mode
         )
         guard language.isEligible else {
-            return TranscriptCleanupResult(
-                segments: segments,
-                warning: language.warning,
-                cleanedSegmentCount: 0
-            )
+            return .blocked(language.warning ?? .uncertainLanguage)
         }
 
-        guard await normalizer.isReady else {
-            return TranscriptCleanupResult(segments: segments, warning: .missingModel, cleanedSegmentCount: 0)
+        guard await normalizer.isReady else { return .blocked(.missingModel) }
+        return .ready
+    }
+
+    /// Cleans every segment it can and returns the assembled result.
+    ///
+    /// A piece the model cannot clean keeps its original text and the run
+    /// continues; only a run that cleaned nothing reports the original
+    /// transcript untouched. Finished pieces are written to `checkpoint` as
+    /// they complete, so an interrupted run resumes instead of starting over.
+    /// No caller should persist individual segments from an in-flight run.
+    func clean(
+        segments: [TranscriptSegment],
+        configuration: TranscriptCleanupConfiguration,
+        checkpoint: (any TranscriptCleanupCheckpointing)? = nil,
+        progress: (@Sendable (TranscriptCleanupProgress) -> Void)? = nil
+    ) async -> TranscriptCleanupResult {
+        switch await preflight(segments: segments, configuration: configuration) {
+        case .notNeeded:
+            return TranscriptCleanupResult(segments: segments, warning: nil, cleanedSegmentCount: 0)
+        case .blocked(let warning):
+            return TranscriptCleanupResult(segments: segments, warning: warning, cleanedSegmentCount: 0)
+        case .ready:
+            break
         }
 
+        let report = RunReport(segmentCount: segments.count)
         do {
-            return try await MLXModelResourceCoordinator.shared.withExclusive {
+            let result = try await MLXModelResourceCoordinator.shared.withExclusive {
                 do {
-                    let result = try await self.cleanEligibleSegments(segments)
+                    let result = try await self.cleanEligibleSegments(
+                        segments,
+                        checkpoint: checkpoint,
+                        progress: progress,
+                        report: report
+                    )
                     await self.normalizer.releaseResources()
                     return result
                 } catch {
@@ -138,19 +157,16 @@ struct TranscriptCleanupCoordinator: Sendable {
                     throw error
                 }
             }
+            report.log(outcome: result.warning?.logCategory ?? "cleaned")
+            return result
         } catch {
-            return TranscriptCleanupResult(
-                segments: segments,
-                warning: Self.warning(for: error),
-                cleanedSegmentCount: 0
-            )
+            let warning = Self.warning(for: error)
+            report.log(outcome: warning.logCategory)
+            return TranscriptCleanupResult(segments: segments, warning: warning, cleanedSegmentCount: 0)
         }
     }
 
-    /// A failed run always keeps the original segments untouched; only the
-    /// reported warning differs. Keeping the mapping here rather than in a
-    /// catch clause per case is what lets the permit and the normalizer be
-    /// released in exactly one place.
+    /// Maps a run- or piece-ending error to the warning the user sees.
     private static func warning(for error: Error) -> TranscriptCleanupWarning {
         if error is CancellationError { return .cancelled }
         switch error as? TranscriptCleanupNormalizerError {
@@ -161,70 +177,178 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
     }
 
+    /// Errors that end the whole run rather than one piece: cancellation, and
+    /// a model or chat template that is unusable for every piece alike.
+    private static func endsRun(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        switch error as? TranscriptCleanupNormalizerError {
+        case .cancelled, .modelUnavailable, .templateUnavailable: return true
+        default: return false
+        }
+    }
+
+    private struct SegmentPlan {
+        enum Kind {
+            /// Whitespace-only: retains its existing value, never removed.
+            case empty
+            /// Only hesitation sounds: cleans to empty text with no model call.
+            case hesitationOnly
+            case pieces([String])
+        }
+        let segment: TranscriptSegment
+        let kind: Kind
+    }
+
     private func cleanEligibleSegments(
-        _ segments: [TranscriptSegment]
+        _ segments: [TranscriptSegment],
+        checkpoint: (any TranscriptCleanupCheckpointing)?,
+        progress: (@Sendable (TranscriptCleanupProgress) -> Void)?,
+        report: RunReport
     ) async throws -> TranscriptCleanupResult {
-        var cleanedSegments: [TranscriptSegment] = []
-        cleanedSegments.reserveCapacity(segments.count)
-        var cleanedSegmentCount = 0
-
-        // The per-generation watchdog in the service bounds one model call, not
-        // the run. A long recording is hundreds of segments, and the whole run
-        // holds the process-wide MLX permit and, on iOS, a finite background
-        // task — so the run gets its own deadline and degrades to a resource
-        // failure, which keeps the original transcript.
-        let deadline = Date().addingTimeInterval(Self.maximumRunDuration)
-
+        let counter = TokenCounter(normalizer: normalizer)
         // The system prompt, control line and chat-template markup are a fixed
         // cost on every rendered request. Measuring it once lets both the
         // chunking budget and the expansion check below talk about the
         // segment's own tokens rather than the prompt's.
-        let overhead = try await normalizer.renderedRequestTokenCount(for: "")
+        let overhead = try await counter.count("")
 
+        // Plan every piece up front so progress has a real total.
+        var plans: [SegmentPlan] = []
+        plans.reserveCapacity(segments.count)
         for segment in segments {
             try Task.checkCancellation()
-            guard Date() < deadline else {
-                throw TranscriptCleanupNormalizerError.generationFailed
-            }
-
             let rawText = segment.text
-            guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                // Empty turns retain their existing derived value. They are
-                // never removed from the segment list, because that would
-                // erase a speaker turn from the cleaned representation.
-                cleanedSegments.append(segment)
+            if rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                plans.append(SegmentPlan(segment: segment, kind: .empty))
+            } else if isHesitationOnly(rawText) {
+                plans.append(SegmentPlan(segment: segment, kind: .hesitationOnly))
+            } else {
+                let pieces = try await inputPieces(for: rawText, overhead: overhead, counter: counter)
+                plans.append(SegmentPlan(segment: segment, kind: .pieces(pieces)))
+            }
+        }
+
+        let totalPieces = plans.reduce(0) { total, plan in
+            if case .pieces(let pieces) = plan.kind { return total + pieces.count }
+            return total
+        }
+        report.piecesPlanned = totalPieces
+        var completedPieces = 0
+        progress?(TranscriptCleanupProgress(completedPieces: 0, totalPieces: totalPieces))
+
+        var cleanedSegments: [TranscriptSegment] = []
+        cleanedSegments.reserveCapacity(segments.count)
+        var cleanedSegmentCount = 0
+        var cleanedPieceCount = 0
+        var keptOriginalPieceCount = 0
+        var firstPieceFailure: Error?
+
+        for plan in plans {
+            switch plan.kind {
+            case .empty:
+                cleanedSegments.append(plan.segment)
                 continue
-            }
+            case .hesitationOnly:
+                report.hesitationShortcuts += 1
+                cleanedSegments.append(plan.segment.withCleanup(TranscriptSegmentCleanup(normalizedText: "")))
+                cleanedSegmentCount += 1
+                continue
+            case .pieces(let pieces):
+                var parts: [String] = []
+                var segmentCleanedPieces = 0
+                for (index, piece) in pieces.enumerated() {
+                    try Task.checkCancellation()
+                    let key = Self.checkpointKey(segmentID: plan.segment.id, index: index, piece: piece)
 
-            let inputPieces = try await inputPieces(for: rawText, overhead: overhead)
-            var normalizedPieces: [String] = []
-            normalizedPieces.reserveCapacity(inputPieces.count)
+                    let outcome: TranscriptCleanupPieceOutcome
+                    if let saved = await checkpoint?.outcome(forPiece: key) {
+                        outcome = saved
+                        report.piecesResumed += 1
+                    } else {
+                        do {
+                            outcome = .cleaned(
+                                try await normalizedText(for: piece, overhead: overhead, counter: counter, report: report)
+                            )
+                        } catch let error where !Self.endsRun(error) {
+                            // One piece the model cannot clean keeps its
+                            // original text; the rest of the run continues.
+                            AppLog.shared.transcription(
+                                "[TranscriptCleanup] Kept original text for one passage: "
+                                    + Self.warning(for: error).logCategory,
+                                level: .default
+                            )
+                            firstPieceFailure = firstPieceFailure ?? error
+                            outcome = .keptOriginal
+                        }
+                        await checkpoint?.record(outcome, forPiece: key)
+                    }
 
-            for piece in inputPieces {
-                try Task.checkCancellation()
-                guard Date() < deadline else {
-                    throw TranscriptCleanupNormalizerError.generationFailed
+                    switch outcome {
+                    case .cleaned(let text):
+                        segmentCleanedPieces += 1
+                        if !text.isEmpty { parts.append(text) }
+                    case .keptOriginal:
+                        keptOriginalPieceCount += 1
+                        parts.append(piece)
+                    }
+                    completedPieces += 1
+                    progress?(TranscriptCleanupProgress(completedPieces: completedPieces, totalPieces: totalPieces))
                 }
-                normalizedPieces.append(try await normalizedText(for: piece, overhead: overhead))
-            }
 
-            let normalizedText = normalizedPieces.joined(separator: " ")
-            let cleanup = TranscriptSegmentCleanup(normalizedText: normalizedText)
-            cleanedSegments.append(segment.withCleanup(cleanup))
-            cleanedSegmentCount += 1
+                if segmentCleanedPieces == 0 {
+                    // Nothing in this segment was cleaned: leave it exactly as
+                    // it was, including any earlier cleaned value.
+                    cleanedSegments.append(plan.segment)
+                } else {
+                    cleanedPieceCount += segmentCleanedPieces
+                    cleanedSegmentCount += 1
+                    cleanedSegments.append(
+                        plan.segment.withCleanup(TranscriptSegmentCleanup(normalizedText: parts.joined(separator: " ")))
+                    )
+                }
+            }
         }
 
         try Task.checkCancellation()
+        report.piecesKeptOriginal = keptOriginalPieceCount
+
+        // A run that could not clean a single passage keeps the original
+        // transcript untouched and says why, exactly as before.
+        if cleanedPieceCount == 0, report.hesitationShortcuts == 0, let firstPieceFailure {
+            throw firstPieceFailure
+        }
 
         return TranscriptCleanupResult(
             segments: cleanedSegments,
-            warning: nil,
+            warning: keptOriginalPieceCount > 0 ? .partiallyCleaned(keptOriginalPieceCount) : nil,
             cleanedSegmentCount: cleanedSegmentCount
         )
     }
 
-    private func inputPieces(for rawText: String, overhead: Int) async throws -> [String] {
-        let fullRequestTokenCount = try await normalizer.renderedRequestTokenCount(for: rawText)
+    /// Identifies one piece of one segment's text. The text hash means an
+    /// edited segment never reuses a stale result; the model revision and
+    /// prompt version are checked by the checkpoint store itself.
+    static func checkpointKey(segmentID: UUID, index: Int, piece: String) -> String {
+        let digest = SHA256.hash(data: Data(piece.utf8))
+        let hash = digest.prefix(12).map { String(format: "%02x", $0) }.joined()
+        return "\(segmentID.uuidString)#\(index)#\(hash)"
+    }
+
+    private func isHesitationOnly(_ text: String) -> Bool {
+        let words = text
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet.punctuationCharacters) }
+            .filter { !$0.isEmpty }
+        return !words.isEmpty && words.allSatisfy { Self.hesitationWords.contains($0) }
+    }
+
+    private func inputPieces(
+        for rawText: String,
+        overhead: Int,
+        counter: TokenCounter
+    ) async throws -> [String] {
+        let fullRequestTokenCount = try await counter.count(rawText)
         guard fullRequestTokenCount > Self.maxRenderedInputTokens else {
             return [rawText]
         }
@@ -243,7 +367,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         var pendingCount = 0
 
         for sentence in sentenceParts(in: rawText) {
-            let sentenceCount = try await unitTokenCount(sentence, overhead: overhead)
+            let sentenceCount = try await unitTokenCount(sentence, overhead: overhead, counter: counter)
             if sentenceCount > budget {
                 if !pending.isEmpty {
                     pieces.append(pending.joined(separator: " "))
@@ -251,7 +375,9 @@ struct TranscriptCleanupCoordinator: Sendable {
                     pendingCount = 0
                 }
                 pieces.append(
-                    contentsOf: try await whitespacePieces(for: sentence, budget: budget, overhead: overhead)
+                    contentsOf: try await whitespacePieces(
+                        for: sentence, budget: budget, overhead: overhead, counter: counter
+                    )
                 )
                 continue
             }
@@ -272,7 +398,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         guard !pieces.isEmpty else {
             throw TranscriptCleanupNormalizerError.invalidRequest
         }
-        return try await verifiedPieces(pieces, budget: budget, overhead: overhead)
+        return try await verifiedPieces(pieces, budget: budget, overhead: overhead, counter: counter)
     }
 
     /// Summed per-unit counts can undercount when the tokenizer merges across a
@@ -282,30 +408,34 @@ struct TranscriptCleanupCoordinator: Sendable {
     private func verifiedPieces(
         _ pieces: [String],
         budget: Int,
-        overhead: Int
+        overhead: Int,
+        counter: TokenCounter
     ) async throws -> [String] {
         var verified: [String] = []
         verified.reserveCapacity(pieces.count)
         for piece in pieces {
-            if try await normalizer.renderedRequestTokenCount(for: piece) <= Self.maxRenderedInputTokens {
+            if try await counter.count(piece) <= Self.maxRenderedInputTokens {
                 verified.append(piece)
             } else {
                 verified.append(
-                    contentsOf: try await whitespacePieces(for: piece, budget: budget, overhead: overhead)
+                    contentsOf: try await whitespacePieces(
+                        for: piece, budget: budget, overhead: overhead, counter: counter
+                    )
                 )
             }
         }
         return verified
     }
 
-    private func unitTokenCount(_ text: String, overhead: Int) async throws -> Int {
-        max(try await normalizer.renderedRequestTokenCount(for: text) - overhead, 1)
+    private func unitTokenCount(_ text: String, overhead: Int, counter: TokenCounter) async throws -> Int {
+        max(try await counter.count(text) - overhead, 1)
     }
 
     private func whitespacePieces(
         for text: String,
         budget: Int,
-        overhead: Int
+        overhead: Int,
+        counter: TokenCounter
     ) async throws -> [String] {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return [] }
@@ -314,7 +444,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         var pending: [String] = []
         var pendingCount = 0
         for word in words {
-            let wordCount = try await unitTokenCount(word, overhead: overhead)
+            let wordCount = try await unitTokenCount(word, overhead: overhead, counter: counter)
             guard wordCount <= budget else {
                 throw TranscriptCleanupNormalizerError.invalidRequest
             }
@@ -340,22 +470,28 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// absolute per-generation output cap is never applied to a concatenated
     /// total — a split retry whose halves each finished normally used to be
     /// rejected as invalid output once their token counts were summed.
-    private func normalizedText(for piece: String, overhead: Int) async throws -> String {
-        let generation = try await normalizer.normalize(piece)
+    private func normalizedText(
+        for piece: String,
+        overhead: Int,
+        counter: TokenCounter,
+        report: RunReport
+    ) async throws -> String {
+        let generation = try await timedNormalize(piece, report: report)
         try Task.checkCancellation()
         if generation.finishReason != .length {
             return try validatedText(generation, originalText: piece, overhead: overhead)
         }
 
-        let retryPieces = try await whitespacePiecesForRetry(piece)
+        let retryPieces = try await whitespacePiecesForRetry(piece, counter: counter)
         guard retryPieces.count > 1 else {
             throw TranscriptCleanupNormalizerError.generationFailed
         }
 
+        report.splitRetries += 1
         var parts: [String] = []
         for retryPiece in retryPieces {
             try Task.checkCancellation()
-            let retry = try await normalizer.normalize(retryPiece)
+            let retry = try await timedNormalize(retryPiece, report: report)
             try Task.checkCancellation()
             let text = try validatedText(retry, originalText: retryPiece, overhead: overhead)
             if !text.isEmpty { parts.append(text) }
@@ -363,7 +499,31 @@ struct TranscriptCleanupCoordinator: Sendable {
         return parts.joined(separator: " ")
     }
 
-    private func whitespacePiecesForRetry(_ text: String) async throws -> [String] {
+    /// One model call, measured. A generation that throws (the per-call
+    /// watchdog, a failed generation) is still counted and timed.
+    private func timedNormalize(_ piece: String, report: RunReport) async throws -> TranscriptCleanupGeneration {
+        let start = Date()
+        do {
+            let generation = try await normalizer.normalize(piece)
+            report.recordGeneration(
+                seconds: Date().timeIntervalSince(start),
+                inputTokens: generation.inputTokenCount,
+                outputTokens: generation.outputTokenCount,
+                finishReason: "\(generation.finishReason)"
+            )
+            return generation
+        } catch {
+            report.recordGeneration(
+                seconds: Date().timeIntervalSince(start),
+                inputTokens: 0,
+                outputTokens: 0,
+                finishReason: "error"
+            )
+            throw error
+        }
+    }
+
+    private func whitespacePiecesForRetry(_ text: String, counter: TokenCounter) async throws -> [String] {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard words.count > 1 else { return [text] }
         let midpoint = max(1, words.count / 2)
@@ -371,7 +531,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         let second = words[midpoint...].joined(separator: " ")
         let pieces = [first, second]
         for piece in pieces {
-            guard try await normalizer.renderedRequestTokenCount(for: piece) <= Self.maxRenderedInputTokens else {
+            guard try await counter.count(piece) <= Self.maxRenderedInputTokens else {
                 throw TranscriptCleanupNormalizerError.invalidRequest
             }
         }
@@ -546,5 +706,104 @@ struct TranscriptCleanupCoordinator: Sendable {
             guard let best = hypotheses.max(by: { $0.value < $1.value }) else { return false }
             return best.key != .english && best.value >= Self.englishConfidenceThreshold
         }
+    }
+}
+
+/// Memoizes rendered-request token counts for one run. Planning measures each
+/// sentence, each assembled piece, and the empty overhead; the same strings
+/// recur, and each count is a full chat-template render plus tokenization.
+private final class TokenCounter {
+    private let normalizer: any TranscriptCleanupNormalizing
+    private var cache: [String: Int] = [:]
+
+    init(normalizer: any TranscriptCleanupNormalizing) {
+        self.normalizer = normalizer
+    }
+
+    func count(_ text: String) async throws -> Int {
+        if let cached = cache[text] { return cached }
+        let value = try await normalizer.renderedRequestTokenCount(for: text)
+        cache[text] = value
+        return value
+    }
+}
+
+/// What one cleanup run did, logged once when it ends however it ends. Without
+/// it a slow or failed run left no record of how much work it attempted, how
+/// fast the model ran, or which condition stopped it.
+final class RunReport: @unchecked Sendable {
+    private let lock = NSLock()
+    private let start = Date()
+    private let segmentCount: Int
+    private var _piecesPlanned = 0
+    private var _piecesResumed = 0
+    private var _piecesKeptOriginal = 0
+    private var _hesitationShortcuts = 0
+    private var _splitRetries = 0
+    private var generations = 0
+    private var generationSeconds: TimeInterval = 0
+    private var outputTokens = 0
+
+    init(segmentCount: Int) {
+        self.segmentCount = segmentCount
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    var piecesPlanned: Int {
+        get { locked { _piecesPlanned } }
+        set { locked { _piecesPlanned = newValue } }
+    }
+    var piecesResumed: Int {
+        get { locked { _piecesResumed } }
+        set { locked { _piecesResumed = newValue } }
+    }
+    var piecesKeptOriginal: Int {
+        get { locked { _piecesKeptOriginal } }
+        set { locked { _piecesKeptOriginal = newValue } }
+    }
+    var hesitationShortcuts: Int {
+        get { locked { _hesitationShortcuts } }
+        set { locked { _hesitationShortcuts = newValue } }
+    }
+    var splitRetries: Int {
+        get { locked { _splitRetries } }
+        set { locked { _splitRetries = newValue } }
+    }
+
+    func recordGeneration(seconds: TimeInterval, inputTokens: Int, outputTokens: Int, finishReason: String) {
+        locked {
+            generations += 1
+            generationSeconds += seconds
+            self.outputTokens += outputTokens
+        }
+        let rate = seconds > 0 ? Double(outputTokens) / seconds : 0
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Generation: "
+                + String(format: "%.2fs", seconds)
+                + ", in=\(inputTokens) out=\(outputTokens) tok, "
+                + String(format: "%.1f tok/s", rate)
+                + ", finish=\(finishReason)",
+            level: .debug
+        )
+    }
+
+    func log(outcome: String) {
+        let line = locked { () -> String in
+            let elapsed = Date().timeIntervalSince(start)
+            let rate = generationSeconds > 0 ? Double(outputTokens) / generationSeconds : 0
+            return "[TranscriptCleanup] Run finished: outcome=\(outcome), "
+                + "segments=\(segmentCount), pieces=\(_piecesPlanned), "
+                + "resumed=\(_piecesResumed), generated=\(generations), "
+                + "retries=\(_splitRetries), keptOriginal=\(_piecesKeptOriginal), "
+                + "hesitationOnly=\(_hesitationShortcuts), "
+                + String(format: "generation=%.1fs, total=%.1fs, ", generationSeconds, elapsed)
+                + String(format: "%.1f tok/s", rate)
+        }
+        AppLog.shared.transcription(line)
     }
 }

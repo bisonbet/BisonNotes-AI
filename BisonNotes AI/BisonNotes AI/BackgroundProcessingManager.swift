@@ -1423,9 +1423,6 @@ class BackgroundProcessingManager: ObservableObject {
         // `transcribeAudioFile`, so this path has to collect the metadata
         // itself instead of inheriting the configuration the direct paths build.
         var detectedLanguageCode: String?
-        let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
-            transcript: try coreDataManager.fetchTranscriptData(for: recordingId)
-        )
 
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
         let audioURL = job.audioSourceURL
@@ -1620,42 +1617,31 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
         }
 
-        // Cleanup is a final-result operation. It runs once after reassembly and
-        // any speaker labeling, never inside transcribeChunk.
+        // Cleanup is a final-result operation on the saved transcript. Only the
+        // model-free checks run here; the cleanup itself is queued after the
+        // save, so a slow pass can no longer delay the transcript, and
+        // backgrounding or a kill can no longer lose it.
         if hasTranscriptContent, let finalTranscriptData {
             let cleanupConfiguration = TranscriptCleanupConfiguration(
                 enabled: job.transcriptCleanupEnabled,
                 mode: .automatic,
                 languageCode: detectedLanguageCode
             )
-            let cleanupPreparation = try await prepareTranscriptCleanup(
-                for: finalTranscriptData,
-                recordingId: recordingId,
-                sourceSnapshot: cleanupSourceSnapshot,
+            let cleanupPreflight = await transcriptCleanupCoordinator.preflight(
+                segments: finalTranscriptData.segments,
                 configuration: cleanupConfiguration
             )
-            if !cleanupPreparation.isCleanupUsable {
-                // Only the derived cleanup is stale, never the ASR result. The
-                // transcript this job just produced is still saved — uncleaned —
-                // and the staleness is reported as a warning, the same way every
-                // other cleanup failure is. Failing the job here threw away a
-                // completed transcription and skipped the chunk cleanup below.
-                let warningCategory = cleanupPreparation.warning?.logCategory ?? "stale-result"
+            if case .blocked(let warning) = cleanupPreflight {
+                transcriptCleanupWarning = warning
                 AppLog.shared.backgroundProcessing(
-                    "Discarded stale transcript cleanup result, saving uncleaned transcript: "
-                        + "recording=\(recordingId.uuidString), category=\(warningCategory)",
+                    "Transcript cleanup not queued: recording=\(recordingId.uuidString), category=\(warning.logCategory)",
                     level: .info
                 )
             }
 
-            transcriptCleanupWarning = cleanupPreparation.warning
             try Task.checkCancellation()
             // The recording row being gone is the only reason to drop a completed
-            // transcription: there is nothing left to attach it to. That is not a
-            // cleanup failure — the whole transcript goes, and cleanup may not even
-            // be enabled — so it must not borrow the cleanup warning above, which
-            // tells the user only a derived cleanup result was discarded. Matches
-            // the wording the direct rerun path already uses in `TranscriptViews`.
+            // transcription: there is nothing left to attach it to.
             guard try coreDataManager.fetchRecording(id: recordingId) != nil else {
                 AppLog.shared.backgroundProcessing(
                     "Discarded the completed transcription because the recording was deleted: "
@@ -1664,11 +1650,22 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 throw BackgroundProcessingError.recordingDeletedDuringProcessing
             }
+            // Raw ASR text only. A rerun replaces any earlier cleaned value,
+            // which described the previous transcript.
             try saveTranscript(
-                cleanupPreparation.transcript,
+                finalTranscriptData.preservingIdentity(
+                    segments: finalTranscriptData.segments.map { $0.withCleanup(nil) }
+                ),
                 speakerLabelWarning: speakerLabelWarning,
                 cleanupWarning: transcriptCleanupWarning
             )
+
+            if cleanupPreflight == .ready {
+                TranscriptCleanupQueue.shared.enqueueSavedTranscript(
+                    recordingId: recordingId,
+                    languageCode: detectedLanguageCode
+                )
+            }
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
@@ -1917,54 +1914,6 @@ class BackgroundProcessingManager: ObservableObject {
            let currentJob {
             completionHandler(transcriptData, currentJob, speakerLabelWarning, cleanupWarning)
         }
-    }
-
-    /// The transcript is always saved; this only says whether the cleanup pass
-    /// produced a value that may be merged into it. `isCleanupUsable == false`
-    /// means the derived text was discarded, not that persistence is skipped.
-    private struct TranscriptCleanupSavePreparation {
-        let transcript: TranscriptData
-        let warning: TranscriptCleanupWarning?
-        let isCleanupUsable: Bool
-    }
-
-    private func prepareTranscriptCleanup(
-        for transcript: TranscriptData,
-        recordingId: UUID,
-        sourceSnapshot: TranscriptCleanupSourceSnapshot,
-        configuration: TranscriptCleanupConfiguration
-    ) async throws -> TranscriptCleanupSavePreparation {
-        guard configuration.enabled else {
-            return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, isCleanupUsable: true)
-        }
-
-        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
-            return TranscriptCleanupSavePreparation(
-                transcript: transcript,
-                warning: .staleResult,
-                isCleanupUsable: false
-            )
-        }
-
-        let result = await transcriptCleanupCoordinator.clean(
-            segments: transcript.segments,
-            configuration: configuration
-        )
-
-        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
-            return TranscriptCleanupSavePreparation(
-                transcript: transcript,
-                warning: .staleResult,
-                isCleanupUsable: false
-            )
-        }
-
-        let cleanedTranscript = transcript.preservingIdentity(segments: result.segments)
-        return TranscriptCleanupSavePreparation(
-            transcript: cleanedTranscript,
-            warning: result.warning,
-            isCleanupUsable: true
-        )
     }
 
     private func summarizationText(
