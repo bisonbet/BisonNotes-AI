@@ -2198,7 +2198,7 @@ struct EditableTranscriptView: View {
                             Text("Cleaning English Transcript…")
                         } else {
                             Image(systemName: "wand.and.stars")
-                            Text("Clean up English transcript")
+                            Text("Clean up English transcript (Experimental)")
                         }
                         Spacer()
                     }

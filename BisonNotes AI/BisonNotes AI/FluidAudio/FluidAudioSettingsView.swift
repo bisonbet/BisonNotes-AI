@@ -445,7 +445,7 @@ private extension FluidAudioSettingsView {
             return "Recommended for normal use. Offline VBx estimates the number of speakers "
                 + "and does not impose a two- or three-speaker cap."
         case .betaNemotron3:
-            return "Beta NVIDIA Nemotron 3 Diarization model for up to 8 speakers. A ninth voice is "
+            return "Experimental NVIDIA Nemotron 3 Diarization model for up to 8 speakers. A ninth voice is "
                 + "merged into another speaker rather than reported, so choose Offline VBx for larger groups."
         case .experimentalLSEEND:
             return "Experimental DIHARD3 model for up to 10 speakers. It processes complete files "

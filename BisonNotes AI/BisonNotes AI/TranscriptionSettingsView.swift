@@ -168,11 +168,11 @@ struct TranscriptionSettingsView: View {
     }
 
     private var modernTranscriptCleanupSection: some View {
-        TranscriptionSettingsCard(title: "Transcript Cleanup", systemImage: "wand.and.stars", tint: .indigo) {
+        TranscriptionSettingsCard(title: "Transcript Cleanup (Experimental)", systemImage: "wand.and.stars", tint: .indigo) {
             Toggle(isOn: $transcriptCleanupEnabled) {
                 TranscriptionSettingsLabel(
                     title: "Clean up transcripts (English only)",
-                    subtitle: "Automatic, on-device cleanup after file transcription",
+                    subtitle: "Experimental: automatic, on-device cleanup after file transcription",
                     systemImage: "wand.and.stars",
                     tint: .indigo
                 )

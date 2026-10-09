@@ -9,7 +9,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.maximumSupportedSpeakerCount, 8)
         XCTAssertNil(LocalDiarizationMethod.betaNemotron3.maximumSupportedDuration)
         XCTAssertEqual(LocalDiarizationMethod.offlineVBx.tier.badgeText, "Recommended")
-        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.tier.badgeText, "Beta")
+        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.tier.badgeText, "Experimental")
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.tier.badgeText, "Experimental")
         XCTAssertEqual(
             FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue("corrupt"),
