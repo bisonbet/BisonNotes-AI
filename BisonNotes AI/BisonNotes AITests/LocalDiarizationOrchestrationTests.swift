@@ -113,6 +113,82 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
         XCTAssertEqual(reassembly.timedWords?.map(\.text), ["go", "go"])
     }
 
+    /// Parakeet emits several tokens per 80 ms frame and FluidAudio clamps its
+    /// timestamps at window seams, so adjacent words often share a start time
+    /// while the earlier one ends later. Ordering those by end time swapped
+    /// them; over a long recording the swaps outgrew the reconciliation budget
+    /// and every speaker label was dropped as a text mismatch.
+    @MainActor
+    func testWordsSharingAStartTimeKeepTextOrderAndStillGetSpeakerLabels() async throws {
+        let service = AudioFileChunkingService()
+        let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")
+        let pairCount = 40
+        var words: [TimedTranscriptWord] = []
+        var textParts: [String] = []
+        for index in 0..<pairCount {
+            let start = Double(index) * 0.5
+            words.append(
+                TimedTranscriptWord(
+                    text: "alpha\(index)", startTime: start, endTime: start + 0.4, hasLeadingSpace: !words.isEmpty
+                )
+            )
+            words.append(
+                TimedTranscriptWord(text: "beta\(index)", startTime: start, endTime: start + 0.2, hasLeadingSpace: true)
+            )
+            textParts += ["alpha\(index)", "beta\(index)"]
+        }
+        let text = textParts.joined(separator: " ")
+        let duration = Double(pairCount) * 0.5
+        let chunk = service.createTranscriptChunk(
+            from: text,
+            audioChunk: AudioChunk(
+                originalURL: sourceURL,
+                chunkURL: URL(fileURLWithPath: "/chunk-0.m4a"),
+                sequenceNumber: 0,
+                startTime: 0,
+                endTime: duration,
+                fileSize: 1
+            ),
+            segments: [TranscriptSegment(speaker: "", text: text, startTime: 0, endTime: duration)],
+            timedWords: words
+        )
+
+        let reassembly = try await service.reassembleTranscript(
+            from: [chunk],
+            originalURL: sourceURL,
+            recordingName: "Complete Source",
+            recordingDate: Date(),
+            recordingId: UUID()
+        )
+        XCTAssertEqual(reassembly.timedWords?.map(\.text), textParts)
+
+        let fake = OrchestrationFakeLocalDiarizationService(
+            intervals: [
+                LocalDiarizationInterval(speakerID: "first", startTime: 0, endTime: duration / 2),
+                LocalDiarizationInterval(speakerID: "second", startTime: duration / 2, endTime: duration)
+            ]
+        )
+        let coordinator = LocalSpeakerLabelingCoordinator(modelManager: fake, diarizer: fake)
+        let labeled = try await coordinator.apply(
+            to: TranscriptionResult(
+                fullText: text,
+                segments: reassembly.transcriptData.segments,
+                processingTime: 0,
+                chunkCount: 1,
+                success: true,
+                error: nil,
+                timedWords: reassembly.timedWords
+            ),
+            configuration: LocalSpeakerLabelsConfiguration(isEnabled: true, method: .offlineVBx),
+            sourceAudioURL: sourceURL,
+            audioDuration: duration
+        )
+
+        XCTAssertNil(labeled.speakerLabelWarning)
+        XCTAssertEqual(labeled.fullText, text)
+        XCTAssertEqual(Set(labeled.segments.map(\.speaker)).count, 2)
+    }
+
     @MainActor
     func testReassemblyAddsBoundarySpaceWhenTimedChunkStartsWithoutOne() async throws {
         let sourceURL = URL(fileURLWithPath: "/complete-source.m4a")

@@ -477,16 +477,20 @@ class AudioFileChunkingService: ObservableObject {
         // Sort only words with complete finite timing. Malformed words remain
         // anchored at their source positions so they can reach the aligner as
         // Unknown without reordering the ASR transcript.
+        //
+        // Words that share a start time keep their source (text) order. Parakeet
+        // emits several tokens per 80 ms frame, and FluidAudio clamps its
+        // timestamps to be non-decreasing at its window seams, so adjacent
+        // words often start together while the earlier one ends later. Ordering
+        // those by end time swapped them, and over a long recording the swaps
+        // outgrew the canonical reconciliation budget and every speaker label
+        // was discarded as a text mismatch.
         let sortedTimedItems = normalizedItems
             .filter { $0.word.startTime != nil && $0.word.endTime != nil }
             .sorted { lhs, rhs in
                 let lhsStart = lhs.word.startTime ?? .greatestFiniteMagnitude
                 let rhsStart = rhs.word.startTime ?? .greatestFiniteMagnitude
                 if lhsStart != rhsStart { return lhsStart < rhsStart }
-
-                let lhsEnd = lhs.word.endTime ?? .greatestFiniteMagnitude
-                let rhsEnd = rhs.word.endTime ?? .greatestFiniteMagnitude
-                if lhsEnd != rhsEnd { return lhsEnd < rhsEnd }
                 return lhs.sourceOrder < rhs.sourceOrder
             }
 

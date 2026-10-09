@@ -48,7 +48,7 @@ These tests must prove default-off behavior, complete-source single-pass routing
 
 The model/accuracy gate is opt-in and excluded from ordinary CI. Before running it, obtain consented non-PHI or license-cleared public fixtures, prefetch models explicitly over HTTPS, and record fixture SHA-256/provenance, actual model on-disk size, device/OS, method, duration, timing, memory/thermal observations, cancellation behavior, and label-quality measurements. Cover one, two, four, six-to-eight, nine-to-ten (to observe Nemotron 3's eight-speaker merge), and ten-speaker cases, overlap/noise, short turns, multilingual audio, a turn across the ten-minute ASR boundary, 30/60-minute files, the over-one-hour LS-EEND guard, and longer VBx and Nemotron 3 meetings (including a speaker who returns after a long silence). Do not publish RAM, device, speed, size, or accuracy claims until this evidence is reviewed.
 
-The opt-in gate must also verify a fresh download, cached airplane-mode reuse, network loss, insufficient disk, retry/relaunch, independent deletes, method switching, cancellation, two serial jobs, and re-running an existing transcript. Keep VBx, beta Nemotron 3, and experimental LS-EEND results separate; synthetic voices are not the accuracy reference, and evaluation fixtures are not redistributed by the app.
+The opt-in gate must also verify a fresh download, cached airplane-mode reuse, network loss, insufficient disk, retry/relaunch, independent deletes, method switching, cancellation, two serial jobs, and re-running an existing transcript. Keep VBx, experimental Nemotron 3, and experimental LS-EEND results separate; synthetic voices are not the accuracy reference, and evaluation fixtures are not redistributed by the app.
 
 Every mode must confirm that audio remains local after the explicit initial HTTPS download, no API key is needed, and transcription does not silently download a speaker model. Speaker-label failure must retain the unlabeled Parakeet transcript with a visible warning.
 
@@ -67,7 +67,7 @@ Run the local pre-merge gate after changes that touch SwiftUI layout, labels, na
 
 Automated audit failures must either be fixed or documented with a specific exception and manual evidence. Keep `docs/accessibility-matrix.md`, `docs/app-store-accessibility.md`, and the public accessibility page in sync with the actual evidence.
 
-The Local Speaker Labels settings surface must expose the toggle, method names, Recommended/Beta/Experimental status, up-to-8 and up-to-10 speaker limitations, status/progress, download/cancel/delete actions, and post-recording-only boundary through text and accessible labels—not color or icons alone. Repository UI audit coverage is automated; physical-device and native-Mac accessibility evidence remains a release-candidate gate.
+The Local Speaker Labels settings surface must expose the toggle, method names, Recommended/Experimental status, up-to-8 and up-to-10 speaker limitations, status/progress, download/cancel/delete actions, and post-recording-only boundary through text and accessible labels—not color or icons alone. Repository UI audit coverage is automated; physical-device and native-Mac accessibility evidence remains a release-candidate gate.
 
 ## Release Candidate Gate
 

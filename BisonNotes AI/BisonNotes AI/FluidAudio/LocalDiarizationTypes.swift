@@ -44,7 +44,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
         case .offlineVBx:
             return .recommended
         case .betaNemotron3:
-            return .beta
+            return .experimental
         case .experimentalLSEEND:
             return .experimental
         }
@@ -82,15 +82,12 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
 
 public enum LocalDiarizationMethodTier: Sendable {
     case recommended
-    case beta
     case experimental
 
     public var badgeText: String {
         switch self {
         case .recommended:
             return "Recommended"
-        case .beta:
-            return "Beta"
         case .experimental:
             return "Experimental"
         }
