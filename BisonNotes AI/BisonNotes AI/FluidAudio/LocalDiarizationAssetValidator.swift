@@ -105,6 +105,35 @@ enum LocalDiarizationAssetValidator {
         return marker.trimmingCharacters(in: .whitespacesAndNewlines) == layout.expectedWeightsVersion
     }
 
+    /// Reads a raw fp32 asset of an exact size. A file that is missing,
+    /// unreadable, or the wrong size throws `downloadRequired(method)` — what
+    /// the user can act on — with the underlying error logged, never a raw
+    /// Cocoa error.
+    static func readFloatAsset(
+        at url: URL,
+        byteCount: Int,
+        method: LocalDiarizationMethod
+    ) throws -> [Float] {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            AppLog.shared.transcription(
+                "\(method.displayName) asset \(url.lastPathComponent) could not be read: \(error.localizedDescription)",
+                level: .error
+            )
+            throw LocalDiarizationError.downloadRequired(method)
+        }
+        guard data.count == byteCount else {
+            AppLog.shared.transcription(
+                "\(method.displayName) asset \(url.lastPathComponent) is \(data.count) bytes, expected \(byteCount)",
+                level: .error
+            )
+            throw LocalDiarizationError.downloadRequired(method)
+        }
+        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    }
+
     /// Read through the file manager rather than `URL.resourceValues`, which
     /// caches per URL instance and would keep reporting a size the file no
     /// longer has when a stored layout is checked again after a download.
