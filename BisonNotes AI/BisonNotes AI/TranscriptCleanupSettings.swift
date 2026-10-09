@@ -141,6 +141,10 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
     /// stopped so other on-device model work could run. Finished passages are
     /// kept and the next run resumes from them.
     case timeLimitReached
+    /// Cleanup stopped, or did not start, because a transcription job is
+    /// running; S1-mini and that job's models are not run together. Finished
+    /// passages are kept.
+    case waitingForTranscription
 
     var errorDescription: String? { userVisibleMessage }
 
@@ -183,6 +187,9 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .timeLimitReached:
             return "Transcript cleanup paused after 10 minutes so other on-device work could run. "
                 + "Finished passages are kept; clean up again to continue from where it stopped."
+        case .waitingForTranscription:
+            return "Transcript cleanup waits while a transcription is running. "
+                + "Finished passages are kept; clean up again when the transcription finishes."
         }
     }
 
@@ -199,6 +206,7 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .partiallyCleaned: return "partially-cleaned"
         case .paused: return "paused"
         case .timeLimitReached: return "time-limit"
+        case .waitingForTranscription: return "waiting-for-transcription"
         }
     }
 }

@@ -288,6 +288,27 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: recordingCheckpoint.path))
     }
 
+    /// A legacy transcript row links its recording only through the
+    /// relationship, which the deletion clears before the save. Its checkpoint
+    /// must still go.
+    func testDeletingLegacyTranscriptWithoutRecordingIdDiscardsItsCheckpoint() async throws {
+        let recordingId = try createCompleteRecording(named: "Cleanup Checkpoint Legacy Transcript")
+        let transcript = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId))
+        let transcriptId = try XCTUnwrap(transcript.id)
+        transcript.recordingId = nil
+        try appCoordinator.coreDataManager.saveContext()
+
+        let checkpoint = TranscriptCleanupCheckpointStore.url(for: recordingId)
+        try FileManager.default.createDirectory(
+            at: checkpoint.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(to: checkpoint)
+
+        try await appCoordinator.deleteTranscript(id: transcriptId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: checkpoint.path))
+    }
+
     func testDeletingUnavailableImportedTranscriptClearsStaleLinksAndQueuesCloudCleanup() async throws {
         let recordingId = try createRecordingOnly(named: "Unavailable Imported Transcript")
         let context = appCoordinator.coreDataManager.managedObjectContext

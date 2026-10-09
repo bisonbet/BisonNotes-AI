@@ -2096,17 +2096,27 @@ class CoreDataManager: ObservableObject {
         for object in context.deletedObjects {
             if let recording = object as? RecordingEntry, let recordingId = recording.id {
                 recordingIds.insert(recordingId)
-            } else if let transcript = object as? TranscriptEntry,
-                      let transcriptId = transcript.id,
-                      let recordingId = transcript.recordingId ?? transcript.recording?.id {
-                let recording = transcript.recording ?? {
+            } else if let transcript = object as? TranscriptEntry, let transcriptId = transcript.id {
+                // Committed values throughout: the deletion unlinks both sides
+                // of the relationship before this save, so a legacy row with no
+                // denormalized `recordingId` has no live link left to read.
+                let committed = transcript.committedValues(forKeys: ["recordingId", "recording"])
+                let linkedRecording = transcript.recording
+                    ?? committedObject(committed["recording"], in: context) as? RecordingEntry
+                guard let recordingId = transcript.recordingId
+                        ?? committed["recordingId"] as? UUID
+                        ?? linkedRecording?.id else {
+                    continue
+                }
+                let recording = linkedRecording ?? {
                     let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
                     request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
                     request.fetchLimit = 1
                     return (try? context.fetch(request))?.first
                 }()
-                // The committed value: the same save may already have unlinked it.
-                let currentTranscriptId = recording?.committedValues(forKeys: ["transcriptId"])["transcriptId"] as? UUID
+                let recordingCommitted = recording?.committedValues(forKeys: ["transcriptId", "transcript"]) ?? [:]
+                let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
+                    ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id
                     ?? recording?.transcript?.id
                 if currentTranscriptId == nil || currentTranscriptId == transcriptId {
                     recordingIds.insert(recordingId)
@@ -2114,6 +2124,14 @@ class CoreDataManager: ObservableObject {
             }
         }
         return recordingIds
+    }
+
+    /// A to-one relationship's committed value, which Core Data reports as the
+    /// related object or as its object ID.
+    private static func committedObject(_ value: Any?, in context: NSManagedObjectContext) -> NSManagedObject? {
+        if let object = value as? NSManagedObject { return object }
+        if let objectID = value as? NSManagedObjectID { return try? context.existingObject(with: objectID) }
+        return nil
     }
 
     /// Performs a mutation in a sibling context so a failed save cannot roll

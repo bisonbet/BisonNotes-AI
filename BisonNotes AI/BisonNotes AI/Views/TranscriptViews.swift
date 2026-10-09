@@ -1726,7 +1726,9 @@ struct EditableTranscriptView: View {
     @State private var isCancellingTranscriptCleanup = false
     @State private var transcriptCleanupTask: Task<Void, Never>?
     @State private var transcriptCleanupProgress: TranscriptCleanupProgress?
-    @State private var isTranscriptCleanupPausedForBackground = false
+    /// Why the manual cleanup was stopped without being cancelled: the app
+    /// went to the background, or a transcription job started.
+    @State private var transcriptCleanupPause: TranscriptCleanupWarning?
     /// This recording's slice of the cleanup queue. Observing the whole queue
     /// re-evaluated this editor on every passage of any recording's cleanup.
     @State private var queuedCleanupStatus: TranscriptCleanupQueue.RecordingStatus?
@@ -2097,10 +2099,20 @@ struct EditableTranscriptView: View {
             // iOS refuses GPU work from a backgrounded app; stop cleanly and
             // keep the checkpoint rather than let generation fail midway.
             guard isCleaningTranscript else { return }
-            isTranscriptCleanupPausedForBackground = true
+            transcriptCleanupPause = .paused
             transcriptCleanupTask?.cancel()
         }
         #endif
+        .onChange(of: backgroundProcessingManager.currentJob?.id) {
+            // S1-mini never runs beside a transcription job's ASR and
+            // speaker-label models; the automatic queue pauses the same way.
+            guard isCleaningTranscript,
+                  backgroundProcessingManager.currentJob?.type.isTranscription == true else {
+                return
+            }
+            transcriptCleanupPause = .waitingForTranscription
+            transcriptCleanupTask?.cancel()
+        }
         .onReceive(NotificationCenter.default.publisher(for: TranscriptCleanupQueue.didFinishNotification)) { notification in
             guard let userInfo = notification.userInfo,
                   let finishedID = userInfo["recordingId"] as? UUID,
@@ -2584,6 +2596,10 @@ struct EditableTranscriptView: View {
             transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
             return
         }
+        guard backgroundProcessingManager.currentJob?.type.isTranscription != true else {
+            transcriptCleanupWarningMessage = TranscriptCleanupWarning.waitingForTranscription.userVisibleMessage
+            return
+        }
 
         let sourceTranscript: TranscriptData
         do {
@@ -2607,7 +2623,7 @@ struct EditableTranscriptView: View {
         let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId)
         isCleaningTranscript = true
         isCancellingTranscriptCleanup = false
-        isTranscriptCleanupPausedForBackground = false
+        transcriptCleanupPause = nil
         transcriptCleanupProgress = nil
 
         transcriptCleanupTask = Task { @MainActor in
@@ -2630,10 +2646,11 @@ struct EditableTranscriptView: View {
                 }
             )
 
-            guard !isTranscriptCleanupPausedForBackground else {
-                // Stopped because iOS refuses GPU work in the background. The
-                // checkpoint keeps every finished passage for the next tap.
-                transcriptCleanupWarningMessage = TranscriptCleanupWarning.paused.userVisibleMessage
+            if let pause = transcriptCleanupPause {
+                // Stopped because iOS refuses GPU work in the background, or
+                // because a transcription job started. The checkpoint keeps
+                // every finished passage for the next tap.
+                transcriptCleanupWarningMessage = pause.userVisibleMessage
                 if let supersededIntent { TranscriptCleanupQueue.shared.restore(supersededIntent) }
                 return
             }
