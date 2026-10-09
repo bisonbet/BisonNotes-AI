@@ -368,6 +368,30 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(result.segments.allSatisfy { $0.cleanup == nil })
     }
 
+    /// A queued cleanup's checkpoint survives an age-based prune; only
+    /// abandoned checkpoints are removed.
+    func testCheckpointPruneKeepsPendingRecordings() throws {
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let pending = UUID()
+        let abandoned = UUID()
+        let old = Date(timeIntervalSinceNow: -30 * 24 * 60 * 60)
+        for id in [pending, abandoned] {
+            let url = TranscriptCleanupCheckpointStore.url(for: id, in: directory)
+            try Data("{}".utf8).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: url.path)
+        }
+
+        TranscriptCleanupCheckpointStore.prune(maximumAge: 7 * 24 * 60 * 60, in: directory, keeping: [pending])
+
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: TranscriptCleanupCheckpointStore.url(for: pending, in: directory).path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: TranscriptCleanupCheckpointStore.url(for: abandoned, in: directory).path
+        ))
+    }
+
     // MARK: - Queue
 
     @MainActor
@@ -611,6 +635,65 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
     }
 
+    /// An app left closed past the prune age still resumes its queued cleanup
+    /// from the checkpoint instead of redoing every finished passage.
+    @MainActor
+    func testStartDoesNotPruneAQueuedCleanupsCheckpoint() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        let queued = harness.makeQueue()
+        queued.start()
+        queued.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try FileManager.default.createDirectory(
+            at: harness.checkpointURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("{}".utf8).write(to: harness.checkpointURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 60 * 60)],
+            ofItemAtPath: harness.checkpointURL.path
+        )
+
+        let relaunched = harness.makeQueue()
+        relaunched.start()
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+    }
+
+    /// A store read that fails once is retried later rather than dropping the
+    /// intent, and the retry does not spin.
+    @MainActor
+    func testTransientReadFailureKeepsTheIntentAndRetries() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.store.failingReads = 1
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.queue.intents.count, 1, "A failed read keeps the intent")
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertTrue(harness.notifications.isEmpty)
+
+        try await waitUntil { await MainActor.run { harness.store.saveCount == 1 } }
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertEqual(harness.store.readAttempts, 3, "One failed read, then the run's two reads")
+    }
+
+    /// A failure that never clears is given up after a bounded number of
+    /// tries, and the user is told.
+    @MainActor
+    func testPersistentReadFailureIsGivenUpAndReported() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.store.failingReads = 100
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+
+        try await waitUntil { await MainActor.run { harness.queue.intents.isEmpty } }
+        XCTAssertEqual(harness.store.readAttempts, TranscriptCleanupQueue.maximumTransientFailures)
+        XCTAssertEqual(harness.notifications, [TranscriptCleanupWarning.resourceFailure.userVisibleMessage])
+    }
+
     // MARK: - Helpers
 
     private func makeCoordinator(_ normalizer: ScriptedNormalizer) -> TranscriptCleanupCoordinator {
@@ -778,6 +861,10 @@ private final class ProgressRecorder: @unchecked Sendable {
 private final class MemoryQueueStore: TranscriptCleanupQueueStore {
     private(set) var transcript: TranscriptData?
     private(set) var saveCount = 0
+    private(set) var readAttempts = 0
+    /// Reads that throw before reads start succeeding, to simulate a
+    /// transient Core Data failure.
+    var failingReads = 0
 
     init(transcript: TranscriptData) {
         self.transcript = transcript
@@ -786,7 +873,12 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
     var isAvailable: Bool { true }
 
     func transcript(for recordingId: UUID) throws -> TranscriptData? {
-        transcript?.recordingId == recordingId ? transcript : nil
+        readAttempts += 1
+        if failingReads > 0 {
+            failingReads -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        return transcript?.recordingId == recordingId ? transcript : nil
     }
 
     func saveCleanedSegments(_ segments: [TranscriptSegment], for transcript: TranscriptData, recordingId: UUID) throws {
@@ -855,6 +947,7 @@ private final class QueueHarness {
             canRunNow: { [unowned self] in self.isForeground },
             isCleanupEnabled: { [unowned self] in self.isCleanupEnabled },
             notifyUser: { [unowned self] message in self.notifications.append(message) },
+            transientRetryDelay: 0.05,
             observesLifecycle: false
         )
     }

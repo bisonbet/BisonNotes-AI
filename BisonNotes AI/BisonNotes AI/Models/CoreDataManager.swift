@@ -887,6 +887,9 @@ class CoreDataManager: ObservableObject {
     /// another device — see `deleteRecording(id:enqueueCloudDeletion:)`.
     func deleteTranscript(id: UUID?, enqueueCloudDeletion: Bool = true) throws {
         do {
+            // Read before the delete: afterwards there is no row to ask.
+            let transcriptRecordingId = try id.flatMap { try fetchTranscript(id: $0) }
+                .flatMap { $0.recordingId ?? $0.recording?.id }
             var effects = DeferredDeletionEffects()
             let didDelete = try performIsolatedMutation(operation: "transcript deletion") { isolatedContext in
                 guard try stageTranscriptDeletion(
@@ -908,6 +911,12 @@ class CoreDataManager: ObservableObject {
                 effects.commitLocalOnly()
             }
             AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
+            // Post-commit, for the user's own delete and another device's
+            // tombstone alike: withdraw any cleanup of this transcript and
+            // delete its checkpoint, which holds the deleted text.
+            if let transcriptRecordingId {
+                TranscriptCleanupQueue.shared.discard(recordingId: transcriptRecordingId)
+            }
         } catch {
             AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
             throw error
@@ -1034,6 +1043,8 @@ class CoreDataManager: ObservableObject {
             effects.stageImportedAudioRemoval(recordingId: recordingId, requestedAt: deletionDate)
             try effects.stageCloudMutations(in: isolatedContext)
         }
+        // Post-commit: the transcript is gone, so is any cleanup of it.
+        TranscriptCleanupQueue.shared.discard(recordingId: recordingId)
     }
 
     /// Applies another device's imported-audio tombstone: unlinks the recording from

@@ -178,17 +178,25 @@ enum TranscriptCleanupCheckpointStore {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Removes checkpoints nobody has touched for `maximumAge`. A finished or
-    /// abandoned run's checkpoint is otherwise only deleted by the run that
-    /// publishes it, or when its recording is deleted.
-    static func prune(maximumAge: TimeInterval, in directory: URL = directory, now: Date = Date()) {
+    /// Removes checkpoints nobody has touched for `maximumAge`, except those
+    /// in `keeping`. A finished or abandoned run's checkpoint is otherwise only
+    /// deleted by the run that publishes it, or when its transcript or recording
+    /// is deleted. A queued cleanup's checkpoint is never pruned for age: an app
+    /// left closed for a week would otherwise redo every finished passage.
+    static func prune(
+        maximumAge: TimeInterval,
+        in directory: URL = directory,
+        keeping pendingRecordingIds: Set<UUID> = [],
+        now: Date = Date()
+    ) {
+        let keptNames = Set(pendingRecordingIds.map { url(for: $0, in: directory).lastPathComponent })
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.contentModificationDateKey]
         ) else {
             return
         }
-        for file in files where file.pathExtension == "json" {
+        for file in files where file.pathExtension == "json" && !keptNames.contains(file.lastPathComponent) {
             let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast
             if now.timeIntervalSince(modified) > maximumAge {
@@ -273,6 +281,13 @@ final class TranscriptCleanupQueue: ObservableObject {
     private let notifyUser: @MainActor (String) -> Void
     private let observesLifecycle: Bool
     private var runTask: Task<Void, Never>?
+    /// After a transient failure the queue waits this long before trying the
+    /// same intent again, rather than spinning on it.
+    private let transientRetryDelay: TimeInterval
+    /// Consecutive transient failures after which an intent is given up.
+    static let maximumTransientFailures = 3
+    private var retryNotBefore: Date?
+    private var transientFailures: [UUID: Int] = [:]
     private var started = false
     private var loadedFromDisk = false
     /// Recordings whose transcript editor is open. That editor shows a run's
@@ -289,8 +304,10 @@ final class TranscriptCleanupQueue: ObservableObject {
         canRunNow: @escaping @MainActor () -> Bool = TranscriptCleanupQueue.isAppInForeground,
         isCleanupEnabled: @escaping @MainActor () -> Bool = { TranscriptCleanupSettings.isEnabled() },
         notifyUser: @escaping @MainActor (String) -> Void = TranscriptCleanupQueue.postUserNotification,
+        transientRetryDelay: TimeInterval = 30,
         observesLifecycle: Bool = true
     ) {
+        self.transientRetryDelay = transientRetryDelay
         self.coordinator = coordinator
         self.store = store
         self.queueFileURL = queueFileURL
@@ -332,7 +349,11 @@ final class TranscriptCleanupQueue: ObservableObject {
         }
         started = true
         loadIntentsIfNeeded()
-        TranscriptCleanupCheckpointStore.prune(maximumAge: Self.checkpointMaximumAge, in: checkpointDirectory)
+        TranscriptCleanupCheckpointStore.prune(
+            maximumAge: Self.checkpointMaximumAge,
+            in: checkpointDirectory,
+            keeping: Set(intents.map(\.recordingId))
+        )
         if observesLifecycle {
             observeLifecycle()
         }
@@ -452,6 +473,9 @@ final class TranscriptCleanupQueue: ObservableObject {
             cleanupSettingDidChange()
             return
         }
+        if let retryNotBefore, Date() < retryNotBefore {
+            return
+        }
         guard store.isAvailable, canRunNow(), let next = intents.first else {
             return
         }
@@ -489,11 +513,9 @@ final class TranscriptCleanupQueue: ObservableObject {
             }
             transcript = loaded
         } catch {
-            AppLog.shared.transcription(
-                "[TranscriptCleanup] Could not read the transcript to clean: \(error.localizedDescription)",
-                level: .error
-            )
-            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false)
+            // Probably transient: the transcript may be readable moments later
+            // or after relaunch. Keep the intent and try again later.
+            await deferAfterTransientFailure(intent, checkpoint: checkpoint, reason: "read the transcript", error: error)
             return
         }
 
@@ -539,11 +561,9 @@ final class TranscriptCleanupQueue: ObservableObject {
         do {
             current = try store.transcript(for: recordingId)
         } catch {
-            AppLog.shared.transcription(
-                "[TranscriptCleanup] Could not reread the transcript before saving cleanup: \(error.localizedDescription)",
-                level: .error
+            await deferAfterTransientFailure(
+                intent, checkpoint: checkpoint, reason: "reread the transcript before saving", error: error
             )
-            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: .resourceFailure)
             return
         }
         guard let current, intent.source.matches(current) else {
@@ -571,16 +591,44 @@ final class TranscriptCleanupQueue: ObservableObject {
         do {
             try store.saveCleanedSegments(result.segments, for: current, recordingId: recordingId)
         } catch {
-            AppLog.shared.transcription(
-                "[TranscriptCleanup] Could not save the cleaned transcript: \(error.localizedDescription)",
-                level: .error
-            )
-            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: .resourceFailure)
+            await deferAfterTransientFailure(intent, checkpoint: checkpoint, reason: "save the cleaned transcript", error: error)
             return
         }
 
         // The cleaned transcript is durable; everything below is a loose end.
         await finish(intent, checkpoint: checkpoint, removeCheckpoint: true, warning: result.warning, cleaned: true)
+    }
+
+    /// A store read or save failed in a way that may pass. The intent stays
+    /// queued — dropping it lost the cleanup for good — and the queue waits
+    /// `transientRetryDelay` before trying again, so it does not spin. Every
+    /// finished passage is in the checkpoint, so the retry is cheap. After
+    /// `maximumTransientFailures` in a row the intent is given up and the user
+    /// is told.
+    private func deferAfterTransientFailure(
+        _ intent: TranscriptCleanupIntent,
+        checkpoint: TranscriptCleanupFileCheckpoint,
+        reason: String,
+        error: Error
+    ) async {
+        let failures = (transientFailures[intent.recordingId] ?? 0) + 1
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Could not \(reason) (attempt \(failures)): \(error.localizedDescription)",
+            level: .error
+        )
+        guard failures < Self.maximumTransientFailures else {
+            transientFailures[intent.recordingId] = nil
+            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: .resourceFailure)
+            return
+        }
+        transientFailures[intent.recordingId] = failures
+        retryNotBefore = Date().addingTimeInterval(transientRetryDelay)
+        let delay = UInt64(transientRetryDelay * 1_000_000_000)
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            self?.retryNotBefore = nil
+            self?.kick()
+        }
     }
 
     private func finish(
@@ -591,6 +639,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         cleaned: Bool = false
     ) async {
         intents.removeAll { $0 == intent }
+        transientFailures[intent.recordingId] = nil
         persistIntents()
         if removeCheckpoint {
             await checkpoint.remove()

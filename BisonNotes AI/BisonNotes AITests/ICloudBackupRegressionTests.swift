@@ -258,6 +258,36 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingTranscriptRemovalCountForTesting, 1)
     }
 
+    /// A transcript cleanup checkpoint holds that transcript's cleaned text, so
+    /// every way of deleting the transcript or its recording removes it.
+    func testDeletingTranscriptOrRecordingDiscardsItsCleanupCheckpoint() async throws {
+        func writeCheckpoint(for recordingId: UUID) throws -> URL {
+            let url = TranscriptCleanupCheckpointStore.url(for: recordingId)
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("{}".utf8).write(to: url)
+            return url
+        }
+
+        let transcriptOnly = try createCompleteRecording(named: "Cleanup Checkpoint Transcript")
+        let transcriptCheckpoint = try writeCheckpoint(for: transcriptOnly)
+        let transcriptId = try XCTUnwrap(appCoordinator.getTranscript(for: transcriptOnly)?.id)
+        try await appCoordinator.deleteTranscript(id: transcriptId)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcriptCheckpoint.path))
+
+        let imported = try createCompleteRecording(named: "Cleanup Checkpoint Imported")
+        let importedCheckpoint = try writeCheckpoint(for: imported)
+        try await appCoordinator.deleteImportedTranscriptPreservingSummary(recordingId: imported)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: importedCheckpoint.path))
+
+        let wholeRecording = try createCompleteRecording(named: "Cleanup Checkpoint Recording")
+        let recordingCheckpoint = try writeCheckpoint(for: wholeRecording)
+        try appCoordinator.deleteRecording(id: wholeRecording)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: recordingCheckpoint.path))
+    }
+
     func testDeletingUnavailableImportedTranscriptClearsStaleLinksAndQueuesCloudCleanup() async throws {
         let recordingId = try createRecordingOnly(named: "Unavailable Imported Transcript")
         let context = appCoordinator.coreDataManager.managedObjectContext
