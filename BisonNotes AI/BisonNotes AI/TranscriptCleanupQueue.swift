@@ -450,6 +450,14 @@ final class TranscriptCleanupQueue: ObservableObject {
         TranscriptCleanupCheckpointStore.discard(for: recordingId, in: checkpointDirectory)
     }
 
+    /// A new raw transcript replaced the recording's previous one. Any queued
+    /// or running cleanup, and the checkpoint, described the old text: withdraw
+    /// and delete them, whether or not the new transcript is queued for
+    /// cleanup next. Call after the replacement commits, before queuing.
+    func transcriptReplaced(recordingId: UUID) {
+        discard(recordingId: recordingId)
+    }
+
     func beginViewing(recordingId: UUID) {
         viewedRecordingIds[recordingId, default: 0] += 1
     }

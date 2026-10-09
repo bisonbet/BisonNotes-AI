@@ -2872,6 +2872,7 @@ struct EditableTranscriptView: View {
                             try saveNewTranscriptToCoreData(
                                 replacement: replacement
                             )
+                            TranscriptCleanupQueue.shared.transcriptReplaced(recordingId: recordingId)
                             if rerunCleanupPreflight == .ready {
                                 TranscriptCleanupQueue.shared.enqueueSavedTranscript(
                                     recordingId: recordingId,

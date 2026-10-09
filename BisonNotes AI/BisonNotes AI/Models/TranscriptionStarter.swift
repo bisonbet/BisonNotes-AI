@@ -311,6 +311,7 @@ final class TranscriptionStarter: ObservableObject {
                             )
                         }
                         AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId)")
+                        TranscriptCleanupQueue.shared.transcriptReplaced(recordingId: recordingId)
                         if cleanupPreflight == .ready {
                             TranscriptCleanupQueue.shared.enqueueSavedTranscript(
                                 recordingId: recordingId,

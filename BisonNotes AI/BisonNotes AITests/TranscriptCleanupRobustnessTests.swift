@@ -53,6 +53,29 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(result.segments.allSatisfy { $0.cleanup == nil })
     }
 
+    /// One whitespace-free run too long to send — a long URL or pasted
+    /// identifier — is kept as written between cleaned passages, instead of
+    /// aborting the whole run.
+    func testOversizedWordPassesThroughWhileItsNeighboursAreCleaned() async {
+        let long = "https://example.com/" + String(repeating: "a", count: 40)
+        let segment = makeSegment(text: "alpha beta \(long) gamma delta")
+        let normalizer = ScriptedNormalizer(oversizedWords: [long])
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: [segment],
+            configuration: englishConfiguration()
+        )
+
+        let requests = await normalizer.normalizationRequests
+        XCTAssertEqual(requests, ["alpha beta", "gamma delta"], "The oversized word is never sent")
+        XCTAssertNil(result.warning, "Keeping a URL as written is not a failure")
+        XCTAssertEqual(
+            result.segments.first?.cleanup?.normalizedText,
+            [ScriptedNormalizer.cleaned("alpha beta"), long, ScriptedNormalizer.cleaned("gamma delta")]
+                .joined(separator: " ")
+        )
+    }
+
     func testProgressCountsEveryPlannedPassageInOrder() async {
         let segments = [
             makeSegment(text: (1...15).map { "a\($0)" }.joined(separator: " ")),
@@ -728,6 +751,27 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         }
     }
 
+    /// A re-run's new raw transcript replaces the old one, so the old one's
+    /// queued cleanup and checkpoint go, whether or not the new one is queued.
+    @MainActor
+    func testTranscriptReplacementDiscardsTheOldCleanupState() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(
+            for: harness.recordingId,
+            in: harness.directory.appendingPathComponent("checkpoints", isDirectory: true)
+        )
+        await checkpoint.record(.cleaned("Old transcript text."), forPiece: "a")
+        await checkpoint.flush()
+
+        harness.queue.transcriptReplaced(recordingId: harness.recordingId)
+
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+    }
+
     /// A store read that fails once is retried later rather than dropping the
     /// intent, and the retry does not spin.
     @MainActor
@@ -812,6 +856,8 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
     /// ends early on cancellation, which the service can report as a failed
     /// generation rather than as cancellation.
     private let errorWhenCancelled: TranscriptCleanupNormalizerError?
+    /// Words that cost more tokens than a whole request may hold.
+    private let oversizedWords: Set<String>
     private var released = false
     private(set) var isBlocked = false
     private(set) var normalizationRequests: [String] = []
@@ -824,8 +870,10 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
         cancellingPieces: Set<Int> = [],
         blockingPieces: Set<Int> = [],
         throwingPieces: [Int: TranscriptCleanupNormalizerError] = [:],
-        errorWhenCancelled: TranscriptCleanupNormalizerError? = nil
+        errorWhenCancelled: TranscriptCleanupNormalizerError? = nil,
+        oversizedWords: Set<String> = []
     ) {
+        self.oversizedWords = oversizedWords
         self.ready = ready
         self.tokenScale = tokenScale
         self.failingPieces = failingPieces
@@ -841,7 +889,11 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
 
     func renderedRequestTokenCount(for rawText: String) async throws -> Int {
         tokenRequestCount += 1
-        return max(1, rawText.split(whereSeparator: \.isWhitespace).count * tokenScale)
+        let words = rawText.split(whereSeparator: \.isWhitespace).map(String.init)
+        let cost = words.reduce(0) { total, word in
+            total + (oversizedWords.contains(word) ? 2_000 : tokenScale)
+        }
+        return max(1, cost)
     }
 
     func normalize(_ rawText: String) async throws -> TranscriptCleanupGeneration {

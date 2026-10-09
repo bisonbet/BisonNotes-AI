@@ -200,13 +200,28 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
     }
 
+    /// One planned model request, or text kept exactly as written.
+    ///
+    /// A single whitespace-free run longer than the whole request budget — a
+    /// long URL, a pasted identifier — cannot be sent to the model, and there
+    /// is nothing for a normalizer to fix in it anyway. It passes through
+    /// unchanged; it used to abort planning, and with it every passage in the
+    /// transcript.
+    private struct PlannedPiece: Equatable {
+        let text: String
+        let passthrough: Bool
+
+        static func model(_ text: String) -> PlannedPiece { PlannedPiece(text: text, passthrough: false) }
+        static func verbatim(_ text: String) -> PlannedPiece { PlannedPiece(text: text, passthrough: true) }
+    }
+
     private struct SegmentPlan {
         enum Kind {
             /// Whitespace-only: retains its existing value, never removed.
             case empty
             /// Only hesitation sounds: cleans to empty text with no model call.
             case hesitationOnly
-            case pieces([String])
+            case pieces([PlannedPiece])
         }
         let segment: TranscriptSegment
         let kind: Kind
@@ -269,8 +284,17 @@ struct TranscriptCleanupCoordinator: Sendable {
             case .pieces(let pieces):
                 var parts: [String] = []
                 var segmentCleanedPieces = 0
-                for (index, piece) in pieces.enumerated() {
+                for (index, planned) in pieces.enumerated() {
                     try Task.checkCancellation()
+                    let piece = planned.text
+                    if planned.passthrough {
+                        // Kept as written; neither cleaned nor a failure.
+                        report.passthroughPieces += 1
+                        parts.append(piece)
+                        completedPieces += 1
+                        progress?(TranscriptCleanupProgress(completedPieces: completedPieces, totalPieces: totalPieces))
+                        continue
+                    }
                     let key = Self.checkpointKey(segmentID: plan.segment.id, index: index, piece: piece)
 
                     let outcome: TranscriptCleanupPieceOutcome
@@ -375,10 +399,10 @@ struct TranscriptCleanupCoordinator: Sendable {
         for rawText: String,
         overhead: Int,
         counter: TokenCounter
-    ) async throws -> [String] {
+    ) async throws -> [PlannedPiece] {
         let fullRequestTokenCount = try await counter.count(rawText)
         guard fullRequestTokenCount > Self.maxRenderedInputTokens else {
-            return [rawText]
+            return [.model(rawText)]
         }
 
         // Each sentence and word is rendered exactly once and the fixed
@@ -390,7 +414,7 @@ struct TranscriptCleanupCoordinator: Sendable {
             throw TranscriptCleanupNormalizerError.invalidRequest
         }
 
-        var pieces: [String] = []
+        var pieces: [PlannedPiece] = []
         var pending: [String] = []
         var pendingCount = 0
 
@@ -398,7 +422,7 @@ struct TranscriptCleanupCoordinator: Sendable {
             let sentenceCount = try await unitTokenCount(sentence, overhead: overhead, counter: counter)
             if sentenceCount > budget {
                 if !pending.isEmpty {
-                    pieces.append(pending.joined(separator: " "))
+                    pieces.append(.model(pending.joined(separator: " ")))
                     pending = []
                     pendingCount = 0
                 }
@@ -411,7 +435,7 @@ struct TranscriptCleanupCoordinator: Sendable {
             }
 
             if pendingCount + sentenceCount > budget, !pending.isEmpty {
-                pieces.append(pending.joined(separator: " "))
+                pieces.append(.model(pending.joined(separator: " ")))
                 pending = []
                 pendingCount = 0
             }
@@ -420,7 +444,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
 
         if !pending.isEmpty {
-            pieces.append(pending.joined(separator: " "))
+            pieces.append(.model(pending.joined(separator: " ")))
         }
 
         guard !pieces.isEmpty else {
@@ -434,20 +458,24 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// assembled piece is therefore measured once against the real renderer,
     /// which stays linear in the number of pieces.
     private func verifiedPieces(
-        _ pieces: [String],
+        _ pieces: [PlannedPiece],
         budget: Int,
         overhead: Int,
         counter: TokenCounter
-    ) async throws -> [String] {
-        var verified: [String] = []
+    ) async throws -> [PlannedPiece] {
+        var verified: [PlannedPiece] = []
         verified.reserveCapacity(pieces.count)
         for piece in pieces {
-            if try await counter.count(piece) <= Self.maxRenderedInputTokens {
+            if piece.passthrough {
+                verified.append(piece)
+                continue
+            }
+            if try await counter.count(piece.text) <= Self.maxRenderedInputTokens {
                 verified.append(piece)
             } else {
                 verified.append(
                     contentsOf: try await whitespacePieces(
-                        for: piece, budget: budget, overhead: overhead, counter: counter
+                        for: piece.text, budget: budget, overhead: overhead, counter: counter
                     )
                 )
             }
@@ -464,21 +492,29 @@ struct TranscriptCleanupCoordinator: Sendable {
         budget: Int,
         overhead: Int,
         counter: TokenCounter
-    ) async throws -> [String] {
+    ) async throws -> [PlannedPiece] {
         let words = text.split(whereSeparator: \.isWhitespace).map(String.init)
         guard !words.isEmpty else { return [] }
 
-        var pieces: [String] = []
+        var pieces: [PlannedPiece] = []
         var pending: [String] = []
         var pendingCount = 0
         for word in words {
             let wordCount = try await unitTokenCount(word, overhead: overhead, counter: counter)
             guard wordCount <= budget else {
-                throw TranscriptCleanupNormalizerError.invalidRequest
+                // Too long to send even alone: keep it as written, between
+                // the passages on either side of it.
+                if !pending.isEmpty {
+                    pieces.append(.model(pending.joined(separator: " ")))
+                    pending = []
+                    pendingCount = 0
+                }
+                pieces.append(.verbatim(word))
+                continue
             }
 
             if pendingCount + wordCount > budget, !pending.isEmpty {
-                pieces.append(pending.joined(separator: " "))
+                pieces.append(.model(pending.joined(separator: " ")))
                 pending = []
                 pendingCount = 0
             }
@@ -487,7 +523,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         }
 
         if !pending.isEmpty {
-            pieces.append(pending.joined(separator: " "))
+            pieces.append(.model(pending.joined(separator: " ")))
         }
         return pieces
     }
@@ -768,6 +804,7 @@ final class RunReport: @unchecked Sendable {
     private var _piecesKeptOriginal = 0
     private var _hesitationShortcuts = 0
     private var _splitRetries = 0
+    private var _passthroughPieces = 0
     private var generations = 0
     private var generationSeconds: TimeInterval = 0
     private var outputTokens = 0
@@ -802,6 +839,10 @@ final class RunReport: @unchecked Sendable {
         get { locked { _splitRetries } }
         set { locked { _splitRetries = newValue } }
     }
+    var passthroughPieces: Int {
+        get { locked { _passthroughPieces } }
+        set { locked { _passthroughPieces = newValue } }
+    }
 
     func recordGeneration(seconds: TimeInterval, inputTokens: Int, outputTokens: Int, finishReason: String) {
         locked {
@@ -828,7 +869,7 @@ final class RunReport: @unchecked Sendable {
                 + "segments=\(segmentCount), pieces=\(_piecesPlanned), "
                 + "resumed=\(_piecesResumed), generated=\(generations), "
                 + "retries=\(_splitRetries), keptOriginal=\(_piecesKeptOriginal), "
-                + "hesitationOnly=\(_hesitationShortcuts), "
+                + "hesitationOnly=\(_hesitationShortcuts), verbatim=\(_passthroughPieces), "
                 + String(format: "generation=%.1fs, total=%.1fs, ", generationSeconds, elapsed)
                 + String(format: "%.1f tok/s", rate)
         }

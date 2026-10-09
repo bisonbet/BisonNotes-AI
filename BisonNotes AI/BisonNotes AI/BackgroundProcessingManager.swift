@@ -1660,6 +1660,9 @@ class BackgroundProcessingManager: ObservableObject {
                 cleanupWarning: transcriptCleanupWarning
             )
 
+            // Post-commit: the previous transcript's cleanup state is stale
+            // whether or not this one is cleaned.
+            TranscriptCleanupQueue.shared.transcriptReplaced(recordingId: recordingId)
             if cleanupPreflight == .ready {
                 TranscriptCleanupQueue.shared.enqueueSavedTranscript(
                     recordingId: recordingId,
