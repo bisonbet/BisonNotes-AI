@@ -2618,7 +2618,7 @@ struct EditableTranscriptView: View {
         )
         // A cleanup started here supersedes one queued for this recording.
         // The queue keeps its checkpoint, so this run starts from its progress.
-        // If this run is interrupted, the automatic one is handed back.
+        // If this run saves nothing, the automatic one is handed back.
         let supersededIntent = TranscriptCleanupQueue.shared.cancel(recordingId: recordingId)
         let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId)
         isCleaningTranscript = true
@@ -2627,7 +2627,14 @@ struct EditableTranscriptView: View {
         transcriptCleanupProgress = nil
 
         transcriptCleanupTask = Task { @MainActor in
+            // Every exit that publishes nothing hands a superseded automatic
+            // cleanup back to the queue, unless the saved transcript changed:
+            // that intent no longer applies.
+            var handsBackSupersededIntent = true
             defer {
+                if handsBackSupersededIntent, let supersededIntent {
+                    TranscriptCleanupQueue.shared.restore(supersededIntent)
+                }
                 transcriptCleanupTask = nil
                 isCleaningTranscript = false
                 isCancellingTranscriptCleanup = false
@@ -2651,12 +2658,10 @@ struct EditableTranscriptView: View {
                 // because a transcription job started. The checkpoint keeps
                 // every finished passage for the next tap.
                 transcriptCleanupWarningMessage = pause.userVisibleMessage
-                if let supersededIntent { TranscriptCleanupQueue.shared.restore(supersededIntent) }
                 return
             }
             guard !Task.isCancelled else {
                 transcriptCleanupWarningMessage = TranscriptCleanupWarning.cancelled.userVisibleMessage
-                if let supersededIntent { TranscriptCleanupQueue.shared.restore(supersededIntent) }
                 return
             }
 
@@ -2675,14 +2680,12 @@ struct EditableTranscriptView: View {
             guard
                   sourceSnapshot.matches(currentTranscript) else {
                 transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                handsBackSupersededIntent = false
                 return
             }
 
             if let warning = result.warning, !warning.keepsCleanedResult {
                 transcriptCleanupWarningMessage = warning.userVisibleMessage
-                if warning == .timeLimitReached {
-                    if let supersededIntent { TranscriptCleanupQueue.shared.restore(supersededIntent) }
-                }
                 return
             }
 
@@ -2709,6 +2712,7 @@ struct EditableTranscriptView: View {
                 return
             }
 
+            handsBackSupersededIntent = false
             editedSegments = result.segments
             speakerMappings = sourceMappings
             savedTranscriptSnapshot = currentTranscriptSnapshot
