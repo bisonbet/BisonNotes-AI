@@ -2092,7 +2092,10 @@ struct EditableTranscriptView: View {
             // `objectWillChange` fires before the change lands; read it after.
             // The editor's body re-evaluates only when this recording's
             // status actually differs.
-            Task { @MainActor in refreshQueuedCleanupStatus() }
+            Task { @MainActor in
+                refreshQueuedCleanupStatus()
+                pauseManualCleanupIfTranscribing()
+            }
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
@@ -2103,16 +2106,6 @@ struct EditableTranscriptView: View {
             transcriptCleanupTask?.cancel()
         }
         #endif
-        .onChange(of: backgroundProcessingManager.currentJob?.id) {
-            // S1-mini never runs beside a transcription job's ASR and
-            // speaker-label models; the automatic queue pauses the same way.
-            guard isCleaningTranscript,
-                  backgroundProcessingManager.currentJob?.type.isTranscription == true else {
-                return
-            }
-            transcriptCleanupPause = .waitingForTranscription
-            transcriptCleanupTask?.cancel()
-        }
         .onReceive(NotificationCenter.default.publisher(for: TranscriptCleanupQueue.didFinishNotification)) { notification in
             guard let userInfo = notification.userInfo,
                   let finishedID = userInfo["recordingId"] as? UUID,
@@ -2561,6 +2554,19 @@ struct EditableTranscriptView: View {
         }
     }
 
+    /// S1-mini never runs beside a transcription's ASR and speaker-label
+    /// models — a background job or a direct fallback, which the queue counts.
+    /// The automatic queue pauses the same way.
+    private func pauseManualCleanupIfTranscribing() {
+        guard isCleaningTranscript,
+              transcriptCleanupPause == nil,
+              TranscriptCleanupQueue.shared.isTranscriptionRunning else {
+            return
+        }
+        transcriptCleanupPause = .waitingForTranscription
+        transcriptCleanupTask?.cancel()
+    }
+
     /// Writes state only when this recording's queue status changed, so other
     /// recordings' progress never re-evaluates this editor.
     private func refreshQueuedCleanupStatus() {
@@ -2596,7 +2602,7 @@ struct EditableTranscriptView: View {
             transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
             return
         }
-        guard backgroundProcessingManager.currentJob?.type.isTranscription != true else {
+        guard !TranscriptCleanupQueue.shared.isTranscriptionRunning else {
             transcriptCleanupWarningMessage = TranscriptCleanupWarning.waitingForTranscription.userVisibleMessage
             return
         }

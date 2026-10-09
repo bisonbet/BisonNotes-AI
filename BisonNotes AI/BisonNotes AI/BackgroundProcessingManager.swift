@@ -632,13 +632,15 @@ class BackgroundProcessingManager: ObservableObject {
     @Published var currentJob: ProcessingJob? {
         didSet {
             guard oldValue?.id != currentJob?.id else { return }
-            // Queued transcript cleanup (S1-mini on the GPU) never runs beside
-            // a transcription job's ASR and speaker-label models: it pauses,
-            // keeping its checkpoint, and resumes when the job ends.
+            // Transcript cleanup (S1-mini on the GPU) never runs beside a
+            // transcription job's ASR and speaker-label models: it pauses,
+            // keeping its checkpoint, and resumes when the job ends. Begin
+            // before end, so a job-to-job handover never restarts it between.
             if currentJob?.type.isTranscription == true {
-                TranscriptCleanupQueue.shared.pause()
-            } else {
-                TranscriptCleanupQueue.shared.kick()
+                TranscriptCleanupQueue.shared.transcriptionDidBegin()
+            }
+            if oldValue?.type.isTranscription == true {
+                TranscriptCleanupQueue.shared.transcriptionDidEnd()
             }
         }
     }

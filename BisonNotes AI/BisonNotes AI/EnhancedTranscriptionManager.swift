@@ -764,6 +764,12 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.fileNotFound
         }
 
+        // The direct fallbacks run here, outside BackgroundProcessingManager,
+        // so they report to the cleanup queue themselves: S1-mini never runs
+        // beside this transcription's ASR and speaker-label models.
+        TranscriptCleanupQueue.shared.transcriptionDidBegin()
+        defer { TranscriptCleanupQueue.shared.transcriptionDidEnd() }
+
         // Snapshot local speaker-label choices at the start of the completed
         // Parakeet job. Later settings changes cannot switch this job's method.
         let selectedEngine = engine ?? .fluidAudio // Default fallback

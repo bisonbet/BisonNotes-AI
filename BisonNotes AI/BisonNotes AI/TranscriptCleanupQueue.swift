@@ -339,6 +339,11 @@ final class TranscriptCleanupQueue: ObservableObject {
     @Published private(set) var progress: [UUID: TranscriptCleanupProgress] = [:]
     @Published private(set) var activeRecordingId: UUID?
     @Published private(set) var intents: [TranscriptCleanupIntent] = []
+    /// Transcriptions running now — a background job or a direct fallback.
+    /// S1-mini never runs beside their ASR and speaker-label models.
+    @Published private(set) var activeTranscriptionCount = 0
+
+    var isTranscriptionRunning: Bool { activeTranscriptionCount > 0 }
 
     private let coordinator: TranscriptCleanupCoordinator
     private let store: any TranscriptCleanupQueueStore
@@ -408,12 +413,26 @@ final class TranscriptCleanupQueue: ObservableObject {
         #endif
     }
 
-    /// Foreground only, and never alongside a transcription job: S1-mini and
-    /// that job's ASR and speaker-label models would otherwise be resident
-    /// together. `BackgroundProcessingManager` pauses the queue when such a
-    /// job starts and kicks it when the job ends.
+    /// GPU work is refused from a backgrounded iOS app; running
+    /// transcriptions are gated separately by `transcriptionDidBegin`.
     static func canRunByDefault() -> Bool {
-        isAppInForeground() && BackgroundProcessingManager.shared.currentJob?.type.isTranscription != true
+        isAppInForeground()
+    }
+
+    /// Call when a transcription starts — a background job or a direct
+    /// fallback. The running cleanup pauses, keeping its checkpoint, and none
+    /// starts until every transcription has called `transcriptionDidEnd`.
+    func transcriptionDidBegin() {
+        activeTranscriptionCount += 1
+        pause()
+    }
+
+    func transcriptionDidEnd() {
+        guard activeTranscriptionCount > 0 else { return }
+        activeTranscriptionCount -= 1
+        if activeTranscriptionCount == 0 {
+            kick()
+        }
     }
 
     /// Loads pending intents and begins running them. Call once app data is
@@ -594,7 +613,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         if let retryNotBefore, Date() < retryNotBefore {
             return
         }
-        guard store.isAvailable, canRunNow(), let next = intents.first else {
+        guard store.isAvailable, canRunNow(), !isTranscriptionRunning, let next = intents.first else {
             return
         }
         runTask = Task { [weak self] in

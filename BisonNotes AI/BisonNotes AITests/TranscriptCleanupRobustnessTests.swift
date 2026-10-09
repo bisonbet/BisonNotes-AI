@@ -584,6 +584,42 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(harness.store.transcript?.segments.allSatisfy { $0.cleanup != nil } == true)
     }
 
+    /// A transcription — a background job or a direct fallback — pauses the
+    /// running cleanup and holds the queue until every transcription ends; the
+    /// cleanup then resumes from its checkpoint.
+    @MainActor
+    func testRunningTranscriptionPausesAndHoldsTheQueue() async throws {
+        let segments = [
+            makeSegment(text: "first segment text"),
+            makeSegment(text: "second segment text")
+        ]
+        let normalizer = ScriptedNormalizer(blockingPieces: [1])
+        let harness = try QueueHarness(segments: segments, normalizer: normalizer)
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await waitUntil { await normalizer.isBlocked }
+        harness.queue.transcriptionDidBegin()
+        harness.queue.transcriptionDidBegin()
+        await harness.queue.waitForCurrentRun()
+        await normalizer.unblock()
+
+        XCTAssertEqual(harness.store.saveCount, 0, "A paused run saves nothing")
+        XCTAssertEqual(harness.queue.intents.count, 1, "A paused run keeps its intent")
+
+        harness.queue.transcriptionDidEnd()
+        harness.queue.kick()
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 0, "One transcription is still running")
+
+        harness.queue.transcriptionDidEnd()
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 1)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        let requests = await normalizer.normalizationRequests
+        XCTAssertEqual(requests, [segments[0].text, segments[1].text, segments[1].text])
+    }
+
     /// A job that finishes before the queue is started must not overwrite the
     /// saved queue — the earlier recordings would never be cleaned.
     @MainActor
