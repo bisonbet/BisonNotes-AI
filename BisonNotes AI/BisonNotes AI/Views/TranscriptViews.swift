@@ -2067,9 +2067,15 @@ struct EditableTranscriptView: View {
         }
         .onAppear {
             refreshTranscriptFromCoreData()
+            if let recordingId = recording.id {
+                transcriptCleanupQueue.beginViewing(recordingId: recordingId)
+            }
         }
         .onDisappear {
             transcriptCleanupTask?.cancel()
+            if let recordingId = recording.id {
+                transcriptCleanupQueue.endViewing(recordingId: recordingId)
+            }
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
@@ -2575,7 +2581,7 @@ struct EditableTranscriptView: View {
         // A cleanup started here supersedes one queued for this recording.
         // The queue keeps its checkpoint, so this run starts from its progress.
         TranscriptCleanupQueue.shared.cancel(recordingId: recordingId)
-        let checkpoint = TranscriptCleanupFileCheckpoint(recordingId: recordingId)
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId)
         isCleaningTranscript = true
         isCancellingTranscriptCleanup = false
         isTranscriptCleanupPausedForBackground = false

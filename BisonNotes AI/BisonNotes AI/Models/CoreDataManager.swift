@@ -1965,6 +1965,9 @@ class CoreDataManager: ObservableObject {
             context.delete(recording)
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
             AppLog.shared.coreData("Recording deleted: \(id)")
+            // Post-commit: a queued cleanup has nothing left to clean, and its
+            // checkpoint holds the deleted recording's text.
+            TranscriptCleanupQueue.shared.discard(recordingId: id)
         } catch {
             AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
             throw error

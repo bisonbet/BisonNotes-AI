@@ -150,9 +150,12 @@ struct TranscriptCleanupCoordinator: Sendable {
                         progress: progress,
                         report: report
                     )
+                    await checkpoint?.flush()
                     await self.normalizer.releaseResources()
                     return result
                 } catch {
+                    // A paused or failed run keeps everything it finished.
+                    await checkpoint?.flush()
                     await self.normalizer.releaseResources()
                     throw error
                 }
@@ -174,6 +177,16 @@ struct TranscriptCleanupCoordinator: Sendable {
         case .modelUnavailable: return .missingModel
         case .templateUnavailable, .generationFailed, .invalidRequest: return .resourceFailure
         case .invalidOutput, .none: return .invalidOutput
+        }
+    }
+
+    /// Failures the same model would produce again for the same passage:
+    /// output it rejected, or a request that cannot be built. Timeouts and
+    /// generation errors are transient.
+    private static func isDeterministic(_ error: Error) -> Bool {
+        switch error as? TranscriptCleanupNormalizerError {
+        case .invalidOutput, .invalidRequest: return true
+        default: return false
         }
     }
 
@@ -261,6 +274,7 @@ struct TranscriptCleanupCoordinator: Sendable {
                     let key = Self.checkpointKey(segmentID: plan.segment.id, index: index, piece: piece)
 
                     let outcome: TranscriptCleanupPieceOutcome
+                    var failureIsDeterministic = false
                     if let saved = await checkpoint?.outcome(forPiece: key) {
                         outcome = saved
                         report.piecesResumed += 1
@@ -270,6 +284,12 @@ struct TranscriptCleanupCoordinator: Sendable {
                                 try await normalizedText(for: piece, overhead: overhead, counter: counter, report: report)
                             )
                         } catch let error where !Self.endsRun(error) {
+                            // A generation interrupted by a pause or cancel
+                            // can surface as an ordinary failure — MLX's
+                            // stream simply ends early. That is not a verdict
+                            // on the passage and must never reach the
+                            // checkpoint, or the passage is never retried.
+                            if Task.isCancelled { throw CancellationError() }
                             // One piece the model cannot clean keeps its
                             // original text; the rest of the run continues.
                             AppLog.shared.transcription(
@@ -279,8 +299,14 @@ struct TranscriptCleanupCoordinator: Sendable {
                             )
                             firstPieceFailure = firstPieceFailure ?? error
                             outcome = .keptOriginal
+                            failureIsDeterministic = Self.isDeterministic(error)
                         }
-                        await checkpoint?.record(outcome, forPiece: key)
+                        // Only outcomes that would repeat are worth resuming:
+                        // a cleaned passage, or output the temperature-0 model
+                        // would reject again. A timeout or GPU error is retried.
+                        if outcome != .keptOriginal || failureIsDeterministic {
+                            await checkpoint?.record(outcome, forPiece: key)
+                        }
                     }
 
                     switch outcome {
@@ -313,9 +339,11 @@ struct TranscriptCleanupCoordinator: Sendable {
         report.piecesKeptOriginal = keptOriginalPieceCount
 
         // A run that could not clean a single passage keeps the original
-        // transcript untouched and says why, exactly as before.
-        if cleanedPieceCount == 0, report.hesitationShortcuts == 0, let firstPieceFailure {
-            throw firstPieceFailure
+        // transcript untouched and says why, exactly as before. Hesitation-only
+        // turns do not count as cleaning, and a passage resumed as kept-original
+        // is still a failure, even though this run did not produce it.
+        if cleanedPieceCount == 0, keptOriginalPieceCount > 0 {
+            throw firstPieceFailure ?? TranscriptCleanupNormalizerError.invalidOutput
         }
 
         return TranscriptCleanupResult(

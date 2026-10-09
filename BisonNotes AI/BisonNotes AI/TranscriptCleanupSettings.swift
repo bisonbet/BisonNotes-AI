@@ -241,6 +241,9 @@ enum TranscriptCleanupPieceOutcome: Codable, Equatable, Sendable {
 protocol TranscriptCleanupCheckpointing: Sendable {
     func outcome(forPiece key: String) async -> TranscriptCleanupPieceOutcome?
     func record(_ outcome: TranscriptCleanupPieceOutcome, forPiece key: String) async
+    /// Writes anything recorded but not yet durable. Called when a run ends,
+    /// however it ends, so batching writes never loses a paused run's work.
+    func flush() async
 }
 
 /// The cheap checks that decide, before any model is loaded, whether a

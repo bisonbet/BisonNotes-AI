@@ -120,6 +120,7 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
             input: input,
             parameters: parameters
         )
+        try Task.checkCancellation()
         var output = ""
         var completionInfo: GenerateCompletionInfo?
         for generation in generations {
@@ -219,6 +220,9 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
                     try Task.checkCancellation()
                     values.append(value)
                 }
+                // A cancelled consumer ends the stream without an error;
+                // report it as cancellation, not as a failed generation.
+                try Task.checkCancellation()
                 return values
             }
             group.addTask {

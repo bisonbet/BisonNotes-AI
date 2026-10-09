@@ -201,11 +201,13 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let recordingId = UUID()
 
-        let writer = TranscriptCleanupFileCheckpoint(recordingId: recordingId, directory: directory)
+        let url = TranscriptCleanupCheckpointStore.url(for: recordingId, in: directory)
+        let writer = TranscriptCleanupFileCheckpoint(url: url)
         await writer.record(.cleaned("Done."), forPiece: "a")
         await writer.record(.keptOriginal, forPiece: "b")
+        await writer.flush()
 
-        let reader = TranscriptCleanupFileCheckpoint(recordingId: recordingId, directory: directory)
+        let reader = TranscriptCleanupFileCheckpoint(url: url)
         let a = await reader.outcome(forPiece: "a")
         let b = await reader.outcome(forPiece: "b")
         XCTAssertEqual(a, .cleaned("Done."))
@@ -213,8 +215,7 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
 
         await reader.remove()
         XCTAssertFalse(FileManager.default.fileExists(atPath: reader.url.path))
-        let afterRemove = await TranscriptCleanupFileCheckpoint(recordingId: recordingId, directory: directory)
-            .outcome(forPiece: "a")
+        let afterRemove = await TranscriptCleanupFileCheckpoint(url: url).outcome(forPiece: "a")
         XCTAssertNil(afterRemove)
     }
 
@@ -250,6 +251,121 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: fresh.path))
+    }
+
+    /// Writes are batched; a flush makes the rest durable, and the store hands
+    /// every caller the same instance so two writers cannot clobber each other.
+    func testCheckpointBatchesWritesAndTheStoreSharesOneInstance() async throws {
+        let directory = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recordingId = UUID()
+        let first = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: directory)
+        let second = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: directory)
+        XCTAssertTrue(first === second)
+
+        for index in 0..<(TranscriptCleanupFileCheckpoint.writeBatchSize * 2 + 3) {
+            await first.record(.cleaned("\(index)"), forPiece: "\(index)")
+        }
+        await first.flush()
+        let reread = await TranscriptCleanupFileCheckpoint(url: first.url).recordedPieceCount()
+        XCTAssertEqual(reread, TranscriptCleanupFileCheckpoint.writeBatchSize * 2 + 3)
+
+        TranscriptCleanupCheckpointStore.discard(for: recordingId, in: directory)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first.url.path))
+        XCTAssertFalse(TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: directory) === first)
+    }
+
+    /// A pause that interrupts a generation can surface as an ordinary failed
+    /// generation. It must end the run as cancelled and leave the interrupted
+    /// passage out of the checkpoint, so the resumed run cleans it.
+    @MainActor
+    func testInterruptedGenerationIsNeverCheckpointedAsAFailure() async throws {
+        let segments = [
+            makeSegment(text: "first segment text"),
+            makeSegment(text: "second segment text")
+        ]
+        let normalizer = ScriptedNormalizer(blockingPieces: [1], errorWhenCancelled: .generationFailed)
+        let checkpoint = MemoryCheckpoint()
+        let coordinator = makeCoordinator(normalizer)
+        let configuration = englishConfiguration()
+
+        let run = Task {
+            await coordinator.clean(segments: segments, configuration: configuration, checkpoint: checkpoint)
+        }
+        try await waitUntil { await normalizer.isBlocked }
+        run.cancel()
+        let result = await run.value
+
+        XCTAssertEqual(result.warning, .cancelled)
+        let interrupted = await checkpoint.outcome(
+            forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: segments[1].id, index: 0, piece: segments[1].text)
+        )
+        XCTAssertNil(interrupted, "The interrupted passage must be retried on resume")
+        let recordedCount = await checkpoint.count
+        XCTAssertEqual(recordedCount, 1, "Only the passage that finished is recorded")
+    }
+
+    /// A timeout or GPU error is retried on resume; output the model rejected
+    /// would be rejected again at temperature 0, so it is remembered.
+    func testOnlyRepeatableFailuresAreCheckpointed() async {
+        let segments = [
+            makeSegment(text: "first segment with several words"),
+            makeSegment(text: "second segment with several words"),
+            makeSegment(text: "third segment with several words")
+        ]
+        let normalizer = ScriptedNormalizer(failingPieces: [0], throwingPieces: [1: .generationFailed])
+        let checkpoint = MemoryCheckpoint()
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: segments,
+            configuration: englishConfiguration(),
+            checkpoint: checkpoint
+        )
+
+        XCTAssertEqual(result.warning, .partiallyCleaned(2))
+        let rejected = await checkpoint.outcome(
+            forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: segments[0].id, index: 0, piece: segments[0].text)
+        )
+        let timedOut = await checkpoint.outcome(
+            forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: segments[1].id, index: 0, piece: segments[1].text)
+        )
+        XCTAssertEqual(rejected, .keptOriginal)
+        XCTAssertNil(timedOut)
+    }
+
+    /// Resuming a checkpoint in which every passage was kept original cleans
+    /// nothing, and must say so rather than report "Transcript cleaned".
+    func testResumedRunThatCleansNothingReportsAFailure() async {
+        let segment = makeSegment(text: "the deadline is Friday")
+        let checkpoint = MemoryCheckpoint()
+        await checkpoint.seed(
+            .keptOriginal,
+            forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: segment.id, index: 0, piece: segment.text)
+        )
+
+        let result = await makeCoordinator(ScriptedNormalizer()).clean(
+            segments: [segment],
+            configuration: englishConfiguration(),
+            checkpoint: checkpoint
+        )
+
+        XCTAssertEqual(result.warning, .invalidOutput)
+        XCTAssertEqual(result.cleanedSegmentCount, 0)
+    }
+
+    /// A hesitation-only turn cleaned locally must not turn a run in which the
+    /// model failed every real passage into a "partially cleaned" success.
+    func testHesitationTurnDoesNotMaskARunThatFailedEveryRealPassage() async {
+        let segments = [
+            makeSegment(text: "Um."),
+            makeSegment(text: "the deadline is Friday")
+        ]
+        let normalizer = ScriptedNormalizer(failingPieces: [0])
+
+        let result = await makeCoordinator(normalizer).clean(segments: segments, configuration: englishConfiguration())
+
+        XCTAssertEqual(result.warning, .invalidOutput)
+        XCTAssertTrue(result.segments.allSatisfy { $0.cleanup == nil })
     }
 
     // MARK: - Queue
@@ -353,6 +469,101 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(harness.store.transcript?.segments.allSatisfy { $0.cleanup != nil } == true)
     }
 
+    /// A job that finishes before the queue is started must not overwrite the
+    /// saved queue — the earlier recordings would never be cleaned.
+    @MainActor
+    func testEnqueueBeforeStartMergesWithTheSavedQueue() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        let earlier = UUID()
+        let saved = harness.makeQueue()
+        saved.start()
+        saved.enqueue(recordingId: earlier, source: harness.snapshot(), languageCode: "en")
+
+        let relaunched = harness.makeQueue()
+        relaunched.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+
+        XCTAssertEqual(Set(relaunched.intents.map(\.recordingId)), [earlier, harness.recordingId])
+        let reloaded = harness.makeQueue()
+        reloaded.start()
+        XCTAssertEqual(Set(reloaded.intents.map(\.recordingId)), [earlier, harness.recordingId])
+    }
+
+    @MainActor
+    func testTurningCleanupOffDropsQueuedWork() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isCleanupEnabled = false
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
+    /// A cancellation the queue did not ask for is a failure, not a pause;
+    /// keeping the intent would restart it in a loop.
+    @MainActor
+    func testUnrequestedCancellationEndsTheIntent() async throws {
+        let harness = try QueueHarness(
+            segments: [makeSegment(text: "the deadline is Friday")],
+            normalizer: ScriptedNormalizer(cancellingPieces: [0])
+        )
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertEqual(harness.notifications.count, 1)
+        let requests = await harness.normalizer.normalizationRequests
+        XCTAssertEqual(requests.count, 1, "Ran once, not in a loop")
+    }
+
+    /// A queued run's outcome reaches the user even when no editor is open
+    /// for that recording; an open editor shows it itself.
+    @MainActor
+    func testQueuedOutcomeNotifiesTheUserOnlyWhenNoEditorShowsIt() async throws {
+        let segments = [
+            makeSegment(text: "first segment with several words"),
+            makeSegment(text: "second segment with several words")
+        ]
+        let harness = try QueueHarness(segments: segments, normalizer: ScriptedNormalizer(failingPieces: [0]))
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.notifications, [TranscriptCleanupWarning.partiallyCleaned(1).userVisibleMessage])
+
+        let viewed = try QueueHarness(segments: segments, normalizer: ScriptedNormalizer(failingPieces: [0]))
+        viewed.queue.start()
+        viewed.queue.beginViewing(recordingId: viewed.recordingId)
+        viewed.queue.enqueue(recordingId: viewed.recordingId, source: viewed.snapshot(), languageCode: "en")
+        await viewed.queue.waitForCurrentRun()
+        XCTAssertTrue(viewed.notifications.isEmpty)
+    }
+
+    @MainActor
+    func testDeletingARecordingDiscardsItsIntentAndCheckpoint() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(
+            for: harness.recordingId,
+            in: harness.directory.appendingPathComponent("checkpoints", isDirectory: true)
+        )
+        await checkpoint.record(.cleaned("Secret."), forPiece: "a")
+        await checkpoint.flush()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+
+        harness.queue.discard(recordingId: harness.recordingId)
+
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+    }
+
     // MARK: - Helpers
 
     private func makeCoordinator(_ normalizer: ScriptedNormalizer) -> TranscriptCleanupCoordinator {
@@ -398,6 +609,11 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
     private let failingPieces: Set<Int>
     private let cancellingPieces: Set<Int>
     private let blockingPieces: Set<Int>
+    private let throwingPieces: [Int: TranscriptCleanupNormalizerError]
+    /// What a blocked call throws when its task is cancelled. MLX's stream
+    /// ends early on cancellation, which the service can report as a failed
+    /// generation rather than as cancellation.
+    private let errorWhenCancelled: TranscriptCleanupNormalizerError?
     private var released = false
     private(set) var isBlocked = false
     private(set) var normalizationRequests: [String] = []
@@ -408,13 +624,17 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
         tokenScale: Int = 1,
         failingPieces: Set<Int> = [],
         cancellingPieces: Set<Int> = [],
-        blockingPieces: Set<Int> = []
+        blockingPieces: Set<Int> = [],
+        throwingPieces: [Int: TranscriptCleanupNormalizerError] = [:],
+        errorWhenCancelled: TranscriptCleanupNormalizerError? = nil
     ) {
         self.ready = ready
         self.tokenScale = tokenScale
         self.failingPieces = failingPieces
         self.cancellingPieces = cancellingPieces
         self.blockingPieces = blockingPieces
+        self.throwingPieces = throwingPieces
+        self.errorWhenCancelled = errorWhenCancelled
     }
 
     static func cleaned(_ text: String) -> String { "Clean(\(text))" }
@@ -432,12 +652,18 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
         if blockingPieces.contains(index), !released {
             isBlocked = true
             while !released {
-                try Task.checkCancellation()
-                try await Task.sleep(nanoseconds: 5_000_000)
+                if Task.isCancelled {
+                    if let errorWhenCancelled { throw errorWhenCancelled }
+                    throw CancellationError()
+                }
+                try? await Task.sleep(nanoseconds: 5_000_000)
             }
         }
         if cancellingPieces.contains(index) {
             throw CancellationError()
+        }
+        if let error = throwingPieces[index] {
+            throw error
         }
         let words = rawText.split(whereSeparator: \.isWhitespace).count
         if failingPieces.contains(index) {
@@ -480,6 +706,8 @@ private actor MemoryCheckpoint: TranscriptCleanupCheckpointing {
     func record(_ outcome: TranscriptCleanupPieceOutcome, forPiece key: String) async {
         pieces[key] = outcome
     }
+
+    func flush() async {}
 }
 
 private final class ProgressRecorder: @unchecked Sendable {
@@ -536,6 +764,8 @@ private final class QueueHarness {
     let store: MemoryQueueStore
     let normalizer: ScriptedNormalizer
     var isForeground = true
+    var isCleanupEnabled = true
+    private(set) var notifications: [String] = []
     private(set) var queue: TranscriptCleanupQueue!
 
     init(segments: [TranscriptSegment], normalizer: ScriptedNormalizer = ScriptedNormalizer()) throws {
@@ -576,6 +806,8 @@ private final class QueueHarness {
             queueFileURL: directory.appendingPathComponent("queue.json"),
             checkpointDirectory: directory.appendingPathComponent("checkpoints", isDirectory: true),
             canRunNow: { [unowned self] in self.isForeground },
+            isCleanupEnabled: { [unowned self] in self.isCleanupEnabled },
+            notifyUser: { [unowned self] message in self.notifications.append(message) },
             observesLifecycle: false
         )
     }

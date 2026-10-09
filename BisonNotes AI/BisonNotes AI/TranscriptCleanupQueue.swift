@@ -27,6 +27,12 @@ import UIKit
 /// written by a different model revision or prompt version is discarded whole.
 /// Failing to write one is logged and otherwise ignored: a checkpoint only saves
 /// work, it never decides what is correct.
+///
+/// Get instances from `TranscriptCleanupCheckpointStore.checkpoint(for:)`, which
+/// hands every caller the same one per file. Two instances with separate
+/// in-memory copies would overwrite each other's entries on disk. Writes are
+/// batched — every passage used to rewrite the whole file, which is quadratic
+/// over a long transcript — and `flush` makes the rest durable when a run ends.
 actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
     private struct Payload: Codable {
         var modelRevision: String
@@ -49,15 +55,17 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
         }
     }
 
+    /// A kill loses at most this many finished passages.
+    static let writeBatchSize = 8
+    static let writeInterval: TimeInterval = 5
+
     nonisolated let url: URL
     private var payload: Payload?
+    private var unwrittenCount = 0
+    private var lastWrite = Date.distantPast
 
     init(url: URL) {
         self.url = url
-    }
-
-    init(recordingId: UUID, directory: URL = TranscriptCleanupCheckpointStore.directory) {
-        self.url = directory.appendingPathComponent("\(recordingId.uuidString).json", isDirectory: false)
     }
 
     func outcome(forPiece key: String) async -> TranscriptCleanupPieceOutcome? {
@@ -69,19 +77,14 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
         current.pieces[key] = outcome
         current.updatedAt = Date()
         payload = current
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try JSONEncoder().encode(current).write(to: url, options: .atomic)
-            AppFileProtection.apply(to: url)
-        } catch {
-            AppLog.shared.transcription(
-                "[TranscriptCleanup] Could not write the cleanup checkpoint: \(error.localizedDescription)",
-                level: .error
-            )
+        unwrittenCount += 1
+        if unwrittenCount >= Self.writeBatchSize || Date().timeIntervalSince(lastWrite) >= Self.writeInterval {
+            write()
         }
+    }
+
+    func flush() async {
+        if unwrittenCount > 0 { write() }
     }
 
     /// Number of finished passages on record, for tests and logging.
@@ -91,12 +94,32 @@ actor TranscriptCleanupFileCheckpoint: TranscriptCleanupCheckpointing {
 
     func remove() {
         payload = .empty()
+        unwrittenCount = 0
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
             try FileManager.default.removeItem(at: url)
         } catch {
             AppLog.shared.transcription(
                 "[TranscriptCleanup] Could not remove the cleanup checkpoint: \(error.localizedDescription)",
+                level: .error
+            )
+        }
+    }
+
+    private func write() {
+        guard let payload else { return }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try JSONEncoder().encode(payload).write(to: url, options: .atomic)
+            AppFileProtection.apply(to: url)
+            unwrittenCount = 0
+            lastWrite = Date()
+        } catch {
+            AppLog.shared.transcription(
+                "[TranscriptCleanup] Could not write the cleanup checkpoint: \(error.localizedDescription)",
                 level: .error
             )
         }
@@ -124,9 +147,40 @@ enum TranscriptCleanupCheckpointStore {
         return base.appendingPathComponent("TranscriptCleanup/Checkpoints", isDirectory: true)
     }
 
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var instances: [URL: TranscriptCleanupFileCheckpoint] = [:]
+
+    static func url(for recordingId: UUID, in directory: URL = directory) -> URL {
+        directory.appendingPathComponent("\(recordingId.uuidString).json", isDirectory: false)
+    }
+
+    /// The one checkpoint instance for this recording's file.
+    static func checkpoint(for recordingId: UUID, in directory: URL = directory) -> TranscriptCleanupFileCheckpoint {
+        let url = url(for: recordingId, in: directory)
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = instances[url] { return existing }
+        let created = TranscriptCleanupFileCheckpoint(url: url)
+        instances[url] = created
+        return created
+    }
+
+    /// Deletes a recording's checkpoint — it holds that recording's cleaned
+    /// text — and forgets the instance so nothing writes it back.
+    static func discard(for recordingId: UUID, in directory: URL = directory) {
+        let url = url(for: recordingId, in: directory)
+        lock.lock()
+        let instance = instances.removeValue(forKey: url)
+        lock.unlock()
+        if let instance {
+            Task { await instance.remove() }
+        }
+        try? FileManager.default.removeItem(at: url)
+    }
+
     /// Removes checkpoints nobody has touched for `maximumAge`. A finished or
     /// abandoned run's checkpoint is otherwise only deleted by the run that
-    /// publishes it.
+    /// publishes it, or when its recording is deleted.
     static func prune(maximumAge: TimeInterval, in directory: URL = directory, now: Date = Date()) {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: directory,
@@ -208,16 +262,23 @@ final class TranscriptCleanupQueue: ObservableObject {
 
     @Published private(set) var progress: [UUID: TranscriptCleanupProgress] = [:]
     @Published private(set) var activeRecordingId: UUID?
-    private(set) var intents: [TranscriptCleanupIntent] = []
+    @Published private(set) var intents: [TranscriptCleanupIntent] = []
 
     private let coordinator: TranscriptCleanupCoordinator
     private let store: any TranscriptCleanupQueueStore
     private let queueFileURL: URL
     private let checkpointDirectory: URL
     private let canRunNow: @MainActor () -> Bool
+    private let isCleanupEnabled: @MainActor () -> Bool
+    private let notifyUser: @MainActor (String) -> Void
     private let observesLifecycle: Bool
     private var runTask: Task<Void, Never>?
     private var started = false
+    private var loadedFromDisk = false
+    /// Recordings whose transcript editor is open. That editor shows a run's
+    /// outcome itself; any other outcome becomes a user notification, because
+    /// otherwise a queued run that failed or only partly worked would go unseen.
+    private var viewedRecordingIds: [UUID: Int] = [:]
     private var observers: [NSObjectProtocol] = []
 
     init(
@@ -226,6 +287,8 @@ final class TranscriptCleanupQueue: ObservableObject {
         queueFileURL: URL = TranscriptCleanupQueue.defaultQueueFileURL,
         checkpointDirectory: URL = TranscriptCleanupCheckpointStore.directory,
         canRunNow: @escaping @MainActor () -> Bool = TranscriptCleanupQueue.isAppInForeground,
+        isCleanupEnabled: @escaping @MainActor () -> Bool = { TranscriptCleanupSettings.isEnabled() },
+        notifyUser: @escaping @MainActor (String) -> Void = TranscriptCleanupQueue.postUserNotification,
         observesLifecycle: Bool = true
     ) {
         self.coordinator = coordinator
@@ -233,7 +296,15 @@ final class TranscriptCleanupQueue: ObservableObject {
         self.queueFileURL = queueFileURL
         self.checkpointDirectory = checkpointDirectory
         self.canRunNow = canRunNow
+        self.isCleanupEnabled = isCleanupEnabled
+        self.notifyUser = notifyUser
         self.observesLifecycle = observesLifecycle
+    }
+
+    static func postUserNotification(_ message: String) {
+        Task {
+            await BackgroundProcessingManager.shared.sendNotification(title: "Transcript Cleanup", body: message)
+        }
     }
 
     static var defaultQueueFileURL: URL {
@@ -260,7 +331,7 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
         started = true
-        intents = loadIntents()
+        loadIntentsIfNeeded()
         TranscriptCleanupCheckpointStore.prune(maximumAge: Self.checkpointMaximumAge, in: checkpointDirectory)
         if observesLifecycle {
             observeLifecycle()
@@ -272,6 +343,9 @@ final class TranscriptCleanupQueue: ObservableObject {
     }
 
     func enqueue(recordingId: UUID, source: TranscriptCleanupSourceSnapshot, languageCode: String?) {
+        // An intent queued before `start` — a job that finished early in launch
+        // — must merge with the saved queue, not overwrite it.
+        loadIntentsIfNeeded()
         if activeRecordingId == recordingId {
             runTask?.cancel()
         }
@@ -286,7 +360,13 @@ final class TranscriptCleanupQueue: ObservableObject {
         )
         persistIntents()
         AppLog.shared.transcription("[TranscriptCleanup] Queued cleanup for recording \(recordingId.uuidString)")
-        kick()
+        // Enqueueing means app data is readable, so the queue can run even if
+        // the launch path that normally starts it has not got there yet.
+        if !started, store.isAvailable {
+            start()
+        } else {
+            kick()
+        }
     }
 
     /// Queues cleanup of a transcript that has just been saved, reading it back
@@ -308,6 +388,7 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// Withdraws a queued or running cleanup — for example when the user starts
     /// one by hand. The checkpoint is kept, so the manual run starts from it.
     func cancel(recordingId: UUID) {
+        loadIntentsIfNeeded()
         let hadIntent = intents.contains { $0.recordingId == recordingId }
         intents.removeAll { $0.recordingId == recordingId }
         if hadIntent { persistIntents() }
@@ -320,6 +401,22 @@ final class TranscriptCleanupQueue: ObservableObject {
         intents.contains { $0.recordingId == recordingId }
     }
 
+    /// The recording was deleted: withdraw its cleanup and delete its
+    /// checkpoint, which holds that recording's cleaned text.
+    func discard(recordingId: UUID) {
+        cancel(recordingId: recordingId)
+        TranscriptCleanupCheckpointStore.discard(for: recordingId, in: checkpointDirectory)
+    }
+
+    func beginViewing(recordingId: UUID) {
+        viewedRecordingIds[recordingId, default: 0] += 1
+    }
+
+    func endViewing(recordingId: UUID) {
+        guard let count = viewedRecordingIds[recordingId] else { return }
+        viewedRecordingIds[recordingId] = count > 1 ? count - 1 : nil
+    }
+
     /// Stops the running cleanup without dropping it; it resumes from its
     /// checkpoint on the next `kick`.
     func pause() {
@@ -330,7 +427,17 @@ final class TranscriptCleanupQueue: ObservableObject {
 
     /// Starts the next intent if nothing is running and the app may use the GPU.
     func kick() {
-        guard started, runTask == nil, store.isAvailable, canRunNow(), let next = intents.first else {
+        guard started, runTask == nil else { return }
+        if !intents.isEmpty, !isCleanupEnabled() {
+            // Turning cleanup off stops work already queued, not just new work.
+            AppLog.shared.transcription(
+                "[TranscriptCleanup] Cleanup was turned off; dropping \(intents.count) queued cleanup(s)"
+            )
+            intents.removeAll()
+            persistIntents()
+            return
+        }
+        guard store.isAvailable, canRunNow(), let next = intents.first else {
             return
         }
         runTask = Task { [weak self] in
@@ -346,7 +453,7 @@ final class TranscriptCleanupQueue: ObservableObject {
     private func run(_ intent: TranscriptCleanupIntent) async {
         let recordingId = intent.recordingId
         activeRecordingId = recordingId
-        let checkpoint = TranscriptCleanupFileCheckpoint(recordingId: recordingId, directory: checkpointDirectory)
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: checkpointDirectory)
         defer {
             activeRecordingId = nil
             progress[recordingId] = nil
@@ -402,8 +509,14 @@ final class TranscriptCleanupQueue: ObservableObject {
         )
 
         if result.warning == .cancelled {
-            // Paused, or withdrawn by `cancel` — which already removed the
-            // intent. Either way the checkpoint stays for whoever resumes.
+            if Task.isCancelled {
+                // Paused, or withdrawn by `cancel` — which already removed the
+                // intent. Either way the checkpoint stays for whoever resumes.
+                return
+            }
+            // Cancelled by something other than this queue. Keeping the
+            // intent would restart it at once from `kick`, in a loop.
+            await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: .resourceFailure)
             return
         }
 
@@ -462,6 +575,13 @@ final class TranscriptCleanupQueue: ObservableObject {
         var userInfo: [String: Any] = ["recordingId": intent.recordingId, "cleaned": cleaned]
         if let warning {
             userInfo["warning"] = warning.userVisibleMessage
+            AppLog.shared.transcription(
+                "[TranscriptCleanup] Queued cleanup ended: category=\(warning.logCategory)",
+                level: .info
+            )
+            if viewedRecordingIds[intent.recordingId] == nil {
+                notifyUser(warning.userVisibleMessage)
+            }
         }
         NotificationCenter.default.post(name: Self.didFinishNotification, object: nil, userInfo: userInfo)
     }
@@ -488,6 +608,14 @@ final class TranscriptCleanupQueue: ObservableObject {
             }
         )
         #endif
+    }
+
+    private func loadIntentsIfNeeded() {
+        guard !loadedFromDisk else { return }
+        loadedFromDisk = true
+        let saved = loadIntents()
+        let pendingIds = Set(intents.map(\.recordingId))
+        intents = saved.filter { !pendingIds.contains($0.recordingId) } + intents
     }
 
     private func loadIntents() -> [TranscriptCleanupIntent] {
