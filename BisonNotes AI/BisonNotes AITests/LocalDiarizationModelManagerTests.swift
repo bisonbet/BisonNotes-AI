@@ -28,7 +28,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         let directories = LocalDiarizationMethod.allCases.map { method in
             FluidAudioModelInfo.localSpeakerModelCacheDirectory(
-                methodRawValue: method.rawValue,
+                for: method,
                 appSupportDirectory: appSupport
             )
         }
@@ -49,7 +49,9 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
             silenceEmbedding: repo.appendingPathComponent("learnable_sil_emb.bin"),
             preEncodeProjection: repo.appendingPathComponent("pre_encode_proj_t.bin"),
             weightsVersionMarker: repo.appendingPathComponent(".weights"),
-            expectedWeightsVersion: "ga-test"
+            expectedWeightsVersion: "ga-test",
+            silenceEmbeddingByteCount: 512 * MemoryLayout<Float>.size,
+            preEncodeProjectionByteCount: 1024 * 512 * MemoryLayout<Float>.size
         )
 
         // The published bundles carry no metadata.json.
@@ -66,15 +68,15 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
             )
         )
 
-        try Data(count: Nemotron3AssetLayout.silenceEmbeddingByteCount).write(to: layout.silenceEmbedding)
-        try Data(count: Nemotron3AssetLayout.preEncodeProjectionByteCount - 4).write(to: layout.preEncodeProjection)
+        try Data(count: layout.silenceEmbeddingByteCount).write(to: layout.silenceEmbedding)
+        try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount) - 4).write(to: layout.preEncodeProjection)
         try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
         XCTAssertFalse(
             LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout),
             "A truncated projection must not report Ready"
         )
 
-        try Data(count: Nemotron3AssetLayout.preEncodeProjectionByteCount).write(to: layout.preEncodeProjection)
+        try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount)).write(to: layout.preEncodeProjection)
         XCTAssertTrue(LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout))
 
         try Data("preview-2026-08\n".utf8).write(to: layout.weightsVersionMarker)
@@ -87,6 +89,71 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertFalse(
             LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout),
             "An interrupted download never writes the marker"
+        )
+    }
+
+    func testNemotron3PresetWithoutAProjectionDoesNotRequireOne() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nemotron3-monolithic-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("nemotron-3-diarization", isDirectory: true)
+        let layout = Nemotron3AssetLayout(
+            repoDirectory: repo,
+            modelBundle: repo.appendingPathComponent("monolithic/v2/Model.mlmodelc", isDirectory: true),
+            silenceEmbedding: repo.appendingPathComponent("learnable_sil_emb.bin"),
+            preEncodeProjection: repo.appendingPathComponent("pre_encode_proj_t.bin"),
+            weightsVersionMarker: repo.appendingPathComponent(".weights"),
+            expectedWeightsVersion: "ga-test",
+            silenceEmbeddingByteCount: 512 * MemoryLayout<Float>.size,
+            preEncodeProjectionByteCount: nil
+        )
+        let weights = layout.modelBundle.appendingPathComponent("weights", isDirectory: true)
+        try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+        try Data([1]).write(to: weights.appendingPathComponent("weight.bin"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("model.mil"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("coremldata.bin"))
+        try Data(count: layout.silenceEmbeddingByteCount).write(to: layout.silenceEmbedding)
+        try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: layout.preEncodeProjection.path))
+        XCTAssertTrue(LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout))
+    }
+
+    /// These folder names are on users' disks. A rename here orphans every
+    /// existing download of that method, so it must be deliberate.
+    func testSpeakerModelCacheFolderNamesAreStable() {
+        XCTAssertEqual(LocalDiarizationMethod.offlineVBx.cacheFolderName, "offline-vbx")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.cacheFolderName, "ls-eend-dihard3-500ms")
+        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.cacheFolderName, "nemotron3-c128-split-w8a8")
+    }
+
+    /// A job saved by a build with a method this build lacks must still decode,
+    /// failing closed (labels off) rather than throwing.
+    func testUnknownMethodInSavedConfigurationDecodesWithLabelsOff() throws {
+        let json = Data(#"{"isEnabled":true,"method":"futureMethod"}"#.utf8)
+        let configuration = try JSONDecoder().decode(LocalSpeakerLabelsConfiguration.self, from: json)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration())
+
+        let roundTripped = try JSONDecoder().decode(
+            LocalSpeakerLabelsConfiguration.self,
+            from: JSONEncoder().encode(LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+        )
+        XCTAssertEqual(roundTripped, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+    }
+
+    func testUnknownMethodInSettingsRunsAsTheDefault() {
+        let suiteName = "LocalSpeakerLabelsSettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
+        defaults.set("futureMethod", forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
+
+        let configuration = LocalSpeakerLabelsConfiguration.currentUserChoice(from: defaults)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .defaultMethod))
+        XCTAssertEqual(
+            defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod),
+            "futureMethod",
+            "Reading the setting must not overwrite the user's stored choice"
         )
     }
 

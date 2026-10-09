@@ -3,26 +3,17 @@ import Foundation
 struct FluidAudioModelInfo {
     /// Persistent choices for the opt-in post-recording local speaker-label feature.
     ///
-    /// The selected method is intentionally stored as a raw value here. The shared
-    /// app-owned method type lives in LocalDiarizationTypes.swift (Package A), while
-    /// this file remains the single source for UserDefaults keys and cache layout.
+    /// The selected method is stored in UserDefaults as a raw value. Which raw
+    /// values are valid, and each method's cache folder, come from
+    /// `LocalDiarizationMethod` itself, so adding a case cannot leave a hand-kept
+    /// list behind that silently reverts the setting or orphans its cache.
     enum LocalSpeakerLabels {
         static let defaultEnabled = false
-        static let defaultMethodRawValue = "offlineVBx"
-        static let recommendedMethodRawValue = "offlineVBx"
-        static let experimentalMethodRawValue = "experimentalLSEEND"
-        static let betaMethodRawValue = "betaNemotron3"
+        static let defaultMethodRawValue = LocalDiarizationMethod.defaultMethod.rawValue
         static let maximumExperimentalDuration: TimeInterval = 60 * 60
 
         static func normalizedMethodRawValue(_ rawValue: String?) -> String {
-            switch rawValue {
-            case let value? where value == recommendedMethodRawValue
-                || value == experimentalMethodRawValue
-                || value == betaMethodRawValue:
-                return value
-            default:
-                return defaultMethodRawValue
-            }
+            rawValue.flatMap(LocalDiarizationMethod.init(rawValue:))?.rawValue ?? defaultMethodRawValue
         }
     }
 
@@ -101,24 +92,14 @@ struct FluidAudioModelInfo {
         return base?.appendingPathComponent("FluidAudio/Models/LocalSpeakerLabels", isDirectory: true)
     }
 
+    /// Takes the method itself, not a raw string, so an unknown value cannot
+    /// reach a cache path. nil only when Application Support is unavailable.
     static func localSpeakerModelCacheDirectory(
-        methodRawValue: String,
+        for method: LocalDiarizationMethod,
         appSupportDirectory: URL? = nil
     ) -> URL? {
-        guard let root = localSpeakerLabelsRoot(appSupportDirectory: appSupportDirectory) else {
-            return nil
-        }
-
-        switch LocalSpeakerLabels.normalizedMethodRawValue(methodRawValue) {
-        case LocalSpeakerLabels.recommendedMethodRawValue:
-            return root.appendingPathComponent("offline-vbx", isDirectory: true)
-        case LocalSpeakerLabels.experimentalMethodRawValue:
-            return root.appendingPathComponent("ls-eend-dihard3-500ms", isDirectory: true)
-        case LocalSpeakerLabels.betaMethodRawValue:
-            return root.appendingPathComponent("nemotron3-c128-split-w8a8", isDirectory: true)
-        default:
-            return nil
-        }
+        localSpeakerLabelsRoot(appSupportDirectory: appSupportDirectory)?
+            .appendingPathComponent(method.cacheFolderName, isDirectory: true)
     }
 
     static func deleteCacheDirectory(

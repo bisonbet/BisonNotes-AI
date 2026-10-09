@@ -119,6 +119,12 @@ extension LocalSpeakerLabelsConfiguration {
         let rawMethod = defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
         let normalizedMethod = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(rawMethod)
         let method = LocalDiarizationMethod(rawValue: normalizedMethod) ?? .defaultMethod
+        if enabled, let rawMethod, rawMethod != method.rawValue {
+            AppLog.shared.transcription(
+                "Unknown speaker-label method \"\(rawMethod)\" in settings; using \(method.displayName)",
+                level: .default
+            )
+        }
         return LocalSpeakerLabelsConfiguration(isEnabled: enabled, method: method)
     }
 }

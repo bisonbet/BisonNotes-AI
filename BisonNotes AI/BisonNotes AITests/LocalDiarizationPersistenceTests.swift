@@ -253,6 +253,21 @@ final class LocalDiarizationPersistenceTests: XCTestCase {
         XCTAssertEqual(legacyPersistence.configuration, LocalSpeakerLabelsConfiguration())
     }
 
+    /// A job queued by a build with a speaker-label method this build lacks.
+    /// The unknown method used to fail the whole envelope, losing the job's
+    /// model name and transcript-cleanup choice along with its labels.
+    func testUnknownMethodInPersistedEnvelopeKeepsTheRestOfTheJob() {
+        let envelope = Data(
+            #"{"version":1,"modelName":"saved-model","localSpeakerLabelsConfiguration":{"isEnabled":true,"method":"futureMethod"},"transcriptCleanupEnabled":true}"#.utf8
+        )
+        let restored = ProcessingJob.restoredPersistenceValues(
+            from: ProcessingJob.persistenceEnvelopePrefix + envelope.base64EncodedString()
+        )
+        XCTAssertEqual(restored.modelName, "saved-model")
+        XCTAssertTrue(restored.transcriptCleanupEnabled)
+        XCTAssertEqual(restored.configuration, LocalSpeakerLabelsConfiguration(), "Labels fail closed")
+    }
+
     func testCancellationImmediatelyBeforePersistenceWritesNoPartialLabels() async throws {
         let recordingID = try makeRecording(named: "Late Cancellation")
         let transcriptData = TranscriptData(

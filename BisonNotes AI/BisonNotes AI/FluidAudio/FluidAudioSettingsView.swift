@@ -520,13 +520,11 @@ private extension FluidAudioSettingsView {
         }
     }
 
+    /// An unknown stored method — typically written by a newer build the user
+    /// has since replaced — is shown and run as the default, but is not
+    /// overwritten just because this screen opened. Returning to the newer
+    /// build then restores the user's choice. Only an explicit pick replaces it.
     private func normalizeAndRefreshLocalSpeakerSettings() {
-        let normalized = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(
-            selectedLocalSpeakerMethodRaw
-        )
-        if selectedLocalSpeakerMethodRaw != normalized {
-            selectedLocalSpeakerMethodRaw = normalized
-        }
         clearLocalSpeakerTransientState()
         if localSpeakerLabelsEnabled {
             refreshLocalSpeakerModelStatus()
@@ -536,7 +534,13 @@ private extension FluidAudioSettingsView {
     private func setLocalSpeakerMethod(_ rawValue: String) {
         let previousMethod = selectedLocalSpeakerMethod
         let normalized = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(rawValue)
-        guard normalized != selectedLocalSpeakerMethodRaw else {
+        guard normalized != previousMethod.rawValue else {
+            // Picking the method already in effect. If the stored value was
+            // unknown and shown as this fallback, the pick is now an explicit
+            // choice, so store it — without unloading the model it keeps using.
+            if selectedLocalSpeakerMethodRaw != normalized {
+                selectedLocalSpeakerMethodRaw = normalized
+            }
             refreshLocalSpeakerModelStatus()
             return
         }

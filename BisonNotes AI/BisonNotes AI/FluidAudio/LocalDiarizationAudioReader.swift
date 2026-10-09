@@ -31,6 +31,7 @@ final class LocalDiarizationAudioReader {
 
     /// Source frames in the file, used only for progress.
     let sourceFrameCount: AVAudioFramePosition
+    private let sourceSampleRate: Double
     private(set) var sourceFramesRead: AVAudioFramePosition = 0
 
     private let file: AVAudioFile
@@ -68,9 +69,16 @@ final class LocalDiarizationAudioReader {
         self.inputBuffer = inputBuffer
         self.outputFormat = outputFormat
         self.sourceFrameCount = file.length
+        self.sourceSampleRate = inputFormat.sampleRate
         let ratio = sampleRate / inputFormat.sampleRate
         // Headroom for the resampler's filter tail on the final block.
         self.outputCapacity = AVAudioFrameCount((Double(sourceBlockFrames) * ratio).rounded(.up)) + 1_024
+    }
+
+    /// The source's length in seconds, or nil when the file reports no length.
+    var sourceDuration: TimeInterval? {
+        guard sourceFrameCount > 0, sourceSampleRate > 0 else { return nil }
+        return Double(sourceFrameCount) / sourceSampleRate
     }
 
     /// Fraction of the source decoded so far, or nil when the file reports no length.

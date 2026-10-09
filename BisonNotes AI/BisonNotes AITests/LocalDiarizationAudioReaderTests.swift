@@ -29,6 +29,7 @@ final class LocalDiarizationAudioReaderTests: XCTestCase {
         // not attenuate, clip, or drop blocks along the way.
         XCTAssertEqual(rms(samples.dropFirst(1_600).dropLast(1_600)), 0.354, accuracy: 0.02)
         XCTAssertEqual(reader.fractionRead ?? 0, 1, accuracy: 0.0001)
+        XCTAssertEqual(reader.sourceDuration ?? 0, 3.5, accuracy: 0.001)
         XCTAssertNil(try reader.nextBlock(), "A drained reader must stay drained")
     }
 

@@ -11,10 +11,12 @@ struct Nemotron3AssetLayout: Equatable, Sendable {
     let weightsVersionMarker: URL
     let expectedWeightsVersion: String
 
-    /// 512 fp32 values.
-    static let silenceEmbeddingByteCount = 512 * MemoryLayout<Float>.size
-    /// The [1024, 512] fp32 FeatureStacking projection split-graph presets need.
-    static let preEncodeProjectionByteCount = 1024 * 512 * MemoryLayout<Float>.size
+    /// Exact fp32 sizes, derived from the pinned SDK's config in production so
+    /// an SDK bump that reshapes the checkpoint moves the check with it.
+    let silenceEmbeddingByteCount: Int
+    /// nil for presets that do not use the host-side projection; such a
+    /// preset's readiness does not depend on that file.
+    let preEncodeProjectionByteCount: Int?
 }
 
 enum LocalDiarizationAssetValidator {
@@ -92,9 +94,10 @@ enum LocalDiarizationAssetValidator {
             fileManager: fileManager
         ),
         regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
-            == Nemotron3AssetLayout.silenceEmbeddingByteCount,
-        regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager)
-            == Nemotron3AssetLayout.preEncodeProjectionByteCount,
+            == layout.silenceEmbeddingByteCount,
+        layout.preEncodeProjectionByteCount.map({
+            regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager) == $0
+        }) ?? true,
         let marker = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
         else {
             return false
