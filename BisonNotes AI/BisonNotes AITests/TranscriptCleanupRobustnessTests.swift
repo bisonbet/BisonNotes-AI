@@ -660,6 +660,36 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
     }
 
+    /// A Cancel or pause that lands after the model has finished, but before
+    /// the save, must still stop the save. The store's re-read before saving
+    /// is where the test lands it.
+    @MainActor
+    func testCancellationAfterGenerationStillPreventsTheSave() async throws {
+        for withdraw in [true, false] {
+            let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+            let queue = harness.queue!
+            let recordingId = harness.recordingId
+            harness.store.onRead = { [weak harness] attempt in
+                guard attempt == 2 else { return }
+                if withdraw {
+                    queue.cancel(recordingId: recordingId)
+                } else {
+                    // In the app a pause only comes from backgrounding, where
+                    // the queue then declines to restart.
+                    harness?.isForeground = false
+                    queue.pause()
+                }
+            }
+
+            queue.start()
+            queue.enqueue(recordingId: recordingId, source: harness.snapshot(), languageCode: "en")
+            await queue.waitForCurrentRun()
+
+            XCTAssertEqual(harness.store.saveCount, 0, withdraw ? "withdrawn" : "paused")
+            XCTAssertEqual(queue.intents.count, withdraw ? 0 : 1, "A pause keeps the intent; a withdrawal removes it")
+        }
+    }
+
     /// A store read that fails once is retried later rather than dropping the
     /// intent, and the retry does not spin.
     @MainActor
@@ -865,6 +895,8 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
     /// Reads that throw before reads start succeeding, to simulate a
     /// transient Core Data failure.
     var failingReads = 0
+    /// Called with the 1-based attempt number on every read.
+    var onRead: ((Int) -> Void)?
 
     init(transcript: TranscriptData) {
         self.transcript = transcript
@@ -874,6 +906,7 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
 
     func transcript(for recordingId: UUID) throws -> TranscriptData? {
         readAttempts += 1
+        onRead?(readAttempts)
         if failingReads > 0 {
             failingReads -= 1
             throw CocoaError(.fileReadUnknown)
@@ -944,9 +977,9 @@ private final class QueueHarness {
             store: store,
             queueFileURL: directory.appendingPathComponent("queue.json"),
             checkpointDirectory: directory.appendingPathComponent("checkpoints", isDirectory: true),
-            canRunNow: { [unowned self] in self.isForeground },
-            isCleanupEnabled: { [unowned self] in self.isCleanupEnabled },
-            notifyUser: { [unowned self] message in self.notifications.append(message) },
+            canRunNow: { [weak self] in self?.isForeground ?? false },
+            isCleanupEnabled: { [weak self] in self?.isCleanupEnabled ?? false },
+            notifyUser: { [weak self] message in self?.notifications.append(message) },
             transientRetryDelay: 0.05,
             observesLifecycle: false
         )

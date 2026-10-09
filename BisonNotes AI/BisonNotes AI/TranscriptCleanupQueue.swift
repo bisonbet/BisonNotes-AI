@@ -545,6 +545,15 @@ final class TranscriptCleanupQueue: ObservableObject {
             }
         )
 
+        // A pause or withdrawal can land after the coordinator's last
+        // cancellation check, leaving a complete result with no `.cancelled`
+        // warning. It must still not be saved: Cancel, a superseding manual
+        // cleanup and backgrounding all mean "do not publish this". Every
+        // finished passage is already in the checkpoint, so resuming is cheap.
+        if Task.isCancelled {
+            return
+        }
+
         if result.warning == .cancelled {
             if Task.isCancelled {
                 // Paused, or withdrawn by `cancel` — which already removed the
@@ -577,6 +586,11 @@ final class TranscriptCleanupQueue: ObservableObject {
             // Nothing usable. Keep the checkpoint: a later manual run — after
             // downloading the model, say — reuses whatever did finish.
             await finish(intent, checkpoint: checkpoint, removeCheckpoint: false, warning: result.warning)
+            return
+        }
+
+        // The re-read above is another point a pause or withdrawal can land.
+        if Task.isCancelled {
             return
         }
 
