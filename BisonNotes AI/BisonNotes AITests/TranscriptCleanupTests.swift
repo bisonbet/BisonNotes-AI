@@ -142,12 +142,16 @@ final class TranscriptCleanupTests: XCTestCase {
         XCTAssertEqual(legacyDecoded.plainText, transcript.plainText)
     }
 
-    func testCleanupIsAtomicAndDoesNotOverwritePriorCleanedValuesOnFailure() async {
-        let firstCleanup = TranscriptSegmentCleanup(normalizedText: "Old first")
-        let first = makeSegment(text: "first", cleanup: firstCleanup)
+    /// A passage the model cannot clean keeps its original text — including any
+    /// earlier cleaned value — while the rest of the run is still saved. This
+    /// replaced an all-or-nothing rule under which one bad passage discarded
+    /// every cleaned passage in the transcript.
+    func testFailedSegmentKeepsItsPriorValueWhileOthersAreCleaned() async {
+        let first = makeSegment(text: "first")
         // Longer than `maxConservativeFallbackWords`, so an empty completion is
         // a genuine invalid output rather than a retained short fragment.
-        let second = makeSegment(text: "second segment with several words")
+        let secondCleanup = TranscriptSegmentCleanup(normalizedText: "Old second")
+        let second = makeSegment(text: "second segment with several words", cleanup: secondCleanup)
         let normalizer = FakeTranscriptNormalizer(
             ready: true,
             generations: [
@@ -163,11 +167,13 @@ final class TranscriptCleanupTests: XCTestCase {
         )
 
         let stats = await normalizer.stats()
-        XCTAssertEqual(result.warning, .invalidOutput)
+        XCTAssertEqual(result.warning, .partiallyCleaned(1))
+        XCTAssertTrue(result.warning?.keepsCleanedResult == true)
+        XCTAssertEqual(result.cleanedSegmentCount, 1)
         XCTAssertEqual(result.segments.map(\.id), [first.id, second.id])
         XCTAssertEqual(result.segments.map(\.text), [first.text, second.text])
-        XCTAssertEqual(result.segments.first?.cleanup, firstCleanup)
-        XCTAssertNil(result.segments.last?.cleanup)
+        XCTAssertEqual(result.segments.first?.cleanup?.normalizedText, "New first")
+        XCTAssertEqual(result.segments.last?.cleanup, secondCleanup)
         XCTAssertEqual(stats.releaseCount, 1)
     }
 

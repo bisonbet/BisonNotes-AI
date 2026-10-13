@@ -751,9 +751,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     func transcribeAudioFile(
         at url: URL,
         using engine: TranscriptionEngine? = nil,
-        recordingId: UUID,
-        performTranscriptCleanup: Bool = true,
-        transcriptCleanupConfiguration: TranscriptCleanupConfiguration? = nil
+        recordingId: UUID
     ) async throws -> TranscriptionResult {
 
         // Check if already transcribing
@@ -761,13 +759,17 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.recognitionFailed(NSError(domain: "AlreadyTranscribing", code: -1, userInfo: nil))
         }
 
-        let resolvedCleanupConfiguration = transcriptCleanupConfiguration
-            ?? (performTranscriptCleanup ? TranscriptCleanupConfiguration.automatic() : nil)
-
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.transcription("Transcription source file is unavailable", level: .error)
             throw TranscriptionError.fileNotFound
         }
+
+        // The direct fallbacks run here, outside BackgroundProcessingManager,
+        // so they report to the cleanup queue themselves: S1-mini never runs
+        // beside this transcription's ASR and speaker-label models.
+        TranscriptCleanupQueue.shared.transcriptionDidBegin()
+        defer { TranscriptCleanupQueue.shared.transcriptionDidEnd() }
+        await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
 
         // Snapshot local speaker-label choices at the start of the completed
         // Parakeet job. Later settings changes cannot switch this job's method.
@@ -795,9 +797,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
             throw TranscriptionError.audioExtractionFailed
         }
 
-        // Select the configured transcription engine. Cleanup is deliberately
-        // applied once to this completed-file result, after the selected engine
-        // has produced its final segments and labels.
+        // Select the configured transcription engine. Transcript cleanup is not
+        // run here: callers save this raw result first and then queue cleanup
+        // with `TranscriptCleanupQueue`, so a slow pass never delays the save.
         let result: TranscriptionResult
         switch selectedEngine {
         case .notConfigured:
@@ -847,61 +849,7 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
 
         }
 
-        guard let resolvedCleanupConfiguration else { return result }
-
-        // An engine that reported its own language beats the caller's guess.
-        // Whisper auto-detects and returns one; without this, a short English
-        // transcript could still fail cleanup's conservative recognizer
-        // threshold and report `uncertainLanguage`.
-        let cleanupConfiguration: TranscriptCleanupConfiguration
-        if resolvedCleanupConfiguration.languageCode == nil, let detected = result.languageCode {
-            cleanupConfiguration = TranscriptCleanupConfiguration(
-                enabled: resolvedCleanupConfiguration.enabled,
-                mode: resolvedCleanupConfiguration.mode,
-                languageCode: detected
-            )
-        } else {
-            cleanupConfiguration = resolvedCleanupConfiguration
-        }
-
-        // Every engine path clears `isTranscribing` before returning, but
-        // cleanup is a multi-minute on-device pass. Re-taking the flag keeps
-        // the UI in its in-progress state and keeps the re-entrancy guard at
-        // the top of this method covering the whole call.
-        isTranscribing = true
-        defer { isTranscribing = false }
-        return await applyFinalTranscriptCleanup(to: result, configuration: cleanupConfiguration)
-    }
-
-    private func applyFinalTranscriptCleanup(
-        to result: TranscriptionResult,
-        configuration: TranscriptCleanupConfiguration
-    ) async -> TranscriptionResult {
-        guard result.success, !result.segments.isEmpty else { return result }
-
-        guard configuration.enabled else { return result }
-
-        let cleanupResult = await TranscriptCleanupCoordinator.shared.clean(
-            segments: result.segments,
-            configuration: configuration
-        )
-        guard cleanupResult.warning == nil else {
-            return result.with(
-                speakerLabelWarning: result.speakerLabelWarning,
-                transcriptCleanupWarning: cleanupResult.warning
-            )
-        }
-
-        // Keep the result's existing fullText contract tied to raw ASR text.
-        // A valid all-filler segment may have an intentionally empty cleaned
-        // value, and callers use fullText to decide whether the ASR result
-        // itself is worth persisting. The representation-aware TranscriptData
-        // accessors expose the cleaned text to the editor and exports.
-        return result.with(
-            speakerLabelWarning: result.speakerLabelWarning,
-            transcriptCleanupWarning: cleanupResult.warning,
-            segments: cleanupResult.segments
-        )
+        return result
     }
 
     private func transcribeWithNativeSpeech(url: URL, duration: TimeInterval, recordingId: UUID) async throws -> TranscriptionResult {

@@ -121,17 +121,17 @@ final class BisonNotesAIUITests: XCTestCase {
     }
 
     @MainActor
-    func testNemotron3BetaSelectionPersistsWithoutPreparation() throws {
+    func testNemotron3ExperimentalSelectionPersistsWithoutPreparation() throws {
         let app = launchSeededApp()
         openFluidAudioSettings(in: app)
 
         localSpeakerElement(LocalSpeakerLabelsTestID.toggle, in: app).setSwitch(on: true)
 
-        let betaMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
-        XCTAssertTrue(betaMethod.waitForExistence(timeout: 5))
-        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("Beta"))
-        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("up to 8 speakers"))
-        betaMethod.tap()
+        let nemotronMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
+        XCTAssertTrue(nemotronMethod.waitForExistence(timeout: 5))
+        XCTAssertTrue(nemotronMethod.label.localizedCaseInsensitiveContains("Experimental"))
+        XCTAssertTrue(nemotronMethod.label.localizedCaseInsensitiveContains("up to 8 speakers"))
+        nemotronMethod.tap()
 
         let doneButtons = app.buttons.matching(identifier: "Done")
         XCTAssertTrue(doneButtons.element(boundBy: 0).waitForExistence(timeout: 5))
@@ -373,12 +373,13 @@ extension BisonNotesAIUITests {
 
         let offlineMethod = localSpeakerElement(LocalSpeakerLabelsTestID.offlineVBx, in: app)
         let experimentalMethod = localSpeakerElement(LocalSpeakerLabelsTestID.lsEEND, in: app)
-        let betaMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
+        let nemotronMethod = localSpeakerElement(LocalSpeakerLabelsTestID.nemotron3, in: app)
         XCTAssertTrue(offlineMethod.label.localizedCaseInsensitiveContains("Offline VBx"))
         XCTAssertTrue(experimentalMethod.label.localizedCaseInsensitiveContains("LS-EEND"))
-        XCTAssertTrue(betaMethod.label.localizedCaseInsensitiveContains("Nemotron 3"))
+        XCTAssertTrue(nemotronMethod.label.localizedCaseInsensitiveContains("Nemotron 3"))
+        XCTAssertTrue(nemotronMethod.label.localizedCaseInsensitiveContains("Experimental"))
 
-        for copy in ["Recommended", "Beta", "Experimental", "up to 8 speakers", "up to 10 speakers"] {
+        for copy in ["Recommended", "Experimental", "up to 8 speakers", "up to 10 speakers"] {
             XCTAssertTrue(
                 app.descendants(matching: .any)
                     .matching(NSPredicate(format: "label CONTAINS[c] %@", copy))

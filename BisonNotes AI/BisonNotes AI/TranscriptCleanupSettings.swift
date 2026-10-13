@@ -131,8 +131,29 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
     case invalidOutput
     case staleResult
     case cancelled
+    /// Some passages could not be cleaned and kept their original text; the
+    /// rest of the cleaned result was saved. Carries the passage count.
+    case partiallyCleaned(Int)
+    /// Cleanup was paused because the app left the foreground. Finished
+    /// passages are kept and the run resumes from them.
+    case paused
+    /// The run reached `TranscriptCleanupCoordinator.maximumRunDuration` and
+    /// stopped so other on-device model work could run. Finished passages are
+    /// kept and the next run resumes from them.
+    case timeLimitReached
+    /// Cleanup stopped, or did not start, because a transcription job is
+    /// running; S1-mini and that job's models are not run together. Finished
+    /// passages are kept.
+    case waitingForTranscription
 
     var errorDescription: String? { userVisibleMessage }
+
+    /// True when the cleanup result is still saved and shown alongside this
+    /// warning. Every other warning means the original transcript was kept.
+    var keepsCleanedResult: Bool {
+        if case .partiallyCleaned = self { return true }
+        return false
+    }
 
     var userVisibleMessage: String {
         switch self {
@@ -157,6 +178,18 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
             return "Transcript cleanup finished after the transcript changed. Its result was discarded."
         case .cancelled:
             return "Transcript cleanup was cancelled. The original transcript was kept."
+        case .partiallyCleaned(let count):
+            let passages = count == 1 ? "1 passage" : "\(count) passages"
+            return "Transcript cleaned. \(passages) could not be cleaned and show the original text."
+        case .paused:
+            return "Transcript cleanup paused when the app left the foreground. "
+                + "Finished passages are kept; clean up again to continue from where it stopped."
+        case .timeLimitReached:
+            return "Transcript cleanup paused after 10 minutes so other on-device work could run. "
+                + "Finished passages are kept; clean up again to continue from where it stopped."
+        case .waitingForTranscription:
+            return "Transcript cleanup waits while a transcription is running. "
+                + "Finished passages are kept; clean up again when the transcription finishes."
         }
     }
 
@@ -170,6 +203,10 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .invalidOutput: return "invalid-output"
         case .staleResult: return "stale-result"
         case .cancelled: return "cancelled"
+        case .partiallyCleaned: return "partially-cleaned"
+        case .paused: return "paused"
+        case .timeLimitReached: return "time-limit"
+        case .waitingForTranscription: return "waiting-for-transcription"
         }
     }
 }
@@ -194,6 +231,54 @@ enum TranscriptCleanupNormalizerError: Error, Equatable, Sendable {
     case invalidRequest
     case invalidOutput
     case cancelled
+    /// The output ran to the token cap even after the split retry. At
+    /// temperature 0 the same passage does so every time.
+    case outputTruncated
+}
+
+/// Progress through one cleanup run, in passages (model-sized pieces of the
+/// transcript). The total is known once the run has planned its pieces.
+struct TranscriptCleanupProgress: Sendable, Equatable {
+    let completedPieces: Int
+    let totalPieces: Int
+
+    var fractionCompleted: Double {
+        totalPieces > 0 ? Double(completedPieces) / Double(totalPieces) : 0
+    }
+}
+
+/// What one piece of a cleanup run produced. `keptOriginal` records a piece
+/// the model could not clean, so a resumed run does not retry a deterministic
+/// (temperature 0) failure.
+enum TranscriptCleanupPieceOutcome: Codable, Equatable, Sendable {
+    case cleaned(String)
+    case keptOriginal
+}
+
+/// Durable record of finished pieces, so an interrupted run — paused in the
+/// background, cancelled, or killed — resumes rather than starting over.
+protocol TranscriptCleanupCheckpointing: Sendable {
+    func outcome(forPiece key: String) async -> TranscriptCleanupPieceOutcome?
+    func record(_ outcome: TranscriptCleanupPieceOutcome, forPiece key: String) async
+    /// Writes anything recorded but not yet durable. Called when a run ends,
+    /// however it ends, so batching writes never loses a paused run's work.
+    func flush() async
+}
+
+/// The cheap checks that decide, before any model is loaded, whether a
+/// cleanup run should be queued at all.
+enum TranscriptCleanupPreflight: Sendable, Equatable {
+    /// Cleanup is off or there is nothing to clean.
+    case notNeeded
+    /// Cleanup cannot run; the warning says why. The original transcript stands.
+    case blocked(TranscriptCleanupWarning)
+    case ready
+
+    /// The warning to report with the raw transcript, if cleanup is blocked.
+    var warning: TranscriptCleanupWarning? {
+        if case .blocked(let warning) = self { return warning }
+        return nil
+    }
 }
 
 /// Normalization is injected so all chunking, validation, stale-result, and

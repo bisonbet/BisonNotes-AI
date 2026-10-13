@@ -1725,6 +1725,13 @@ struct EditableTranscriptView: View {
     @State private var isCleaningTranscript = false
     @State private var isCancellingTranscriptCleanup = false
     @State private var transcriptCleanupTask: Task<Void, Never>?
+    @State private var transcriptCleanupProgress: TranscriptCleanupProgress?
+    /// Why the manual cleanup was stopped without being cancelled: the app
+    /// went to the background, or a transcription job started.
+    @State private var transcriptCleanupPause: TranscriptCleanupWarning?
+    /// This recording's slice of the cleanup queue. Observing the whole queue
+    /// re-evaluated this editor on every passage of any recording's cleanup.
+    @State private var queuedCleanupStatus: TranscriptCleanupQueue.RecordingStatus?
     @State private var transcriptRepresentation: TranscriptRepresentation = .original
     @State private var summaryStateRefresh = false
     @State private var savedTranscriptSnapshot: TranscriptEditorSnapshot
@@ -1832,7 +1839,7 @@ struct EditableTranscriptView: View {
         )
     }
 
-    var body: some View {
+    private var editorContent: some View {
         NavigationStack {
             Group {
                 #if os(macOS)
@@ -2064,9 +2071,53 @@ struct EditableTranscriptView: View {
         }
         .onAppear {
             refreshTranscriptFromCoreData()
+            if let recordingId = recording.id {
+                TranscriptCleanupQueue.shared.beginViewing(recordingId: recordingId)
+            }
+            refreshQueuedCleanupStatus()
         }
         .onDisappear {
             transcriptCleanupTask?.cancel()
+            if let recordingId = recording.id {
+                TranscriptCleanupQueue.shared.endViewing(recordingId: recordingId)
+            }
+        }
+    }
+
+    /// Transcript cleanup observers, split from `editorContent` so the
+    /// modifier chain stays within what the type checker can solve.
+    var body: some View {
+        editorContent
+        .onReceive(TranscriptCleanupQueue.shared.objectWillChange) { _ in
+            // `objectWillChange` fires before the change lands; read it after.
+            // The editor's body re-evaluates only when this recording's
+            // status actually differs.
+            Task { @MainActor in
+                refreshQueuedCleanupStatus()
+                pauseManualCleanupIfTranscribing()
+            }
+        }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.didEnterBackgroundNotification)) { _ in
+            // iOS refuses GPU work from a backgrounded app; stop cleanly and
+            // keep the checkpoint rather than let generation fail midway.
+            guard isCleaningTranscript else { return }
+            transcriptCleanupPause = .paused
+            transcriptCleanupTask?.cancel()
+        }
+        #endif
+        .onReceive(NotificationCenter.default.publisher(for: TranscriptCleanupQueue.didFinishNotification)) { notification in
+            guard let userInfo = notification.userInfo,
+                  let finishedID = userInfo["recordingId"] as? UUID,
+                  finishedID == recording.id else {
+                return
+            }
+            if let warning = userInfo["warning"] as? String {
+                transcriptCleanupWarningMessage = warning
+            }
+            if userInfo["cleaned"] as? Bool == true {
+                refreshTranscriptFromCoreData(preferredRepresentation: .cleaned)
+            }
         }
     }
 
@@ -2198,7 +2249,7 @@ struct EditableTranscriptView: View {
                             Text("Cleaning English Transcript…")
                         } else {
                             Image(systemName: "wand.and.stars")
-                            Text("Clean up English transcript")
+                            Text("Clean up English transcript (Experimental)")
                         }
                         Spacer()
                     }
@@ -2223,14 +2274,26 @@ struct EditableTranscriptView: View {
 
             if isCleaningTranscript {
                 HStack(spacing: 12) {
-                    ProgressView()
-                        .accessibilityLabel("Transcript cleanup in progress")
+                    transcriptCleanupProgressView(transcriptCleanupProgress, label: "Cleaning")
                     Button("Cancel") {
                         isCancellingTranscriptCleanup = true
                         transcriptCleanupTask?.cancel()
                     }
                     .buttonStyle(.bordered)
                     .disabled(isCancellingTranscriptCleanup)
+                }
+            } else if let recordingId = recording.id, let queuedCleanupStatus {
+                HStack(spacing: 12) {
+                    transcriptCleanupProgressView(
+                        queuedCleanupStatus.progress,
+                        label: queuedCleanupStatus.isActive
+                            ? "Cleaning automatically"
+                            : "Automatic cleanup queued"
+                    )
+                    Button("Cancel") {
+                        TranscriptCleanupQueue.shared.cancel(recordingId: recordingId)
+                    }
+                    .buttonStyle(.bordered)
                 }
             } else if transcriptCleanupModelManager.state != .ready {
                 Text(transcriptCleanupModelManager.statusDescription)
@@ -2465,6 +2528,54 @@ struct EditableTranscriptView: View {
         }
     }
 
+    /// "Cleaning… 12 of 40 passages" with a determinate bar once the run has
+    /// planned its passages, and an indeterminate spinner before that.
+    @ViewBuilder
+    private func transcriptCleanupProgressView(_ progress: TranscriptCleanupProgress?, label: String) -> some View {
+        if let progress, progress.totalPieces > 0 {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: progress.fractionCompleted)
+                Text("\(label)… \(progress.completedPieces) of \(progress.totalPieces) passages")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Transcript cleanup in progress")
+            .accessibilityValue("\(progress.completedPieces) of \(progress.totalPieces) passages")
+        } else {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("\(label)…")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Transcript cleanup in progress")
+        }
+    }
+
+    /// S1-mini never runs beside a transcription's ASR and speaker-label
+    /// models — a background job or a direct fallback, which the queue counts.
+    /// The automatic queue pauses the same way.
+    private func pauseManualCleanupIfTranscribing() {
+        guard isCleaningTranscript,
+              transcriptCleanupPause == nil,
+              TranscriptCleanupQueue.shared.isTranscriptionRunning else {
+            return
+        }
+        transcriptCleanupPause = .waitingForTranscription
+        transcriptCleanupTask?.cancel()
+    }
+
+    /// Writes state only when this recording's queue status changed, so other
+    /// recordings' progress never re-evaluates this editor.
+    private func refreshQueuedCleanupStatus() {
+        let status = recording.id.flatMap { TranscriptCleanupQueue.shared.status(for: $0) }
+        if status != queuedCleanupStatus {
+            queuedCleanupStatus = status
+        }
+    }
+
     private var selectedRepresentationText: String {
         let currentTranscript = transcript.preservingIdentity(
             segments: editedSegments,
@@ -2491,6 +2602,10 @@ struct EditableTranscriptView: View {
             transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
             return
         }
+        guard !TranscriptCleanupQueue.shared.isTranscriptionRunning else {
+            transcriptCleanupWarningMessage = TranscriptCleanupWarning.waitingForTranscription.userVisibleMessage
+            return
+        }
 
         let sourceTranscript: TranscriptData
         do {
@@ -2507,21 +2622,50 @@ struct EditableTranscriptView: View {
             segments: sourceSegments,
             speakerMappings: sourceMappings
         )
+        // A cleanup started here supersedes one queued for this recording.
+        // The queue keeps its checkpoint, so this run starts from its progress.
+        // If this run saves nothing, the automatic one is handed back.
+        let supersededIntent = TranscriptCleanupQueue.shared.cancel(recordingId: recordingId)
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId)
         isCleaningTranscript = true
         isCancellingTranscriptCleanup = false
+        transcriptCleanupPause = nil
+        transcriptCleanupProgress = nil
 
         transcriptCleanupTask = Task { @MainActor in
+            // Every exit that publishes nothing hands a superseded automatic
+            // cleanup back to the queue, unless the saved transcript changed:
+            // that intent no longer applies.
+            var handsBackSupersededIntent = true
             defer {
+                if handsBackSupersededIntent, let supersededIntent {
+                    TranscriptCleanupQueue.shared.restore(supersededIntent)
+                }
                 transcriptCleanupTask = nil
                 isCleaningTranscript = false
                 isCancellingTranscriptCleanup = false
+                transcriptCleanupProgress = nil
             }
 
             let result = await TranscriptCleanupCoordinator.shared.clean(
                 segments: sourceSegments,
-                configuration: .manual(confirmedEnglish: true)
+                configuration: .manual(confirmedEnglish: true),
+                checkpoint: checkpoint,
+                progress: { update in
+                    Task { @MainActor in
+                        guard isCleaningTranscript else { return }
+                        transcriptCleanupProgress = update
+                    }
+                }
             )
 
+            if let pause = transcriptCleanupPause {
+                // Stopped because iOS refuses GPU work in the background, or
+                // because a transcription job started. The checkpoint keeps
+                // every finished passage for the next tap.
+                transcriptCleanupWarningMessage = pause.userVisibleMessage
+                return
+            }
             guard !Task.isCancelled else {
                 transcriptCleanupWarningMessage = TranscriptCleanupWarning.cancelled.userVisibleMessage
                 return
@@ -2542,11 +2686,12 @@ struct EditableTranscriptView: View {
             guard
                   sourceSnapshot.matches(currentTranscript) else {
                 transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
+                handsBackSupersededIntent = false
                 return
             }
 
-            guard result.warning == nil else {
-                transcriptCleanupWarningMessage = result.warning?.userVisibleMessage
+            if let warning = result.warning, !warning.keepsCleanedResult {
+                transcriptCleanupWarningMessage = warning.userVisibleMessage
                 return
             }
 
@@ -2573,10 +2718,14 @@ struct EditableTranscriptView: View {
                 return
             }
 
+            handsBackSupersededIntent = false
             editedSegments = result.segments
             speakerMappings = sourceMappings
             savedTranscriptSnapshot = currentTranscriptSnapshot
             transcriptRepresentation = .cleaned
+            // Some passages kept their original text; say so.
+            transcriptCleanupWarningMessage = result.warning?.userVisibleMessage
+            await checkpoint.remove()
             NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
         }
     }
@@ -2637,13 +2786,9 @@ struct EditableTranscriptView: View {
             }
 
             // Deliberately make this preflight throwing. A failed read must not
-            // look like "there was no prior transcript" and authorize a rerun
-            // or a later cleanup decision.
-            let rerunSourceSnapshot: TranscriptCleanupSourceSnapshot
+            // look like "there was no prior transcript" and authorize a rerun.
             do {
-                rerunSourceSnapshot = TranscriptCleanupSourceSnapshot(
-                    transcript: try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
-                )
+                _ = try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
             } catch {
                 await MainActor.run {
                     saveErrorMessage = "The previous transcript could not be loaded. The rerun was not started."
@@ -2722,9 +2867,7 @@ struct EditableTranscriptView: View {
                     let result = try await enhancedTranscriptionManager.transcribeAudioFile(
                         at: recordingURL,
                         using: selectedEngine,
-                        recordingId: recordingId,
-                        performTranscriptCleanup: rerunCleanupEnabled,
-                        transcriptCleanupConfiguration: rerunCleanupConfiguration
+                        recordingId: recordingId
                     )
 
                     // The recording itself being gone is the only reason to drop
@@ -2746,40 +2889,30 @@ struct EditableTranscriptView: View {
                         return
                     }
 
-                    // Only the derived cleanup can go stale. Matching
-                    // TranscriptionStarter and BackgroundProcessingManager, the
-                    // ASR rerun is still saved — uncleaned — and the staleness
-                    // is reported as a warning rather than throwing the work away.
-                    let isRerunCleanupStale: Bool
-                    if rerunCleanupEnabled {
-                        isRerunCleanupStale = !rerunSourceSnapshot.matches(
-                            try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
+                    // Model-free checks only; the cleanup itself is queued
+                    // after the raw rerun below is saved.
+                    let rerunCleanupPreflight = await TranscriptCleanupCoordinator.shared.preflight(
+                        segments: result.segments,
+                        configuration: TranscriptCleanupConfiguration(
+                            enabled: rerunCleanupEnabled,
+                            mode: .automatic,
+                            languageCode: result.languageCode
                         )
-                    } else {
-                        isRerunCleanupStale = false
-                    }
-                    if isRerunCleanupStale {
-                        AppLog.shared.transcription(
-                            "Discarded stale direct rerun cleanup result, keeping uncleaned transcript: "
-                                + "recording=\(recordingId.uuidString)",
-                            level: .info
-                        )
-                    }
+                    )
+                    let rerunCleanupWarning = rerunCleanupPreflight.warning
 
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
-                        // The warning says the cleaned result was discarded, so
-                        // it must not be persisted with the ASR segments.
-                        // `with` does not carry `speakerLabelWarning` forward on
-                        // its own, so it is passed through explicitly.
-                        let rerunResult = isRerunCleanupStale
-                            ? result.with(
-                                speakerLabelWarning: result.speakerLabelWarning,
-                                transcriptCleanupWarning: .staleResult,
-                                segments: result.segments.map { $0.withCleanup(nil) }
-                            )
-                            : result
+                        // Raw ASR text only; any earlier cleaned value described
+                        // the previous transcript. `with` does not carry
+                        // `speakerLabelWarning` forward on its own, so it is
+                        // passed through explicitly.
+                        let rerunResult = result.with(
+                            speakerLabelWarning: result.speakerLabelWarning,
+                            transcriptCleanupWarning: rerunCleanupWarning,
+                            segments: result.segments.map { $0.withCleanup(nil) }
+                        )
                         let replacement = TranscriptRerunReplacement(
                             result: rerunResult,
                             engine: selectedEngine
@@ -2790,6 +2923,11 @@ struct EditableTranscriptView: View {
                             // Save the new transcript to Core Data first (this will replace the existing transcript)
                             try saveNewTranscriptToCoreData(
                                 replacement: replacement
+                            )
+                            TranscriptCleanupQueue.shared.transcriptSaved(
+                                recordingId: recordingId,
+                                preflight: rerunCleanupPreflight,
+                                languageCode: result.languageCode
                             )
 
                             AppLog.shared.transcription("Transcript UI updated with rerun results")

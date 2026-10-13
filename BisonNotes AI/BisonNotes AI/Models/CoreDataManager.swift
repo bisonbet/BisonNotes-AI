@@ -2056,6 +2056,9 @@ class CoreDataManager: ObservableObject {
         }
         #endif
 
+        // Read before the save: afterwards deleted rows have nothing to ask.
+        let deletedCleanupRecordingIds = Self.transcriptCleanupRecordingIds(deletedIn: saveContext)
+
         do {
             try saveContext.save()
         } catch let error as CoreDataSaveError {
@@ -2071,6 +2074,64 @@ class CoreDataManager: ObservableObject {
             )
             throw wrappedError
         }
+
+        // Post-commit, for every delete path — the user's, another device's
+        // tombstone, orphan and missing-file cleanup alike: withdraw cleanup of
+        // the deleted content and delete its checkpoint, which holds that text.
+        if !deletedCleanupRecordingIds.isEmpty {
+            afterCommit("Discarding transcript cleanup of deleted content", category: .coreData) {
+                for recordingId in deletedCleanupRecordingIds {
+                    TranscriptCleanupQueue.shared.discard(recordingId: recordingId)
+                }
+            }
+        }
+    }
+
+    /// Recordings whose transcript cleanup state describes content this save
+    /// deletes: a deleted recording, or a deleted transcript the recording
+    /// pointed at before the save. A superseded duplicate transcript is not the
+    /// one a queued cleanup or checkpoint describes, so it leaves them alone.
+    private static func transcriptCleanupRecordingIds(deletedIn context: NSManagedObjectContext) -> Set<UUID> {
+        var recordingIds = Set<UUID>()
+        for object in context.deletedObjects {
+            if let recording = object as? RecordingEntry, let recordingId = recording.id {
+                recordingIds.insert(recordingId)
+            } else if let transcript = object as? TranscriptEntry, let transcriptId = transcript.id {
+                // Committed values throughout: the deletion unlinks both sides
+                // of the relationship before this save, so a legacy row with no
+                // denormalized `recordingId` has no live link left to read.
+                let committed = transcript.committedValues(forKeys: ["recordingId", "recording"])
+                let linkedRecording = transcript.recording
+                    ?? committedObject(committed["recording"], in: context) as? RecordingEntry
+                guard let recordingId = transcript.recordingId
+                        ?? committed["recordingId"] as? UUID
+                        ?? linkedRecording?.id else {
+                    continue
+                }
+                let recording = linkedRecording ?? {
+                    let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+                    request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
+                    request.fetchLimit = 1
+                    return (try? context.fetch(request))?.first
+                }()
+                let recordingCommitted = recording?.committedValues(forKeys: ["transcriptId", "transcript"]) ?? [:]
+                let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
+                    ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id
+                    ?? recording?.transcript?.id
+                if currentTranscriptId == nil || currentTranscriptId == transcriptId {
+                    recordingIds.insert(recordingId)
+                }
+            }
+        }
+        return recordingIds
+    }
+
+    /// A to-one relationship's committed value, which Core Data reports as the
+    /// related object or as its object ID.
+    private static func committedObject(_ value: Any?, in context: NSManagedObjectContext) -> NSManagedObject? {
+        if let object = value as? NSManagedObject { return object }
+        if let objectID = value as? NSManagedObjectID { return try? context.existingObject(with: objectID) }
+        return nil
     }
 
     /// Performs a mutation in a sibling context so a failed save cannot roll
