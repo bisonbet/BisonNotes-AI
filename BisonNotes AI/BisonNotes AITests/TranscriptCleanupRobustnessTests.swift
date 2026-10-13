@@ -584,6 +584,85 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(harness.store.transcript?.segments.allSatisfy { $0.cleanup != nil } == true)
     }
 
+    /// Cancellation during preflight must not reach token counting, even
+    /// though the coordinator has not registered an active generation yet.
+    @MainActor
+    func testTranscriptionCancelsCleanupSuspendedInPreflightBeforeModelWork() async throws {
+        let normalizer = ScriptedNormalizer(blocksReadiness: true)
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")], normalizer: normalizer)
+        defer { Task { await normalizer.unblockReadiness() } }
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await waitUntil { await normalizer.isWaitingForReadiness }
+
+        harness.queue.transcriptionDidBegin()
+        let transcriptionCanStart = Task {
+            await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
+        }
+        await normalizer.unblockReadiness()
+        await transcriptionCanStart.value
+        await harness.queue.waitForCurrentRun()
+
+        let tokenRequests = await normalizer.tokenRequestCount
+        let generationRequests = await normalizer.normalizationRequests
+        XCTAssertEqual(tokenRequests, 0, "Cancelled preflight must not load the model for token counting")
+        XCTAssertTrue(generationRequests.isEmpty)
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertEqual(harness.queue.intents.count, 1, "The interrupted cleanup remains queued")
+
+        harness.queue.transcriptionDidEnd()
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 1, "Cleanup resumes after transcription ends")
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
+    /// Clearing the job list is not the end of the executing ASR task. The
+    /// cleanup queue must remain gated until that task actually unwinds.
+    @MainActor
+    func testClearingAllJobsKeepsCleanupPausedUntilTranscriptionTaskEnds() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        let transcription = SuspendedTranscription()
+        defer { Task { await transcription.finish() } }
+        let persistence = PersistenceController(inMemory: true)
+        let store = CoreDataManager(persistenceController: persistence)
+        let manager = BackgroundProcessingManager.makeForTesting(
+            coreDataManager: store,
+            startBackgroundWork: false,
+            transcriptCleanupQueue: harness.queue,
+            transcriptionProcessor: { _, _ in try await transcription.run() }
+        )
+        let job = ProcessingJob(
+            type: .transcription(engine: .fluidAudio),
+            recordingURL: harness.directory.appendingPathComponent("transcription.m4a"),
+            recordingName: "Blocked transcription"
+        )
+        _ = try store.createProcessingJob(
+            id: job.id,
+            jobType: job.type.displayName,
+            engine: TranscriptionEngine.fluidAudio.rawValue,
+            recordingURL: job.recordingURL,
+            recordingName: job.recordingName
+        )
+        manager.activeJobs = [job]
+        await manager.processNextJob()
+        try await waitUntil { await transcription.isRunning }
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        try await manager.clearAllJobs()
+        XCTAssertNil(manager.currentJob)
+        XCTAssertTrue(manager.activeJobs.isEmpty)
+        XCTAssertTrue(harness.queue.isTranscriptionRunning, "The executing task still owns the gate")
+        harness.queue.kick()
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 0, "Clearing the list must not resume cleanup beside ASR")
+
+        await transcription.finish()
+        try await waitUntil { await MainActor.run { harness.store.saveCount == 1 } }
+        XCTAssertFalse(harness.queue.isTranscriptionRunning)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
     /// A transcription — a background job or a direct fallback — pauses the
     /// running cleanup and holds the queue until every transcription ends; the
     /// cleanup then resumes from its checkpoint.
@@ -960,6 +1039,10 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
 /// or blocking on the passages it is told to, counted in call order.
 private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
     private let ready: Bool
+    private let blocksReadiness: Bool
+    private var readinessReleased = false
+    private var readinessContinuation: CheckedContinuation<Void, Never>?
+    private(set) var isWaitingForReadiness = false
     private let tokenScale: Int
     private let failingPieces: Set<Int>
     private let cancellingPieces: Set<Int>
@@ -978,6 +1061,7 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
 
     init(
         ready: Bool = true,
+        blocksReadiness: Bool = false,
         tokenScale: Int = 1,
         failingPieces: Set<Int> = [],
         cancellingPieces: Set<Int> = [],
@@ -988,6 +1072,7 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
     ) {
         self.oversizedWords = oversizedWords
         self.ready = ready
+        self.blocksReadiness = blocksReadiness
         self.tokenScale = tokenScale
         self.failingPieces = failingPieces
         self.cancellingPieces = cancellingPieces
@@ -998,7 +1083,22 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
 
     static func cleaned(_ text: String) -> String { "Clean(\(text))" }
 
-    var isReady: Bool { ready }
+    var isReady: Bool {
+        get async {
+            if blocksReadiness, !readinessReleased {
+                isWaitingForReadiness = true
+                await withCheckedContinuation { readinessContinuation = $0 }
+                isWaitingForReadiness = false
+            }
+            return ready
+        }
+    }
+
+    func unblockReadiness() {
+        readinessReleased = true
+        readinessContinuation?.resume()
+        readinessContinuation = nil
+    }
 
     func renderedRequestTokenCount(for rawText: String) async throws -> Int {
         tokenRequestCount += 1
@@ -1093,6 +1193,27 @@ private final class ProgressRecorder: @unchecked Sendable {
 private actor IdleFlag {
     private(set) var value = false
     func set() { value = true }
+}
+
+private actor SuspendedTranscription {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var isRunning = false
+
+    func run() async throws {
+        isRunning = true
+        if !released {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        isRunning = false
+        throw CancellationError()
+    }
+
+    func finish() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 @MainActor

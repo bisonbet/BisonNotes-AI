@@ -629,21 +629,7 @@ class BackgroundProcessingManager: ObservableObject {
 
     @Published var activeJobs: [ProcessingJob] = []
     @Published var processingStatus: JobProcessingStatus = .ready
-    @Published var currentJob: ProcessingJob? {
-        didSet {
-            guard oldValue?.id != currentJob?.id else { return }
-            // Transcript cleanup (S1-mini on the GPU) never runs beside a
-            // transcription job's ASR and speaker-label models: it pauses,
-            // keeping its checkpoint, and resumes when the job ends. Begin
-            // before end, so a job-to-job handover never restarts it between.
-            if currentJob?.type.isTranscription == true {
-                TranscriptCleanupQueue.shared.transcriptionDidBegin()
-            }
-            if oldValue?.type.isTranscription == true {
-                TranscriptCleanupQueue.shared.transcriptionDidEnd()
-            }
-        }
-    }
+    @Published var currentJob: ProcessingJob?
     @Published private(set) var jobLoadError: String? = nil
     @Published private(set) var recoveryIssues: [JobRecoveryIssue] = []
 
@@ -654,6 +640,12 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Private Properties
 
     private var currentTaskHandle: Task<Void, Never>?
+    private let transcriptCleanupQueue: TranscriptCleanupQueue
+    #if DEBUG
+    private var transcriptionProcessorForTesting: (
+        @MainActor (ProcessingJob, TranscriptionEngine) async throws -> Void
+    )?
+    #endif
     private var externalTaskHandles: [UUID: Task<Void, Never>] = [:]
     /// Reason for the current cancellation — nil means user-initiated cancel
     private var cancellationReason: String?
@@ -701,10 +693,12 @@ class BackgroundProcessingManager: ObservableObject {
     private init(
         audioSessionManager: EnhancedAudioSessionManager = .shared,
         coreDataManager: CoreDataManager = CoreDataManager(),
+        transcriptCleanupQueue: TranscriptCleanupQueue = .shared,
         startBackgroundWork: Bool = true
     ) {
         self.audioSessionManager = audioSessionManager
         self.coreDataManager = coreDataManager
+        self.transcriptCleanupQueue = transcriptCleanupQueue
         self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
 
         guard coreDataManager.persistenceState.isOperational else {
@@ -761,13 +755,18 @@ class BackgroundProcessingManager: ObservableObject {
     static func makeForTesting(
         coreDataManager: CoreDataManager,
         audioSessionManager: EnhancedAudioSessionManager = .shared,
-        startBackgroundWork: Bool = true
+        startBackgroundWork: Bool = true,
+        transcriptCleanupQueue: TranscriptCleanupQueue = .shared,
+        transcriptionProcessor: (@MainActor (ProcessingJob, TranscriptionEngine) async throws -> Void)? = nil
     ) -> BackgroundProcessingManager {
-        BackgroundProcessingManager(
+        let manager = BackgroundProcessingManager(
             audioSessionManager: audioSessionManager,
             coreDataManager: coreDataManager,
+            transcriptCleanupQueue: transcriptCleanupQueue,
             startBackgroundWork: startBackgroundWork
         )
+        manager.transcriptionProcessorForTesting = transcriptionProcessor
+        return manager
     }
     func resumePersistedJobsForTesting() async {
         await resumeInterruptedJobs(notify: false)
@@ -1194,13 +1193,26 @@ class BackgroundProcessingManager: ObservableObject {
             return
         }
         // Don't start a new job if one is already running
-        guard currentJob == nil else { return }
+        guard currentJob == nil, currentTaskHandle == nil else { return }
 
         // Find the next queued job
         guard let nextJob = activeJobs.first(where: { $0.status == .queued && !isRecoveryJob($0.id) }) else {
             processingStatus = .ready
             await endBackgroundTask()
             return
+        }
+
+        // Job-list edits can clear currentJob while its task is still running.
+        // Hold cleanup through preparation and the executing task's actual exit.
+        let holdsTranscriptionGate = nextJob.type.isTranscription
+        if holdsTranscriptionGate {
+            transcriptCleanupQueue.transcriptionDidBegin()
+        }
+        var gateTransferredToTask = false
+        defer {
+            if holdsTranscriptionGate, !gateTransferredToTask {
+                transcriptCleanupQueue.transcriptionDidEnd()
+            }
         }
 
         currentJob = nextJob
@@ -1225,10 +1237,25 @@ class BackgroundProcessingManager: ObservableObject {
             return
         }
 
+        // Clear All Jobs can run while preparation is suspended. A removed
+        // reservation must not start executing after the list has been cleared.
+        guard currentJob?.id == nextJob.id else {
+            // A replacement reservation may already own the shared protection.
+            if currentJob == nil, currentTaskHandle == nil {
+                await endBackgroundTask()
+            }
+            return
+        }
+
         AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
         currentTaskHandle = Task {
+            defer {
+                if holdsTranscriptionGate {
+                    transcriptCleanupQueue.transcriptionDidEnd()
+                }
+            }
             var completionStatePersisted = false
             // Whether the job's output is already durable. Distinct from
             // `completionStatePersisted`, which is whether that success was
@@ -1246,7 +1273,7 @@ class BackgroundProcessingManager: ObservableObject {
                 switch nextJob.type {
                 case .transcription(let engine):
                     AppLog.shared.backgroundProcessing("Processing transcription job with \(engine.rawValue)")
-                    // Setting `currentJob` paused any transcript cleanup; let
+                    // Acquiring the transcription gate paused cleanup; let
                     // it unwind and release its model before ASR loads.
                     await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
                     try await processTranscriptionJob(processingJob, engine: engine)
@@ -1403,6 +1430,7 @@ class BackgroundProcessingManager: ObservableObject {
             // Process next queued job
             await processNextJob()
         }
+        gateTransferredToTask = true
     }
 
     private func applyBatteryOptimization(for job: ProcessingJob) async {
@@ -1422,6 +1450,12 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func processTranscriptionJob(_ job: ProcessingJob, engine: TranscriptionEngine) async throws {
+        #if DEBUG
+        if let transcriptionProcessorForTesting {
+            try await transcriptionProcessorForTesting(job, engine)
+            return
+        }
+        #endif
         EnhancedLogger.shared.logBackgroundJobStart(job)
 
         try Task.checkCancellation()
