@@ -70,7 +70,7 @@ struct MacAdvancedSettingsPane: View {
                 .buttonStyle(.bordered)
             }
 
-            MacSettingsCard(title: "About", systemImage: "info.circle", tint: .indigo) {
+            MacSettingsCard(title: "About & Support", systemImage: "info.circle", tint: .indigo) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("BisonNotes AI")
@@ -94,6 +94,8 @@ struct MacAdvancedSettingsPane: View {
                     Label("Acknowledgements", systemImage: "hand.raised.fill")
                 }
                 .buttonStyle(.bordered)
+
+                BisonNotesSupportLinks()
             }
         }
         .sheet(isPresented: $showingAdvancedTroubleshooting) {
