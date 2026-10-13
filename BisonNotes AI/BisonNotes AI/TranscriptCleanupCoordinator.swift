@@ -223,7 +223,7 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// Errors that end the whole run rather than one piece: cancellation, and
     /// a model or chat template that is unusable for every piece alike.
     private static func endsRun(_ error: Error) -> Bool {
-        if error is CancellationError { return true }
+        if error is CancellationError || error is RunTimeLimitReached { return true }
         switch error as? TranscriptCleanupNormalizerError {
         case .cancelled, .modelUnavailable, .templateUnavailable: return true
         default: return false
@@ -340,7 +340,13 @@ struct TranscriptCleanupCoordinator: Sendable {
                         guard Date() < deadline else { throw RunTimeLimitReached() }
                         do {
                             outcome = .cleaned(
-                                try await normalizedText(for: piece, overhead: overhead, counter: counter, report: report)
+                                try await normalizedText(
+                                    for: piece,
+                                    deadline: deadline,
+                                    overhead: overhead,
+                                    counter: counter,
+                                    report: report
+                                )
                             )
                         } catch let error where !Self.endsRun(error) {
                             // A generation interrupted by a pause or cancel
@@ -571,17 +577,19 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// rejected as invalid output once their token counts were summed.
     private func normalizedText(
         for piece: String,
+        deadline: Date,
         overhead: Int,
         counter: TokenCounter,
         report: RunReport
     ) async throws -> String {
-        let generation = try await timedNormalize(piece, report: report)
+        let generation = try await timedNormalize(piece, deadline: deadline, report: report)
         try Task.checkCancellation()
         if generation.finishReason != .length {
             return try validatedText(generation, originalText: piece, overhead: overhead)
         }
 
         let retryPieces = try await whitespacePiecesForRetry(piece, counter: counter)
+        guard Date() < deadline else { throw RunTimeLimitReached() }
         guard retryPieces.count > 1 else {
             throw TranscriptCleanupNormalizerError.outputTruncated
         }
@@ -590,7 +598,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         var parts: [String] = []
         for retryPiece in retryPieces {
             try Task.checkCancellation()
-            let retry = try await timedNormalize(retryPiece, report: report)
+            let retry = try await timedNormalize(retryPiece, deadline: deadline, report: report)
             try Task.checkCancellation()
             let text = try validatedText(retry, originalText: retryPiece, overhead: overhead)
             if !text.isEmpty { parts.append(text) }
@@ -600,17 +608,35 @@ struct TranscriptCleanupCoordinator: Sendable {
 
     /// One model call, measured. A generation that throws (the per-call
     /// watchdog, a failed generation) is still counted and timed.
-    private func timedNormalize(_ piece: String, report: RunReport) async throws -> TranscriptCleanupGeneration {
+    private func timedNormalize(
+        _ piece: String,
+        deadline: Date,
+        report: RunReport
+    ) async throws -> TranscriptCleanupGeneration {
         let start = Date()
+        let remainingNanoseconds = deadline.timeIntervalSinceNow * 1_000_000_000
+        guard remainingNanoseconds > 0 else { throw RunTimeLimitReached() }
+        let timeoutNanoseconds = UInt64(remainingNanoseconds)
+        guard timeoutNanoseconds > 0 else { throw RunTimeLimitReached() }
+        let normalizer = self.normalizer
+
+        let generation: TranscriptCleanupGeneration
         do {
-            let generation = try await normalizer.normalize(piece)
-            report.recordGeneration(
-                seconds: Date().timeIntervalSince(start),
-                inputTokens: generation.inputTokenCount,
-                outputTokens: generation.outputTokenCount,
-                finishReason: "\(generation.finishReason)"
-            )
-            return generation
+            generation = try await withThrowingTaskGroup(of: TranscriptCleanupGeneration.self) { group in
+                group.addTask {
+                    try await normalizer.normalize(piece)
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                    throw RunTimeLimitReached()
+                }
+
+                defer { group.cancelAll() }
+                guard let result = try await group.next() else {
+                    throw RunTimeLimitReached()
+                }
+                return result
+            }
         } catch {
             report.recordGeneration(
                 seconds: Date().timeIntervalSince(start),
@@ -620,6 +646,15 @@ struct TranscriptCleanupCoordinator: Sendable {
             )
             throw error
         }
+
+        report.recordGeneration(
+            seconds: Date().timeIntervalSince(start),
+            inputTokens: generation.inputTokenCount,
+            outputTokens: generation.outputTokenCount,
+            finishReason: "\(generation.finishReason)"
+        )
+        guard Date() < deadline else { throw RunTimeLimitReached() }
+        return generation
     }
 
     private func whitespacePiecesForRetry(_ text: String, counter: TokenCounter) async throws -> [String] {
