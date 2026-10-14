@@ -1130,11 +1130,12 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
     func testBoundedWaitForCleanupTimesOutOnAnActiveRun() async throws {
         let normalizer = ScriptedNormalizer(blockingPieces: [0])
         let coordinator = makeCoordinator(normalizer)
+        // Built outside the task so its closure captures only Sendable values,
+        // not the test case.
+        let segments = [makeSegment(text: "the deadline is Friday")]
+        let configuration = englishConfiguration()
         let run = Task {
-            await coordinator.clean(
-                segments: [makeSegment(text: "the deadline is Friday")],
-                configuration: englishConfiguration()
-            )
+            await coordinator.clean(segments: segments, configuration: configuration)
         }
         try await waitUntil { await normalizer.isBlocked }
 
