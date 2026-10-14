@@ -180,6 +180,25 @@ struct TranscriptCleanupCoordinator: Sendable {
         await TranscriptCleanupActivity.shared.waitUntilIdle()
     }
 
+    /// `waitUntilNoRunIsActive`, giving up after `timeout`. For callers that
+    /// must not be held up indefinitely, such as starting a recording. Returns
+    /// false when a run was still active at the timeout.
+    static func waitUntilNoRunIsActive(timeout: TimeInterval) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            // The idle wait cannot be cancelled, so it is raced in unstructured
+            // tasks rather than a task group, which would wait for both.
+            let resume = ResumeOnce(continuation)
+            Task {
+                await TranscriptCleanupActivity.shared.waitUntilIdle()
+                resume(true)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                resume(false)
+            }
+        }
+    }
+
     private func cleanReadySegments(
         _ segments: [TranscriptSegment],
         checkpoint: (any TranscriptCleanupCheckpointing)?,
@@ -320,6 +339,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         var cleanedSegmentCount = 0
         var cleanedPieceCount = 0
         var keptOriginalPieceCount = 0
+        var retryablePieceCount = 0
         var firstPieceFailure: Error?
 
         for plan in plans {
@@ -391,6 +411,8 @@ struct TranscriptCleanupCoordinator: Sendable {
                         // would reject again. A timeout or GPU error is retried.
                         if outcome != .keptOriginal || failureIsDeterministic {
                             await checkpoint?.record(outcome, forPiece: key)
+                        } else {
+                            retryablePieceCount += 1
                         }
                     }
 
@@ -434,7 +456,8 @@ struct TranscriptCleanupCoordinator: Sendable {
         return TranscriptCleanupResult(
             segments: cleanedSegments,
             warning: keptOriginalPieceCount > 0 ? .partiallyCleaned(keptOriginalPieceCount) : nil,
-            cleanedSegmentCount: cleanedSegmentCount
+            cleanedSegmentCount: cleanedSegmentCount,
+            retryablePieceCount: retryablePieceCount
         )
     }
 
@@ -882,6 +905,24 @@ private actor TranscriptCleanupActivity {
     func waitUntilIdle() async {
         guard activeRuns > 0 else { return }
         await withCheckedContinuation { idleWaiters.append($0) }
+    }
+}
+
+/// Resumes a continuation with the first value it is called with.
+private final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+
+    init(_ continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func callAsFunction(_ value: Value) {
+        lock.lock()
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(returning: value)
     }
 }
 

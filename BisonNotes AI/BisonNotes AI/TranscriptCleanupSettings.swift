@@ -145,6 +145,10 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
     /// running; S1-mini and that job's models are not run together. Finished
     /// passages are kept.
     case waitingForTranscription
+    /// Cleanup stopped, or did not start, because a recording is in progress;
+    /// S1-mini and the recorder's audio engine and live models are not run
+    /// together. Finished passages are kept.
+    case waitingForRecording
 
     var errorDescription: String? { userVisibleMessage }
 
@@ -190,6 +194,9 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .waitingForTranscription:
             return "Transcript cleanup waits while a transcription is running. "
                 + "Finished passages are kept; clean up again when the transcription finishes."
+        case .waitingForRecording:
+            return "Transcript cleanup waits while a recording is in progress. "
+                + "Finished passages are kept; clean up again when the recording stops."
         }
     }
 
@@ -207,6 +214,7 @@ enum TranscriptCleanupWarning: Equatable, Sendable, LocalizedError {
         case .paused: return "paused"
         case .timeLimitReached: return "time-limit"
         case .waitingForTranscription: return "waiting-for-transcription"
+        case .waitingForRecording: return "waiting-for-recording"
         }
     }
 }
@@ -304,6 +312,10 @@ struct TranscriptCleanupResult: Sendable {
     let segments: [TranscriptSegment]
     let warning: TranscriptCleanupWarning?
     let cleanedSegmentCount: Int
+    /// Passages that kept their original text for a reason that may pass — a
+    /// timeout, a GPU or generation error. They are not checkpointed, so a
+    /// retry runs them again; a deterministic failure is not counted here.
+    var retryablePieceCount = 0
 
     var didClean: Bool { warning == nil && cleanedSegmentCount > 0 }
 }

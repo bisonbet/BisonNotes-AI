@@ -1203,17 +1203,13 @@ class BackgroundProcessingManager: ObservableObject {
         }
 
         // Job-list edits can clear currentJob while its task is still running.
-        // Hold cleanup through preparation and the executing task's actual exit.
-        let holdsTranscriptionGate = nextJob.type.isTranscription
-        if holdsTranscriptionGate {
-            transcriptCleanupQueue.transcriptionDidBegin()
-        }
-        var gateTransferredToTask = false
-        defer {
-            if holdsTranscriptionGate, !gateTransferredToTask {
-                transcriptCleanupQueue.transcriptionDidEnd()
-            }
-        }
+        // Hold cleanup through preparation and the executing task's actual exit:
+        // the hold is ended here on any early return, and handed to the task
+        // (this reference cleared) once the task owns it.
+        var preparationGate = nextJob.type.isTranscription
+            ? transcriptCleanupQueue.beginTranscription()
+            : nil
+        defer { preparationGate?.end() }
 
         currentJob = nextJob
         processingStatus = .processing
@@ -1250,12 +1246,10 @@ class BackgroundProcessingManager: ObservableObject {
         AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
+        let taskGate = preparationGate
+        preparationGate = nil
         currentTaskHandle = Task {
-            defer {
-                if holdsTranscriptionGate {
-                    transcriptCleanupQueue.transcriptionDidEnd()
-                }
-            }
+            defer { taskGate?.end() }
             var completionStatePersisted = false
             // Whether the job's output is already durable. Distinct from
             // `completionStatePersisted`, which is whether that success was
@@ -1275,7 +1269,7 @@ class BackgroundProcessingManager: ObservableObject {
                     AppLog.shared.backgroundProcessing("Processing transcription job with \(engine.rawValue)")
                     // Acquiring the transcription gate paused cleanup; let
                     // it unwind and release its model before ASR loads.
-                    await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
+                    await taskGate?.waitForCleanupToUnwind()
                     try await processTranscriptionJob(processingJob, engine: engine)
                 case .summarization(let engine):
                     AppLog.shared.backgroundProcessing("Processing summarization job with \(engine)")
@@ -1430,7 +1424,6 @@ class BackgroundProcessingManager: ObservableObject {
             // Process next queued job
             await processNextJob()
         }
-        gateTransferredToTask = true
     }
 
     private func applyBatteryOptimization(for job: ProcessingJob) async {

@@ -1036,6 +1036,121 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertEqual(harness.notifications, [TranscriptCleanupWarning.resourceFailure.userVisibleMessage])
     }
 
+    /// A passage that failed for a reason that may pass is left out of the
+    /// checkpoint so it can be retried. Saving the partial result at once
+    /// deleted the checkpoint with the intent, so it never was.
+    @MainActor
+    func testTransientPassageFailureIsRetriedBeforeSaving() async throws {
+        let segments = [
+            makeSegment(text: "first segment text"),
+            makeSegment(text: "second segment text")
+        ]
+        let normalizer = ScriptedNormalizer(throwingPieces: [0: .generationFailed])
+        let harness = try QueueHarness(segments: segments, normalizer: normalizer)
+
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 0, "A run with a retryable passage does not save yet")
+        XCTAssertEqual(harness.queue.intents.count, 1)
+
+        try await waitUntil { await MainActor.run { harness.store.saveCount == 1 } }
+        let requests = await normalizer.normalizationRequests
+        XCTAssertEqual(
+            requests,
+            [segments[0].text, segments[1].text, segments[0].text],
+            "Only the failed passage ran again; the cleaned one came from the checkpoint"
+        )
+        XCTAssertTrue(harness.store.transcript?.segments.allSatisfy { $0.cleanup != nil } == true)
+        XCTAssertTrue(harness.notifications.isEmpty, "The retried run cleaned everything")
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
+    /// A withdrawal after `kick` has scheduled a run but before the run has
+    /// started must still stop it.
+    @MainActor
+    func testWithdrawalBeforeTheScheduledRunStartsCancelsIt() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+
+        harness.isForeground = true
+        harness.queue.kick()
+        harness.queue.cancel(recordingId: harness.recordingId)
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 0)
+        let requests = await harness.normalizer.normalizationRequests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
+    /// One transcript that keeps failing waits out its own retry delay; the
+    /// intents queued behind it run meanwhile.
+    @MainActor
+    func testOneRecordingsTransientFailureDoesNotHoldUpTheQueue() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.transientRetryDelay = 60
+        let failing = UUID()
+        harness.store.failingRecordingIds = [failing]
+        let queue = harness.makeQueue()
+
+        queue.start()
+        queue.enqueue(recordingId: failing, source: nil, languageCode: "en")
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+
+        try await waitUntil { await MainActor.run { harness.store.saveCount == 1 } }
+        XCTAssertEqual(queue.intents.map(\.recordingId), [failing], "The failing intent stays queued for its retry")
+    }
+
+    /// A recording holds the queue like a transcription does.
+    @MainActor
+    func testRecordingPausesAndHoldsTheQueue() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.queue.start()
+        harness.queue.recordingActivityDidChange(isRecording: true)
+        harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertEqual(harness.queue.intents.count, 1)
+
+        harness.queue.recordingActivityDidChange(isRecording: false)
+        await harness.queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 1)
+    }
+
+    /// Core Data announces deleted content; a queue that observes it discards
+    /// the recording's intent and checkpoint, even before it starts.
+    @MainActor
+    func testCoreDataDeletionNotificationDiscardsCleanupState() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        let queue = harness.makeQueue(observesLifecycle: true)
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(
+            for: harness.recordingId,
+            in: harness.directory.appendingPathComponent("checkpoints", isDirectory: true)
+        )
+        await checkpoint.record(.cleaned("Secret."), forPiece: "a")
+        await checkpoint.flush()
+
+        NotificationCenter.default.post(
+            name: CoreDataManager.transcriptContentDeletedNotification,
+            object: nil,
+            userInfo: [CoreDataManager.deletedRecordingIdsKey: Set([harness.recordingId])]
+        )
+
+        XCTAssertTrue(queue.intents.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+    }
+
+    /// The bounded wait returns at once when nothing is running.
+    func testBoundedWaitForCleanupReturnsWhenIdle() async {
+        let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(timeout: 5)
+        XCTAssertTrue(unwound)
+    }
+
     // MARK: - Helpers
 
     private func makeCoordinator(_ normalizer: ScriptedNormalizer) -> TranscriptCleanupCoordinator {
@@ -1262,6 +1377,9 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
     /// Reads that throw before reads start succeeding, to simulate a
     /// transient Core Data failure.
     var failingReads = 0
+    /// Recordings whose every read throws, as for a transcript that keeps
+    /// failing while the others read normally.
+    var failingRecordingIds: Set<UUID> = []
     /// Called with the 1-based attempt number on every read.
     var onRead: ((Int) -> Void)?
 
@@ -1276,6 +1394,9 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
         onRead?(readAttempts)
         if failingReads > 0 {
             failingReads -= 1
+            throw CocoaError(.fileReadUnknown)
+        }
+        if failingRecordingIds.contains(recordingId) {
             throw CocoaError(.fileReadUnknown)
         }
         return transcript?.recordingId == recordingId ? transcript : nil
@@ -1304,6 +1425,8 @@ private final class QueueHarness {
     let normalizer: ScriptedNormalizer
     var isForeground = true
     var isCleanupEnabled = true
+    /// Applies to queues made after it is set.
+    var transientRetryDelay: TimeInterval = 0.05
     private(set) var notifications: [String] = []
     private(set) var queue: TranscriptCleanupQueue!
 
@@ -1338,7 +1461,7 @@ private final class QueueHarness {
         TranscriptCleanupSourceSnapshot(transcript: store.transcript)
     }
 
-    func makeQueue() -> TranscriptCleanupQueue {
+    func makeQueue(observesLifecycle: Bool = false) -> TranscriptCleanupQueue {
         TranscriptCleanupQueue(
             coordinator: TranscriptCleanupCoordinator(normalizer: normalizer, availabilityProvider: { .available }),
             store: store,
@@ -1347,8 +1470,8 @@ private final class QueueHarness {
             canRunNow: { [weak self] in self?.isForeground ?? false },
             isCleanupEnabled: { [weak self] in self?.isCleanupEnabled ?? false },
             notifyUser: { [weak self] message in self?.notifications.append(message) },
-            transientRetryDelay: 0.05,
-            observesLifecycle: false
+            transientRetryDelay: transientRetryDelay,
+            observesLifecycle: observesLifecycle
         )
     }
 }

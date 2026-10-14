@@ -2076,16 +2076,24 @@ class CoreDataManager: ObservableObject {
         }
 
         // Post-commit, for every delete path — the user's, another device's
-        // tombstone, orphan and missing-file cleanup alike: withdraw cleanup of
-        // the deleted content and delete its checkpoint, which holds that text.
+        // tombstone, orphan and missing-file cleanup alike. Whoever holds state
+        // derived from the deleted content — the transcript cleanup queue and
+        // its checkpoints, which hold that text — discards it. Announced rather
+        // than called, so the data layer does not depend on those features.
         if !deletedCleanupRecordingIds.isEmpty {
-            afterCommit("Discarding transcript cleanup of deleted content", category: .coreData) {
-                for recordingId in deletedCleanupRecordingIds {
-                    TranscriptCleanupQueue.shared.discard(recordingId: recordingId)
-                }
-            }
+            NotificationCenter.default.post(
+                name: Self.transcriptContentDeletedNotification,
+                object: self,
+                userInfo: [Self.deletedRecordingIdsKey: deletedCleanupRecordingIds]
+            )
         }
     }
+
+    /// Posted synchronously on the main thread after a save commits that
+    /// deleted a recording, or the transcript its recording pointed at.
+    /// `userInfo[deletedRecordingIdsKey]` is the affected `Set<UUID>`.
+    static let transcriptContentDeletedNotification = Notification.Name("CoreDataManagerTranscriptContentDeleted")
+    static let deletedRecordingIdsKey = "recordingIds"
 
     /// Recordings whose transcript cleanup state describes content this save
     /// deletes: a deleted recording, or a deleted transcript the recording
@@ -2093,6 +2101,10 @@ class CoreDataManager: ObservableObject {
     /// one a queued cleanup or checkpoint describes, so it leaves them alone.
     private static func transcriptCleanupRecordingIds(deletedIn context: NSManagedObjectContext) -> Set<UUID> {
         var recordingIds = Set<UUID>()
+        // Deleted transcripts whose recording must be looked up to tell
+        // whether it was that recording's current transcript.
+        var unresolved: [(transcriptId: UUID, recordingId: UUID)] = []
+        var resolved: [(transcriptId: UUID, recordingId: UUID, recording: RecordingEntry)] = []
         for object in context.deletedObjects {
             if let recording = object as? RecordingEntry, let recordingId = recording.id {
                 recordingIds.insert(recordingId)
@@ -2108,36 +2120,54 @@ class CoreDataManager: ObservableObject {
                         ?? linkedRecording?.id else {
                     continue
                 }
-                let recording: RecordingEntry?
                 if let linkedRecording {
-                    recording = linkedRecording
+                    resolved.append((transcriptId, recordingId, linkedRecording))
                 } else {
-                    let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
-                    request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
-                    request.fetchLimit = 1
-                    do {
-                        recording = try context.fetch(request).first
-                    } catch {
-                        // Unknown whether this was the recording's current
-                        // transcript. Discard its cleanup anyway: a checkpoint
-                        // may hold the deleted text, and losing a cleanup is
-                        // recoverable. Say why, so it is not silent.
-                        AppLog.shared.coreData(
-                            "durable_read_failed operation=transcript-cleanup-discard "
-                                + "recording=\(recordingId.uuidString) cause=\(error.localizedDescription)",
-                            level: .error
-                        )
-                        recordingIds.insert(recordingId)
-                        continue
+                    unresolved.append((transcriptId, recordingId))
+                }
+            }
+        }
+
+        if !unresolved.isEmpty {
+            // One fetch for every unlinked transcript: a reconcile that prunes
+            // hundreds of superseded rows must not issue a fetch per row.
+            let wantedIds = Array(Set(unresolved.map(\.recordingId)))
+            let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+            request.predicate = NSPredicate(format: "id IN %@", wantedIds)
+            do {
+                let recordingsById = Dictionary(
+                    try context.fetch(request).compactMap { recording in recording.id.map { ($0, recording) } },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                for item in unresolved {
+                    if let recording = recordingsById[item.recordingId] {
+                        resolved.append((item.transcriptId, item.recordingId, recording))
+                    } else {
+                        // No recording left to point anywhere else.
+                        recordingIds.insert(item.recordingId)
                     }
                 }
-                let recordingCommitted = recording?.committedValues(forKeys: ["transcriptId", "transcript"]) ?? [:]
-                let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
-                    ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id
-                    ?? recording?.transcript?.id
-                if currentTranscriptId == nil || currentTranscriptId == transcriptId {
-                    recordingIds.insert(recordingId)
-                }
+            } catch {
+                // Unknown whether these were their recordings' current
+                // transcripts. Discard their cleanup anyway: a checkpoint may
+                // hold the deleted text, and losing a cleanup is recoverable.
+                // Say why, so it is not silent.
+                AppLog.shared.coreData(
+                    "durable_read_failed operation=transcript-cleanup-discard "
+                        + "recordings=\(wantedIds.count) cause=\(error.localizedDescription)",
+                    level: .error
+                )
+                recordingIds.formUnion(wantedIds)
+            }
+        }
+
+        for item in resolved {
+            let recordingCommitted = item.recording.committedValues(forKeys: ["transcriptId", "transcript"])
+            let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
+                ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id
+                ?? item.recording.transcript?.id
+            if currentTranscriptId == nil || currentTranscriptId == item.transcriptId {
+                recordingIds.insert(item.recordingId)
             }
         }
         return recordingIds

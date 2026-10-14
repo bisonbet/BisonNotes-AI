@@ -33,11 +33,8 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	@Published var isRecording = false {
 		didSet {
-			// Automatic transcript cleanup (S1-mini on the GPU) never runs
-			// beside a recording's audio engine and live-transcription models.
-			// Observed here because many paths start and stop a recording.
 			guard oldValue != isRecording else { return }
-			TranscriptCleanupQueue.shared.recordingActivityDidChange(isRecording: isRecording)
+			updateTranscriptCleanupRecordingActivity()
 		}
 	}
 	@Published var isPlaying = false
@@ -54,7 +51,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	@Published var isLocationTrackingEnabled: Bool = false
 	@Published var recordingState: RecordingState = .idle
 	@Published var isMacSystemAudioCaptureEnabled: Bool = false
-	@Published var isStartingRecording = false
+	@Published var isStartingRecording = false {
+		didSet {
+			guard oldValue != isStartingRecording else { return }
+			updateTranscriptCleanupRecordingActivity()
+		}
+	}
 
 	// MARK: - Internal Properties (accessed by extensions)
 
@@ -593,6 +595,33 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	// MARK: - Core Recording
 
+	/// Automatic transcript cleanup (S1-mini on the GPU) never runs beside a
+	/// recording's audio engine and live-transcription models. Held from the
+	/// start request, not from when the recorder is running, so cleanup has
+	/// paused before the microphone opens; a start that fails releases it
+	/// when `isStartingRecording` clears. Observed here because many paths
+	/// start and stop a recording.
+	private func updateTranscriptCleanupRecordingActivity() {
+		TranscriptCleanupQueue.shared.recordingActivityDidChange(isRecording: isStartingRecording || isRecording)
+	}
+
+	/// Gives a cleanup run the start request paused a moment to unwind and
+	/// release its model before the recorder starts. Bounded: a recording
+	/// that starts late is worse than one that briefly overlaps cleanup.
+	private func waitForTranscriptCleanupToUnwind() async {
+		let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(
+			timeout: Self.transcriptCleanupUnwindTimeout
+		)
+		if !unwound {
+			AppLog.shared.recording(
+				"Transcript cleanup was still unwinding when the recording started",
+				level: .default
+			)
+		}
+	}
+
+	private static let transcriptCleanupUnwindTimeout: TimeInterval = 3
+
 	@discardableResult
 	private func beginRecordingStartup() -> Bool {
 		#if os(macOS)
@@ -619,7 +648,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startRecording: requesting microphone permission")
 		#if os(macOS)
-		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		Task { @MainActor [weak self] in
+			await self?.waitForTranscriptCleanupToUnwind()
+			guard let self, self.isStartingRecording else { return }
+			self.requestMicPermissionAndRecord()
+		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			Task { @MainActor [weak self] in
@@ -628,6 +661,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					AppLog.shared.recording("startRecording: microphone permission granted")
 					Task { @MainActor [weak self] in
 						guard let self else { return }
+						// Before the session is configured, so the abandoned-start
+						// handling below also covers a stop during this wait.
+						await self.waitForTranscriptCleanupToUnwind()
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
@@ -745,7 +781,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		guard beginRecordingStartup() else { return }
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
 		#if os(macOS)
-		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		Task { @MainActor [weak self] in
+			await self?.waitForTranscriptCleanupToUnwind()
+			guard let self, self.isStartingRecording else { return }
+			self.requestMicPermissionAndRecord()
+		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			Task { @MainActor [weak self] in
@@ -754,6 +794,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					AppLog.shared.recording("startBackgroundRecording: microphone permission granted")
 					Task { @MainActor [weak self] in
 						guard let self else { return }
+						// Before the session is configured, so the abandoned-start
+						// handling below also covers a stop during this wait.
+						await self.waitForTranscriptCleanupToUnwind()
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
@@ -891,11 +934,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	}
 
 	func markRecordingStarted() {
+		// `isRecording` first, so the cleanup hold passes from startup to the
+		// recording without a gap in which the queue could start a run.
+		isRecording = true
 		finishRecordingStartup()
 		#if os(iOS)
 		recordingIntentActive = true
 		#endif
-		isRecording = true
 		recordingState = .recording
 		recordingTime = 0
 		lastCheckpointTime = Date()

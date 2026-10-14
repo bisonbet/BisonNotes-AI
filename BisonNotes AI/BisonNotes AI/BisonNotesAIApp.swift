@@ -684,6 +684,11 @@ struct BisonNotesAIApp: App {
         // Log device capabilities on startup
         logDeviceCapabilities()
 
+        // Created now, not on first use: the queue discards cleanup state for
+        // content Core Data reports deleted, and a delete can commit long
+        // before anything else touches the queue. Reads nothing from disk.
+        _ = TranscriptCleanupQueue.shared
+
         // Register system launch handlers even when storage cannot be opened.
         // Their handlers decline persistence work and complete the task unsuccessfully.
         setupBackgroundTasks()

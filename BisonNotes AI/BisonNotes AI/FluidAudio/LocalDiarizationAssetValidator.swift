@@ -88,21 +88,40 @@ enum LocalDiarizationAssetValidator {
         _ layout: Nemotron3AssetLayout,
         fileManager: FileManager = .default
     ) -> Bool {
-        guard compiledModelBundleIsValid(
-            at: layout.modelBundle,
-            requiresMetadata: false,
-            fileManager: fileManager
-        ),
-        regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
-            == layout.silenceEmbeddingByteCount,
-        layout.preEncodeProjectionByteCount.map({
-            regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager) == $0
-        }) ?? true,
-        let marker = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
-        else {
-            return false
+        nemotron3LayoutProblems(layout, fileManager: fileManager).isEmpty
+    }
+
+    /// Each way the cache differs from `layout`, for the log. Empty when valid.
+    static func nemotron3LayoutProblems(
+        _ layout: Nemotron3AssetLayout,
+        fileManager: FileManager = .default
+    ) -> [String] {
+        var problems: [String] = []
+        if !compiledModelBundleIsValid(at: layout.modelBundle, requiresMetadata: false, fileManager: fileManager) {
+            problems.append("model bundle \(layout.modelBundle.lastPathComponent) missing or incomplete")
         }
-        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == layout.expectedWeightsVersion
+        let silenceSize = regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
+        if silenceSize != layout.silenceEmbeddingByteCount {
+            problems.append(
+                "\(layout.silenceEmbedding.lastPathComponent) is \(silenceSize.map(String.init) ?? "missing"), "
+                    + "expected \(layout.silenceEmbeddingByteCount) bytes"
+            )
+        }
+        if let expected = layout.preEncodeProjectionByteCount {
+            let size = regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager)
+            if size != expected {
+                problems.append(
+                    "\(layout.preEncodeProjection.lastPathComponent) is \(size.map(String.init) ?? "missing"), "
+                        + "expected \(expected) bytes"
+                )
+            }
+        }
+        let marker = (try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if marker != layout.expectedWeightsVersion {
+            problems.append("weights marker is \(marker ?? "missing"), expected \(layout.expectedWeightsVersion)")
+        }
+        return problems
     }
 
     /// Reads a raw fp32 asset of an exact size. A file that is missing,

@@ -2094,7 +2094,7 @@ struct EditableTranscriptView: View {
             // status actually differs.
             Task { @MainActor in
                 refreshQueuedCleanupStatus()
-                pauseManualCleanupIfTranscribing()
+                pauseManualCleanupIfBlocked()
             }
         }
         #if os(iOS)
@@ -2585,16 +2585,25 @@ struct EditableTranscriptView: View {
     }
 
     /// S1-mini never runs beside a transcription's ASR and speaker-label
-    /// models — a background job or a direct fallback, which the queue counts.
+    /// models — a background job or a direct fallback, which the queue counts
+    /// — nor beside a recording's audio engine and live-transcription models.
     /// The automatic queue pauses the same way.
-    private func pauseManualCleanupIfTranscribing() {
+    private func pauseManualCleanupIfBlocked() {
         guard isCleaningTranscript,
               transcriptCleanupPause == nil,
-              TranscriptCleanupQueue.shared.isTranscriptionRunning else {
+              let reason = Self.cleanupBlockingActivity() else {
             return
         }
-        transcriptCleanupPause = .waitingForTranscription
+        transcriptCleanupPause = reason
         transcriptCleanupTask?.cancel()
+    }
+
+    /// Why S1-mini may not run now, or nil when it may.
+    private static func cleanupBlockingActivity() -> TranscriptCleanupWarning? {
+        let queue = TranscriptCleanupQueue.shared
+        if queue.isTranscriptionRunning { return .waitingForTranscription }
+        if queue.isRecordingActive { return .waitingForRecording }
+        return nil
     }
 
     /// Writes state only when this recording's queue status changed, so other
@@ -2632,8 +2641,8 @@ struct EditableTranscriptView: View {
             transcriptCleanupWarningMessage = "This transcript is missing a recording identifier."
             return
         }
-        guard !TranscriptCleanupQueue.shared.isTranscriptionRunning else {
-            transcriptCleanupWarningMessage = TranscriptCleanupWarning.waitingForTranscription.userVisibleMessage
+        if let blocking = Self.cleanupBlockingActivity() {
+            transcriptCleanupWarningMessage = blocking.userVisibleMessage
             return
         }
 
@@ -2664,11 +2673,12 @@ struct EditableTranscriptView: View {
 
         transcriptCleanupTask = Task { @MainActor in
             // Every exit that publishes nothing hands a superseded automatic
-            // cleanup back to the queue, unless the saved transcript changed:
-            // that intent no longer applies.
+            // cleanup back to the queue, unless the saved transcript changed —
+            // that intent no longer applies — or the user tapped Cancel, which
+            // means stop cleaning this recording, not switch to the queue.
             var handsBackSupersededIntent = true
             defer {
-                if handsBackSupersededIntent, let supersededIntent {
+                if handsBackSupersededIntent, !isCancellingTranscriptCleanup, let supersededIntent {
                     TranscriptCleanupQueue.shared.restore(supersededIntent)
                 }
                 transcriptCleanupTask = nil
@@ -2689,9 +2699,9 @@ struct EditableTranscriptView: View {
                 }
             )
 
-            if let pause = transcriptCleanupPause {
+            if let pause = transcriptCleanupPause, !isCancellingTranscriptCleanup {
                 // Stopped because iOS refuses GPU work in the background, or
-                // because a transcription job started. The checkpoint keeps
+                // because a transcription or recording started. The checkpoint keeps
                 // every finished passage for the next tap.
                 transcriptCleanupWarningMessage = pause.userVisibleMessage
                 return
@@ -2755,7 +2765,11 @@ struct EditableTranscriptView: View {
             transcriptRepresentation = .cleaned
             // Some passages kept their original text; say so.
             transcriptCleanupWarningMessage = result.warning?.userVisibleMessage
-            await checkpoint.remove()
+            // Passages that failed for a reason that may pass are not in the
+            // checkpoint; keeping it lets the next tap retry only those.
+            if result.retryablePieceCount == 0 {
+                await checkpoint.remove()
+            }
             NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
         }
     }

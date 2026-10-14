@@ -236,7 +236,22 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             }
         )
         try Task.checkCancellation()
-        try Self.ensureNemotron3WeightsMarker(Self.nemotron3Layout(at: directory, config: config))
+        let layout = Self.nemotron3Layout(at: directory, config: config)
+        try Self.ensureNemotron3WeightsMarker(layout)
+
+        // `nemotron3Layout` mirrors where the SDK's download puts each file; the
+        // SDK has no public loader for its own cache. The SDK has just
+        // downloaded and loaded this cache, so a mismatch here means a
+        // FluidAudio update moved something, not a bad download. Name it, or the
+        // only symptom is a preparation that never verifies.
+        let problems = LocalDiarizationAssetValidator.nemotron3LayoutProblems(layout)
+        if !problems.isEmpty {
+            AppLog.shared.transcription(
+                "Nemotron 3 cache layout differs from the FluidAudio download; update nemotron3Layout: "
+                    + problems.joined(separator: "; "),
+                level: .fault
+            )
+        }
     }
 
     /// The SDK writes its weights marker with `try?`, so a failed write (most

@@ -276,6 +276,31 @@ enum TranscriptCleanupCheckpointStore {
 
 // MARK: - Queue
 
+/// One transcription's hold on the cleanup queue, from
+/// `TranscriptCleanupQueue.beginTranscription`.
+@MainActor
+final class TranscriptionCleanupGate {
+    private let queue: TranscriptCleanupQueue
+    private var isHeld = true
+
+    fileprivate init(queue: TranscriptCleanupQueue) {
+        self.queue = queue
+    }
+
+    /// Waits for a cleanup run the hold paused to unwind and release its
+    /// model. Cancellation is cooperative, so this can take a moment.
+    func waitForCleanupToUnwind() async {
+        await TranscriptCleanupCoordinator.waitUntilNoRunIsActive()
+    }
+
+    /// Releases the hold. Later calls do nothing.
+    func end() {
+        guard isHeld else { return }
+        isHeld = false
+        queue.transcriptionDidEnd()
+    }
+}
+
 /// One recording whose saved transcript should be cleaned. `source` is the
 /// transcript as it was saved; an intent whose transcript has changed since is
 /// dropped, because its result would describe text that no longer exists. It
@@ -365,7 +390,9 @@ final class TranscriptCleanupQueue: ObservableObject {
     private let transientRetryDelay: TimeInterval
     /// Consecutive transient failures after which an intent is given up.
     static let maximumTransientFailures = 3
-    private var retryNotBefore: Date?
+    /// Per recording: one transcript that keeps failing must not hold up the
+    /// intents queued behind it.
+    private var retryNotBefore: [UUID: Date] = [:]
     private var transientFailures: [UUID: Int] = [:]
     private var started = false
     private var loadedFromDisk = false
@@ -397,6 +424,31 @@ final class TranscriptCleanupQueue: ObservableObject {
         self.isCleanupEnabled = isCleanupEnabled
         self.notifyUser = notifyUser
         self.observesLifecycle = observesLifecycle
+        if observesLifecycle {
+            observeDeletedContent()
+        }
+    }
+
+    /// Core Data reports deleted recordings and transcripts; their cleanup
+    /// and checkpoint describe text that no longer exists. Registered at init,
+    /// not `start`, because a delete can commit before the queue starts.
+    private func observeDeletedContent() {
+        observers.add(
+            NotificationCenter.default.addObserver(
+                forName: CoreDataManager.transcriptContentDeletedNotification,
+                object: nil,
+                // Delivered synchronously on the posting (main) thread, so the
+                // discard lands before anything the deleting caller does next.
+                queue: nil
+            ) { [weak self] notification in
+                let recordingIds = notification.userInfo?[CoreDataManager.deletedRecordingIdsKey] as? Set<UUID> ?? []
+                MainActor.assumeIsolated {
+                    for recordingId in recordingIds {
+                        self?.discard(recordingId: recordingId)
+                    }
+                }
+            }
+        )
     }
 
     static func postUserNotification(_ message: String) {
@@ -427,9 +479,18 @@ final class TranscriptCleanupQueue: ObservableObject {
         isAppInForeground()
     }
 
-    /// Call when a transcription starts — a background job or a direct
-    /// fallback. The running cleanup pauses, keeping its checkpoint, and none
-    /// starts until every transcription has called `transcriptionDidEnd`.
+    /// Holds the queue for one transcription — a background job or a direct
+    /// fallback — until `end`. Prefer this to pairing `transcriptionDidBegin`
+    /// and `transcriptionDidEnd` by hand: `end` is idempotent, so a path that
+    /// reaches it twice cannot release another transcription's hold.
+    func beginTranscription() -> TranscriptionCleanupGate {
+        transcriptionDidBegin()
+        return TranscriptionCleanupGate(queue: self)
+    }
+
+    /// Call when a transcription starts. The running cleanup pauses, keeping
+    /// its checkpoint, and none starts until every transcription has called
+    /// `transcriptionDidEnd`. Production code uses `beginTranscription`.
     func transcriptionDidBegin() {
         activeTranscriptionCount += 1
         pause()
@@ -634,13 +695,16 @@ final class TranscriptCleanupQueue: ObservableObject {
             cleanupSettingDidChange()
             return
         }
-        if let retryNotBefore, Date() < retryNotBefore {
-            return
-        }
+        let now = Date()
+        retryNotBefore = retryNotBefore.filter { $0.value > now }
         guard store.isAvailable, canRunNow(), !isTranscriptionRunning, !isRecordingActive,
-              let next = intents.first else {
+              let next = intents.first(where: { retryNotBefore[$0.recordingId] == nil }) else {
             return
         }
+        // Marked active as soon as the run is scheduled, not when it starts:
+        // `cancel` and `enqueue` match on it, and a withdrawal in between must
+        // still cancel the run.
+        activeRecordingId = next.recordingId
         runTask = Task { [weak self] in
             await self?.run(next)
         }
@@ -654,7 +718,6 @@ final class TranscriptCleanupQueue: ObservableObject {
     private func run(_ queuedIntent: TranscriptCleanupIntent) async {
         var intent = queuedIntent
         let recordingId = intent.recordingId
-        activeRecordingId = recordingId
         let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: checkpointDirectory)
         defer {
             activeRecordingId = nil
@@ -664,6 +727,8 @@ final class TranscriptCleanupQueue: ObservableObject {
             // declines; anything else moves straight on to the next intent.
             kick()
         }
+        // Withdrawn or paused between `kick` and here.
+        if Task.isCancelled { return }
 
         let transcript: TranscriptData
         do {
@@ -806,6 +871,22 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
+        if result.retryablePieceCount > 0,
+           (transientFailures[recordingId] ?? 0) + 1 < Self.maximumTransientFailures {
+            // Some passages failed for a reason that may pass and were left
+            // out of the checkpoint so they could be retried. Saving now would
+            // delete the checkpoint with the intent and leave them uncleaned
+            // for good, so retry first; every cleaned passage resumes from the
+            // checkpoint. The last attempt saves what it has.
+            await deferAfterTransientFailure(
+                intent,
+                checkpoint: checkpoint,
+                reason: "clean \(result.retryablePieceCount) passage(s)",
+                error: TranscriptCleanupWarning.resourceFailure
+            )
+            return
+        }
+
         guard isCleanupEnabled() else {
             // Turned off while this run was generating, by a path the settings
             // observer did not see. Do not save text the user opted out of.
@@ -867,11 +948,12 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
         transientFailures[intent.recordingId] = failures
-        retryNotBefore = Date().addingTimeInterval(transientRetryDelay)
+        retryNotBefore[intent.recordingId] = Date().addingTimeInterval(transientRetryDelay)
         let delay = UInt64(transientRetryDelay * 1_000_000_000)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
-            self?.retryNotBefore = nil
+            // `kick` drops only retry times that have passed, so an older
+            // sleeper cannot cut short a newer failure's delay.
             self?.kick()
         }
     }
@@ -885,6 +967,7 @@ final class TranscriptCleanupQueue: ObservableObject {
     ) async {
         intents.removeAll { $0 == intent }
         transientFailures[intent.recordingId] = nil
+        retryNotBefore[intent.recordingId] = nil
         persistIntents()
         if removeCheckpoint {
             await checkpoint.remove()
