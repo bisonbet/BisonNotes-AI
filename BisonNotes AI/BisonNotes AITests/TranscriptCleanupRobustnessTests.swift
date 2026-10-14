@@ -348,6 +348,7 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         )
 
         XCTAssertEqual(result.warning, .partiallyCleaned(2))
+        XCTAssertEqual(result.retryablePieceCount, 1, "Only the timed-out passage is worth retrying")
         let rejected = await checkpoint.outcome(
             forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: segments[0].id, index: 0, piece: segments[0].text)
         )
@@ -1037,10 +1038,10 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
     }
 
     /// A passage that failed for a reason that may pass is left out of the
-    /// checkpoint so it can be retried. Saving the partial result at once
-    /// deleted the checkpoint with the intent, so it never was.
+    /// checkpoint so it can be retried. The cleaned passages are saved at once
+    /// and a follow-up pass, bound to the saved transcript, retries only it.
     @MainActor
-    func testTransientPassageFailureIsRetriedBeforeSaving() async throws {
+    func testTransientPassageFailureIsSavedThenRetriedInAFollowUpPass() async throws {
         let segments = [
             makeSegment(text: "first segment text"),
             makeSegment(text: "second segment text")
@@ -1051,10 +1052,14 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         harness.queue.start()
         harness.queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
         await harness.queue.waitForCurrentRun()
-        XCTAssertEqual(harness.store.saveCount, 0, "A run with a retryable passage does not save yet")
-        XCTAssertEqual(harness.queue.intents.count, 1)
+        XCTAssertEqual(harness.store.saveCount, 1, "The cleaned passages are saved without waiting for the retry")
+        XCTAssertNil(harness.store.transcript?.segments.first?.cleanup)
+        XCTAssertNotNil(harness.store.transcript?.segments.last?.cleanup)
+        XCTAssertEqual(harness.queue.intents.first?.retryPass, 1)
+        XCTAssertEqual(harness.queue.intents.first?.source, harness.snapshot(), "Bound to the saved transcript")
+        XCTAssertTrue(harness.notifications.isEmpty, "A pass with a retry to come tells the user nothing yet")
 
-        try await waitUntil { await MainActor.run { harness.store.saveCount == 1 } }
+        try await waitUntil { await MainActor.run { harness.store.saveCount == 2 } }
         let requests = await normalizer.normalizationRequests
         XCTAssertEqual(
             requests,
@@ -1062,8 +1067,86 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
             "Only the failed passage ran again; the cleaned one came from the checkpoint"
         )
         XCTAssertTrue(harness.store.transcript?.segments.allSatisfy { $0.cleanup != nil } == true)
-        XCTAssertTrue(harness.notifications.isEmpty, "The retried run cleaned everything")
         XCTAssertTrue(harness.queue.intents.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
+    }
+
+    /// An edit before the follow-up pass makes it stale, but the passages the
+    /// first pass cleaned are already saved.
+    @MainActor
+    func testEditBeforeTheFollowUpPassKeepsTheSavedCleanup() async throws {
+        let segments = [
+            makeSegment(text: "first segment text"),
+            makeSegment(text: "second segment text")
+        ]
+        let normalizer = ScriptedNormalizer(throwingPieces: [0: .generationFailed])
+        let harness = try QueueHarness(segments: segments, normalizer: normalizer)
+        harness.transientRetryDelay = 60
+        let queue = harness.makeQueue()
+
+        queue.start()
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        await queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 1)
+        XCTAssertEqual(queue.intents.count, 1)
+
+        // The user edits the transcript — renames a speaker, say — so the
+        // follow-up no longer applies; the segments and their cleanup stay.
+        harness.store.markEdited()
+        let staleFollowUp = try XCTUnwrap(queue.intents.first)
+        queue.cancel(recordingId: harness.recordingId)
+        let restarted = harness.makeQueue()
+        restarted.start()
+        restarted.restore(staleFollowUp)
+        await restarted.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 1, "The stale follow-up saves nothing")
+        XCTAssertTrue(restarted.intents.isEmpty)
+        XCTAssertNotNil(
+            harness.store.transcript?.segments.last?.cleanup,
+            "The first pass's cleaned passage survives"
+        )
+    }
+
+    /// When nothing cleans, a passage a retry could fix decides the outcome
+    /// over an earlier one that failed deterministically, so the queue retries.
+    func testRetryableFailureOutranksAnEarlierDeterministicOne() async {
+        let segments = [
+            makeSegment(text: "first segment with several words"),
+            makeSegment(text: "second segment with several words")
+        ]
+        let normalizer = ScriptedNormalizer(failingPieces: [0], throwingPieces: [1: .generationFailed])
+
+        let result = await makeCoordinator(normalizer).clean(
+            segments: segments,
+            configuration: englishConfiguration()
+        )
+
+        XCTAssertEqual(result.warning, .resourceFailure)
+        XCTAssertEqual(result.cleanedSegmentCount, 0)
+    }
+
+    /// The bounded wait gives up on a run that is still active, promptly.
+    func testBoundedWaitForCleanupTimesOutOnAnActiveRun() async throws {
+        let normalizer = ScriptedNormalizer(blockingPieces: [0])
+        let coordinator = makeCoordinator(normalizer)
+        let run = Task {
+            await coordinator.clean(
+                segments: [makeSegment(text: "the deadline is Friday")],
+                configuration: englishConfiguration()
+            )
+        }
+        try await waitUntil { await normalizer.isBlocked }
+
+        let start = Date()
+        let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(timeout: 0.2)
+        XCTAssertFalse(unwound)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2, "The cancelled idle wait must not hold the timeout open")
+
+        await normalizer.unblock()
+        _ = await run.value
+        let idle = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(timeout: 5)
+        XCTAssertTrue(idle)
     }
 
     /// A withdrawal after `kick` has scheduled a run but before the run has
@@ -1405,6 +1488,16 @@ private final class MemoryQueueStore: TranscriptCleanupQueueStore {
     func saveCleanedSegments(_ segments: [TranscriptSegment], for transcript: TranscriptData, recordingId: UUID) throws {
         saveCount += 1
         self.transcript = transcript.preservingIdentity(segments: segments)
+    }
+
+    /// Simulates an edit that leaves the segments alone, such as renaming a
+    /// speaker: the transcript is newer, its cleaned values untouched.
+    func markEdited() {
+        guard let transcript else { return }
+        self.transcript = transcript.preservingIdentity(
+            segments: transcript.segments,
+            lastModified: Date(timeIntervalSinceNow: 60)
+        )
     }
 
     /// Simulates the user editing the saved transcript.

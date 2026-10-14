@@ -632,6 +632,20 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	/// of one request can tell when a stop and a new start replaced it.
 	private var recordingStartupGeneration: UInt64 = 0
 
+	/// True while the start request `generation` is still the one in progress.
+	/// `isStartingRecording` alone is not enough after a suspension: a stop
+	/// and a newer start set it back to true on that start's behalf.
+	private func isCurrentRecordingStartup(_ generation: UInt64) -> Bool {
+		isStartingRecording && recordingStartupGeneration == generation
+	}
+
+	/// A stop and a newer start replaced the request `generation`. The newer
+	/// start owns the audio session and the startup flag; the old one must
+	/// touch neither.
+	private func isSupersededRecordingStartup(_ generation: UInt64) -> Bool {
+		recordingStartupGeneration != generation
+	}
+
 	private static let transcriptCleanupUnwindTimeout: TimeInterval = 3
 
 	@discardableResult
@@ -666,7 +680,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 			guard let self,
 				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
 				  self.isStartingRecording else { return }
-			self.requestMicPermissionAndRecord()
+			self.requestMicPermissionAndRecord(startupGeneration: startupGeneration)
 		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -687,14 +701,19 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 							// stop path cannot undo that: `deactivateSession()` already returned early
 							// while this configuration was pending.
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
-								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+								isStillWanted: { [weak self] in self?.isCurrentRecordingStartup(startupGeneration) == true }
 							)
 							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
+							guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
 							self.finishRecordingStartup()
+							return
+						}
+						guard !self.isSupersededRecordingStartup(startupGeneration) else {
+							AppLog.shared.recording("Recording start superseded during setup; leaving the session to the newer start")
 							return
 						}
 						guard self.isStartingRecording else {
@@ -710,6 +729,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					}
 				} else {
 					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
+					guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 					self.errorMessage = "Microphone permission denied"
 					self.finishRecordingStartup()
 				}
@@ -720,18 +740,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	#if os(macOS)
 	@MainActor
-	private func requestMicPermissionAndRecord() {
+	private func requestMicPermissionAndRecord(startupGeneration: UInt64) {
 		#if os(macOS)
 		let status = AVCaptureDevice.authorizationStatus(for: .audio)
 		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
 		case .authorized:
-			didReceiveMicrophonePermission(granted: true)
+			didReceiveMicrophonePermission(granted: true, startupGeneration: startupGeneration)
 		case .notDetermined:
 			AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
 				Task { @MainActor [weak self] in
 					AppLog.shared.recording("Mac mic permission result: \(granted)")
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		case .denied, .restricted:
@@ -748,12 +768,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
 		case .granted:
-			didReceiveMicrophonePermission(granted: true)
+			didReceiveMicrophonePermission(granted: true, startupGeneration: startupGeneration)
 		case .undetermined:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
 					AppLog.shared.recording("Mac mic permission result: \(granted)")
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		case .denied:
@@ -764,7 +784,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		@unknown default:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		}
@@ -772,7 +792,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	}
 
 	@MainActor
-	private func didReceiveMicrophonePermission(granted: Bool) {
+	private func didReceiveMicrophonePermission(granted: Bool, startupGeneration: UInt64) {
+		// The permission prompt can stay up for as long as the user likes; a
+		// stop and a newer start in the meantime own the startup flag now.
+		guard !isSupersededRecordingStartup(startupGeneration) else {
+			AppLog.shared.recording("Recording start superseded while microphone permission was requested")
+			return
+		}
 		guard granted else {
 			errorMessage = "Microphone permission denied"
 			finishRecordingStartup()
@@ -786,6 +812,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			await self.applySelectedInputToSession()
+			// Stopped, or stopped and started again, while the input was applied.
+			guard self.isCurrentRecordingStartup(startupGeneration) else {
+				AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
+				return
+			}
 			self.setupRecording()
 		}
 		#else
@@ -803,7 +834,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 			guard let self,
 				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
 				  self.isStartingRecording else { return }
-			self.requestMicPermissionAndRecord()
+			self.requestMicPermissionAndRecord(startupGeneration: startupGeneration)
 		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
@@ -824,12 +855,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 							// stop path cannot undo that: `deactivateSession()` already returned early
 							// while this configuration was pending.
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
-								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+								isStillWanted: { [weak self] in self?.isCurrentRecordingStartup(startupGeneration) == true }
 							)
 							await self.applySelectedInputToSession()
 						} catch {
+							guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							self.finishRecordingStartup()
+							return
+						}
+						guard !self.isSupersededRecordingStartup(startupGeneration) else {
+							AppLog.shared.recording("Recording start superseded during setup; leaving the session to the newer start")
 							return
 						}
 						guard self.isStartingRecording else {
@@ -845,6 +881,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					}
 				} else {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
+					guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 					self.errorMessage = "Microphone permission denied"
 					self.finishRecordingStartup()
 				}

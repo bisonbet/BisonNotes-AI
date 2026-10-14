@@ -13,6 +13,9 @@ enum LocalDiarizationError: Error, LocalizedError, Sendable, Equatable {
     case audioFileNotFound
     case experimentalDurationLimit
     case unsupportedSpeakerCount(method: LocalDiarizationMethod, maximum: Int)
+    /// The SDK downloaded the method's models, but not where this build looks
+    /// for them — a FluidAudio update moved them. Re-downloading cannot help.
+    case cacheLayoutMismatch(LocalDiarizationMethod)
 
     var errorDescription: String? {
         switch self {
@@ -32,6 +35,9 @@ enum LocalDiarizationError: Error, LocalizedError, Sendable, Equatable {
             return "LS-EEND speaker labeling is limited to complete files up to one hour."
         case let .unsupportedSpeakerCount(method, maximum):
             return "\(method.displayName) supports up to \(maximum) speakers."
+        case let .cacheLayoutMismatch(method):
+            return "\(method.displayName) downloaded, but its files are not where this version of "
+                + "BisonNotes expects them, so downloading again will not help. Check for an app update."
         }
     }
 }

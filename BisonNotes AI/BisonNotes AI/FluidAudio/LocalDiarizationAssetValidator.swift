@@ -88,10 +88,27 @@ enum LocalDiarizationAssetValidator {
         _ layout: Nemotron3AssetLayout,
         fileManager: FileManager = .default
     ) -> Bool {
-        nemotron3LayoutProblems(layout, fileManager: fileManager).isEmpty
+        // Called on every readiness check, so it stops at the first failure;
+        // `nemotron3LayoutProblems` collects them all for the log.
+        guard compiledModelBundleIsValid(
+            at: layout.modelBundle,
+            requiresMetadata: false,
+            fileManager: fileManager
+        ),
+        regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
+            == layout.silenceEmbeddingByteCount,
+        layout.preEncodeProjectionByteCount.map({
+            regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager) == $0
+        }) ?? true,
+        let marker = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
+        else {
+            return false
+        }
+        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == layout.expectedWeightsVersion
     }
 
     /// Each way the cache differs from `layout`, for the log. Empty when valid.
+    /// Must check the same conditions as `nemotron3AssetsAreValid`.
     static func nemotron3LayoutProblems(
         _ layout: Nemotron3AssetLayout,
         fileManager: FileManager = .default

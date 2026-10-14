@@ -311,6 +311,25 @@ struct TranscriptCleanupIntent: Codable, Equatable, Sendable {
     let source: TranscriptCleanupSourceSnapshot?
     let languageCode: String?
     let enqueuedAt: Date
+    /// Set on a follow-up pass that retries passages an earlier pass could not
+    /// clean for a reason that may pass; counts those passes. Stored with the
+    /// intent so the bound survives a relaunch. Nil for a first pass, and in
+    /// queues written before it existed.
+    let retryPass: Int?
+
+    init(
+        recordingId: UUID,
+        source: TranscriptCleanupSourceSnapshot?,
+        languageCode: String?,
+        enqueuedAt: Date,
+        retryPass: Int? = nil
+    ) {
+        self.recordingId = recordingId
+        self.source = source
+        self.languageCode = languageCode
+        self.enqueuedAt = enqueuedAt
+        self.retryPass = retryPass
+    }
 }
 
 /// Reads and writes the transcripts the queue cleans. Injected so the queue's
@@ -539,7 +558,12 @@ final class TranscriptCleanupQueue: ObservableObject {
         kick()
     }
 
-    func enqueue(recordingId: UUID, source: TranscriptCleanupSourceSnapshot?, languageCode: String?) {
+    func enqueue(
+        recordingId: UUID,
+        source: TranscriptCleanupSourceSnapshot?,
+        languageCode: String?,
+        retryPass: Int? = nil
+    ) {
         // An intent queued before `start` — a job that finished early in launch
         // — must merge with the saved queue, not overwrite it.
         loadIntentsIfNeeded()
@@ -552,7 +576,8 @@ final class TranscriptCleanupQueue: ObservableObject {
                 recordingId: recordingId,
                 source: source,
                 languageCode: languageCode,
-                enqueuedAt: Date()
+                enqueuedAt: Date(),
+                retryPass: retryPass
             )
         )
         persistIntents()
@@ -616,7 +641,12 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// so it is dropped as stale if the transcript changed in the meantime.
     func restore(_ intent: TranscriptCleanupIntent) {
         guard !hasPendingCleanup(for: intent.recordingId) else { return }
-        enqueue(recordingId: intent.recordingId, source: intent.source, languageCode: intent.languageCode)
+        enqueue(
+            recordingId: intent.recordingId,
+            source: intent.source,
+            languageCode: intent.languageCode,
+            retryPass: intent.retryPass
+        )
     }
 
     func hasPendingCleanup(for recordingId: UUID) -> Bool {
@@ -875,22 +905,6 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
-        if result.retryablePieceCount > 0,
-           (transientFailures[recordingId] ?? 0) + 1 < Self.maximumTransientFailures {
-            // Some passages failed for a reason that may pass and were left
-            // out of the checkpoint so they could be retried. Saving now would
-            // delete the checkpoint with the intent and leave them uncleaned
-            // for good, so retry first; every cleaned passage resumes from the
-            // checkpoint. The last attempt saves what it has.
-            await deferAfterTransientFailure(
-                intent,
-                checkpoint: checkpoint,
-                reason: "clean \(result.retryablePieceCount) passage(s)",
-                error: RetryablePassagesRemain(count: result.retryablePieceCount)
-            )
-            return
-        }
-
         guard isCleanupEnabled() else {
             // Turned off while this run was generating, by a path the settings
             // observer did not see. Do not save text the user opted out of.
@@ -907,7 +921,60 @@ final class TranscriptCleanupQueue: ObservableObject {
         }
 
         // The cleaned transcript is durable; everything below is a loose end.
-        await finish(intent, checkpoint: checkpoint, removeCheckpoint: true, warning: result.warning, cleaned: true)
+        // Passages that failed for a reason that may pass are not in the
+        // checkpoint, so a follow-up pass retries only those. It is queued
+        // after the save rather than instead of it: holding the cleaned work
+        // back for the retry let an edit in between discard all of it.
+        let followUp = retryPassFollowUp(after: intent, result: result)
+        await finish(
+            intent,
+            checkpoint: checkpoint,
+            removeCheckpoint: followUp == nil,
+            warning: result.warning,
+            cleaned: true,
+            notifiesUser: followUp == nil
+        )
+        if let followUp {
+            queueRetryPass(followUp, retryablePieceCount: result.retryablePieceCount)
+        }
+    }
+
+    /// The follow-up pass for a saved result with retryable passages, bound to
+    /// the transcript just saved, or nil when none is due or the saved
+    /// transcript cannot be reread.
+    private func retryPassFollowUp(
+        after intent: TranscriptCleanupIntent,
+        result: TranscriptCleanupResult
+    ) -> TranscriptCleanupIntent? {
+        let pass = (intent.retryPass ?? 0) + 1
+        guard result.retryablePieceCount > 0, pass < Self.maximumTransientFailures else { return nil }
+        var followUp: TranscriptCleanupIntent?
+        afterCommit("Rereading the cleaned transcript for a retry pass", category: .transcription) {
+            guard let saved = try store.transcript(for: intent.recordingId) else {
+                throw BackgroundProcessingError.processingFailed("The cleaned transcript could not be reread")
+            }
+            followUp = TranscriptCleanupIntent(
+                recordingId: intent.recordingId,
+                source: TranscriptCleanupSourceSnapshot(transcript: saved),
+                languageCode: intent.languageCode,
+                enqueuedAt: Date(),
+                retryPass: pass
+            )
+        }
+        return followUp
+    }
+
+    private func queueRetryPass(_ followUp: TranscriptCleanupIntent, retryablePieceCount: Int) {
+        // Something newer — a re-transcription, a restore — already queued
+        // this recording; that intent wins.
+        guard !hasPendingCleanup(for: followUp.recordingId) else { return }
+        intents.append(followUp)
+        persistIntents()
+        AppLog.shared.transcription(
+            "[TranscriptCleanup] Saved the cleaned transcript; \(retryablePieceCount) passage(s) failed for a "
+                + "reason that may pass and will be retried (pass \(followUp.retryPass ?? 0))"
+        )
+        scheduleRetry(for: followUp.recordingId)
     }
 
     /// Replaces a source-less intent with one bound to `source`, durably. An
@@ -920,25 +987,14 @@ final class TranscriptCleanupQueue: ObservableObject {
             recordingId: intent.recordingId,
             source: source,
             languageCode: intent.languageCode,
-            enqueuedAt: intent.enqueuedAt
+            enqueuedAt: intent.enqueuedAt,
+            retryPass: intent.retryPass
         )
         if let index = intents.firstIndex(of: intent) {
             intents[index] = bound
             persistIntents()
         }
         return bound
-    }
-
-    /// Logged when a run defers for passages that may clean on a retry. The
-    /// user-facing `.resourceFailure` text says the original transcript was
-    /// kept, which misdescribes a run that cleaned the rest and will retry.
-    private struct RetryablePassagesRemain: LocalizedError {
-        let count: Int
-
-        var errorDescription: String? {
-            "\(count) passage(s) failed for a reason that may pass; "
-                + "the cleaned passages are checkpointed and the run will retry before saving"
-        }
     }
 
     /// A store read or save failed in a way that may pass. The intent stays
@@ -964,7 +1020,11 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
         transientFailures[intent.recordingId] = failures
-        let recordingId = intent.recordingId
+        scheduleRetry(for: intent.recordingId)
+    }
+
+    /// Holds the recording's intent back for `transientRetryDelay`, then kicks.
+    private func scheduleRetry(for recordingId: UUID) {
         let notBefore = Date().addingTimeInterval(transientRetryDelay)
         retryNotBefore[recordingId] = notBefore
         let delay = UInt64(transientRetryDelay * 1_000_000_000)
@@ -987,7 +1047,8 @@ final class TranscriptCleanupQueue: ObservableObject {
         checkpoint: TranscriptCleanupFileCheckpoint,
         removeCheckpoint: Bool,
         warning: TranscriptCleanupWarning? = nil,
-        cleaned: Bool = false
+        cleaned: Bool = false,
+        notifiesUser: Bool = true
     ) async {
         intents.removeAll { $0 == intent }
         transientFailures[intent.recordingId] = nil
@@ -1003,7 +1064,9 @@ final class TranscriptCleanupQueue: ObservableObject {
                 "[TranscriptCleanup] Queued cleanup ended: category=\(warning.logCategory)",
                 level: .info
             )
-            if viewedRecordingIds[intent.recordingId] == nil {
+            // A pass with a retry still to come says nothing yet; the last
+            // pass reports what is left.
+            if notifiesUser, viewedRecordingIds[intent.recordingId] == nil {
                 notifyUser(warning.userVisibleMessage)
             }
         }

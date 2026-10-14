@@ -621,7 +621,12 @@ private extension FluidAudioSettingsView {
                       selectedLocalSpeakerMethod == method else { return }
                 localSpeakerProgress = nil
                 localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .failed)
-                localSpeakerError = "\(method.displayName): Speaker model preparation failed."
+                if case .cacheLayoutMismatch? = error as? LocalDiarizationError {
+                    // Retrying cannot fix this one; say what can.
+                    localSpeakerError = error.localizedDescription
+                } else {
+                    localSpeakerError = "\(method.displayName): Speaker model preparation failed."
+                }
             }
         }
     }

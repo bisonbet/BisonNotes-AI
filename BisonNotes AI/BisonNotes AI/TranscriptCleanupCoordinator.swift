@@ -184,26 +184,15 @@ struct TranscriptCleanupCoordinator: Sendable {
     /// must not be held up indefinitely, such as starting a recording. Returns
     /// false when a run was still active at the timeout.
     static func waitUntilNoRunIsActive(timeout: TimeInterval) async -> Bool {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            // The idle wait cannot be cancelled, so it is raced in unstructured
-            // tasks rather than a task group, which would wait for both.
-            let resume = ResumeOnce(continuation)
-            let timer = Task {
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
-                } catch {
-                    return  // Cancelled: the idle wait already won.
-                }
-                resume(false)
-            }
-            Task {
+        do {
+            // The idle wait honours cancellation, so the losing side of the
+            // race unwinds at once instead of parking until cleanup ends.
+            try await withTimeout(seconds: max(timeout, 0), timeoutError: CancellationError()) {
                 await TranscriptCleanupActivity.shared.waitUntilIdle()
-                // Resume first, so the cancelled timer cannot win the race.
-                resume(true)
-                // Every recording start calls this; most find nothing running,
-                // and should not leave a timer sleeping out the full timeout.
-                timer.cancel()
             }
+            return true
+        } catch {
+            return false
         }
     }
 
@@ -349,6 +338,7 @@ struct TranscriptCleanupCoordinator: Sendable {
         var keptOriginalPieceCount = 0
         var retryablePieceCount = 0
         var firstPieceFailure: Error?
+        var firstRetryableFailure: Error?
 
         for plan in plans {
             switch plan.kind {
@@ -413,6 +403,9 @@ struct TranscriptCleanupCoordinator: Sendable {
                             firstPieceFailure = firstPieceFailure ?? error
                             outcome = .keptOriginal
                             failureIsDeterministic = Self.isDeterministic(error)
+                            if !failureIsDeterministic {
+                                firstRetryableFailure = firstRetryableFailure ?? error
+                            }
                         }
                         // Only outcomes that would repeat are worth resuming:
                         // a cleaned passage, or output the temperature-0 model
@@ -457,8 +450,11 @@ struct TranscriptCleanupCoordinator: Sendable {
         // transcript untouched and says why, exactly as before. Hesitation-only
         // turns do not count as cleaning, and a passage resumed as kept-original
         // is still a failure, even though this run did not produce it.
+        // A failure a retry could fix outranks a deterministic one: reporting
+        // the first passage's invalid output would end the cleanup for good
+        // while later passages only timed out.
         if cleanedPieceCount == 0, keptOriginalPieceCount > 0 {
-            throw firstPieceFailure ?? TranscriptCleanupNormalizerError.invalidOutput
+            throw firstRetryableFailure ?? firstPieceFailure ?? TranscriptCleanupNormalizerError.invalidOutput
         }
 
         return TranscriptCleanupResult(
@@ -896,7 +892,7 @@ private actor TranscriptCleanupActivity {
     static let shared = TranscriptCleanupActivity()
 
     private var activeRuns = 0
-    private var idleWaiters: [CheckedContinuation<Void, Never>] = []
+    private var idleWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
 
     func runDidStart() {
         activeRuns += 1
@@ -907,30 +903,29 @@ private actor TranscriptCleanupActivity {
         guard activeRuns == 0 else { return }
         let waiters = idleWaiters
         idleWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        waiters.forEach { $0.continuation.resume() }
     }
 
+    /// Returns when no run is active, or as soon as the caller is cancelled.
     func waitUntilIdle() async {
         guard activeRuns > 0 else { return }
-        await withCheckedContinuation { idleWaiters.append($0) }
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled {
+                    continuation.resume()
+                } else {
+                    idleWaiters.append((id, continuation))
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id: id) }
+        }
     }
-}
 
-/// Resumes a continuation with the first value it is called with.
-private final class ResumeOnce<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
-
-    init(_ continuation: CheckedContinuation<Value, Never>) {
-        self.continuation = continuation
-    }
-
-    func callAsFunction(_ value: Value) {
-        lock.lock()
-        let pending = continuation
-        continuation = nil
-        lock.unlock()
-        pending?.resume(returning: value)
+    private func cancelWaiter(id: UUID) {
+        guard let index = idleWaiters.firstIndex(where: { $0.id == id }) else { return }
+        idleWaiters.remove(at: index).continuation.resume()
     }
 }
 

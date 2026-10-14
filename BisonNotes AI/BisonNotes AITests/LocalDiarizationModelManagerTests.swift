@@ -73,24 +73,42 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount) - 4).write(to: layout.preEncodeProjection)
         try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
         XCTAssertFalse(
-            LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout),
+            nemotron3AssetsAreValid(layout),
             "A truncated projection must not report Ready"
         )
 
         try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount)).write(to: layout.preEncodeProjection)
-        XCTAssertTrue(LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout))
+        XCTAssertTrue(nemotron3AssetsAreValid(layout))
 
         try Data("preview-2026-08\n".utf8).write(to: layout.weightsVersionMarker)
         XCTAssertFalse(
-            LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout),
+            nemotron3AssetsAreValid(layout),
             "Weights from a superseded checkpoint must ask for a fresh download"
         )
 
         try FileManager.default.removeItem(at: layout.weightsVersionMarker)
         XCTAssertFalse(
-            LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout),
+            nemotron3AssetsAreValid(layout),
             "An interrupted download never writes the marker"
         )
+    }
+
+    /// The short-circuiting readiness check and the diagnostic list must
+    /// agree on every layout, or a log would blame the wrong file.
+    private func nemotron3AssetsAreValid(
+        _ layout: Nemotron3AssetLayout,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let valid = LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout)
+        XCTAssertEqual(
+            LocalDiarizationAssetValidator.nemotron3LayoutProblems(layout).isEmpty,
+            valid,
+            "nemotron3LayoutProblems disagrees with nemotron3AssetsAreValid",
+            file: file,
+            line: line
+        )
+        return valid
     }
 
     func testNemotron3PresetWithoutAProjectionDoesNotRequireOne() throws {
@@ -117,7 +135,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: layout.preEncodeProjection.path))
-        XCTAssertTrue(LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout))
+        XCTAssertTrue(nemotron3AssetsAreValid(layout))
     }
 
     /// Every way a cached fp32 asset can be bad reports Download Required,

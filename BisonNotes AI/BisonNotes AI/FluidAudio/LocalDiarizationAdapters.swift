@@ -251,6 +251,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                     + problems.joined(separator: "; "),
                 level: .fault
             )
+            throw LocalDiarizationError.cacheLayoutMismatch(.experimentalNemotron3)
         }
     }
 

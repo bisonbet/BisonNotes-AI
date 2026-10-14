@@ -2049,6 +2049,14 @@ class CoreDataManager: ObservableObject {
     }
 
     private func save(_ saveContext: NSManagedObjectContext, operation: String) throws {
+        announceDeletedTranscriptContent(try commit(saveContext, operation: operation))
+    }
+
+    /// Saves `saveContext` and returns the recordings whose transcript content
+    /// the save deleted. Callers announce them with
+    /// `announceDeletedTranscriptContent` once the main context reflects the
+    /// save — at once for the main context, after the merge for a sibling.
+    private func commit(_ saveContext: NSManagedObjectContext, operation: String) throws -> Set<UUID> {
         #if DEBUG
         if let injectedFailure = Self.injectedSaveFailure,
            (Self.injectedSaveOperation == nil || Self.injectedSaveOperation == operation) {
@@ -2074,23 +2082,28 @@ class CoreDataManager: ObservableObject {
             )
             throw wrappedError
         }
+        return deletedCleanupRecordingIds
+    }
 
-        // Post-commit, for every delete path — the user's, another device's
-        // tombstone, orphan and missing-file cleanup alike. Whoever holds state
-        // derived from the deleted content — the transcript cleanup queue and
-        // its checkpoints, which hold that text — discards it. Announced rather
-        // than called, so the data layer does not depend on those features.
-        if !deletedCleanupRecordingIds.isEmpty {
+    /// Post-commit, for every delete path — the user's, another device's
+    /// tombstone, orphan and missing-file cleanup alike. Whoever holds state
+    /// derived from the deleted content — the transcript cleanup queue and its
+    /// checkpoints, which hold that text — discards it. Announced rather than
+    /// called, so the data layer does not depend on those features.
+    private func announceDeletedTranscriptContent(_ recordingIds: Set<UUID>) {
+        guard !recordingIds.isEmpty else { return }
+        afterCommit("Announcing deleted transcript content", category: .coreData) {
             NotificationCenter.default.post(
                 name: Self.transcriptContentDeletedNotification,
                 object: self,
-                userInfo: [Self.deletedRecordingIdsKey: deletedCleanupRecordingIds]
+                userInfo: [Self.deletedRecordingIdsKey: recordingIds]
             )
         }
     }
 
     /// Posted synchronously on the main thread after a save commits that
-    /// deleted a recording, or the transcript its recording pointed at.
+    /// deleted a recording, or the transcript its recording pointed at, and
+    /// after the main context has merged that save.
     /// `userInfo[deletedRecordingIdsKey]` is the affected `Set<UUID>`.
     static let transcriptContentDeletedNotification = Notification.Name("CoreDataManagerTranscriptContentDeleted")
     static let deletedRecordingIdsKey = "recordingIds"
@@ -2209,8 +2222,11 @@ class CoreDataManager: ObservableObject {
                 NSUpdatedObjectsKey: Array(isolatedContext.updatedObjects).map(\.objectID),
                 NSDeletedObjectsKey: Array(isolatedContext.deletedObjects).map(\.objectID)
             ]
-            try save(isolatedContext, operation: operation)
+            let deletedRecordingIds = try commit(isolatedContext, operation: operation)
             NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [context])
+            // After the merge, so an observer reading the main context does not
+            // see rows this save already deleted.
+            announceDeletedTranscriptContent(deletedRecordingIds)
             return result
         } catch {
             isolatedContext.rollback()
