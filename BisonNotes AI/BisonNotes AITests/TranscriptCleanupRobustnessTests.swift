@@ -746,6 +746,44 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertTrue(harness.queue.intents.isEmpty)
     }
 
+    /// A source-less intent is bound to the transcript its first run reads.
+    /// If that run is paused and the user edits the transcript before the
+    /// retry, the retry is stale — it must not clean and save the edited text.
+    @MainActor
+    func testSourcelessIntentIsBoundToItsFirstReadAcrossARetry() async throws {
+        let normalizer = ScriptedNormalizer(blockingPieces: [0])
+        let harness = try QueueHarness(
+            segments: [makeSegment(text: "the deadline is Friday")],
+            normalizer: normalizer
+        )
+        harness.queue.start()
+        harness.queue.enqueue(recordingId: harness.recordingId, source: nil, languageCode: "en")
+        try await waitUntil { await normalizer.isBlocked }
+
+        XCTAssertEqual(
+            harness.queue.intents.first?.source,
+            harness.snapshot(),
+            "The first read becomes the intent's source"
+        )
+        let persisted = try JSONDecoder().decode(
+            [TranscriptCleanupIntent].self,
+            from: Data(contentsOf: harness.directory.appendingPathComponent("queue.json"))
+        )
+        XCTAssertEqual(persisted.first?.source, harness.snapshot(), "The binding is durable")
+
+        harness.queue.pause()
+        await harness.queue.waitForCurrentRun()
+        await normalizer.unblock()
+        harness.store.replaceText(with: "the deadline is Monday")
+
+        harness.queue.kick()
+        await harness.queue.waitForCurrentRun()
+
+        XCTAssertEqual(harness.store.saveCount, 0)
+        XCTAssertNil(harness.store.transcript?.segments.first?.cleanup)
+        XCTAssertTrue(harness.queue.intents.isEmpty)
+    }
+
     /// A job that finishes before the queue is started must not overwrite the
     /// saved queue — the earlier recordings would never be cleaned.
     @MainActor

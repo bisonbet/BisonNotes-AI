@@ -2806,7 +2806,7 @@ struct EditableTranscriptView: View {
         Task {
             let rerunCleanupConfiguration = TranscriptCleanupConfiguration.automatic()
             let rerunCleanupEnabled = rerunCleanupConfiguration.enabled
-            guard let recordingId = recording.id else {
+            guard recording.id != nil else {
                 await MainActor.run {
                     saveErrorMessage = "The transcription rerun could not start because the recording has no durable identity."
                     showingSaveErrorAlert = true

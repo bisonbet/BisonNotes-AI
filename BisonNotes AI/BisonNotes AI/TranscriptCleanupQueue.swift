@@ -651,7 +651,8 @@ final class TranscriptCleanupQueue: ObservableObject {
         await runTask?.value
     }
 
-    private func run(_ intent: TranscriptCleanupIntent) async {
+    private func run(_ queuedIntent: TranscriptCleanupIntent) async {
+        var intent = queuedIntent
         let recordingId = intent.recordingId
         activeRecordingId = recordingId
         let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: checkpointDirectory)
@@ -681,8 +682,17 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
 
-        // An intent queued without a source cleans what is saved now.
-        let source = intent.source ?? TranscriptCleanupSourceSnapshot(transcript: transcript)
+        // An intent queued without a source cleans what is saved now, and is
+        // bound to it from here on: a pause, time limit or transient failure
+        // retries it later, and an edit made in between must make that retry
+        // stale rather than become its new source.
+        let source: TranscriptCleanupSourceSnapshot
+        if let queuedSource = intent.source {
+            source = queuedSource
+        } else {
+            source = TranscriptCleanupSourceSnapshot(transcript: transcript)
+            intent = bindSource(source, to: intent)
+        }
         guard source.matches(transcript) else {
             // Edited or replaced since it was queued; its cleanup would
             // describe text that no longer exists.
@@ -813,6 +823,25 @@ final class TranscriptCleanupQueue: ObservableObject {
 
         // The cleaned transcript is durable; everything below is a loose end.
         await finish(intent, checkpoint: checkpoint, removeCheckpoint: true, warning: result.warning, cleaned: true)
+    }
+
+    /// Replaces a source-less intent with one bound to `source`, durably. An
+    /// intent no longer queued — withdrawn before its run began — stays gone.
+    private func bindSource(
+        _ source: TranscriptCleanupSourceSnapshot,
+        to intent: TranscriptCleanupIntent
+    ) -> TranscriptCleanupIntent {
+        let bound = TranscriptCleanupIntent(
+            recordingId: intent.recordingId,
+            source: source,
+            languageCode: intent.languageCode,
+            enqueuedAt: intent.enqueuedAt
+        )
+        if let index = intents.firstIndex(of: intent) {
+            intents[index] = bound
+            persistIntents()
+        }
+        return bound
     }
 
     /// A store read or save failed in a way that may pass. The intent stays
