@@ -640,6 +640,12 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// checkpoint, which holds that recording's cleaned text.
     func discard(recordingId: UUID) {
         cancel(recordingId: recordingId)
+        // The failure count and retry delay described the discarded content.
+        // Left behind, a replacement transcript would start with them: its
+        // first retryable passage would save at once, and one store failure
+        // would give it up.
+        transientFailures[recordingId] = nil
+        retryNotBefore[recordingId] = nil
         TranscriptCleanupCheckpointStore.discard(for: recordingId, in: checkpointDirectory)
     }
 
@@ -695,8 +701,6 @@ final class TranscriptCleanupQueue: ObservableObject {
             cleanupSettingDidChange()
             return
         }
-        let now = Date()
-        retryNotBefore = retryNotBefore.filter { $0.value > now }
         guard store.isAvailable, canRunNow(), !isTranscriptionRunning, !isRecordingActive,
               let next = intents.first(where: { retryNotBefore[$0.recordingId] == nil }) else {
             return
@@ -948,13 +952,21 @@ final class TranscriptCleanupQueue: ObservableObject {
             return
         }
         transientFailures[intent.recordingId] = failures
-        retryNotBefore[intent.recordingId] = Date().addingTimeInterval(transientRetryDelay)
+        let recordingId = intent.recordingId
+        let notBefore = Date().addingTimeInterval(transientRetryDelay)
+        retryNotBefore[recordingId] = notBefore
         let delay = UInt64(transientRetryDelay * 1_000_000_000)
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
-            // `kick` drops only retry times that have passed, so an older
-            // sleeper cannot cut short a newer failure's delay.
-            self?.kick()
+            guard let self else { return }
+            // Each sleeper clears only the delay it set, so an older one cannot
+            // cut short a newer failure's delay. Clearing it here rather than
+            // comparing against the wall clock means a clock change cannot
+            // leave the intent waiting with no sleeper left to wake it.
+            if self.retryNotBefore[recordingId] == notBefore {
+                self.retryNotBefore[recordingId] = nil
+            }
+            self.kick()
         }
     }
 

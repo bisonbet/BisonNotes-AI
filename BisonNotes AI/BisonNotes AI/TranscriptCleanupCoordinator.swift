@@ -188,13 +188,21 @@ struct TranscriptCleanupCoordinator: Sendable {
             // The idle wait cannot be cancelled, so it is raced in unstructured
             // tasks rather than a task group, which would wait for both.
             let resume = ResumeOnce(continuation)
-            Task {
-                await TranscriptCleanupActivity.shared.waitUntilIdle()
-                resume(true)
+            let timer = Task {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                } catch {
+                    return  // Cancelled: the idle wait already won.
+                }
+                resume(false)
             }
             Task {
-                try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
-                resume(false)
+                await TranscriptCleanupActivity.shared.waitUntilIdle()
+                // Resume first, so the cancelled timer cannot win the race.
+                resume(true)
+                // Every recording start calls this; most find nothing running,
+                // and should not leave a timer sleeping out the full timeout.
+                timer.cancel()
             }
         }
     }

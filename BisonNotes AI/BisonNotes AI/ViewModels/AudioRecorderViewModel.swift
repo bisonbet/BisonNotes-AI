@@ -608,7 +608,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	/// Gives a cleanup run the start request paused a moment to unwind and
 	/// release its model before the recorder starts. Bounded: a recording
 	/// that starts late is worse than one that briefly overlaps cleanup.
-	private func waitForTranscriptCleanupToUnwind() async {
+	/// Returns false when the start request `generation` was superseded during
+	/// the wait — stopped and started again — so a newer start owns the
+	/// startup flag and this one must neither proceed nor clear it.
+	private func waitForTranscriptCleanupToUnwind(startupGeneration generation: UInt64) async -> Bool {
 		let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(
 			timeout: Self.transcriptCleanupUnwindTimeout
 		)
@@ -618,7 +621,16 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 				level: .default
 			)
 		}
+		guard recordingStartupGeneration == generation else {
+			AppLog.shared.recording("Recording start superseded while transcript cleanup unwound")
+			return false
+		}
+		return true
 	}
+
+	/// Advanced by every accepted start request, so work suspended on behalf
+	/// of one request can tell when a stop and a new start replaced it.
+	private var recordingStartupGeneration: UInt64 = 0
 
 	private static let transcriptCleanupUnwindTimeout: TimeInterval = 3
 
@@ -636,6 +648,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 			)
 			return false
 		}
+		recordingStartupGeneration &+= 1
 		isStartingRecording = true
 		return true
 	}
@@ -646,11 +659,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	func startRecording() {
 		guard beginRecordingStartup() else { return }
+		let startupGeneration = recordingStartupGeneration
 		AppLog.shared.recording("startRecording: requesting microphone permission")
 		#if os(macOS)
 		Task { @MainActor [weak self] in
-			await self?.waitForTranscriptCleanupToUnwind()
-			guard let self, self.isStartingRecording else { return }
+			guard let self,
+				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
+				  self.isStartingRecording else { return }
 			self.requestMicPermissionAndRecord()
 		}
 		#else
@@ -663,7 +678,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 						guard let self else { return }
 						// Before the session is configured, so the abandoned-start
 						// handling below also covers a stop during this wait.
-						await self.waitForTranscriptCleanupToUnwind()
+						guard await self.waitForTranscriptCleanupToUnwind(
+							startupGeneration: startupGeneration
+						) else { return }
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
@@ -779,11 +796,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	func startBackgroundRecording() {
 		guard beginRecordingStartup() else { return }
+		let startupGeneration = recordingStartupGeneration
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
 		#if os(macOS)
 		Task { @MainActor [weak self] in
-			await self?.waitForTranscriptCleanupToUnwind()
-			guard let self, self.isStartingRecording else { return }
+			guard let self,
+				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
+				  self.isStartingRecording else { return }
 			self.requestMicPermissionAndRecord()
 		}
 		#else
@@ -796,7 +815,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 						guard let self else { return }
 						// Before the session is configured, so the abandoned-start
 						// handling below also covers a stop during this wait.
-						await self.waitForTranscriptCleanupToUnwind()
+						guard await self.waitForTranscriptCleanupToUnwind(
+							startupGeneration: startupGeneration
+						) else { return }
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
