@@ -510,14 +510,22 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         return url
     }
 
+    /// Polls against a real deadline. The conditions are changed by other
+    /// tasks — the preparation hops through a new task, the manager actor, its
+    /// inner task and the provider actor — and `Task.yield()` guarantees none of
+    /// them runs, so a fixed number of yields could expire before the
+    /// preparation started on a loaded machine.
     private func waitUntil(
-        attempts: Int = 200,
+        timeout: Duration = .seconds(5),
         condition: @escaping () async -> Bool
     ) async {
-        for _ in 0..<attempts {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
             if await condition() { return }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        if await condition() { return }
         XCTFail("Timed out waiting for asynchronous test condition")
     }
 }
