@@ -2105,8 +2105,10 @@ class CoreDataManager: ObservableObject {
     /// deleted a recording, or the transcript its recording pointed at, and
     /// after the main context has merged that save.
     /// `userInfo[deletedRecordingIdsKey]` is the affected `Set<UUID>`.
-    static let transcriptContentDeletedNotification = Notification.Name("CoreDataManagerTranscriptContentDeleted")
-    static let deletedRecordingIdsKey = "recordingIds"
+    /// Nonisolated: observers read them from `@Sendable` notification
+    /// closures, and both are immutable Sendable constants.
+    nonisolated static let transcriptContentDeletedNotification = Notification.Name("CoreDataManagerTranscriptContentDeleted")
+    nonisolated static let deletedRecordingIdsKey = "recordingIds"
 
     /// Recordings whose transcript cleanup state describes content this save
     /// deletes: a deleted recording, or a deleted transcript the recording
