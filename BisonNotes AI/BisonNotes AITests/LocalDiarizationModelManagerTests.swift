@@ -6,10 +6,10 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertFalse(FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled)
         XCTAssertNil(LocalDiarizationMethod.offlineVBx.maximumSupportedSpeakerCount)
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.maximumSupportedSpeakerCount, 10)
-        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.maximumSupportedSpeakerCount, 8)
-        XCTAssertNil(LocalDiarizationMethod.betaNemotron3.maximumSupportedDuration)
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.maximumSupportedSpeakerCount, 8)
+        XCTAssertNil(LocalDiarizationMethod.experimentalNemotron3.maximumSupportedDuration)
         XCTAssertEqual(LocalDiarizationMethod.offlineVBx.tier.badgeText, "Recommended")
-        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.tier.badgeText, "Experimental")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.tier.badgeText, "Experimental")
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.tier.badgeText, "Experimental")
         XCTAssertEqual(
             FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue("corrupt"),
@@ -132,7 +132,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         let values: [Float] = [0.5, -1, 2]
         try values.withUnsafeBytes { Data($0) }.write(to: valid)
         XCTAssertEqual(
-            try LocalDiarizationAssetValidator.readFloatAsset(at: valid, byteCount: 12, method: .betaNemotron3),
+            try LocalDiarizationAssetValidator.readFloatAsset(at: valid, byteCount: 12, method: .experimentalNemotron3),
             values
         )
 
@@ -145,10 +145,10 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         for url in [missized, unreadable, missing] {
             XCTAssertThrowsError(
-                try LocalDiarizationAssetValidator.readFloatAsset(at: url, byteCount: 12, method: .betaNemotron3),
+                try LocalDiarizationAssetValidator.readFloatAsset(at: url, byteCount: 12, method: .experimentalNemotron3),
                 url.lastPathComponent
             ) { error in
-                guard case LocalDiarizationError.downloadRequired(.betaNemotron3) = error else {
+                guard case LocalDiarizationError.downloadRequired(.experimentalNemotron3) = error else {
                     return XCTFail("\(url.lastPathComponent): expected downloadRequired, got \(error)")
                 }
             }
@@ -160,7 +160,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
     func testSpeakerModelCacheFolderNamesAreStable() {
         XCTAssertEqual(LocalDiarizationMethod.offlineVBx.cacheFolderName, "offline-vbx")
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.cacheFolderName, "ls-eend-dihard3-500ms")
-        XCTAssertEqual(LocalDiarizationMethod.betaNemotron3.cacheFolderName, "nemotron3-c128-split-w8a8")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.cacheFolderName, "nemotron3-c128-split-w8a8")
     }
 
     /// A job saved by a build with a method this build lacks must still decode,
@@ -172,9 +172,9 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         let roundTripped = try JSONDecoder().decode(
             LocalSpeakerLabelsConfiguration.self,
-            from: JSONEncoder().encode(LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+            from: JSONEncoder().encode(LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalNemotron3))
         )
-        XCTAssertEqual(roundTripped, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3))
+        XCTAssertEqual(roundTripped, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalNemotron3))
     }
 
     func testUnknownMethodInSettingsRunsAsTheDefault() {
@@ -201,12 +201,12 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
                 intervals: [LocalDiarizationInterval(speakerID: "speaker_0", startTime: 0, endTime: 1)]
             )
         )
-        let provider = FakeLocalDiarizationModelProvider(readyMethods: [.betaNemotron3], runner: runner)
+        let provider = FakeLocalDiarizationModelProvider(readyMethods: [.experimentalNemotron3], runner: runner)
         let manager = LocalDiarizationManager(provider: provider)
 
         let result = try await manager.diarize(
             audioURL: audioURL,
-            method: .betaNemotron3,
+            method: .experimentalNemotron3,
             audioDuration: 3 * 60 * 60,
             progress: { _ in }
         )
@@ -305,12 +305,12 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         try await firstManager.prepareModel(for: .offlineVBx, progress: { _ in })
         try await firstManager.prepareModel(for: .experimentalLSEEND, progress: { _ in })
-        try await firstManager.prepareModel(for: .betaNemotron3, progress: { _ in })
+        try await firstManager.prepareModel(for: .experimentalNemotron3, progress: { _ in })
 
         let relaunchedManager = LocalDiarizationManager(provider: provider)
         let relaunchedVBxStatus = await relaunchedManager.modelStatus(for: .offlineVBx)
         let relaunchedLSEENDStatus = await relaunchedManager.modelStatus(for: .experimentalLSEEND)
-        let relaunchedNemotronStatus = await relaunchedManager.modelStatus(for: .betaNemotron3)
+        let relaunchedNemotronStatus = await relaunchedManager.modelStatus(for: .experimentalNemotron3)
         XCTAssertTrue(relaunchedVBxStatus.isReady)
         XCTAssertTrue(relaunchedLSEENDStatus.isReady)
         XCTAssertTrue(relaunchedNemotronStatus.isReady)
@@ -319,7 +319,7 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         let deletedVBxStatus = await relaunchedManager.modelStatus(for: .offlineVBx)
         let preservedLSEENDStatus = await relaunchedManager.modelStatus(for: .experimentalLSEEND)
-        let preservedNemotronStatus = await relaunchedManager.modelStatus(for: .betaNemotron3)
+        let preservedNemotronStatus = await relaunchedManager.modelStatus(for: .experimentalNemotron3)
         XCTAssertFalse(deletedVBxStatus.isReady)
         XCTAssertTrue(preservedLSEENDStatus.isReady)
         XCTAssertTrue(preservedNemotronStatus.isReady)

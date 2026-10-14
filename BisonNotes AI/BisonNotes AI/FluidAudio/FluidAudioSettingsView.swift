@@ -278,7 +278,7 @@ private extension FluidAudioSettingsView {
                     .accessibilityAddTraits(.isHeader)
 
                 localMethodButton(.offlineVBx)
-                localMethodButton(.betaNemotron3)
+                localMethodButton(.experimentalNemotron3)
                 localMethodButton(.experimentalLSEEND)
             }
 
@@ -444,7 +444,7 @@ private extension FluidAudioSettingsView {
         case .offlineVBx:
             return "Recommended for normal use. Offline VBx estimates the number of speakers "
                 + "and does not impose a two- or three-speaker cap."
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return "Experimental NVIDIA Nemotron 3 Diarization model for up to 8 speakers. A ninth voice is "
                 + "merged into another speaker rather than reported, so choose Offline VBx for larger groups."
         case .experimentalLSEEND:
@@ -461,7 +461,7 @@ private extension FluidAudioSettingsView {
         switch method {
         case .offlineVBx:
             return BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return BisonNotesAccessibilityID.localSpeakerMethodNemotron3
         case .experimentalLSEEND:
             return BisonNotesAccessibilityID.localSpeakerMethodLSEEND

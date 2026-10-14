@@ -8,7 +8,7 @@ import Foundation
 public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
     case offlineVBx
     case experimentalLSEEND
-    case betaNemotron3
+    case experimentalNemotron3
 
     public static let defaultMethod: LocalDiarizationMethod = .offlineVBx
 
@@ -18,7 +18,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return "Offline VBx"
         case .experimentalLSEEND:
             return "LS-EEND"
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return "Nemotron 3"
         }
     }
@@ -32,7 +32,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return "offline-vbx"
         case .experimentalLSEEND:
             return "ls-eend-dihard3-500ms"
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return "nemotron3-c128-split-w8a8"
         }
     }
@@ -43,7 +43,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
         switch self {
         case .offlineVBx:
             return .recommended
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return .experimental
         case .experimentalLSEEND:
             return .experimental
@@ -54,7 +54,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
     /// Nemotron 3 have no app-imposed duration cap in this layer.
     public var maximumSupportedDuration: TimeInterval? {
         switch self {
-        case .offlineVBx, .betaNemotron3:
+        case .offlineVBx, .experimentalNemotron3:
             return nil
         case .experimentalLSEEND:
             return 60 * 60
@@ -74,7 +74,7 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return nil
         case .experimentalLSEEND:
             return 10
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             return 8
         }
     }

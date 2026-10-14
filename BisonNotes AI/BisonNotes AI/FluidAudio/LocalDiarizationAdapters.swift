@@ -64,7 +64,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             return Self.offlineVBxAssetsExist(at: directory, fileManager: fileManager)
         case .experimentalLSEEND:
             return Self.lseendAssetsExist(at: directory, fileManager: fileManager)
-        case .betaNemotron3:
+        case .experimentalNemotron3:
             guard let config = Self.nemotron3Config else { return false }
             return LocalDiarizationAssetValidator.nemotron3AssetsAreValid(
                 Self.nemotron3Layout(at: directory, config: config),
@@ -97,7 +97,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                     forceRedownload: forceRedownload,
                     progressHandler: progressHandler
                 )
-            case .betaNemotron3:
+            case .experimentalNemotron3:
                 try await prepareNemotron3(
                     at: directory,
                     forceRedownload: forceRedownload,
@@ -126,9 +126,9 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         // Engine recompile after an OS update can take several seconds, and
         // holding the gate through it stalled every Parakeet, VBx and LS-EEND
         // prepare or load queued behind it.
-        if method == .betaNemotron3 {
+        if method == .experimentalNemotron3 {
             guard let config = Self.nemotron3Config else {
-                throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+                throw LocalDiarizationError.unsupportedMethod(.experimentalNemotron3)
             }
             return try await Self.makeNemotron3Runner(
                 layout: Self.nemotron3Layout(at: directory, config: config),
@@ -153,9 +153,9 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                 let model = try LSEENDModel(modelURL: modelURL, computeUnits: .cpuOnly)
                 let diarizer = try LSEENDDiarizer(model: model)
                 return LSEENDRunner(diarizer: diarizer)
-            case .betaNemotron3:
+            case .experimentalNemotron3:
                 // Handled above, outside the gate.
-                throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+                throw LocalDiarizationError.unsupportedMethod(.experimentalNemotron3)
             }
         }
     }
@@ -218,7 +218,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         progressHandler: @escaping LocalDiarizationProgressHandler
     ) async throws {
         guard let config = Self.nemotron3Config else {
-            throw LocalDiarizationError.unsupportedMethod(.betaNemotron3)
+            throw LocalDiarizationError.unsupportedMethod(.experimentalNemotron3)
         }
         if forceRedownload {
             try FluidAudioModelInfo.deleteCacheDirectory(at: directory)
@@ -232,7 +232,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
             cacheDirectory: directory,
             computeUnits: Self.nemotron3ComputeUnits,
             progressHandler: { progress in
-                progressHandler(Self.localProgress(from: progress, method: .betaNemotron3))
+                progressHandler(Self.localProgress(from: progress, method: .experimentalNemotron3))
             }
         )
         try Task.checkCancellation()
@@ -317,13 +317,13 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
         let silenceEmbedding = try LocalDiarizationAssetValidator.readFloatAsset(
             at: layout.silenceEmbedding,
             byteCount: layout.silenceEmbeddingByteCount,
-            method: .betaNemotron3
+            method: .experimentalNemotron3
         )
         let preEncodeProjection = try layout.preEncodeProjectionByteCount.map {
             try LocalDiarizationAssetValidator.readFloatAsset(
                 at: layout.preEncodeProjection,
                 byteCount: $0,
-                method: .betaNemotron3
+                method: .experimentalNemotron3
             )
         }
 
@@ -339,7 +339,7 @@ actor FluidAudioLocalDiarizationModelProvider: LocalDiarizationModelProvider {
                 "Nemotron 3 model bundle failed to load: \(error.localizedDescription)",
                 level: .error
             )
-            throw LocalDiarizationError.downloadRequired(.betaNemotron3)
+            throw LocalDiarizationError.downloadRequired(.experimentalNemotron3)
         }
 
         let models = try Nemotron3Models(

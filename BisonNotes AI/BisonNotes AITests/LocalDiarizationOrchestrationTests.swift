@@ -461,13 +461,13 @@ final class LocalDiarizationOrchestrationTests: XCTestCase {
 
         defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
         defaults.set(
-            LocalDiarizationMethod.betaNemotron3.rawValue,
+            LocalDiarizationMethod.experimentalNemotron3.rawValue,
             forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod
         )
 
         XCTAssertEqual(
             LocalSpeakerLabelsConfiguration.currentUserChoice(from: defaults),
-            LocalSpeakerLabelsConfiguration(isEnabled: true, method: .betaNemotron3)
+            LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalNemotron3)
         )
     }
 
