@@ -886,7 +886,7 @@ final class TranscriptCleanupQueue: ObservableObject {
                 intent,
                 checkpoint: checkpoint,
                 reason: "clean \(result.retryablePieceCount) passage(s)",
-                error: TranscriptCleanupWarning.resourceFailure
+                error: RetryablePassagesRemain(count: result.retryablePieceCount)
             )
             return
         }
@@ -927,6 +927,18 @@ final class TranscriptCleanupQueue: ObservableObject {
             persistIntents()
         }
         return bound
+    }
+
+    /// Logged when a run defers for passages that may clean on a retry. The
+    /// user-facing `.resourceFailure` text says the original transcript was
+    /// kept, which misdescribes a run that cleaned the rest and will retry.
+    private struct RetryablePassagesRemain: LocalizedError {
+        let count: Int
+
+        var errorDescription: String? {
+            "\(count) passage(s) failed for a reason that may pass; "
+                + "the cleaned passages are checkpointed and the run will retry before saving"
+        }
     }
 
     /// A store read or save failed in a way that may pass. The intent stays
