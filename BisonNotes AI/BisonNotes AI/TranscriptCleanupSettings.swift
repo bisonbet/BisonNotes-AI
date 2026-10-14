@@ -281,6 +281,16 @@ enum TranscriptCleanupPreflight: Sendable, Equatable {
     }
 }
 
+/// What a save path hands the queue for a fresh transcript: the preflight
+/// verdict and the language it was checked for. Carried together, so the
+/// queue is never asked to clean for a language preflight did not check.
+struct TranscriptCleanupRequest: Sendable, Equatable {
+    let preflight: TranscriptCleanupPreflight
+    let languageCode: String?
+
+    var warning: TranscriptCleanupWarning? { preflight.warning }
+}
+
 /// Normalization is injected so all chunking, validation, stale-result, and
 /// preservation behavior can be tested without downloading a model.
 protocol TranscriptCleanupNormalizing: Sendable {

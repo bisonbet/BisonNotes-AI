@@ -463,6 +463,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
     // MARK: - Published Properties
 
     @Published var isTranscribing = false
+    /// True for the whole of a `transcribeAudioFile` call, including the
+    /// suspensions before an engine sets `isTranscribing`.
+    private var hasFileTranscriptionInFlight = false
     @Published var currentStatus = ""
     @Published var progress: TranscriptionProgress?
 
@@ -754,10 +757,14 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         recordingId: UUID
     ) async throws -> TranscriptionResult {
 
-        // Check if already transcribing
-        guard !isTranscribing else {
+        // Check if already transcribing. `isTranscribing` is set only once an
+        // engine starts, after several suspensions below — including waiting
+        // for a cleanup run to unwind — so the call is reserved here as well.
+        guard !isTranscribing, !hasFileTranscriptionInFlight else {
             throw TranscriptionError.recognitionFailed(NSError(domain: "AlreadyTranscribing", code: -1, userInfo: nil))
         }
+        hasFileTranscriptionInFlight = true
+        defer { hasFileTranscriptionInFlight = false }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
             AppLog.shared.transcription("Transcription source file is unavailable", level: .error)

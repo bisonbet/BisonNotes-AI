@@ -267,15 +267,12 @@ final class TranscriptionStarter: ObservableObject {
 
                     // Model-free checks only; the cleanup itself is queued
                     // after the raw transcript below is saved.
-                    let cleanupPreflight = await TranscriptCleanupCoordinator.shared.preflight(
+                    let cleanupRequest = await TranscriptCleanupCoordinator.shared.automaticRequest(
                         segments: result.segments,
-                        configuration: TranscriptCleanupConfiguration(
-                            enabled: cleanupConfiguration.enabled,
-                            mode: .automatic,
-                            languageCode: result.languageCode
-                        )
+                        enabled: cleanupConfiguration.enabled,
+                        languageCode: result.languageCode
                     )
-                    let cleanupWarning = cleanupPreflight.warning
+                    let cleanupWarning = cleanupRequest.warning
 
                     lastTranscriptionWarning = result.speakerLabelWarning
                     lastTranscriptCleanupWarning = cleanupWarning
@@ -283,13 +280,12 @@ final class TranscriptionStarter: ObservableObject {
 
                     if result.success && !result.fullText.isEmpty {
                         let identityURL = appCoordinator.getAbsoluteURL(for: recording) ?? transcriptionURL
-                        let segmentsToSave = result.segments.map { $0.withCleanup(nil) }
                         let transcriptData = TranscriptData(
                             recordingId: recordingId,
                             recordingURL: identityURL,
                             recordingName: recording.recordingName ?? "Unknown Recording",
                             recordingDate: recording.recordingDate ?? Date(),
-                            segments: segmentsToSave,
+                            segments: result.segments,
                             speakerMappings: result.speakerMappings ?? [:],
                             engine: selectedEngine,
                             processingTime: result.processingTime
@@ -308,11 +304,7 @@ final class TranscriptionStarter: ObservableObject {
                             )
                         }
                         AppLog.shared.transcription("Transcript saved to Core Data with ID: \(transcriptId)")
-                        TranscriptCleanupQueue.shared.transcriptSaved(
-                            recordingId: recordingId,
-                            preflight: cleanupPreflight,
-                            languageCode: result.languageCode
-                        )
+                        TranscriptCleanupQueue.shared.transcriptSaved(recordingId: recordingId, request: cleanupRequest)
 
                         let warnings = [
                             result.speakerLabelWarning?.userVisibleMessage,

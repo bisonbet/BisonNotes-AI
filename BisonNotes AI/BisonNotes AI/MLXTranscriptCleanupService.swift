@@ -45,6 +45,7 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
 
     private var modelContainer: ModelContainer?
     private var previousCacheLimit: Int?
+    private var requestTokenCounter: ((String) throws -> Int)?
 
     var isReady: Bool {
         TranscriptCleanupSettings.availability.isAvailable
@@ -52,23 +53,42 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
     }
 
     func renderedRequestTokenCount(for rawText: String) async throws -> Int {
-        let container = try await loadContainer()
-        let tokenizer = await container.tokenizer
+        try await loadRequestTokenCounter()(rawText)
+    }
+
+    /// Counting needs only the tokenizer. Loading it alone keeps planning —
+    /// including a resumed run whose passages are all checkpointed — from
+    /// loading the ~650 MB model just to measure text.
+    private func loadRequestTokenCounter() async throws -> (String) throws -> Int {
+        if let requestTokenCounter {
+            return requestTokenCounter
+        }
+        guard isReady else {
+            throw TranscriptCleanupNormalizerError.modelUnavailable
+        }
+        try Task.checkCancellation()
+
+        // The directory configuration reads local files only.
+        let tokenizer = try await loadTokenizer(
+            configuration: ModelConfiguration(directory: TranscriptCleanupModelLocator.directory),
+            hub: defaultHubApi
+        )
         guard tokenizer.hasChatTemplate else {
             throw TranscriptCleanupNormalizerError.templateUnavailable
         }
-
-        let messages = TranscriptCleanupSettings.messages(for: rawText)
-        let tokens = try tokenizer.applyChatTemplate(
-            messages: messages,
-            chatTemplate: nil,
-            addGenerationPrompt: true,
-            truncation: false,
-            maxLength: nil,
-            tools: nil,
-            additionalContext: ["enable_thinking": false]
-        )
-        return tokens.count
+        let counter: (String) throws -> Int = { rawText in
+            try tokenizer.applyChatTemplate(
+                messages: TranscriptCleanupSettings.messages(for: rawText),
+                chatTemplate: nil,
+                addGenerationPrompt: true,
+                truncation: false,
+                maxLength: nil,
+                tools: nil,
+                additionalContext: ["enable_thinking": false]
+            ).count
+        }
+        requestTokenCounter = counter
+        return counter
     }
 
     func normalize(_ rawText: String) async throws -> TranscriptCleanupGeneration {
@@ -149,6 +169,7 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
     func releaseResources() async {
         let before = Memory.snapshot()
         modelContainer = nil
+        requestTokenCounter = nil
         Memory.clearCache()
         if let previousCacheLimit {
             Memory.cacheLimit = previousCacheLimit
@@ -228,7 +249,7 @@ actor MLXTranscriptCleanupService: TranscriptCleanupNormalizing {
             group.addTask {
                 // Bounds one model call. A piece that hits it keeps its
                 // original text and the run continues; the run as a whole is
-                // bounded by its piece count, and pauses in the background.
+                // bounded by `TranscriptCleanupCoordinator.maximumRunDuration`.
                 try await Task.sleep(nanoseconds: Self.generationTimeoutNanoseconds)
                 throw TranscriptCleanupNormalizerError.generationFailed
             }

@@ -31,7 +31,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	// MARK: - Published Properties
 
-	@Published var isRecording = false
+	@Published var isRecording = false {
+		didSet {
+			// Automatic transcript cleanup (S1-mini on the GPU) never runs
+			// beside a recording's audio engine and live-transcription models.
+			// Observed here because many paths start and stop a recording.
+			guard oldValue != isRecording else { return }
+			TranscriptCleanupQueue.shared.recordingActivityDidChange(isRecording: isRecording)
+		}
+	}
 	@Published var isPlaying = false
 	@Published var recordingTime: TimeInterval = 0
 	@Published var playingTime: TimeInterval = 0

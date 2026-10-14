@@ -2055,11 +2055,11 @@ struct EditableTranscriptView: View {
                 if let warningMessage = userInfo["transcriptCleanupWarning"] as? String {
                     transcriptCleanupWarningMessage = warningMessage
                 }
-                let shouldSelectCleaned = userInfo["transcriptCleanupWarning"] == nil
-                    && recording.id.flatMap({ appCoordinator.getTranscriptData(for: $0) })?.hasCleanedText == true
+                // A transcription saves raw text; its cleanup is queued and
+                // switches the view itself via `didFinishNotification`.
                 refreshTranscriptFromCoreData(
                     replacingUnsavedEdits: true,
-                    preferredRepresentation: shouldSelectCleaned ? .cleaned : .original
+                    preferredRepresentation: .original
                 )
                 isRerunningTranscription = false
                 AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
@@ -2116,9 +2116,39 @@ struct EditableTranscriptView: View {
                 transcriptCleanupWarningMessage = warning
             }
             if userInfo["cleaned"] as? Bool == true {
-                refreshTranscriptFromCoreData(preferredRepresentation: .cleaned)
+                if isTranscriptDirty {
+                    adoptQueuedCleanupKeepingEdits()
+                } else {
+                    refreshTranscriptFromCoreData(preferredRepresentation: .cleaned)
+                }
             }
         }
+    }
+
+    /// A queued cleanup saved while the editor holds unsaved edits. A refresh
+    /// would decline to replace those edits, and the next Save would then write
+    /// the pre-cleanup segments back over the whole cleaned result. Instead,
+    /// carry each cleaned value onto every segment the user has not changed,
+    /// and re-baseline against what is now stored so the edits stay unsaved.
+    private func adoptQueuedCleanupKeepingEdits() {
+        guard let recordingId = recording.id,
+              let stored = appCoordinator.getTranscriptData(for: recordingId) else {
+            return
+        }
+        let storedByID = Dictionary(
+            stored.segments.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        editedSegments = editedSegments.map { segment in
+            guard let match = storedByID[segment.id], match.text == segment.text else {
+                return segment
+            }
+            return segment.withCleanup(match.cleanup)
+        }
+        savedTranscriptSnapshot = TranscriptEditorSnapshot(
+            segments: stored.segments,
+            speakerMappings: stored.speakerMappings
+        )
     }
 
     @ViewBuilder
@@ -2785,23 +2815,6 @@ struct EditableTranscriptView: View {
                 return
             }
 
-            // Deliberately make this preflight throwing. A failed read must not
-            // look like "there was no prior transcript" and authorize a rerun.
-            do {
-                _ = try appCoordinator.coreDataManager.fetchTranscriptData(for: recordingId)
-            } catch {
-                await MainActor.run {
-                    saveErrorMessage = "The previous transcript could not be loaded. The rerun was not started."
-                    showingSaveErrorAlert = true
-                    isRerunningTranscription = false
-                }
-                AppLog.shared.transcription(
-                    "Withheld transcription rerun because the previous transcript could not be read: \(error)",
-                    level: .fault
-                )
-                return
-            }
-
             do {
                 // Get the currently configured transcription engine
                 let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
@@ -2891,27 +2904,22 @@ struct EditableTranscriptView: View {
 
                     // Model-free checks only; the cleanup itself is queued
                     // after the raw rerun below is saved.
-                    let rerunCleanupPreflight = await TranscriptCleanupCoordinator.shared.preflight(
+                    let rerunCleanupRequest = await TranscriptCleanupCoordinator.shared.automaticRequest(
                         segments: result.segments,
-                        configuration: TranscriptCleanupConfiguration(
-                            enabled: rerunCleanupEnabled,
-                            mode: .automatic,
-                            languageCode: result.languageCode
-                        )
+                        enabled: rerunCleanupEnabled,
+                        languageCode: result.languageCode
                     )
-                    let rerunCleanupWarning = rerunCleanupPreflight.warning
+                    let rerunCleanupWarning = rerunCleanupRequest.warning
 
                     AppLog.shared.transcription("Transcription rerun result: success=\(result.success), textLength=\(result.fullText.count)", level: .debug)
 
                     if result.success && !result.fullText.isEmpty {
-                        // Raw ASR text only; any earlier cleaned value described
-                        // the previous transcript. `with` does not carry
+                        // Raw ASR text. `with` does not carry
                         // `speakerLabelWarning` forward on its own, so it is
                         // passed through explicitly.
                         let rerunResult = result.with(
                             speakerLabelWarning: result.speakerLabelWarning,
-                            transcriptCleanupWarning: rerunCleanupWarning,
-                            segments: result.segments.map { $0.withCleanup(nil) }
+                            transcriptCleanupWarning: rerunCleanupWarning
                         )
                         let replacement = TranscriptRerunReplacement(
                             result: rerunResult,
@@ -2926,8 +2934,7 @@ struct EditableTranscriptView: View {
                             )
                             TranscriptCleanupQueue.shared.transcriptSaved(
                                 recordingId: recordingId,
-                                preflight: rerunCleanupPreflight,
-                                languageCode: result.languageCode
+                                request: rerunCleanupRequest
                             )
 
                             AppLog.shared.transcription("Transcript UI updated with rerun results")
@@ -2984,9 +2991,7 @@ struct EditableTranscriptView: View {
                     self.updateVisibleTranscript(
                         with: transcriptData,
                         replacingUnsavedEdits: true,
-                        preferredRepresentation: cleanupWarning == nil && transcriptData.hasCleanedText
-                            ? .cleaned
-                            : .original
+                        preferredRepresentation: .original
                     )
                     self.isRerunningTranscription = false
 
@@ -3055,10 +3060,7 @@ struct EditableTranscriptView: View {
         // after the replacement save has succeeded.
         refreshTranscriptFromCoreData(
             replacingUnsavedEdits: true,
-            preferredRepresentation: replacement.transcriptCleanupWarning == nil
-                && replacement.segments.contains(where: { $0.cleanup != nil })
-                ? .cleaned
-                : .original
+            preferredRepresentation: .original
         )
 
         NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)

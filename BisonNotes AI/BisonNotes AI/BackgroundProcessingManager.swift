@@ -1673,16 +1673,12 @@ class BackgroundProcessingManager: ObservableObject {
         // save, so a slow pass can no longer delay the transcript, and
         // backgrounding or a kill can no longer lose it.
         if hasTranscriptContent, let finalTranscriptData {
-            let cleanupConfiguration = TranscriptCleanupConfiguration(
+            let cleanupRequest = await transcriptCleanupCoordinator.automaticRequest(
+                segments: finalTranscriptData.segments,
                 enabled: job.transcriptCleanupEnabled,
-                mode: .automatic,
                 languageCode: detectedLanguageCode
             )
-            let cleanupPreflight = await transcriptCleanupCoordinator.preflight(
-                segments: finalTranscriptData.segments,
-                configuration: cleanupConfiguration
-            )
-            if let warning = cleanupPreflight.warning {
+            if let warning = cleanupRequest.warning {
                 transcriptCleanupWarning = warning
                 AppLog.shared.backgroundProcessing(
                     "Transcript cleanup not queued: recording=\(recordingId.uuidString), category=\(warning.logCategory)",
@@ -1701,23 +1697,17 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 throw BackgroundProcessingError.recordingDeletedDuringProcessing
             }
-            // Raw ASR text only. A rerun replaces any earlier cleaned value,
-            // which described the previous transcript.
+            // Raw ASR text: transcription never cleans, and saving replaces
+            // the previous transcript's segments, cleaned values included.
             try saveTranscript(
-                finalTranscriptData.preservingIdentity(
-                    segments: finalTranscriptData.segments.map { $0.withCleanup(nil) }
-                ),
+                finalTranscriptData,
                 speakerLabelWarning: speakerLabelWarning,
                 cleanupWarning: transcriptCleanupWarning
             )
 
             // Post-commit: the previous transcript's cleanup state is stale
             // whether or not this one is cleaned.
-            TranscriptCleanupQueue.shared.transcriptSaved(
-                recordingId: recordingId,
-                preflight: cleanupPreflight,
-                languageCode: detectedLanguageCode
-            )
+            transcriptCleanupQueue.transcriptSaved(recordingId: recordingId, request: cleanupRequest)
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {

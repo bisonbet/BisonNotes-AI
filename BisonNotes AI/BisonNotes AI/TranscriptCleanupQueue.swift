@@ -338,14 +338,18 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// Unused checkpoints are deleted after this long.
     static let checkpointMaximumAge: TimeInterval = 7 * 24 * 60 * 60
 
-    @Published private(set) var progress: [UUID: TranscriptCleanupProgress] = [:]
     @Published private(set) var activeRecordingId: UUID?
+    /// Progress of the run for `activeRecordingId`; the queue runs one at a time.
+    @Published private(set) var activeProgress: TranscriptCleanupProgress?
     @Published private(set) var intents: [TranscriptCleanupIntent] = []
     /// Transcriptions running now — a background job or a direct fallback.
     /// S1-mini never runs beside their ASR and speaker-label models.
     @Published private(set) var activeTranscriptionCount = 0
 
     var isTranscriptionRunning: Bool { activeTranscriptionCount > 0 }
+    /// A recording is in progress. Its audio engine and live-transcription
+    /// models are not shared with S1-mini's ~650 MB on the GPU either.
+    @Published private(set) var isRecordingActive = false
 
     private let coordinator: TranscriptCleanupCoordinator
     private let store: any TranscriptCleanupQueueStore
@@ -369,7 +373,9 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// outcome itself; any other outcome becomes a user notification, because
     /// otherwise a queued run that failed or only partly worked would go unseen.
     private var viewedRecordingIds: [UUID: Int] = [:]
-    private var observers: [NSObjectProtocol] = []
+    /// Unregistered when the queue is released; a `[weak self]` capture alone
+    /// would leave every registration firing for the life of the process.
+    private let observers = LifecycleObserverTokens()
 
     init(
         coordinator: TranscriptCleanupCoordinator = .shared,
@@ -433,6 +439,18 @@ final class TranscriptCleanupQueue: ObservableObject {
         guard activeTranscriptionCount > 0 else { return }
         activeTranscriptionCount -= 1
         if activeTranscriptionCount == 0 {
+            kick()
+        }
+    }
+
+    /// Call when a recording starts or stops. The running cleanup pauses,
+    /// keeping its checkpoint, and none starts until the recording ends.
+    func recordingActivityDidChange(isRecording: Bool) {
+        guard isRecordingActive != isRecording else { return }
+        isRecordingActive = isRecording
+        if isRecording {
+            pause()
+        } else {
             kick()
         }
     }
@@ -510,10 +528,10 @@ final class TranscriptCleanupQueue: ObservableObject {
     /// Call after a new raw transcript commits. The previous transcript's
     /// cleanup state is discarded, and the new one is queued when its preflight
     /// allows. Every path that saves a fresh transcript goes through here.
-    func transcriptSaved(recordingId: UUID, preflight: TranscriptCleanupPreflight, languageCode: String?) {
+    func transcriptSaved(recordingId: UUID, request: TranscriptCleanupRequest) {
         transcriptReplaced(recordingId: recordingId)
-        if preflight == .ready {
-            enqueueSavedTranscript(recordingId: recordingId, languageCode: languageCode)
+        if request.preflight == .ready {
+            enqueueSavedTranscript(recordingId: recordingId, languageCode: request.languageCode)
         }
     }
 
@@ -554,7 +572,7 @@ final class TranscriptCleanupQueue: ObservableObject {
     func status(for recordingId: UUID) -> RecordingStatus? {
         let isActive = activeRecordingId == recordingId
         guard isActive || hasPendingCleanup(for: recordingId) else { return nil }
-        return RecordingStatus(isActive: isActive, progress: progress[recordingId])
+        return RecordingStatus(isActive: isActive, progress: isActive ? activeProgress : nil)
     }
 
     /// The recording was deleted: withdraw its cleanup and delete its
@@ -619,7 +637,8 @@ final class TranscriptCleanupQueue: ObservableObject {
         if let retryNotBefore, Date() < retryNotBefore {
             return
         }
-        guard store.isAvailable, canRunNow(), !isTranscriptionRunning, let next = intents.first else {
+        guard store.isAvailable, canRunNow(), !isTranscriptionRunning, !isRecordingActive,
+              let next = intents.first else {
             return
         }
         runTask = Task { [weak self] in
@@ -638,7 +657,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         let checkpoint = TranscriptCleanupCheckpointStore.checkpoint(for: recordingId, in: checkpointDirectory)
         defer {
             activeRecordingId = nil
-            progress[recordingId] = nil
+            activeProgress = nil
             runTask = nil
             // A paused run leaves the app in the background, where `kick`
             // declines; anything else moves straight on to the next intent.
@@ -686,7 +705,7 @@ final class TranscriptCleanupQueue: ObservableObject {
             progress: { [weak self] update in
                 Task { @MainActor [weak self] in
                     guard self?.activeRecordingId == recordingId else { return }
-                    self?.progress[recordingId] = update
+                    self?.activeProgress = update
                 }
             }
         )
@@ -859,7 +878,7 @@ final class TranscriptCleanupQueue: ObservableObject {
         let center = NotificationCenter.default
         // The toggle, Reset to Defaults and a settings restore all write the
         // same UserDefaults key; observing the store catches every one of them.
-        observers.append(
+        observers.add(
             center.addObserver(
                 forName: UserDefaults.didChangeNotification,
                 object: nil,
@@ -868,7 +887,7 @@ final class TranscriptCleanupQueue: ObservableObject {
                 MainActor.assumeIsolated { self?.cleanupSettingDidChange() }
             }
         )
-        observers.append(
+        observers.add(
             center.addObserver(
                 forName: PlatformLifecycle.didBecomeActiveNotification,
                 object: nil,
@@ -878,7 +897,7 @@ final class TranscriptCleanupQueue: ObservableObject {
             }
         )
         #if os(iOS)
-        observers.append(
+        observers.add(
             center.addObserver(
                 forName: PlatformLifecycle.didEnterBackgroundNotification,
                 object: nil,

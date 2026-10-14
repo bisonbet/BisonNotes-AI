@@ -2108,12 +2108,29 @@ class CoreDataManager: ObservableObject {
                         ?? linkedRecording?.id else {
                     continue
                 }
-                let recording = linkedRecording ?? {
+                let recording: RecordingEntry?
+                if let linkedRecording {
+                    recording = linkedRecording
+                } else {
                     let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
                     request.predicate = NSPredicate(format: "id == %@", recordingId as CVarArg)
                     request.fetchLimit = 1
-                    return (try? context.fetch(request))?.first
-                }()
+                    do {
+                        recording = try context.fetch(request).first
+                    } catch {
+                        // Unknown whether this was the recording's current
+                        // transcript. Discard its cleanup anyway: a checkpoint
+                        // may hold the deleted text, and losing a cleanup is
+                        // recoverable. Say why, so it is not silent.
+                        AppLog.shared.coreData(
+                            "durable_read_failed operation=transcript-cleanup-discard "
+                                + "recording=\(recordingId.uuidString) cause=\(error.localizedDescription)",
+                            level: .error
+                        )
+                        recordingIds.insert(recordingId)
+                        continue
+                    }
+                }
                 let recordingCommitted = recording?.committedValues(forKeys: ["transcriptId", "transcript"]) ?? [:]
                 let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
                     ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id

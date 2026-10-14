@@ -73,7 +73,7 @@ struct TranscriptCleanupCoordinator: Sendable {
     static let maximumRunDuration: TimeInterval = 10 * 60
     /// Pure hesitation sounds. A segment made only of these cleans to empty
     /// text without a model call — the outcome the model is already allowed to
-    /// produce for them. Deliberately narrower than `isFillerOnly`'s list:
+    /// produce for them. A subset of `fillerWords`, and deliberately narrower:
     /// words like "you", "well" or "like" — and "mhm", "mm" or "hmm", which
     /// are often a yes — can be a complete spoken answer.
     private static let hesitationWords: Set<String> = ["um", "uh", "erm", "er", "umm", "uhm"]
@@ -121,6 +121,26 @@ struct TranscriptCleanupCoordinator: Sendable {
 
         guard await normalizer.isReady else { return .blocked(.missingModel) }
         return .ready
+    }
+
+    /// The automatic-cleanup check every path that saves a fresh transcript
+    /// makes on its ASR result, before saving it raw.
+    func automaticRequest(
+        segments: [TranscriptSegment],
+        enabled: Bool,
+        languageCode: String?
+    ) async -> TranscriptCleanupRequest {
+        TranscriptCleanupRequest(
+            preflight: await preflight(
+                segments: segments,
+                configuration: TranscriptCleanupConfiguration(
+                    enabled: enabled,
+                    mode: .automatic,
+                    languageCode: languageCode
+                )
+            ),
+            languageCode: languageCode
+        )
     }
 
     /// Cleans every segment it can and returns the assembled result.
@@ -335,9 +355,9 @@ struct TranscriptCleanupCoordinator: Sendable {
                         report.piecesResumed += 1
                     } else {
                         // Resumed passages cost nothing; only new model work
-                        // is bounded. Finished passages are already in the
-                        // checkpoint, so the next run continues from here.
-                        guard Date() < deadline else { throw RunTimeLimitReached() }
+                        // is bounded, by `timedNormalize`. Finished passages
+                        // are already in the checkpoint, so the next run
+                        // continues from here.
                         do {
                             outcome = .cleaned(
                                 try await normalizedText(
@@ -428,12 +448,7 @@ struct TranscriptCleanupCoordinator: Sendable {
     }
 
     private func isHesitationOnly(_ text: String) -> Bool {
-        let words = text
-            .lowercased()
-            .split(whereSeparator: { $0.isWhitespace })
-            .map { $0.trimmingCharacters(in: CharacterSet.punctuationCharacters) }
-            .filter { !$0.isEmpty }
-        return !words.isEmpty && words.allSatisfy { Self.hesitationWords.contains($0) }
+        Self.consistsOnly(of: Self.hesitationWords, text)
     }
 
     private func inputPieces(
@@ -588,8 +603,9 @@ struct TranscriptCleanupCoordinator: Sendable {
             return try validatedText(generation, originalText: piece, overhead: overhead)
         }
 
+        // No deadline check here: a passage that cannot be split is truncated,
+        // not timed out, and each retry call checks the deadline itself.
         let retryPieces = try await whitespacePiecesForRetry(piece, counter: counter)
-        guard Date() < deadline else { throw RunTimeLimitReached() }
         guard retryPieces.count > 1 else {
             throw TranscriptCleanupNormalizerError.outputTruncated
         }
@@ -614,28 +630,16 @@ struct TranscriptCleanupCoordinator: Sendable {
         report: RunReport
     ) async throws -> TranscriptCleanupGeneration {
         let start = Date()
-        let remainingNanoseconds = deadline.timeIntervalSinceNow * 1_000_000_000
-        guard remainingNanoseconds > 0 else { throw RunTimeLimitReached() }
-        let timeoutNanoseconds = UInt64(remainingNanoseconds)
-        guard timeoutNanoseconds > 0 else { throw RunTimeLimitReached() }
+        // The run's single deadline check: every model call starts here, and
+        // `withTimeout` traps on a negative duration.
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { throw RunTimeLimitReached() }
         let normalizer = self.normalizer
 
         let generation: TranscriptCleanupGeneration
         do {
-            generation = try await withThrowingTaskGroup(of: TranscriptCleanupGeneration.self) { group in
-                group.addTask {
-                    try await normalizer.normalize(piece)
-                }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: timeoutNanoseconds)
-                    throw RunTimeLimitReached()
-                }
-
-                defer { group.cancelAll() }
-                guard let result = try await group.next() else {
-                    throw RunTimeLimitReached()
-                }
-                return result
+            generation = try await withTimeout(seconds: remaining, timeoutError: RunTimeLimitReached()) {
+                try await normalizer.normalize(piece)
             }
         } catch {
             report.recordGeneration(
@@ -653,7 +657,9 @@ struct TranscriptCleanupCoordinator: Sendable {
             outputTokens: generation.outputTokenCount,
             finishReason: "\(generation.finishReason)"
         )
-        guard Date() < deadline else { throw RunTimeLimitReached() }
+        // A generation that finished inside the race is kept even if the
+        // deadline passed while it was being recorded: it is in hand, and
+        // discarding it would only make the next run redo it.
         return generation
     }
 
@@ -734,16 +740,23 @@ struct TranscriptCleanupCoordinator: Sendable {
         ) != nil
     }
 
+    /// Words the model may drop entirely. Includes every hesitation word, so
+    /// a segment the shortcut empties is one the validator would accept empty.
+    private static let fillerWords: Set<String> = hesitationWords.union(
+        ["hmm", "mm", "mhm", "like", "well", "you", "know"]
+    )
+
     private func isFillerOnly(_ text: String) -> Bool {
-        let allowlist: Set<String> = ["um", "uh", "erm", "er", "hmm", "mm", "mhm", "like", "well", "you", "know"]
+        Self.consistsOnly(of: Self.fillerWords, text)
+    }
+
+    private static func consistsOnly(of allowed: Set<String>, _ text: String) -> Bool {
         let words = text
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace })
-            .map { word in
-                word.trimmingCharacters(in: CharacterSet.punctuationCharacters)
-            }
+            .map { $0.trimmingCharacters(in: CharacterSet.punctuationCharacters) }
             .filter { !$0.isEmpty }
-        return !words.isEmpty && words.allSatisfy { allowlist.contains($0) }
+        return !words.isEmpty && words.allSatisfy { allowed.contains($0) }
     }
 
     private func sentenceParts(in text: String) -> [String] {

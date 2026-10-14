@@ -195,13 +195,14 @@ For AI-generated content display:
 - `Views/AITextView.swift`: MarkdownUI-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
-- `FluidAudio/LocalDiarizationManager.swift`: Independent VBx/LS-EEND model lifecycle and adapters
+- `FluidAudio/LocalDiarizationManager.swift`: Independent VBx, Nemotron 3 and LS-EEND model lifecycle
+- `FluidAudio/LocalDiarizationAdapters.swift`, `FluidAudio/LocalDiarizationAssetValidator.swift`: Per-method prepare, readiness and runners. Nemotron 3 loads from its verified cache outside `FluidAudioModelHubGate` and requires its weights marker
 - `FluidAudio/SpeakerTranscriptAligner.swift`: Complete-source speaker timeline alignment
 - `AudioFileChunkingService.swift`: Shared ASR reassembly before post-ASR enrichment
 - `BackgroundProcessingManager.swift`: Background job management
 - `FutureAIEngines.swift`: AI engine implementations
 - `Models/SummaryThinkingModelCatalog.swift`: Model thinking capabilities and reasoning output budgets
-- `TranscriptCleanupCoordinator.swift`, `TranscriptCleanupQueue.swift`: S1-mini transcript cleanup. The raw transcript is always saved first; automatic cleanup runs afterwards from a durable, foreground-only queue that pauses when iOS backgrounds the app (no GPU in the background) and resumes from a per-recording checkpoint. A passage the model cannot clean keeps its original text instead of failing the run
+- `TranscriptCleanupCoordinator.swift`, `TranscriptCleanupQueue.swift`: S1-mini transcript cleanup. The raw transcript is always saved first; automatic cleanup runs afterwards from a durable, foreground-only queue that pauses when iOS backgrounds the app (no GPU in the background) and resumes from a per-recording checkpoint. A passage the model cannot clean keeps its original text and the run continues; a run that cleans no passage at all keeps the original transcript and reports why. The queue also pauses while a transcription job, a direct transcription or a recording is active
 - `AISettingsView.swift`: AI engine configuration UI
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
 
