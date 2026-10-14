@@ -580,8 +580,17 @@ final class TranscriptCleanupQueue: ObservableObject {
                 retryPass: retryPass
             )
         )
-        persistIntents()
-        AppLog.shared.transcription("[TranscriptCleanup] Queued cleanup for recording \(recordingId.uuidString)")
+        if persistIntents() {
+            AppLog.shared.transcription("[TranscriptCleanup] Queued cleanup for recording \(recordingId.uuidString)")
+        } else {
+            // Runs while the app stays open; `persistIntents` has told the user
+            // it will not survive a relaunch unless a later write succeeds.
+            AppLog.shared.transcription(
+                "[TranscriptCleanup] Queued cleanup for recording \(recordingId.uuidString) for this session only; "
+                    + "the queue could not be saved",
+                level: .error
+            )
+        }
         // Enqueueing means app data is readable, so the queue can run even if
         // the launch path that normally starts it has not got there yet.
         if !started, store.isAvailable {
@@ -1095,6 +1104,20 @@ final class TranscriptCleanupQueue: ObservableObject {
                 MainActor.assumeIsolated { self?.kick() }
             }
         )
+        // The last chance to make an unsaved queue durable before the app is
+        // suspended or quits.
+        observers.add(
+            center.addObserver(
+                forName: PlatformLifecycle.willResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.queueIsUnsaved else { return }
+                    self.persistIntents()
+                }
+            }
+        )
         #if os(iOS)
         observers.add(
             center.addObserver(
@@ -1129,7 +1152,19 @@ final class TranscriptCleanupQueue: ObservableObject {
         }
     }
 
-    private func persistIntents() {
+    /// Whether the queue file failed to save at the last attempt. Every later
+    /// write, and resigning active, tries again.
+    private var queueIsUnsaved = false
+
+    static let unsavedQueueMessage = "Automatic transcript cleanup could not be saved to this device's storage. "
+        + "It will still run while BisonNotes stays open, but will be lost if the app closes first."
+
+    /// Writes the queue file. A failure is not only logged: an intent that is
+    /// not on disk is lost on relaunch, so the first failure in a streak tells
+    /// the user, and the caller can say the cleanup is queued for this session
+    /// only. Returns whether the queue is now durable.
+    @discardableResult
+    private func persistIntents() -> Bool {
         do {
             try FileManager.default.createDirectory(
                 at: queueFileURL.deletingLastPathComponent(),
@@ -1137,11 +1172,21 @@ final class TranscriptCleanupQueue: ObservableObject {
             )
             try JSONEncoder().encode(intents).write(to: queueFileURL, options: .atomic)
             AppFileProtection.apply(to: queueFileURL)
+            if queueIsUnsaved {
+                queueIsUnsaved = false
+                AppLog.shared.transcription("[TranscriptCleanup] The cleanup queue was saved after an earlier failure")
+            }
+            return true
         } catch {
             AppLog.shared.transcription(
                 "[TranscriptCleanup] Could not save the cleanup queue: \(error.localizedDescription)",
                 level: .error
             )
+            if !queueIsUnsaved {
+                queueIsUnsaved = true
+                notifyUser(Self.unsavedQueueMessage)
+            }
+            return false
         }
     }
 }

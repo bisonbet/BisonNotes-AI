@@ -777,6 +777,9 @@ class EnhancedTranscriptionManager: NSObject, ObservableObject {
         let cleanupGate = TranscriptCleanupQueue.shared.beginTranscription()
         defer { cleanupGate.end() }
         await cleanupGate.waitForCleanupToUnwind()
+        // The wait returns early when this call is cancelled; stop before any
+        // transcription model loads.
+        try Task.checkCancellation()
 
         // Snapshot local speaker-label choices at the start of the completed
         // Parakeet job. Later settings changes cannot switch this job's method.

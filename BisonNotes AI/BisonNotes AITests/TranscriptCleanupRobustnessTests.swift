@@ -1228,6 +1228,39 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: harness.checkpointURL.path))
     }
 
+    /// A queue that cannot be saved still runs the cleanup, but says once that
+    /// it will not survive a relaunch, and saves again once storage allows.
+    @MainActor
+    func testUnsavableQueueTellsTheUserOnceAndRecovers() async throws {
+        let harness = try QueueHarness(segments: [makeSegment(text: "the deadline is Friday")])
+        harness.isForeground = false
+        // A regular file where the queue's directory should be: every write fails.
+        let blocker = harness.directory.appendingPathComponent("blocked")
+        try Data().write(to: blocker)
+        let queueFile = blocker.appendingPathComponent("queue.json")
+        let queue = harness.makeQueue(queueFileURL: queueFile)
+
+        queue.start()
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        XCTAssertEqual(queue.intents.count, 1, "The cleanup is still queued in memory")
+        XCTAssertEqual(
+            harness.notifications,
+            [TranscriptCleanupQueue.unsavedQueueMessage],
+            "One notice per failure streak, not one per write"
+        )
+
+        try FileManager.default.removeItem(at: blocker)
+        queue.enqueue(recordingId: harness.recordingId, source: harness.snapshot(), languageCode: "en")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queueFile.path), "Saved once storage allows")
+        XCTAssertEqual(harness.notifications.count, 1)
+
+        harness.isForeground = true
+        queue.kick()
+        await queue.waitForCurrentRun()
+        XCTAssertEqual(harness.store.saveCount, 1)
+    }
+
     /// The bounded wait returns at once when nothing is running.
     func testBoundedWaitForCleanupReturnsWhenIdle() async {
         let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(timeout: 5)
@@ -1554,11 +1587,11 @@ private final class QueueHarness {
         TranscriptCleanupSourceSnapshot(transcript: store.transcript)
     }
 
-    func makeQueue(observesLifecycle: Bool = false) -> TranscriptCleanupQueue {
+    func makeQueue(observesLifecycle: Bool = false, queueFileURL: URL? = nil) -> TranscriptCleanupQueue {
         TranscriptCleanupQueue(
             coordinator: TranscriptCleanupCoordinator(normalizer: normalizer, availabilityProvider: { .available }),
             store: store,
-            queueFileURL: directory.appendingPathComponent("queue.json"),
+            queueFileURL: queueFileURL ?? directory.appendingPathComponent("queue.json"),
             checkpointDirectory: directory.appendingPathComponent("checkpoints", isDirectory: true),
             canRunNow: { [weak self] in self?.isForeground ?? false },
             isCleanupEnabled: { [weak self] in self?.isCleanupEnabled ?? false },
