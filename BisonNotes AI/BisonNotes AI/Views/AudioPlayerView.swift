@@ -336,7 +336,7 @@ struct AudioPlayerView: View {
         guard !hasStoppedPlayback else { return }
         hasStoppedPlayback = true
 
-        if recorderVM.isPlaying {
+        if recorderVM.isPlaying || recorderVM.isPreparingPlayback {
             recorderVM.stopPlaying()
         }
     }
@@ -456,7 +456,7 @@ struct AudioPlayerView: View {
 
     private func togglePlayback() {
         AppLog.shared.recording("Toggle playback - currently playing: \(recorderVM.isPlaying)", level: .debug)
-        if recorderVM.isPlaying {
+        if recorderVM.isPlaying || recorderVM.isPreparingPlayback {
             recorderVM.stopPlaying()
         } else {
             recorderVM.playRecording(url: recording.url)

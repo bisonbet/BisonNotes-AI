@@ -77,6 +77,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	var audioRecorder: AVAudioRecorder?
 	var audioPlayer: AVAudioPlayer?
+	/// Identifies the playback request whose player is still being prepared off
+	/// the main actor. Stopping clears it and a newer request replaces it, so a
+	/// preparation that finishes afterwards is discarded instead of starting audio.
+	var pendingPlaybackRequestID: UUID?
 	var recordingTimer: Timer?
 	var playingTimer: Timer?
 	var interruptionObserver: NSObjectProtocol?

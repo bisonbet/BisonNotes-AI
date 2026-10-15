@@ -2364,7 +2364,7 @@ struct EditableTranscriptView: View {
         } header: {
             Text("Transcript Text")
         } footer: {
-            Text("Automatic cleanup and summaries use the original text. Cleanup is on-device and English only.")
+            Text("Automatic cleanup uses the original text. Summaries use the version you save here, so saving Cleaned sends the cleaned text to your summary engine. Cleanup is on-device and English only.")
         }
     }
 
