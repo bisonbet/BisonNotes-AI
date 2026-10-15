@@ -35,16 +35,30 @@ private struct TranscriptDeletionRequest {
 
 /// The persisted parts of an editable transcript that represent unsaved work.
 /// The recording title is intentionally excluded because it has its own
-/// immediate persistence action in the editor.
+/// immediate persistence action in the editor. The selected version is
+/// included: summaries read it, so choosing one is a change to save.
 struct TranscriptEditorSnapshot: Equatable {
     let segmentTexts: [String]
     let segmentCleanups: [TranscriptSegmentCleanup?]
     let speakerMappings: [String: String]
+    let representation: TranscriptRepresentation
 
-    init(segments: [TranscriptSegment], speakerMappings: [String: String]) {
+    init(
+        segments: [TranscriptSegment],
+        speakerMappings: [String: String],
+        representation: TranscriptRepresentation = .original
+    ) {
         self.segmentTexts = segments.map(\.text)
         self.segmentCleanups = segments.map(\.cleanup)
         self.speakerMappings = speakerMappings
+        self.representation = representation
+    }
+
+    /// Same segments and speaker names, whichever version is selected.
+    func hasSameContent(as other: TranscriptEditorSnapshot) -> Bool {
+        segmentTexts == other.segmentTexts
+            && segmentCleanups == other.segmentCleanups
+            && speakerMappings == other.speakerMappings
     }
 }
 
@@ -1795,7 +1809,11 @@ struct EditableTranscriptView: View {
     }
 
     private var currentTranscriptSnapshot: TranscriptEditorSnapshot {
-        TranscriptEditorSnapshot(segments: editedSegments, speakerMappings: speakerMappings)
+        TranscriptEditorSnapshot(
+            segments: editedSegments,
+            speakerMappings: speakerMappings,
+            representation: transcriptRepresentation
+        )
     }
 
     private var isTranscriptDirty: Bool {
@@ -1827,14 +1845,15 @@ struct EditableTranscriptView: View {
         self.transcriptManager = transcriptManager
         self._editedSegments = State(initialValue: transcript.segments)
         self._speakerMappings = State(initialValue: transcript.speakerMappings)
-        self._transcriptRepresentation = State(initialValue: .original)
+        self._transcriptRepresentation = State(initialValue: transcript.selectedRepresentation)
         let initialName = recording.recordingName ?? transcript.recordingName
         self._editableRecordingName = State(initialValue: initialName)
         self._savedRecordingName = State(initialValue: initialName)
         self._savedTranscriptSnapshot = State(
             initialValue: TranscriptEditorSnapshot(
                 segments: transcript.segments,
-                speakerMappings: transcript.speakerMappings
+                speakerMappings: transcript.speakerMappings,
+                representation: transcript.selectedRepresentation
             )
         )
     }
@@ -2057,10 +2076,7 @@ struct EditableTranscriptView: View {
                 }
                 // A transcription saves raw text; its cleanup is queued and
                 // switches the view itself via `didFinishNotification`.
-                refreshTranscriptFromCoreData(
-                    replacingUnsavedEdits: true,
-                    preferredRepresentation: .original
-                )
+                refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
                 isRerunningTranscription = false
                 AppLog.shared.transcription("Transcript UI updated with rerun results from notification")
                 NotificationCenter.default.post(name: NSNotification.Name("TranscriptReplacementCompleted"), object: nil)
@@ -2119,7 +2135,7 @@ struct EditableTranscriptView: View {
                 if isTranscriptDirty {
                     adoptQueuedCleanupKeepingEdits()
                 } else {
-                    refreshTranscriptFromCoreData(preferredRepresentation: .cleaned)
+                    refreshTranscriptFromCoreData()
                 }
             }
         }
@@ -2147,7 +2163,8 @@ struct EditableTranscriptView: View {
         }
         savedTranscriptSnapshot = TranscriptEditorSnapshot(
             segments: stored.segments,
-            speakerMappings: stored.speakerMappings
+            speakerMappings: stored.speakerMappings,
+            representation: stored.selectedRepresentation
         )
     }
 
@@ -2543,7 +2560,8 @@ struct EditableTranscriptView: View {
                 speakerMappings: speakerMappings,
                 engine: transcript.engine,
                 processingTime: transcript.processingTime,
-                confidence: transcript.confidence
+                confidence: transcript.confidence,
+                selectedRepresentation: transcriptRepresentation
             ) else {
                 saveErrorMessage = "We couldn't save your transcript changes because no transcript was produced."
                 return false
@@ -2659,7 +2677,8 @@ struct EditableTranscriptView: View {
         let sourceMappings = speakerMappings
         let sourceEditorSnapshot = TranscriptEditorSnapshot(
             segments: sourceSegments,
-            speakerMappings: sourceMappings
+            speakerMappings: sourceMappings,
+            representation: transcriptRepresentation
         )
         // A cleanup started here supersedes one queued for this recording.
         // The queue keeps its checkpoint, so this run starts from its progress.
@@ -2735,7 +2754,8 @@ struct EditableTranscriptView: View {
                 return
             }
 
-            guard currentTranscriptSnapshot == sourceEditorSnapshot else {
+            // Switching versions while cleanup runs is not an edit it would lose.
+            guard currentTranscriptSnapshot.hasSameContent(as: sourceEditorSnapshot) else {
                 transcriptCleanupWarningMessage = TranscriptCleanupWarning.staleResult.userVisibleMessage
                 return
             }
@@ -2747,7 +2767,9 @@ struct EditableTranscriptView: View {
                     speakerMappings: sourceMappings,
                     engine: currentTranscript.engine,
                     processingTime: currentTranscript.processingTime,
-                    confidence: currentTranscript.confidence
+                    confidence: currentTranscript.confidence,
+                    // The view switches to the result, so summaries follow it.
+                    selectedRepresentation: .cleaned
                 ) != nil else {
                     transcriptCleanupWarningMessage = "The cleaned transcript could not be saved. The original transcript was kept."
                     return
@@ -2761,8 +2783,8 @@ struct EditableTranscriptView: View {
             handsBackSupersededIntent = false
             editedSegments = result.segments
             speakerMappings = sourceMappings
-            savedTranscriptSnapshot = currentTranscriptSnapshot
             transcriptRepresentation = .cleaned
+            savedTranscriptSnapshot = currentTranscriptSnapshot
             // Some passages kept their original text; say so.
             transcriptCleanupWarningMessage = result.warning?.userVisibleMessage
             // Passages that failed for a reason that may pass are not in the
@@ -3004,8 +3026,7 @@ struct EditableTranscriptView: View {
                     }
                     self.updateVisibleTranscript(
                         with: transcriptData,
-                        replacingUnsavedEdits: true,
-                        preferredRepresentation: .original
+                        replacingUnsavedEdits: true
                     )
                     self.isRerunningTranscription = false
 
@@ -3072,18 +3093,12 @@ struct EditableTranscriptView: View {
 
         // Immediately refresh the UI with the updated transcript data only
         // after the replacement save has succeeded.
-        refreshTranscriptFromCoreData(
-            replacingUnsavedEdits: true,
-            preferredRepresentation: .original
-        )
+        refreshTranscriptFromCoreData(replacingUnsavedEdits: true)
 
         NotificationCenter.default.post(name: NSNotification.Name("TranscriptionCompleted"), object: nil)
     }
 
-    private func refreshTranscriptFromCoreData(
-        replacingUnsavedEdits: Bool = false,
-        preferredRepresentation: TranscriptRepresentation? = nil
-    ) {
+    private func refreshTranscriptFromCoreData(replacingUnsavedEdits: Bool = false) {
         guard let recordingURL = appCoordinator.getAbsoluteURL(for: recording) else {
             return
         }
@@ -3098,16 +3113,16 @@ struct EditableTranscriptView: View {
 
             updateVisibleTranscript(
                 with: updatedTranscript,
-                replacingUnsavedEdits: replacingUnsavedEdits,
-                preferredRepresentation: preferredRepresentation
+                replacingUnsavedEdits: replacingUnsavedEdits
             )
         }
     }
 
+    /// Shows the version saved with `updatedTranscript`, so the picker always
+    /// opens on the text summaries will read.
     private func updateVisibleTranscript(
         with updatedTranscript: TranscriptData,
-        replacingUnsavedEdits: Bool = false,
-        preferredRepresentation: TranscriptRepresentation? = nil
+        replacingUnsavedEdits: Bool = false
     ) {
         // Only update if we have segments with actual content.
         let hasValidContent = updatedTranscript.segments.contains {
@@ -3117,7 +3132,8 @@ struct EditableTranscriptView: View {
 
         let incomingSnapshot = TranscriptEditorSnapshot(
             segments: updatedTranscript.segments,
-            speakerMappings: updatedTranscript.speakerMappings
+            speakerMappings: updatedTranscript.speakerMappings,
+            representation: updatedTranscript.selectedRepresentation
         )
 
         // Re-baselining the snapshot below also clears the dirty flag, so an
@@ -3137,11 +3153,9 @@ struct EditableTranscriptView: View {
         // Already showing exactly what the store holds — no rebuild needed, but
         // re-anchor the baseline so the editor cannot read as dirty against a
         // stale snapshot.
-        guard incomingSnapshot != currentTranscriptSnapshot else {
+        guard !incomingSnapshot.hasSameContent(as: currentTranscriptSnapshot) else {
+            transcriptRepresentation = updatedTranscript.selectedRepresentation
             savedTranscriptSnapshot = incomingSnapshot
-            if let preferredRepresentation {
-                transcriptRepresentation = preferredRepresentation
-            }
             return
         }
 
@@ -3151,7 +3165,7 @@ struct EditableTranscriptView: View {
         isReloadingTranscript = true
         editedSegments = []
         speakerMappings = updatedTranscript.speakerMappings
-        transcriptRepresentation = preferredRepresentation ?? .original
+        transcriptRepresentation = updatedTranscript.selectedRepresentation
 
         // Small delay to ensure the List/Form rebuilds its segment bindings.
         // The saved baseline moves with the restored segments so the editor is

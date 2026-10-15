@@ -3069,6 +3069,7 @@ extension iCloudStorageManager {
     private static let fieldConfidence = "confidence"
     private static let fieldSegments = "segments"
     private static let fieldSpeakerMappings = "speakerMappings"
+    private static let fieldSelectedRepresentation = "selectedRepresentation"
 
     private static let fieldSummaryText = "summary"
     private static let fieldTasks = "tasks"
@@ -4100,6 +4101,7 @@ extension iCloudStorageManager {
         updateDoubleField(Self.fieldConfidence, value: transcript.confidence, on: record, changed: &changed)
         updateStringField(Self.fieldSegments, value: transcript.segments, on: record, changed: &changed)
         updateStringField(Self.fieldSpeakerMappings, value: transcript.speakerMappings, on: record, changed: &changed)
+        updateStringField(Self.fieldSelectedRepresentation, value: transcript.selectedRepresentation, on: record, changed: &changed)
         markBackupRecordActive(record, changed: &changed)
     }
 
@@ -5230,6 +5232,11 @@ extension iCloudStorageManager {
                     entry.confidence = doubleValue(from: record[Self.fieldConfidence])
                     entry.segments = record[Self.fieldSegments] as? String
                     entry.speakerMappings = record[Self.fieldSpeakerMappings] as? String
+                    // A record written before this field existed says nothing
+                    // about the user's choice; keep the local one.
+                    if let selectedRepresentation = record[Self.fieldSelectedRepresentation] as? String {
+                        entry.selectedRepresentation = selectedRepresentation
+                    }
                 } else {
                     result.localItemsKeptAsNewer += 1
                 }
@@ -7976,6 +7983,7 @@ extension iCloudStorageManager {
             hashBuilder.combine(String(transcript.confidence))
             hashBuilder.combine(transcript.segments ?? "-")
             hashBuilder.combine(transcript.speakerMappings ?? "-")
+            hashBuilder.combine(transcript.selectedRepresentation ?? "-")
         }
 
         let sortedSummaries = summaries.sorted {

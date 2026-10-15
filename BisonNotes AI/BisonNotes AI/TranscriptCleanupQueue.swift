@@ -364,7 +364,9 @@ struct AppTranscriptCleanupQueueStore: TranscriptCleanupQueueStore {
             speakerMappings: transcript.speakerMappings,
             engine: transcript.engine,
             processingTime: transcript.processingTime,
-            confidence: transcript.confidence
+            confidence: transcript.confidence,
+            // The editor opens on the cleaned result, so summaries follow it.
+            selectedRepresentation: .cleaned
         ) != nil else {
             throw BackgroundProcessingError.processingFailed("The cleaned transcript could not be saved")
         }

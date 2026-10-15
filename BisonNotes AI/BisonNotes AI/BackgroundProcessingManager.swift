@@ -1965,13 +1965,14 @@ class BackgroundProcessingManager: ObservableObject {
                 speakerMappings = (try? JSONDecoder().decode([String: String].self, from: mappingsData)) ?? [:]
             }
             // Build TranscriptData to use textForSummarization (includes speaker labels)
-            let transcriptData = TranscriptData(
+            var transcriptData = TranscriptData(
                 recordingURL: recordingURL,
                 recordingName: recordingName,
                 recordingDate: recordingDate,
                 segments: segments,
                 speakerMappings: speakerMappings
             )
+            transcriptData.selectedRepresentation = TranscriptRepresentation(storedValue: transcriptEntry.selectedRepresentation)
             transcriptText = transcriptData.textForSummarization
         } else {
             throw BackgroundProcessingError.processingFailed("Could not read transcript text for \(recordingName)")

@@ -20,29 +20,7 @@ extension AudioRecorderViewModel {
 				// Store the current seek position before creating new player
 				let seekPosition = await MainActor.run { playingTime }
 
-				guard FileManager.default.fileExists(atPath: url.path) else {
-					throw NSError(
-						domain: "AudioRecorderViewModel.Playback",
-						code: -1,
-						userInfo: [NSLocalizedDescriptionKey: "The audio file is missing."]
-					)
-				}
-
-				let player = try AVAudioPlayer(contentsOf: url)
-				guard player.duration.isFinite, player.duration > 0 else {
-					throw NSError(
-						domain: "AudioRecorderViewModel.Playback",
-						code: -2,
-						userInfo: [NSLocalizedDescriptionKey: "The audio file is empty or corrupted."]
-					)
-				}
-				guard player.prepareToPlay() else {
-					throw NSError(
-						domain: "AudioRecorderViewModel.Playback",
-						code: -3,
-						userInfo: [NSLocalizedDescriptionKey: "The audio file could not be prepared for playback."]
-					)
-				}
+				let player = try await Self.makePreparedPlayer(url: url)
 
 				await MainActor.run {
 					audioPlayer = player
@@ -76,6 +54,37 @@ extension AudioRecorderViewModel {
 				}
 			}
 		}
+	}
+
+	/// Opens and prepares a player off the main actor. `prepareToPlay()` acquires
+	/// the audio hardware and can block long enough to stall the UI when it runs
+	/// on the main thread, and this view model is main-actor isolated.
+	@concurrent
+	nonisolated private static func makePreparedPlayer(url: URL) async throws -> sending AVAudioPlayer {
+		guard FileManager.default.fileExists(atPath: url.path) else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Playback",
+				code: -1,
+				userInfo: [NSLocalizedDescriptionKey: "The audio file is missing."]
+			)
+		}
+
+		let player = try AVAudioPlayer(contentsOf: url)
+		guard player.duration.isFinite, player.duration > 0 else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Playback",
+				code: -2,
+				userInfo: [NSLocalizedDescriptionKey: "The audio file is empty or corrupted."]
+			)
+		}
+		guard player.prepareToPlay() else {
+			throw NSError(
+				domain: "AudioRecorderViewModel.Playback",
+				code: -3,
+				userInfo: [NSLocalizedDescriptionKey: "The audio file could not be prepared for playback."]
+			)
+		}
+		return player
 	}
 
 	func stopPlaying() {

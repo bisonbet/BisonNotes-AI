@@ -98,7 +98,7 @@ class TranscriptManager: ObservableObject {
         // Convert engine string to enum
         let engine = transcriptEntry.engine.flatMap { TranscriptionEngine(rawValue: $0) }
 
-        return TranscriptData(
+        var transcriptData = TranscriptData(
             id: transcriptEntry.id ?? UUID(),
             recordingId: recordingId,
             recordingURL: url,
@@ -112,6 +112,8 @@ class TranscriptManager: ObservableObject {
             createdAt: transcriptEntry.createdAt,
             lastModified: transcriptEntry.lastModified
         )
+        transcriptData.selectedRepresentation = TranscriptRepresentation(storedValue: transcriptEntry.selectedRepresentation)
+        return transcriptData
     }
 
     // MARK: - Helper Methods
