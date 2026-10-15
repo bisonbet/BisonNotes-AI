@@ -1127,6 +1127,7 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
     }
 
     /// The bounded wait gives up on a run that is still active, promptly.
+    @MainActor
     func testBoundedWaitForCleanupTimesOutOnAnActiveRun() async throws {
         let normalizer = ScriptedNormalizer(blockingPieces: [0])
         let coordinator = makeCoordinator(normalizer)
