@@ -31,6 +31,7 @@ struct RecordingsListView: View {
     @State private var showingEnhancedDeleteDialog = false
     @State private var recordingPendingDirectDeletion: AudioRecordingFile?
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
+    @State private var recordingToTrim: AudioRecordingFile?
     enum SelectionAction {
         case combine
         case archive
@@ -324,6 +325,12 @@ struct RecordingsListView: View {
                 }
             }
             #endif
+        }
+        .sheet(item: $recordingToTrim) { recording in
+            TrimRecordingView(recording: recording)
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 720, height: 760)
         }
         .sheet(item: $selectedRecordingForPlayer) { recording in
             AudioPlayerView(recording: recording)
@@ -795,6 +802,15 @@ struct RecordingsListView: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contextMenu {
+            if recording.hasLocalAudio && !isSelectionMode {
+                Button {
+                    recordingToTrim = recording
+                } label: {
+                    Label("Trim Recording…", systemImage: "scissors")
+                }
+            }
+        }
     }
 
     private func recordingSelectionButton(for recording: AudioRecordingFile) -> some View {
