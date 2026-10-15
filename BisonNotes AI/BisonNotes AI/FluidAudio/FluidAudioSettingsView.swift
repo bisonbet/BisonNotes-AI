@@ -168,6 +168,7 @@ struct FluidAudioSettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .modifier(OpaqueTopScrollEdge())
         .background(Color(.systemGroupedBackground))
         .navigationTitle("On Device Transcription")
 #if !os(macOS)
@@ -183,6 +184,20 @@ struct FluidAudioSettingsView: View {
         .onDisappear(perform: stopLocalSpeakerObservationTasks)
     }
 
+}
+
+/// iOS 26's default soft scroll edge lets scrolled-up text show through the
+/// navigation bar's glass, where it has too little contrast to read; the
+/// accessibility audit failed on the section header beneath the title. A hard
+/// edge cuts content off at the bar instead. Earlier systems have no soft edge.
+private struct OpaqueTopScrollEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            content
+        }
+    }
 }
 
 private extension FluidAudioSettingsView {
