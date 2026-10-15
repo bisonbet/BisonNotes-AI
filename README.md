@@ -16,6 +16,7 @@
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 [![Download on the App Store](https://img.shields.io/badge/Download_on_the-App_Store-0D96F6?style=for-the-badge&logo=appstore&logoColor=white)](https://apps.apple.com/us/app/bisonnotes-ai-voice-notes/id6749189425)
+[![Buy me a coffee](https://img.shields.io/badge/Buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/Bisonnetworking)
 
 </div>
 
@@ -489,6 +490,10 @@ The software dependencies listed above are MIT or Apache 2.0 licensed as shown; 
 - **LS-EEND DIHARD3 Core ML assets**: [FluidInference/ls-eend-coreml](https://huggingface.co/FluidInference/ls-eend-coreml), MIT; upstream dataset terms remain applicable.
 
 The LS-EEND model card and original paper/source credits should be reviewed with the model terms before release. BisonNotes does not redistribute consented or evaluation fixtures.
+
+## Support BisonNotes AI
+
+If BisonNotes AI saves you time, you can [buy me a coffee](https://buymeacoffee.com/Bisonnetworking) to support ongoing development and maintenance. Thank you!
 
 ## Contributing
 Follow the Local Dev Setup above to run and validate changes before opening a PR.
