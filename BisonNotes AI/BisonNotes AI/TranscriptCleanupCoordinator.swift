@@ -80,15 +80,19 @@ struct TranscriptCleanupCoordinator: Sendable {
 
     let normalizer: any TranscriptCleanupNormalizing
     private let availabilityProvider: @Sendable () -> TranscriptCleanupAvailability
+    /// `maximumRunDuration` in production; tests shorten it.
+    private let runDuration: TimeInterval
 
     init(
         normalizer: any TranscriptCleanupNormalizing = MLXTranscriptCleanupService.shared,
         availabilityProvider: @escaping @Sendable () -> TranscriptCleanupAvailability = {
             TranscriptCleanupSettings.availability
-        }
+        },
+        runDuration: TimeInterval = TranscriptCleanupCoordinator.maximumRunDuration
     ) {
         self.normalizer = normalizer
         self.availabilityProvider = availabilityProvider
+        self.runDuration = runDuration
     }
 
     /// The checks that need no model: whether cleanup is wanted, possible on
@@ -231,7 +235,7 @@ struct TranscriptCleanupCoordinator: Sendable {
     }
 
     /// Thrown when a run reaches `maximumRunDuration`.
-    private struct RunTimeLimitReached: Error {}
+    fileprivate struct RunTimeLimitReached: Error {}
 
     /// Maps a run- or piece-ending error to the warning the user sees.
     private static func warning(for error: Error) -> TranscriptCleanupWarning {
@@ -287,7 +291,8 @@ struct TranscriptCleanupCoordinator: Sendable {
             case empty
             /// Only hesitation sounds: cleans to empty text with no model call.
             case hesitationOnly
-            case pieces([PlannedPiece])
+            /// Needs the model; split into pieces just before it is cleaned.
+            case pending
         }
         let segment: TranscriptSegment
         let kind: Kind
@@ -299,32 +304,36 @@ struct TranscriptCleanupCoordinator: Sendable {
         progress: (@Sendable (TranscriptCleanupProgress) -> Void)?,
         report: RunReport
     ) async throws -> TranscriptCleanupResult {
-        let deadline = Date().addingTimeInterval(Self.maximumRunDuration)
-        let counter = TokenCounter(normalizer: normalizer)
+        let deadline = Date().addingTimeInterval(runDuration)
+        // Planning renders and tokenizes while holding the MLX permit, so it
+        // is bounded by the same deadline as generation.
+        let counter = TokenCounter(normalizer: normalizer, deadline: deadline)
         // The system prompt, control line and chat-template markup are a fixed
         // cost on every rendered request. Measuring it once lets both the
         // chunking budget and the expansion check below talk about the
         // segment's own tokens rather than the prompt's.
         let overhead = try await counter.count("")
 
-        // Plan every piece up front so progress has a real total.
-        var plans: [SegmentPlan] = []
-        plans.reserveCapacity(segments.count)
-        for segment in segments {
-            try Task.checkCancellation()
+        // Only the cheap classification happens up front. Each segment is
+        // split into pieces just before it is cleaned: planning the whole
+        // transcript first could spend the run's entire budget before the
+        // first generation, leaving nothing in the checkpoint, so every
+        // resumed run would repeat the same planning and never progress.
+        let plans: [SegmentPlan] = segments.map { segment in
             let rawText = segment.text
             if rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                plans.append(SegmentPlan(segment: segment, kind: .empty))
+                return SegmentPlan(segment: segment, kind: .empty)
             } else if isHesitationOnly(rawText) {
-                plans.append(SegmentPlan(segment: segment, kind: .hesitationOnly))
-            } else {
-                let pieces = try await inputPieces(for: rawText, overhead: overhead, counter: counter)
-                plans.append(SegmentPlan(segment: segment, kind: .pieces(pieces)))
+                return SegmentPlan(segment: segment, kind: .hesitationOnly)
             }
+            return SegmentPlan(segment: segment, kind: .pending)
         }
 
-        let totalPieces = plans.reduce(0) { total, plan in
-            if case .pieces(let pieces) = plan.kind { return total + pieces.count }
+        // Every pending segment is at least one passage; the total grows as
+        // planning finds segments that need splitting, and is exact once the
+        // last one is planned.
+        var totalPieces = plans.reduce(0) { total, plan in
+            if case .pending = plan.kind { return total + 1 }
             return total
         }
         report.piecesPlanned = totalPieces
@@ -350,7 +359,11 @@ struct TranscriptCleanupCoordinator: Sendable {
                 cleanedSegments.append(plan.segment.withCleanup(TranscriptSegmentCleanup(normalizedText: "")))
                 cleanedSegmentCount += 1
                 continue
-            case .pieces(let pieces):
+            case .pending:
+                try Task.checkCancellation()
+                let pieces = try await inputPieces(for: plan.segment.text, overhead: overhead, counter: counter)
+                totalPieces += pieces.count - 1
+                report.piecesPlanned = totalPieces
                 var parts: [String] = []
                 var segmentCleanedPieces = 0
                 for (index, planned) in pieces.enumerated() {
@@ -657,8 +670,8 @@ struct TranscriptCleanupCoordinator: Sendable {
         report: RunReport
     ) async throws -> TranscriptCleanupGeneration {
         let start = Date()
-        // The run's single deadline check: every model call starts here, and
-        // `withTimeout` traps on a negative duration.
+        // Every model call checks the deadline here (planning checks it in
+        // `TokenCounter`), and `withTimeout` traps on a negative duration.
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else { throw RunTimeLimitReached() }
         let normalizer = self.normalizer
@@ -932,16 +945,23 @@ private actor TranscriptCleanupActivity {
 /// Memoizes rendered-request token counts for one run. Planning measures each
 /// sentence, each assembled piece, and the empty overhead; the same strings
 /// recur, and each count is a full chat-template render plus tokenization.
+/// An uncached count past the run's deadline ends the run, so planning a
+/// long transcript cannot hold the MLX permit past `maximumRunDuration`.
 private final class TokenCounter {
     private let normalizer: any TranscriptCleanupNormalizing
+    private let deadline: Date
     private var cache: [String: Int] = [:]
 
-    init(normalizer: any TranscriptCleanupNormalizing) {
+    init(normalizer: any TranscriptCleanupNormalizing, deadline: Date) {
         self.normalizer = normalizer
+        self.deadline = deadline
     }
 
     func count(_ text: String) async throws -> Int {
         if let cached = cache[text] { return cached }
+        guard deadline.timeIntervalSinceNow > 0 else {
+            throw TranscriptCleanupCoordinator.RunTimeLimitReached()
+        }
         let value = try await normalizer.renderedRequestTokenCount(for: text)
         cache[text] = value
         return value

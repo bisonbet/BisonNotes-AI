@@ -94,9 +94,37 @@ final class TranscriptCleanupRobustnessTests: XCTestCase {
         let updates = recorder.values
         // Two passages for the long turn, one for the short turn; the
         // hesitation-only turn needs no model call and is not a passage.
-        XCTAssertEqual(updates.first, TranscriptCleanupProgress(completedPieces: 0, totalPieces: 3))
+        // Segments are split as they are reached, so the first total counts
+        // one passage per turn and grows once the long turn is planned.
+        XCTAssertEqual(updates.first, TranscriptCleanupProgress(completedPieces: 0, totalPieces: 2))
         XCTAssertEqual(updates.last, TranscriptCleanupProgress(completedPieces: 3, totalPieces: 3))
         XCTAssertEqual(updates.map(\.completedPieces), [0, 1, 2, 3])
+        XCTAssertEqual(updates.map(\.totalPieces), updates.map(\.totalPieces).sorted(), "The total never shrinks")
+    }
+
+    /// Planning counts against the run's deadline, and each segment is planned
+    /// just before it is cleaned. A run whose budget ends mid-transcript has
+    /// already checkpointed the passages before that point, so the next run
+    /// makes progress instead of repeating the same planning pass.
+    func testRunDeadlineBoundsPlanningAndKeepsEarlierPassages() async {
+        let first = makeSegment(text: "first segment text")
+        let second = makeSegment(text: "second segment text")
+        let checkpoint = MemoryCheckpoint()
+        let normalizer = ScriptedNormalizer(tokenCountDelayAfter: 2, tokenCountDelay: 0.3)
+
+        let result = await TranscriptCleanupCoordinator(
+            normalizer: normalizer,
+            availabilityProvider: { .available },
+            runDuration: 0.2
+        ).clean(segments: [first, second], configuration: englishConfiguration(), checkpoint: checkpoint)
+
+        XCTAssertEqual(result.warning, .timeLimitReached)
+        let requests = await normalizer.normalizationRequests
+        XCTAssertEqual(requests, [first.text], "The first passage is cleaned before the second is planned")
+        let saved = await checkpoint.outcome(
+            forPiece: TranscriptCleanupCoordinator.checkpointKey(segmentID: first.id, index: 0, piece: first.text)
+        )
+        XCTAssertEqual(saved, .cleaned(ScriptedNormalizer.cleaned(first.text)))
     }
 
     /// A resumed run skips passages the checkpoint already holds — including
@@ -1329,6 +1357,10 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
     private(set) var isBlocked = false
     private(set) var normalizationRequests: [String] = []
     private(set) var tokenRequestCount = 0
+    /// Token counts after the first `tokenCountDelayAfter` take
+    /// `tokenCountDelay` seconds each, standing in for slow planning.
+    private let tokenCountDelayAfter: Int
+    private let tokenCountDelay: TimeInterval
 
     init(
         ready: Bool = true,
@@ -1339,8 +1371,12 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
         blockingPieces: Set<Int> = [],
         throwingPieces: [Int: TranscriptCleanupNormalizerError] = [:],
         errorWhenCancelled: TranscriptCleanupNormalizerError? = nil,
-        oversizedWords: Set<String> = []
+        oversizedWords: Set<String> = [],
+        tokenCountDelayAfter: Int = .max,
+        tokenCountDelay: TimeInterval = 0
     ) {
+        self.tokenCountDelayAfter = tokenCountDelayAfter
+        self.tokenCountDelay = tokenCountDelay
         self.oversizedWords = oversizedWords
         self.ready = ready
         self.blocksReadiness = blocksReadiness
@@ -1373,6 +1409,9 @@ private actor ScriptedNormalizer: TranscriptCleanupNormalizing {
 
     func renderedRequestTokenCount(for rawText: String) async throws -> Int {
         tokenRequestCount += 1
+        if tokenRequestCount > tokenCountDelayAfter {
+            try await Task.sleep(nanoseconds: UInt64(tokenCountDelay * 1_000_000_000))
+        }
         let words = rawText.split(whereSeparator: \.isWhitespace).map(String.init)
         let cost = words.reduce(0) { total, word in
             total + (oversizedWords.contains(word) ? 2_000 : tokenScale)
