@@ -33,7 +33,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 - ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
 - 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
 - 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
-- ✨ **Optional English Transcript Cleanup** — Explicitly download S1-mini by Superwhisper, then clean completed file transcripts on-device while retaining the original
+- ✨ **Optional English Transcript Cleanup (Experimental)** — Explicitly download S1-mini by Superwhisper, then clean completed file transcripts on-device while retaining the original
 - 🤖 **Pluggable AI Engines** — On-device MLX Swift, Apple Foundation Models, OpenAI-compatible, Mistral AI, Google AI Studio, Whisper, Wyoming, and Ollama on native macOS
 - 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
 - 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
@@ -55,9 +55,11 @@ In-app Help links derive both the page slug and the anchor from the installed ma
 
 ## Transcript Cleanup
 
-The optional **Clean up transcripts (English only)** setting runs S1-mini by Superwhisper on completed file transcriptions on supported Apple-silicon Mac and physical iPhone/iPad targets. It is off by default and never downloads the model when enabled; download S1-mini explicitly from Transcription Settings or the transcript editor first.
+The optional, experimental **Clean up transcripts (English only)** setting runs S1-mini by Superwhisper on completed file transcriptions on supported Apple-silicon Mac and physical iPhone/iPad targets. It is off by default and never downloads the model when enabled; download S1-mini explicitly from Transcription Settings or the transcript editor first.
 
 Cleanup preserves the original transcript, segment timing, speaker labels, and raw text. Existing editors open on **Original** and can switch to **Cleaned** when a revision exists. Copy, share, and ordinary text export follow the selected representation. The one-time **Clean up English transcript** action also works for imported text without enabling automatic cleanup or rerunning ASR/diarization. Automatic summaries continue to use original text.
+
+Automatic cleanup never holds up the transcript: the raw transcript is saved first, and cleanup runs afterwards from a durable queue while the app is in the foreground. iOS does not allow on-device GPU work in the background, so cleanup pauses when the app leaves the foreground and resumes when it returns, continuing from the passages it already finished. The transcript editor shows progress ("Cleaning… 12 of 40 passages") for both automatic and manual cleanup. A passage S1-mini cannot clean keeps its original text and the rest of the transcript is still cleaned; the editor says how many passages were kept. Unsupported devices, a missing model, and non-English transcripts are reported immediately, without queuing anything.
 
 The model is English-only and runs locally. Unsupported targets and simulators show an availability reason. An older app may ignore or drop the optional cleaned fields if it rewrites a transcript; the original text remains usable.
 
@@ -84,7 +86,7 @@ The model is English-only and runs locally. Unsupported targets and simulators s
 - Enabling Record Meeting Audio now provides a guided Screen & System Audio Recording permission flow, including the required quit-and-reopen step. If Live Transcription is enabled, the finalized meeting recording is queued for file-based transcription so the combined audio is transcribed.
 - Native macOS can run the Ternary Bonsai 27B MLX model on Macs with at least 16 GB RAM; the approximately 8.5 GB model remains excluded from iPhone and iPad.
 - On-device Parakeet setup now recovers valid cached models more reliably, reports missing model assets accurately, and waits for model preparation to finish before starting transcription.
-- Local Speaker Labels are opt-in post-processing for completed Parakeet recordings, imports, and transcript re-runs. Offline VBx is the recommended method; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. A failed label pass keeps the complete unlabeled Parakeet transcript.
+- Local Speaker Labels are opt-in post-processing for completed Parakeet recordings, imports, and transcript re-runs. Offline VBx is the recommended method; Nemotron 3 is experimental and supports up to 8 speakers; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. A failed label pass keeps the complete unlabeled Parakeet transcript.
 - Summary controls are shared across the active engines: Brief, Balanced, or Detailed narrative output, plus Off or Light thinking when the selected model supports a safe thinking control. Thinking output stays out of the user-visible summary and structured metadata.
 - The provider surface is streamlined: AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are removed, existing selections migrate to supported replacements, Ollama is native-macOS-only, and external llama.cpp servers remain available through Compatible API.
 - Import from web links can now bring in direct audio/video files, transcript documents, and public YouTube captions, with a guided pasted-transcript recovery flow when YouTube blocks automated caption downloads.
@@ -291,8 +293,9 @@ Parakeet is the sole on-device transcription engine as of v1.8 (WhisperKit was r
 Local Speaker Labels are an optional post-processing step for completed Parakeet recordings, imported audio, and transcript re-runs. The setting is off by default and does not affect Live Transcription or any other transcription engine.
 
 - **Offline VBx — Recommended**: the normal local choice; it estimates the number of speakers rather than imposing an app-side two- or three-speaker cap.
+- **Nemotron 3 — Experimental**: NVIDIA's Nemotron 3 Diarization model, run on-device through FluidAudio. It supports up to 8 speakers; a ninth voice is merged into another speaker rather than reported, so choose VBx for larger groups. It has no app-side duration limit.
 - **LS-EEND — Experimental**: the DIHARD3 500 ms model supports up to 10 speakers, but labels may be over-segmented or less stable. LS-EEND is guarded at one hour; choose VBx for longer meetings.
-- **Model lifecycle**: choose a method, then explicitly download/prepare its speaker model from On Device settings. Enabling labels or switching methods never downloads during transcription. Parakeet, VBx, and LS-EEND readiness, cached files, unload, and delete operations are independent; deleting one does not delete the others. Cached models work offline after the initial HTTPS download.
+- **Model lifecycle**: choose a method, then explicitly download/prepare its speaker model from On Device settings. Enabling labels or switching methods never downloads during transcription. Parakeet, VBx, Nemotron 3, and LS-EEND readiness, cached files, unload, and delete operations are independent; deleting one does not delete the others. Cached models work offline after the initial HTTPS download.
 - **Failures**: if a model is missing, the one-hour LS-EEND limit is reached, or alignment/diarization fails, the complete unlabeled Parakeet transcript is retained and a visible warning explains what happened. No cloud fallback is used.
 - **Privacy**: audio and diarization stay on the device and no API key is needed. Do not publish model sizes, RAM/device guarantees, speed, or accuracy until the opt-in measurement gate has captured and approved them.
 - **Speaker names**: open the existing transcript speaker controls, rename a speaker, and save. The renamed mapping is reused in speaker-aware transcript and summary presentation.
@@ -482,6 +485,7 @@ The direct dependencies bring in a number of excellent open-source libraries fro
 The software dependencies listed above are MIT or Apache 2.0 licensed as shown; see each project's repository for full license terms. Downloaded model assets are separate from software dependencies and have their own terms:
 
 - **Offline VBx / Pyannote Core ML assets**: [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml), CC BY 4.0 for the parent Pyannote material; the FluidAudio SDK is Apache 2.0.
+- **Nemotron 3 Diarization Core ML assets**: [FluidInference/nemotron-3-diarization-coreml](https://huggingface.co/FluidInference/nemotron-3-diarization-coreml), converted from [nvidia/Nemotron-3-Diarization](https://huggingface.co/nvidia/Nemotron-3-Diarization) under the OpenMDW License 1.1, which permits commercial use.
 - **LS-EEND DIHARD3 Core ML assets**: [FluidInference/ls-eend-coreml](https://huggingface.co/FluidInference/ls-eend-coreml), MIT; upstream dataset terms remain applicable.
 
 The LS-EEND model card and original paper/source credits should be reviewed with the model terms before release. BisonNotes does not redistribute consented or evaluation fixtures.

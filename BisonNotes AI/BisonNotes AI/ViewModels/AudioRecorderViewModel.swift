@@ -31,7 +31,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	// MARK: - Published Properties
 
-	@Published var isRecording = false
+	@Published var isRecording = false {
+		didSet {
+			guard oldValue != isRecording else { return }
+			updateTranscriptCleanupRecordingActivity()
+		}
+	}
 	@Published var isPlaying = false
 	@Published var recordingTime: TimeInterval = 0
 	@Published var playingTime: TimeInterval = 0
@@ -46,7 +51,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	@Published var isLocationTrackingEnabled: Bool = false
 	@Published var recordingState: RecordingState = .idle
 	@Published var isMacSystemAudioCaptureEnabled: Bool = false
-	@Published var isStartingRecording = false
+	@Published var isStartingRecording = false {
+		didSet {
+			guard oldValue != isStartingRecording else { return }
+			updateTranscriptCleanupRecordingActivity()
+		}
+	}
 
 	// MARK: - Internal Properties (accessed by extensions)
 
@@ -67,6 +77,10 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	var audioRecorder: AVAudioRecorder?
 	var audioPlayer: AVAudioPlayer?
+	/// Identifies the playback request whose player is still being prepared off
+	/// the main actor. Stopping clears it and a newer request replaces it, so a
+	/// preparation that finishes afterwards is discarded instead of starting audio.
+	var pendingPlaybackRequestID: UUID?
 	var recordingTimer: Timer?
 	var playingTimer: Timer?
 	var interruptionObserver: NSObjectProtocol?
@@ -585,6 +599,59 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	// MARK: - Core Recording
 
+	/// Automatic transcript cleanup (S1-mini on the GPU) never runs beside a
+	/// recording's audio engine and live-transcription models. Held from the
+	/// start request, not from when the recorder is running, so cleanup has
+	/// paused before the microphone opens; a start that fails releases it
+	/// when `isStartingRecording` clears. Observed here because many paths
+	/// start and stop a recording.
+	private func updateTranscriptCleanupRecordingActivity() {
+		TranscriptCleanupQueue.shared.recordingActivityDidChange(isRecording: isStartingRecording || isRecording)
+	}
+
+	/// Gives a cleanup run the start request paused a moment to unwind and
+	/// release its model before the recorder starts. Bounded: a recording
+	/// that starts late is worse than one that briefly overlaps cleanup.
+	/// Returns false when the start request `generation` was superseded during
+	/// the wait — stopped and started again — so a newer start owns the
+	/// startup flag and this one must neither proceed nor clear it.
+	private func waitForTranscriptCleanupToUnwind(startupGeneration generation: UInt64) async -> Bool {
+		let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(
+			timeout: Self.transcriptCleanupUnwindTimeout
+		)
+		if !unwound {
+			AppLog.shared.recording(
+				"Transcript cleanup was still unwinding when the recording started",
+				level: .default
+			)
+		}
+		guard recordingStartupGeneration == generation else {
+			AppLog.shared.recording("Recording start superseded while transcript cleanup unwound")
+			return false
+		}
+		return true
+	}
+
+	/// Advanced by every accepted start request, so work suspended on behalf
+	/// of one request can tell when a stop and a new start replaced it.
+	private var recordingStartupGeneration: UInt64 = 0
+
+	/// True while the start request `generation` is still the one in progress.
+	/// `isStartingRecording` alone is not enough after a suspension: a stop
+	/// and a newer start set it back to true on that start's behalf.
+	private func isCurrentRecordingStartup(_ generation: UInt64) -> Bool {
+		isStartingRecording && recordingStartupGeneration == generation
+	}
+
+	/// A stop and a newer start replaced the request `generation`. The newer
+	/// start owns the audio session and the startup flag; the old one must
+	/// touch neither.
+	private func isSupersededRecordingStartup(_ generation: UInt64) -> Bool {
+		recordingStartupGeneration != generation
+	}
+
+	private static let transcriptCleanupUnwindTimeout: TimeInterval = 3
+
 	@discardableResult
 	private func beginRecordingStartup() -> Bool {
 		#if os(macOS)
@@ -599,6 +666,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 			)
 			return false
 		}
+		recordingStartupGeneration &+= 1
 		isStartingRecording = true
 		return true
 	}
@@ -609,9 +677,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	func startRecording() {
 		guard beginRecordingStartup() else { return }
+		let startupGeneration = recordingStartupGeneration
 		AppLog.shared.recording("startRecording: requesting microphone permission")
 		#if os(macOS)
-		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		Task { @MainActor [weak self] in
+			guard let self,
+				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
+				  self.isStartingRecording else { return }
+			self.requestMicPermissionAndRecord(startupGeneration: startupGeneration)
+		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			Task { @MainActor [weak self] in
@@ -620,20 +694,30 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					AppLog.shared.recording("startRecording: microphone permission granted")
 					Task { @MainActor [weak self] in
 						guard let self else { return }
+						// Before the session is configured, so the abandoned-start
+						// handling below also covers a stop during this wait.
+						guard await self.waitForTranscriptCleanupToUnwind(
+							startupGeneration: startupGeneration
+						) else { return }
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
 							// stop path cannot undo that: `deactivateSession()` already returned early
 							// while this configuration was pending.
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
-								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+								isStillWanted: { [weak self] in self?.isCurrentRecordingStartup(startupGeneration) == true }
 							)
 							AppLog.shared.recording("Background recording session configured")
 							await self.applySelectedInputToSession()
 						} catch {
+							guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							self.errorMessage = "Failed to set up audio: \(error.localizedDescription)"
 							self.finishRecordingStartup()
+							return
+						}
+						guard !self.isSupersededRecordingStartup(startupGeneration) else {
+							AppLog.shared.recording("Recording start superseded during setup; leaving the session to the newer start")
 							return
 						}
 						guard self.isStartingRecording else {
@@ -649,6 +733,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					}
 				} else {
 					AppLog.shared.recording("startRecording: microphone permission denied", level: .error)
+					guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 					self.errorMessage = "Microphone permission denied"
 					self.finishRecordingStartup()
 				}
@@ -659,18 +744,18 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	#if os(macOS)
 	@MainActor
-	private func requestMicPermissionAndRecord() {
+	private func requestMicPermissionAndRecord(startupGeneration: UInt64) {
 		#if os(macOS)
 		let status = AVCaptureDevice.authorizationStatus(for: .audio)
 		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
 		case .authorized:
-			didReceiveMicrophonePermission(granted: true)
+			didReceiveMicrophonePermission(granted: true, startupGeneration: startupGeneration)
 		case .notDetermined:
 			AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
 				Task { @MainActor [weak self] in
 					AppLog.shared.recording("Mac mic permission result: \(granted)")
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		case .denied, .restricted:
@@ -687,12 +772,12 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		AppLog.shared.recording("Mac mic permission status: \(status.rawValue)")
 		switch status {
 		case .granted:
-			didReceiveMicrophonePermission(granted: true)
+			didReceiveMicrophonePermission(granted: true, startupGeneration: startupGeneration)
 		case .undetermined:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
 					AppLog.shared.recording("Mac mic permission result: \(granted)")
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		case .denied:
@@ -703,7 +788,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		@unknown default:
 			AVAudioApplication.requestRecordPermission { [weak self] granted in
 				Task { @MainActor [weak self] in
-					self?.didReceiveMicrophonePermission(granted: granted)
+					self?.didReceiveMicrophonePermission(granted: granted, startupGeneration: startupGeneration)
 				}
 			}
 		}
@@ -711,7 +796,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	}
 
 	@MainActor
-	private func didReceiveMicrophonePermission(granted: Bool) {
+	private func didReceiveMicrophonePermission(granted: Bool, startupGeneration: UInt64) {
+		// The permission prompt can stay up for as long as the user likes; a
+		// stop and a newer start in the meantime own the startup flag now.
+		guard !isSupersededRecordingStartup(startupGeneration) else {
+			AppLog.shared.recording("Recording start superseded while microphone permission was requested")
+			return
+		}
 		guard granted else {
 			errorMessage = "Microphone permission denied"
 			finishRecordingStartup()
@@ -725,6 +816,11 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		Task { @MainActor [weak self] in
 			guard let self else { return }
 			await self.applySelectedInputToSession()
+			// Stopped, or stopped and started again, while the input was applied.
+			guard self.isCurrentRecordingStartup(startupGeneration) else {
+				AppLog.shared.recording("Recording start abandoned before setup; not opening the microphone")
+				return
+			}
 			self.setupRecording()
 		}
 		#else
@@ -735,9 +831,15 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	func startBackgroundRecording() {
 		guard beginRecordingStartup() else { return }
+		let startupGeneration = recordingStartupGeneration
 		AppLog.shared.recording("startBackgroundRecording: requesting microphone permission")
 		#if os(macOS)
-		Task { @MainActor [weak self] in self?.requestMicPermissionAndRecord() }
+		Task { @MainActor [weak self] in
+			guard let self,
+				  await self.waitForTranscriptCleanupToUnwind(startupGeneration: startupGeneration),
+				  self.isStartingRecording else { return }
+			self.requestMicPermissionAndRecord(startupGeneration: startupGeneration)
+		}
 		#else
 		AVAudioApplication.requestRecordPermission { [weak self] granted in
 			Task { @MainActor [weak self] in
@@ -746,18 +848,28 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					AppLog.shared.recording("startBackgroundRecording: microphone permission granted")
 					Task { @MainActor [weak self] in
 						guard let self else { return }
+						// Before the session is configured, so the abandoned-start
+						// handling below also covers a stop during this wait.
+						guard await self.waitForTranscriptCleanupToUnwind(
+							startupGeneration: startupGeneration
+						) else { return }
 						do {
 							// Stopping during the activation await clears this flag. Without it the
 							// manager commits an exclusive session the user no longer wants, and the
 							// stop path cannot undo that: `deactivateSession()` already returned early
 							// while this configuration was pending.
 							try await self.enhancedAudioSessionManager.configureBackgroundRecording(
-								isStillWanted: { [weak self] in self?.isStartingRecording == true }
+								isStillWanted: { [weak self] in self?.isCurrentRecordingStartup(startupGeneration) == true }
 							)
 							await self.applySelectedInputToSession()
 						} catch {
+							guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 							AppLog.shared.recording("Failed to configure audio session: \(error)", level: .error)
 							self.finishRecordingStartup()
+							return
+						}
+						guard !self.isSupersededRecordingStartup(startupGeneration) else {
+							AppLog.shared.recording("Recording start superseded during setup; leaving the session to the newer start")
 							return
 						}
 						guard self.isStartingRecording else {
@@ -773,6 +885,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					}
 				} else {
 					AppLog.shared.recording("startBackgroundRecording: microphone permission denied", level: .error)
+					guard !self.isSupersededRecordingStartup(startupGeneration) else { return }
 					self.errorMessage = "Microphone permission denied"
 					self.finishRecordingStartup()
 				}
@@ -883,11 +996,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	}
 
 	func markRecordingStarted() {
+		// `isRecording` first, so the cleanup hold passes from startup to the
+		// recording without a gap in which the queue could start a run.
+		isRecording = true
 		finishRecordingStartup()
 		#if os(iOS)
 		recordingIntentActive = true
 		#endif
-		isRecording = true
 		recordingState = .recording
 		recordingTime = 0
 		lastCheckpointTime = Date()

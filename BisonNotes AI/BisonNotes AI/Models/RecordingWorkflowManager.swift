@@ -94,7 +94,10 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Transcription Workflow
 
     /// Creates a transcript linked to a recording with proper UUID relationships
-    func createTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) throws -> UUID? {
+    /// `selectedRepresentation` nil keeps the version the user last saved, so
+    /// a rerun or speaker relabel does not silently move summaries back to
+    /// the original text.
+    func createTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5, selectedRepresentation: TranscriptRepresentation? = nil) throws -> UUID? {
 
         guard let recording = try coreDataManager.fetchRecording(id: recordingId) else {
             throw RecordingWorkflowError.recordingNotFound(recordingId)
@@ -118,6 +121,9 @@ class RecordingWorkflowManager: ObservableObject {
             transcript.confidence = confidence
             transcript.segments = segmentsString
             transcript.speakerMappings = mappingsString
+            if let selectedRepresentation {
+                transcript.selectedRepresentation = selectedRepresentation.rawValue
+            }
             storedRecording.transcript = transcript
             storedRecording.transcriptId = transcript.id
             storedRecording.transcriptionStatus = ProcessingStatus.completed.rawValue

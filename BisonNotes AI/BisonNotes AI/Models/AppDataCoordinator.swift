@@ -134,14 +134,15 @@ class AppDataCoordinator: ObservableObject {
         return id
     }
 
-    func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5) throws -> UUID? {
+    func addTranscript(for recordingId: UUID, segments: [TranscriptSegment], speakerMappings: [String: String] = [:], engine: TranscriptionEngine? = nil, processingTime: TimeInterval = 0, confidence: Double = 0.5, selectedRepresentation: TranscriptRepresentation? = nil) throws -> UUID? {
         let result = try workflowManager.createTranscript(
             for: recordingId,
             segments: segments,
             speakerMappings: speakerMappings,
             engine: engine,
             processingTime: processingTime,
-            confidence: confidence
+            confidence: confidence,
+            selectedRepresentation: selectedRepresentation
         )
         if result != nil {
             do {

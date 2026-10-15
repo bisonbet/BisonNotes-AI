@@ -8,6 +8,7 @@ import Foundation
 public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
     case offlineVBx
     case experimentalLSEEND
+    case experimentalNemotron3
 
     public static let defaultMethod: LocalDiarizationMethod = .offlineVBx
 
@@ -17,32 +18,78 @@ public enum LocalDiarizationMethod: String, CaseIterable, Codable, Sendable {
             return "Offline VBx"
         case .experimentalLSEEND:
             return "LS-EEND"
+        case .experimentalNemotron3:
+            return "Nemotron 3"
         }
     }
 
-    public var isExperimental: Bool {
-        self == .experimentalLSEEND
-    }
-
-    /// LS-EEND's completed-file contract is limited to one hour. VBx has no
-    /// app-imposed speaker-count or duration cap in this layer.
-    public var maximumSupportedDuration: TimeInterval? {
+    /// Each method's models live in their own folder under the local
+    /// speaker-labels root. These names are on users' disks: renaming one
+    /// orphans every existing download of that method.
+    var cacheFolderName: String {
         switch self {
         case .offlineVBx:
+            return "offline-vbx"
+        case .experimentalLSEEND:
+            return "ls-eend-dihard3-500ms"
+        case .experimentalNemotron3:
+            return "nemotron3-c128-split-w8a8"
+        }
+    }
+
+    /// The single source for how a method is presented: the settings badge
+    /// reads this rather than keeping its own switch.
+    public var tier: LocalDiarizationMethodTier {
+        switch self {
+        case .offlineVBx:
+            return .recommended
+        case .experimentalNemotron3:
+            return .experimental
+        case .experimentalLSEEND:
+            return .experimental
+        }
+    }
+
+    /// LS-EEND's completed-file contract is limited to one hour. VBx and
+    /// Nemotron 3 have no app-imposed duration cap in this layer.
+    public var maximumSupportedDuration: TimeInterval? {
+        switch self {
+        case .offlineVBx, .experimentalNemotron3:
             return nil
         case .experimentalLSEEND:
             return 60 * 60
         }
     }
 
-    /// The initial LS-EEND DIHARD3 model exposes up to ten speaker tracks.
-    /// Offline VBx leaves speaker count estimation to the SDK.
+    /// The initial LS-EEND DIHARD3 model exposes up to ten speaker tracks and
+    /// Nemotron 3 exactly eight. Offline VBx leaves speaker count estimation
+    /// to the SDK.
+    ///
+    /// Nemotron 3's limit is structural rather than detectable: its output has
+    /// eight arrival-ordered channels, so a ninth voice is attributed to an
+    /// existing channel instead of being reported as over the limit.
     public var maximumSupportedSpeakerCount: Int? {
         switch self {
         case .offlineVBx:
             return nil
         case .experimentalLSEEND:
             return 10
+        case .experimentalNemotron3:
+            return 8
+        }
+    }
+}
+
+public enum LocalDiarizationMethodTier: Sendable {
+    case recommended
+    case experimental
+
+    public var badgeText: String {
+        switch self {
+        case .recommended:
+            return "Recommended"
+        case .experimental:
+            return "Experimental"
         }
     }
 }
@@ -58,6 +105,33 @@ public struct LocalSpeakerLabelsConfiguration: Codable, Equatable, Sendable {
     ) {
         self.isEnabled = isEnabled
         self.method = method
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case isEnabled
+        case method
+    }
+
+    /// A saved job whose method this build does not know — written by a build
+    /// with a newer method, or one since removed — fails closed: labels off,
+    /// rather than running a method nobody chose for that job. It decodes
+    /// instead of throwing, because a throw here discarded the whole persisted
+    /// envelope on the Core Data restore path, taking the job's model name and
+    /// transcript-cleanup choice with it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let rawMethod = try container.decodeIfPresent(String.self, forKey: .method)
+        let knownMethod = rawMethod.flatMap(LocalDiarizationMethod.init(rawValue:))
+        let wantsLabels = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? false
+        isEnabled = wantsLabels && knownMethod != nil
+        method = knownMethod ?? .defaultMethod
+        if wantsLabels, knownMethod == nil {
+            AppLog.shared.transcription(
+                "Unknown speaker-label method \"\(rawMethod ?? "none")\" in a saved job; "
+                    + "transcribing without speaker labels",
+                level: .default
+            )
+        }
     }
 }
 

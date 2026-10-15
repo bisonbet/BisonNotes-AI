@@ -203,6 +203,7 @@ struct SettingsView: View {
                 moderniCloudSection
                 modernBehaviorSection
                 modernMaintenanceSection
+                modernAboutSection
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -566,14 +567,6 @@ struct SettingsView: View {
                     .foregroundColor(.red)
             }
 
-            ModernSettingsNavigationRow(
-                title: "Acknowledgements",
-                subtitle: "Open-source projects and licenses",
-                systemImage: "hand.raised.fill",
-                tint: .indigo,
-                action: { showingAcknowledgements = true }
-            )
-
             Button {
                 showingAdvancedTroubleshooting = true
             } label: {
@@ -582,6 +575,20 @@ struct SettingsView: View {
             }
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsMaintenanceSection)
+    }
+
+    private var modernAboutSection: some View {
+        ModernSettingsCard(title: "About & Support", systemImage: "info.circle", tint: .indigo) {
+            ModernSettingsNavigationRow(
+                title: "Acknowledgements",
+                subtitle: "Open-source projects and licenses",
+                systemImage: "hand.raised.fill",
+                tint: .indigo,
+                action: { showingAcknowledgements = true }
+            )
+
+            BisonNotesSupportLinks()
+        }
     }
 
     private var preferencesSection: some View {

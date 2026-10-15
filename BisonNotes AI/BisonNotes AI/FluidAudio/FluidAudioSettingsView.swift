@@ -168,6 +168,7 @@ struct FluidAudioSettingsView: View {
             }
         }
         .scrollContentBackground(.hidden)
+        .modifier(OpaqueTopScrollEdge())
         .background(Color(.systemGroupedBackground))
         .navigationTitle("On Device Transcription")
 #if !os(macOS)
@@ -183,6 +184,20 @@ struct FluidAudioSettingsView: View {
         .onDisappear(perform: stopLocalSpeakerObservationTasks)
     }
 
+}
+
+/// iOS 26's default soft scroll edge lets scrolled-up text show through the
+/// navigation bar's glass, where it has too little contrast to read; the
+/// accessibility audit failed on the section header beneath the title. A hard
+/// edge cuts content off at the bar instead. Earlier systems have no soft edge.
+private struct OpaqueTopScrollEdge: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            content.scrollEdgeEffectStyle(.hard, for: .top)
+        } else {
+            content
+        }
+    }
 }
 
 private extension FluidAudioSettingsView {
@@ -278,6 +293,7 @@ private extension FluidAudioSettingsView {
                     .accessibilityAddTraits(.isHeader)
 
                 localMethodButton(.offlineVBx)
+                localMethodButton(.experimentalNemotron3)
                 localMethodButton(.experimentalLSEEND)
             }
 
@@ -391,11 +407,7 @@ private extension FluidAudioSettingsView {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityIdentifier(
-            method == .offlineVBx
-                ? BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
-                : BisonNotesAccessibilityID.localSpeakerMethodLSEEND
-        )
+        .accessibilityIdentifier(localMethodAccessibilityIdentifier(method))
         .accessibilityLabel(localSpeakerMethodAccessibilityLabel(method))
         .accessibilityValue(selectedLocalSpeakerMethod == method ? "Selected" : "Not selected")
         .accessibilityHint(
@@ -420,19 +432,26 @@ private extension FluidAudioSettingsView {
     }
 
     private func localMethodBadge(_ method: LocalDiarizationMethod) -> some View {
-        Text(method == .offlineVBx ? "Recommended" : "Experimental")
+        Text(localMethodBadgeText(method))
             .font(.subheadline.weight(.semibold))
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    private func localMethodBadgeText(_ method: LocalDiarizationMethod) -> String {
+        method.tier.badgeText
+    }
+
     private func localMethodSpeakerCount(_ method: LocalDiarizationMethod) -> some View {
-        Text(
-            method == .experimentalLSEEND
-                ? "up to 10 speakers"
-                : "speaker count estimated"
-        )
-        .font(.subheadline)
-        .fixedSize(horizontal: false, vertical: true)
+        Text(localMethodSpeakerCountText(method))
+            .font(.subheadline)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func localMethodSpeakerCountText(_ method: LocalDiarizationMethod) -> String {
+        guard let maximum = method.maximumSupportedSpeakerCount else {
+            return "speaker count estimated"
+        }
+        return "up to \(maximum) speakers"
     }
 
     private var localSpeakerMethodDescription: String {
@@ -440,6 +459,9 @@ private extension FluidAudioSettingsView {
         case .offlineVBx:
             return "Recommended for normal use. Offline VBx estimates the number of speakers "
                 + "and does not impose a two- or three-speaker cap."
+        case .experimentalNemotron3:
+            return "Experimental NVIDIA Nemotron 3 Diarization model for up to 8 speakers. A ninth voice is "
+                + "merged into another speaker rather than reported, so choose Offline VBx for larger groups."
         case .experimentalLSEEND:
             return "Experimental DIHARD3 model for up to 10 speakers. It processes complete files "
                 + "up to one hour and may over-segment or produce less-stable labels."
@@ -447,11 +469,17 @@ private extension FluidAudioSettingsView {
     }
 
     private func localSpeakerMethodAccessibilityLabel(_ method: LocalDiarizationMethod) -> String {
+        "\(method.displayName), \(localMethodBadgeText(method)), \(localMethodSpeakerCountText(method))"
+    }
+
+    private func localMethodAccessibilityIdentifier(_ method: LocalDiarizationMethod) -> String {
         switch method {
         case .offlineVBx:
-            return "Offline VBx, Recommended, speaker count estimated"
+            return BisonNotesAccessibilityID.localSpeakerMethodOfflineVBx
+        case .experimentalNemotron3:
+            return BisonNotesAccessibilityID.localSpeakerMethodNemotron3
         case .experimentalLSEEND:
-            return "LS-EEND, Experimental, up to 10 speakers"
+            return BisonNotesAccessibilityID.localSpeakerMethodLSEEND
         }
     }
 
@@ -500,13 +528,11 @@ private extension FluidAudioSettingsView {
         }
     }
 
+    /// An unknown stored method — typically written by a newer build the user
+    /// has since replaced — is shown and run as the default, but is not
+    /// overwritten just because this screen opened. Returning to the newer
+    /// build then restores the user's choice. Only an explicit pick replaces it.
     private func normalizeAndRefreshLocalSpeakerSettings() {
-        let normalized = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(
-            selectedLocalSpeakerMethodRaw
-        )
-        if selectedLocalSpeakerMethodRaw != normalized {
-            selectedLocalSpeakerMethodRaw = normalized
-        }
         clearLocalSpeakerTransientState()
         if localSpeakerLabelsEnabled {
             refreshLocalSpeakerModelStatus()
@@ -516,7 +542,13 @@ private extension FluidAudioSettingsView {
     private func setLocalSpeakerMethod(_ rawValue: String) {
         let previousMethod = selectedLocalSpeakerMethod
         let normalized = FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(rawValue)
-        guard normalized != selectedLocalSpeakerMethodRaw else {
+        guard normalized != previousMethod.rawValue else {
+            // Picking the method already in effect. If the stored value was
+            // unknown and shown as this fallback, the pick is now an explicit
+            // choice, so store it — without unloading the model it keeps using.
+            if selectedLocalSpeakerMethodRaw != normalized {
+                selectedLocalSpeakerMethodRaw = normalized
+            }
             refreshLocalSpeakerModelStatus()
             return
         }
@@ -604,7 +636,12 @@ private extension FluidAudioSettingsView {
                       selectedLocalSpeakerMethod == method else { return }
                 localSpeakerProgress = nil
                 localSpeakerStatus = LocalDiarizationModelStatus(method: method, state: .failed)
-                localSpeakerError = "\(method.displayName): Speaker model preparation failed."
+                if case .cacheLayoutMismatch? = error as? LocalDiarizationError {
+                    // Retrying cannot fix this one; say what can.
+                    localSpeakerError = error.localizedDescription
+                } else {
+                    localSpeakerError = "\(method.displayName): Speaker model preparation failed."
+                }
             }
         }
     }

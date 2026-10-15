@@ -2049,12 +2049,23 @@ class CoreDataManager: ObservableObject {
     }
 
     private func save(_ saveContext: NSManagedObjectContext, operation: String) throws {
+        announceDeletedTranscriptContent(try commit(saveContext, operation: operation))
+    }
+
+    /// Saves `saveContext` and returns the recordings whose transcript content
+    /// the save deleted. Callers announce them with
+    /// `announceDeletedTranscriptContent` once the main context reflects the
+    /// save — at once for the main context, after the merge for a sibling.
+    private func commit(_ saveContext: NSManagedObjectContext, operation: String) throws -> Set<UUID> {
         #if DEBUG
         if let injectedFailure = Self.injectedSaveFailure,
            (Self.injectedSaveOperation == nil || Self.injectedSaveOperation == operation) {
             throw CoreDataSaveError(operation: operation, failure: injectedFailure)
         }
         #endif
+
+        // Read before the save: afterwards deleted rows have nothing to ask.
+        let deletedCleanupRecordingIds = Self.transcriptCleanupRecordingIds(deletedIn: saveContext)
 
         do {
             try saveContext.save()
@@ -2071,6 +2082,118 @@ class CoreDataManager: ObservableObject {
             )
             throw wrappedError
         }
+        return deletedCleanupRecordingIds
+    }
+
+    /// Post-commit, for every delete path — the user's, another device's
+    /// tombstone, orphan and missing-file cleanup alike. Whoever holds state
+    /// derived from the deleted content — the transcript cleanup queue and its
+    /// checkpoints, which hold that text — discards it. Announced rather than
+    /// called, so the data layer does not depend on those features.
+    private func announceDeletedTranscriptContent(_ recordingIds: Set<UUID>) {
+        guard !recordingIds.isEmpty else { return }
+        afterCommit("Announcing deleted transcript content", category: .coreData) {
+            NotificationCenter.default.post(
+                name: Self.transcriptContentDeletedNotification,
+                object: self,
+                userInfo: [Self.deletedRecordingIdsKey: recordingIds]
+            )
+        }
+    }
+
+    /// Posted synchronously on the main thread after a save commits that
+    /// deleted a recording, or the transcript its recording pointed at, and
+    /// after the main context has merged that save.
+    /// `userInfo[deletedRecordingIdsKey]` is the affected `Set<UUID>`.
+    /// Nonisolated: observers read them from `@Sendable` notification
+    /// closures, and both are immutable Sendable constants.
+    nonisolated static let transcriptContentDeletedNotification = Notification.Name("CoreDataManagerTranscriptContentDeleted")
+    nonisolated static let deletedRecordingIdsKey = "recordingIds"
+
+    /// Recordings whose transcript cleanup state describes content this save
+    /// deletes: a deleted recording, or a deleted transcript the recording
+    /// pointed at before the save. A superseded duplicate transcript is not the
+    /// one a queued cleanup or checkpoint describes, so it leaves them alone.
+    private static func transcriptCleanupRecordingIds(deletedIn context: NSManagedObjectContext) -> Set<UUID> {
+        var recordingIds = Set<UUID>()
+        // Deleted transcripts whose recording must be looked up to tell
+        // whether it was that recording's current transcript.
+        var unresolved: [(transcriptId: UUID, recordingId: UUID)] = []
+        var resolved: [(transcriptId: UUID, recordingId: UUID, recording: RecordingEntry)] = []
+        for object in context.deletedObjects {
+            if let recording = object as? RecordingEntry, let recordingId = recording.id {
+                recordingIds.insert(recordingId)
+            } else if let transcript = object as? TranscriptEntry, let transcriptId = transcript.id {
+                // Committed values throughout: the deletion unlinks both sides
+                // of the relationship before this save, so a legacy row with no
+                // denormalized `recordingId` has no live link left to read.
+                let committed = transcript.committedValues(forKeys: ["recordingId", "recording"])
+                let linkedRecording = transcript.recording
+                    ?? committedObject(committed["recording"], in: context) as? RecordingEntry
+                guard let recordingId = transcript.recordingId
+                        ?? committed["recordingId"] as? UUID
+                        ?? linkedRecording?.id else {
+                    continue
+                }
+                if let linkedRecording {
+                    resolved.append((transcriptId, recordingId, linkedRecording))
+                } else {
+                    unresolved.append((transcriptId, recordingId))
+                }
+            }
+        }
+
+        if !unresolved.isEmpty {
+            // One fetch for every unlinked transcript: a reconcile that prunes
+            // hundreds of superseded rows must not issue a fetch per row.
+            let wantedIds = Array(Set(unresolved.map(\.recordingId)))
+            let request: NSFetchRequest<RecordingEntry> = RecordingEntry.fetchRequest()
+            request.predicate = NSPredicate(format: "id IN %@", wantedIds)
+            do {
+                let recordingsById = Dictionary(
+                    try context.fetch(request).compactMap { recording in recording.id.map { ($0, recording) } },
+                    uniquingKeysWith: { first, _ in first }
+                )
+                for item in unresolved {
+                    if let recording = recordingsById[item.recordingId] {
+                        resolved.append((item.transcriptId, item.recordingId, recording))
+                    } else {
+                        // No recording left to point anywhere else.
+                        recordingIds.insert(item.recordingId)
+                    }
+                }
+            } catch {
+                // Unknown whether these were their recordings' current
+                // transcripts. Discard their cleanup anyway: a checkpoint may
+                // hold the deleted text, and losing a cleanup is recoverable.
+                // Say why, so it is not silent.
+                AppLog.shared.coreData(
+                    "durable_read_failed operation=transcript-cleanup-discard "
+                        + "recordings=\(wantedIds.count) cause=\(error.localizedDescription)",
+                    level: .error
+                )
+                recordingIds.formUnion(wantedIds)
+            }
+        }
+
+        for item in resolved {
+            let recordingCommitted = item.recording.committedValues(forKeys: ["transcriptId", "transcript"])
+            let currentTranscriptId = recordingCommitted["transcriptId"] as? UUID
+                ?? (committedObject(recordingCommitted["transcript"], in: context) as? TranscriptEntry)?.id
+                ?? item.recording.transcript?.id
+            if currentTranscriptId == nil || currentTranscriptId == item.transcriptId {
+                recordingIds.insert(item.recordingId)
+            }
+        }
+        return recordingIds
+    }
+
+    /// A to-one relationship's committed value, which Core Data reports as the
+    /// related object or as its object ID.
+    private static func committedObject(_ value: Any?, in context: NSManagedObjectContext) -> NSManagedObject? {
+        if let object = value as? NSManagedObject { return object }
+        if let objectID = value as? NSManagedObjectID { return try? context.existingObject(with: objectID) }
+        return nil
     }
 
     /// Performs a mutation in a sibling context so a failed save cannot roll
@@ -2101,8 +2224,11 @@ class CoreDataManager: ObservableObject {
                 NSUpdatedObjectsKey: Array(isolatedContext.updatedObjects).map(\.objectID),
                 NSDeletedObjectsKey: Array(isolatedContext.deletedObjects).map(\.objectID)
             ]
-            try save(isolatedContext, operation: operation)
+            let deletedRecordingIds = try commit(isolatedContext, operation: operation)
             NSManagedObjectContext.mergeChanges(fromRemoteContextSave: changes, into: [context])
+            // After the merge, so an observer reading the main context does not
+            // see rows this save already deleted.
+            announceDeletedTranscriptContent(deletedRecordingIds)
             return result
         } catch {
             isolatedContext.rollback()
@@ -2195,7 +2321,7 @@ class CoreDataManager: ObservableObject {
         // Convert engine string to enum
         let engine = transcriptEntry.engine.flatMap { TranscriptionEngine(rawValue: $0) }
 
-        return TranscriptData(
+        var transcriptData = TranscriptData(
             id: transcriptEntry.id ?? UUID(),
             recordingId: recordingId,
             recordingURL: url,
@@ -2209,6 +2335,8 @@ class CoreDataManager: ObservableObject {
             createdAt: transcriptEntry.createdAt,
             lastModified: transcriptEntry.lastModified
         )
+        transcriptData.selectedRepresentation = TranscriptRepresentation(storedValue: transcriptEntry.selectedRepresentation)
+        return transcriptData
     }
 
     private func convertToEnhancedSummaryData(summaryEntry: SummaryEntry, recordingEntry: RecordingEntry) -> EnhancedSummaryData? {

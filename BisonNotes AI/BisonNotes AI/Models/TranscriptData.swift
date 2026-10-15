@@ -4,8 +4,9 @@ import Foundation
 
 /// The model-produced text associated with one original ASR segment.
 ///
-/// The original `TranscriptSegment.text` remains the source of truth for
-/// summaries, word timing, and all existing transcript consumers. Cleanup is
+/// The original `TranscriptSegment.text` remains the source of truth for word
+/// timing and all existing transcript consumers. Summaries follow the version
+/// the user saved (`TranscriptData.selectedRepresentation`). Cleanup is
 /// intentionally additive so older records and older app versions can still
 /// read the original transcript.
 struct TranscriptSegmentCleanup: Codable, Equatable, Sendable {
@@ -30,12 +31,18 @@ struct TranscriptSegmentCleanup: Codable, Equatable, Sendable {
     }
 }
 
-enum TranscriptRepresentation: String, CaseIterable, Identifiable, Sendable {
+enum TranscriptRepresentation: String, CaseIterable, Identifiable, Codable, Sendable {
     case original
     case cleaned
 
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
+
+    /// Reads the stored `TranscriptEntry.selectedRepresentation` value. A
+    /// missing or unknown value is the original transcript.
+    init(storedValue: String?) {
+        self = storedValue.flatMap(TranscriptRepresentation.init(rawValue:)) ?? .original
+    }
 }
 
 struct TranscriptSegment: Codable, Identifiable, Sendable {
@@ -193,6 +200,16 @@ public struct TranscriptData: Codable, Identifiable {
     let lastModified: Date
     let processingTime: TimeInterval
     let confidence: Double
+    /// The version the user last saved. Summaries read this version, falling
+    /// back to the original text for any segment that has no cleanup.
+    var selectedRepresentation: TranscriptRepresentation = .original
+
+    /// `selectedRepresentation` persists in Core Data, not in this legacy
+    /// JSON form, so files written before it existed still decode.
+    private enum CodingKeys: String, CodingKey {
+        case id, recordingId, recordingURL, recordingName, recordingDate, segments
+        case speakerMappings, engine, createdAt, lastModified, processingTime, confidence
+    }
 
     // Legacy initializer for backward compatibility
     init(recordingURL: URL, recordingName: String, recordingDate: Date, segments: [TranscriptSegment], speakerMappings: [String: String] = [:]) {
@@ -291,12 +308,12 @@ public struct TranscriptData: Codable, Identifiable {
             || (uniqueSpeakers.count == 1 && uniqueSpeakers.first != "Speaker" && uniqueSpeakers.first != "Unknown")
 
         guard hasMultipleSpeakers else {
-            return plainText
+            return plainText(for: selectedRepresentation)
         }
 
         return segments.map { segment in
             let name = speakerMappings[segment.speaker] ?? formatSpeakerName(segment.speaker)
-            return "\(name): \(segment.text)"
+            return "\(name): \(text(for: segment, representation: selectedRepresentation))"
         }.joined(separator: "\n")
     }
 
@@ -336,7 +353,7 @@ public struct TranscriptData: Codable, Identifiable {
         speakerMappings: [String: String]? = nil,
         lastModified: Date = Date()
     ) -> TranscriptData {
-        TranscriptData(
+        var copy = TranscriptData(
             id: id,
             recordingId: recordingId,
             recordingURL: recordingURL,
@@ -350,6 +367,8 @@ public struct TranscriptData: Codable, Identifiable {
             createdAt: createdAt,
             lastModified: lastModified
         )
+        copy.selectedRepresentation = selectedRepresentation
+        return copy
     }
 }
 

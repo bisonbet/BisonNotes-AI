@@ -640,6 +640,12 @@ class BackgroundProcessingManager: ObservableObject {
     // MARK: - Private Properties
 
     private var currentTaskHandle: Task<Void, Never>?
+    private let transcriptCleanupQueue: TranscriptCleanupQueue
+    #if DEBUG
+    private var transcriptionProcessorForTesting: (
+        @MainActor (ProcessingJob, TranscriptionEngine) async throws -> Void
+    )?
+    #endif
     private var externalTaskHandles: [UUID: Task<Void, Never>] = [:]
     /// Reason for the current cancellation — nil means user-initiated cancel
     private var cancellationReason: String?
@@ -687,10 +693,12 @@ class BackgroundProcessingManager: ObservableObject {
     private init(
         audioSessionManager: EnhancedAudioSessionManager = .shared,
         coreDataManager: CoreDataManager = CoreDataManager(),
+        transcriptCleanupQueue: TranscriptCleanupQueue = .shared,
         startBackgroundWork: Bool = true
     ) {
         self.audioSessionManager = audioSessionManager
         self.coreDataManager = coreDataManager
+        self.transcriptCleanupQueue = transcriptCleanupQueue
         self.previousSessionCrashed = AppLog.shared.previousSessionCrashed
 
         guard coreDataManager.persistenceState.isOperational else {
@@ -747,13 +755,18 @@ class BackgroundProcessingManager: ObservableObject {
     static func makeForTesting(
         coreDataManager: CoreDataManager,
         audioSessionManager: EnhancedAudioSessionManager = .shared,
-        startBackgroundWork: Bool = true
+        startBackgroundWork: Bool = true,
+        transcriptCleanupQueue: TranscriptCleanupQueue = .shared,
+        transcriptionProcessor: (@MainActor (ProcessingJob, TranscriptionEngine) async throws -> Void)? = nil
     ) -> BackgroundProcessingManager {
-        BackgroundProcessingManager(
+        let manager = BackgroundProcessingManager(
             audioSessionManager: audioSessionManager,
             coreDataManager: coreDataManager,
+            transcriptCleanupQueue: transcriptCleanupQueue,
             startBackgroundWork: startBackgroundWork
         )
+        manager.transcriptionProcessorForTesting = transcriptionProcessor
+        return manager
     }
     func resumePersistedJobsForTesting() async {
         await resumeInterruptedJobs(notify: false)
@@ -1180,7 +1193,7 @@ class BackgroundProcessingManager: ObservableObject {
             return
         }
         // Don't start a new job if one is already running
-        guard currentJob == nil else { return }
+        guard currentJob == nil, currentTaskHandle == nil else { return }
 
         // Find the next queued job
         guard let nextJob = activeJobs.first(where: { $0.status == .queued && !isRecoveryJob($0.id) }) else {
@@ -1188,6 +1201,15 @@ class BackgroundProcessingManager: ObservableObject {
             await endBackgroundTask()
             return
         }
+
+        // Job-list edits can clear currentJob while its task is still running.
+        // Hold cleanup through preparation and the executing task's actual exit:
+        // the hold is ended here on any early return, and handed to the task
+        // (this reference cleared) once the task owns it.
+        var preparationGate = nextJob.type.isTranscription
+            ? transcriptCleanupQueue.beginTranscription()
+            : nil
+        defer { preparationGate?.end() }
 
         currentJob = nextJob
         processingStatus = .processing
@@ -1211,10 +1233,23 @@ class BackgroundProcessingManager: ObservableObject {
             return
         }
 
+        // Clear All Jobs can run while preparation is suspended. A removed
+        // reservation must not start executing after the list has been cleared.
+        guard currentJob?.id == nextJob.id else {
+            // A replacement reservation may already own the shared protection.
+            if currentJob == nil, currentTaskHandle == nil {
+                await endBackgroundTask()
+            }
+            return
+        }
+
         AppLog.shared.backgroundProcessing("Starting job: \(nextJob.type.displayName), engine=\(nextJob.type.engineName)\(nextJob.modelName.map { ", model=\($0)" } ?? ""), fileExists=\(FileManager.default.fileExists(atPath: nextJob.audioSourceURL.path))")
 
         // Store the task handle so it can be cancelled
+        let taskGate = preparationGate
+        preparationGate = nil
         currentTaskHandle = Task {
+            defer { taskGate?.end() }
             var completionStatePersisted = false
             // Whether the job's output is already durable. Distinct from
             // `completionStatePersisted`, which is whether that success was
@@ -1232,6 +1267,9 @@ class BackgroundProcessingManager: ObservableObject {
                 switch nextJob.type {
                 case .transcription(let engine):
                     AppLog.shared.backgroundProcessing("Processing transcription job with \(engine.rawValue)")
+                    // Acquiring the transcription gate paused cleanup; let
+                    // it unwind and release its model before ASR loads.
+                    await taskGate?.waitForCleanupToUnwind()
                     try await processTranscriptionJob(processingJob, engine: engine)
                 case .summarization(let engine):
                     AppLog.shared.backgroundProcessing("Processing summarization job with \(engine)")
@@ -1405,6 +1443,12 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func processTranscriptionJob(_ job: ProcessingJob, engine: TranscriptionEngine) async throws {
+        #if DEBUG
+        if let transcriptionProcessorForTesting {
+            try await transcriptionProcessorForTesting(job, engine)
+            return
+        }
+        #endif
         EnhancedLogger.shared.logBackgroundJobStart(job)
 
         try Task.checkCancellation()
@@ -1423,9 +1467,6 @@ class BackgroundProcessingManager: ObservableObject {
         // `transcribeAudioFile`, so this path has to collect the metadata
         // itself instead of inheriting the configuration the direct paths build.
         var detectedLanguageCode: String?
-        let cleanupSourceSnapshot = TranscriptCleanupSourceSnapshot(
-            transcript: try coreDataManager.fetchTranscriptData(for: recordingId)
-        )
 
         // Use the source audio URL (cleaned file) if available, otherwise the recording URL
         let audioURL = job.audioSourceURL
@@ -1620,42 +1661,27 @@ class BackgroundProcessingManager: ObservableObject {
             AppLog.shared.backgroundProcessing("Transcription job completed but no transcript content found! Total chunks: \(transcriptChunks.count)", level: .error)
         }
 
-        // Cleanup is a final-result operation. It runs once after reassembly and
-        // any speaker labeling, never inside transcribeChunk.
+        // Cleanup is a final-result operation on the saved transcript. Only the
+        // model-free checks run here; the cleanup itself is queued after the
+        // save, so a slow pass can no longer delay the transcript, and
+        // backgrounding or a kill can no longer lose it.
         if hasTranscriptContent, let finalTranscriptData {
-            let cleanupConfiguration = TranscriptCleanupConfiguration(
+            let cleanupRequest = await transcriptCleanupCoordinator.automaticRequest(
+                segments: finalTranscriptData.segments,
                 enabled: job.transcriptCleanupEnabled,
-                mode: .automatic,
                 languageCode: detectedLanguageCode
             )
-            let cleanupPreparation = try await prepareTranscriptCleanup(
-                for: finalTranscriptData,
-                recordingId: recordingId,
-                sourceSnapshot: cleanupSourceSnapshot,
-                configuration: cleanupConfiguration
-            )
-            if !cleanupPreparation.isCleanupUsable {
-                // Only the derived cleanup is stale, never the ASR result. The
-                // transcript this job just produced is still saved — uncleaned —
-                // and the staleness is reported as a warning, the same way every
-                // other cleanup failure is. Failing the job here threw away a
-                // completed transcription and skipped the chunk cleanup below.
-                let warningCategory = cleanupPreparation.warning?.logCategory ?? "stale-result"
+            if let warning = cleanupRequest.warning {
+                transcriptCleanupWarning = warning
                 AppLog.shared.backgroundProcessing(
-                    "Discarded stale transcript cleanup result, saving uncleaned transcript: "
-                        + "recording=\(recordingId.uuidString), category=\(warningCategory)",
+                    "Transcript cleanup not queued: recording=\(recordingId.uuidString), category=\(warning.logCategory)",
                     level: .info
                 )
             }
 
-            transcriptCleanupWarning = cleanupPreparation.warning
             try Task.checkCancellation()
             // The recording row being gone is the only reason to drop a completed
-            // transcription: there is nothing left to attach it to. That is not a
-            // cleanup failure — the whole transcript goes, and cleanup may not even
-            // be enabled — so it must not borrow the cleanup warning above, which
-            // tells the user only a derived cleanup result was discarded. Matches
-            // the wording the direct rerun path already uses in `TranscriptViews`.
+            // transcription: there is nothing left to attach it to.
             guard try coreDataManager.fetchRecording(id: recordingId) != nil else {
                 AppLog.shared.backgroundProcessing(
                     "Discarded the completed transcription because the recording was deleted: "
@@ -1664,11 +1690,17 @@ class BackgroundProcessingManager: ObservableObject {
                 )
                 throw BackgroundProcessingError.recordingDeletedDuringProcessing
             }
+            // Raw ASR text: transcription never cleans, and saving replaces
+            // the previous transcript's segments, cleaned values included.
             try saveTranscript(
-                cleanupPreparation.transcript,
+                finalTranscriptData,
                 speakerLabelWarning: speakerLabelWarning,
                 cleanupWarning: transcriptCleanupWarning
             )
+
+            // Post-commit: the previous transcript's cleanup state is stale
+            // whether or not this one is cleaned.
+            transcriptCleanupQueue.transcriptSaved(recordingId: recordingId, request: cleanupRequest)
         }
 
         if chunks.contains(where: { $0.chunkURL != $0.originalURL }) {
@@ -1919,54 +1951,6 @@ class BackgroundProcessingManager: ObservableObject {
         }
     }
 
-    /// The transcript is always saved; this only says whether the cleanup pass
-    /// produced a value that may be merged into it. `isCleanupUsable == false`
-    /// means the derived text was discarded, not that persistence is skipped.
-    private struct TranscriptCleanupSavePreparation {
-        let transcript: TranscriptData
-        let warning: TranscriptCleanupWarning?
-        let isCleanupUsable: Bool
-    }
-
-    private func prepareTranscriptCleanup(
-        for transcript: TranscriptData,
-        recordingId: UUID,
-        sourceSnapshot: TranscriptCleanupSourceSnapshot,
-        configuration: TranscriptCleanupConfiguration
-    ) async throws -> TranscriptCleanupSavePreparation {
-        guard configuration.enabled else {
-            return TranscriptCleanupSavePreparation(transcript: transcript, warning: nil, isCleanupUsable: true)
-        }
-
-        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
-            return TranscriptCleanupSavePreparation(
-                transcript: transcript,
-                warning: .staleResult,
-                isCleanupUsable: false
-            )
-        }
-
-        let result = await transcriptCleanupCoordinator.clean(
-            segments: transcript.segments,
-            configuration: configuration
-        )
-
-        guard sourceSnapshot.matches(try coreDataManager.fetchTranscriptData(for: recordingId)) else {
-            return TranscriptCleanupSavePreparation(
-                transcript: transcript,
-                warning: .staleResult,
-                isCleanupUsable: false
-            )
-        }
-
-        let cleanedTranscript = transcript.preservingIdentity(segments: result.segments)
-        return TranscriptCleanupSavePreparation(
-            transcript: cleanedTranscript,
-            warning: result.warning,
-            isCleanupUsable: true
-        )
-    }
-
     private func summarizationText(
         _ transcriptEntry: TranscriptEntry, recordingURL: URL, recordingName: String, recordingDate: Date
     ) throws -> String {
@@ -1981,13 +1965,14 @@ class BackgroundProcessingManager: ObservableObject {
                 speakerMappings = (try? JSONDecoder().decode([String: String].self, from: mappingsData)) ?? [:]
             }
             // Build TranscriptData to use textForSummarization (includes speaker labels)
-            let transcriptData = TranscriptData(
+            var transcriptData = TranscriptData(
                 recordingURL: recordingURL,
                 recordingName: recordingName,
                 recordingDate: recordingDate,
                 segments: segments,
                 speakerMappings: speakerMappings
             )
+            transcriptData.selectedRepresentation = TranscriptRepresentation(storedValue: transcriptEntry.selectedRepresentation)
             transcriptText = transcriptData.textForSummarization
         } else {
             throw BackgroundProcessingError.processingFailed("Could not read transcript text for \(recordingName)")

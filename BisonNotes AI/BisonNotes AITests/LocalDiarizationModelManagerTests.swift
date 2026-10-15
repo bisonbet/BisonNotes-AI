@@ -6,28 +6,235 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         XCTAssertFalse(FluidAudioModelInfo.LocalSpeakerLabels.defaultEnabled)
         XCTAssertNil(LocalDiarizationMethod.offlineVBx.maximumSupportedSpeakerCount)
         XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.maximumSupportedSpeakerCount, 10)
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.maximumSupportedSpeakerCount, 8)
+        XCTAssertNil(LocalDiarizationMethod.experimentalNemotron3.maximumSupportedDuration)
+        XCTAssertEqual(LocalDiarizationMethod.offlineVBx.tier.badgeText, "Recommended")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.tier.badgeText, "Experimental")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.tier.badgeText, "Experimental")
         XCTAssertEqual(
             FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue("corrupt"),
             LocalDiarizationMethod.offlineVBx.rawValue
         )
+        for method in LocalDiarizationMethod.allCases {
+            XCTAssertEqual(
+                FluidAudioModelInfo.LocalSpeakerLabels.normalizedMethodRawValue(method.rawValue),
+                method.rawValue,
+                "\(method) must survive normalization or the setting silently reverts"
+            )
+        }
 
         let appSupport = FileManager.default.temporaryDirectory
             .appendingPathComponent("local-diarization-cache-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: appSupport) }
 
-        let vbx = FluidAudioModelInfo.localSpeakerModelCacheDirectory(
-            methodRawValue: LocalDiarizationMethod.offlineVBx.rawValue,
-            appSupportDirectory: appSupport
-        )
-        let lsEEND = FluidAudioModelInfo.localSpeakerModelCacheDirectory(
-            methodRawValue: LocalDiarizationMethod.experimentalLSEEND.rawValue,
-            appSupportDirectory: appSupport
+        let directories = LocalDiarizationMethod.allCases.map { method in
+            FluidAudioModelInfo.localSpeakerModelCacheDirectory(
+                for: method,
+                appSupportDirectory: appSupport
+            )
+        }
+
+        XCTAssertFalse(directories.contains(nil))
+        XCTAssertEqual(Set(directories).count, LocalDiarizationMethod.allCases.count)
+        XCTAssertEqual(Set(directories.map { $0?.deletingLastPathComponent() }).count, 1)
+    }
+
+    func testNemotron3ReadinessRequiresExactAssetsAndTheCurrentWeights() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nemotron3-assets-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("nemotron-3-diarization", isDirectory: true)
+        let layout = Nemotron3AssetLayout(
+            repoDirectory: repo,
+            modelBundle: repo.appendingPathComponent("split/Model.mlmodelc", isDirectory: true),
+            silenceEmbedding: repo.appendingPathComponent("learnable_sil_emb.bin"),
+            preEncodeProjection: repo.appendingPathComponent("pre_encode_proj_t.bin"),
+            weightsVersionMarker: repo.appendingPathComponent(".weights"),
+            expectedWeightsVersion: "ga-test",
+            silenceEmbeddingByteCount: 512 * MemoryLayout<Float>.size,
+            preEncodeProjectionByteCount: 1024 * 512 * MemoryLayout<Float>.size
         )
 
-        XCTAssertNotNil(vbx)
-        XCTAssertNotNil(lsEEND)
-        XCTAssertNotEqual(vbx, lsEEND)
-        XCTAssertEqual(vbx?.deletingLastPathComponent(), lsEEND?.deletingLastPathComponent())
+        // The published bundles carry no metadata.json.
+        let weights = layout.modelBundle.appendingPathComponent("weights", isDirectory: true)
+        try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+        try Data([1]).write(to: weights.appendingPathComponent("weight.bin"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("model.mil"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("coremldata.bin"))
+        XCTAssertFalse(LocalDiarizationAssetValidator.compiledModelBundleIsValid(at: layout.modelBundle))
+        XCTAssertTrue(
+            LocalDiarizationAssetValidator.compiledModelBundleIsValid(
+                at: layout.modelBundle,
+                requiresMetadata: false
+            )
+        )
+
+        try Data(count: layout.silenceEmbeddingByteCount).write(to: layout.silenceEmbedding)
+        try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount) - 4).write(to: layout.preEncodeProjection)
+        try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
+        XCTAssertFalse(
+            nemotron3AssetsAreValid(layout),
+            "A truncated projection must not report Ready"
+        )
+
+        try Data(count: try XCTUnwrap(layout.preEncodeProjectionByteCount)).write(to: layout.preEncodeProjection)
+        XCTAssertTrue(nemotron3AssetsAreValid(layout))
+
+        try Data("preview-2026-08\n".utf8).write(to: layout.weightsVersionMarker)
+        XCTAssertFalse(
+            nemotron3AssetsAreValid(layout),
+            "Weights from a superseded checkpoint must ask for a fresh download"
+        )
+
+        try FileManager.default.removeItem(at: layout.weightsVersionMarker)
+        XCTAssertFalse(
+            nemotron3AssetsAreValid(layout),
+            "An interrupted download never writes the marker"
+        )
+    }
+
+    /// The short-circuiting readiness check and the diagnostic list must
+    /// agree on every layout, or a log would blame the wrong file.
+    private func nemotron3AssetsAreValid(
+        _ layout: Nemotron3AssetLayout,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> Bool {
+        let valid = LocalDiarizationAssetValidator.nemotron3AssetsAreValid(layout)
+        XCTAssertEqual(
+            LocalDiarizationAssetValidator.nemotron3LayoutProblems(layout).isEmpty,
+            valid,
+            "nemotron3LayoutProblems disagrees with nemotron3AssetsAreValid",
+            file: file,
+            line: line
+        )
+        return valid
+    }
+
+    func testNemotron3PresetWithoutAProjectionDoesNotRequireOne() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nemotron3-monolithic-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("nemotron-3-diarization", isDirectory: true)
+        let layout = Nemotron3AssetLayout(
+            repoDirectory: repo,
+            modelBundle: repo.appendingPathComponent("monolithic/v2/Model.mlmodelc", isDirectory: true),
+            silenceEmbedding: repo.appendingPathComponent("learnable_sil_emb.bin"),
+            preEncodeProjection: repo.appendingPathComponent("pre_encode_proj_t.bin"),
+            weightsVersionMarker: repo.appendingPathComponent(".weights"),
+            expectedWeightsVersion: "ga-test",
+            silenceEmbeddingByteCount: 512 * MemoryLayout<Float>.size,
+            preEncodeProjectionByteCount: nil
+        )
+        let weights = layout.modelBundle.appendingPathComponent("weights", isDirectory: true)
+        try FileManager.default.createDirectory(at: weights, withIntermediateDirectories: true)
+        try Data([1]).write(to: weights.appendingPathComponent("weight.bin"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("model.mil"))
+        try Data([1]).write(to: layout.modelBundle.appendingPathComponent("coremldata.bin"))
+        try Data(count: layout.silenceEmbeddingByteCount).write(to: layout.silenceEmbedding)
+        try Data("ga-test\n".utf8).write(to: layout.weightsVersionMarker)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: layout.preEncodeProjection.path))
+        XCTAssertTrue(nemotron3AssetsAreValid(layout))
+    }
+
+    /// Every way a cached fp32 asset can be bad reports Download Required,
+    /// which the user can act on, rather than a raw Cocoa error.
+    func testUnreadableOrMissizedAssetsReportDownloadRequired() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("float-asset-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let valid = root.appendingPathComponent("valid.bin")
+        let values: [Float] = [0.5, -1, 2]
+        try values.withUnsafeBytes { Data($0) }.write(to: valid)
+        XCTAssertEqual(
+            try LocalDiarizationAssetValidator.readFloatAsset(at: valid, byteCount: 12, method: .experimentalNemotron3),
+            values
+        )
+
+        let missized = root.appendingPathComponent("missized.bin")
+        try Data(count: 8).write(to: missized)
+        // A directory where the file should be: present, but not readable as data.
+        let unreadable = root.appendingPathComponent("unreadable.bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        let missing = root.appendingPathComponent("missing.bin")
+
+        for url in [missized, unreadable, missing] {
+            XCTAssertThrowsError(
+                try LocalDiarizationAssetValidator.readFloatAsset(at: url, byteCount: 12, method: .experimentalNemotron3),
+                url.lastPathComponent
+            ) { error in
+                guard case LocalDiarizationError.downloadRequired(.experimentalNemotron3) = error else {
+                    return XCTFail("\(url.lastPathComponent): expected downloadRequired, got \(error)")
+                }
+            }
+        }
+    }
+
+    /// These folder names are on users' disks. A rename here orphans every
+    /// existing download of that method, so it must be deliberate.
+    func testSpeakerModelCacheFolderNamesAreStable() {
+        XCTAssertEqual(LocalDiarizationMethod.offlineVBx.cacheFolderName, "offline-vbx")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalLSEEND.cacheFolderName, "ls-eend-dihard3-500ms")
+        XCTAssertEqual(LocalDiarizationMethod.experimentalNemotron3.cacheFolderName, "nemotron3-c128-split-w8a8")
+    }
+
+    /// A job saved by a build with a method this build lacks must still decode,
+    /// failing closed (labels off) rather than throwing.
+    func testUnknownMethodInSavedConfigurationDecodesWithLabelsOff() throws {
+        let json = Data(#"{"isEnabled":true,"method":"futureMethod"}"#.utf8)
+        let configuration = try JSONDecoder().decode(LocalSpeakerLabelsConfiguration.self, from: json)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration())
+
+        let roundTripped = try JSONDecoder().decode(
+            LocalSpeakerLabelsConfiguration.self,
+            from: JSONEncoder().encode(LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalNemotron3))
+        )
+        XCTAssertEqual(roundTripped, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .experimentalNemotron3))
+    }
+
+    func testUnknownMethodInSettingsRunsAsTheDefault() {
+        let suiteName = "LocalSpeakerLabelsSettings.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: FluidAudioModelInfo.SettingsKeys.localSpeakerLabelsEnabled)
+        defaults.set("futureMethod", forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod)
+
+        let configuration = LocalSpeakerLabelsConfiguration.currentUserChoice(from: defaults)
+        XCTAssertEqual(configuration, LocalSpeakerLabelsConfiguration(isEnabled: true, method: .defaultMethod))
+        XCTAssertEqual(
+            defaults.string(forKey: FluidAudioModelInfo.SettingsKeys.selectedLocalSpeakerLabelMethod),
+            "futureMethod",
+            "Reading the setting must not overwrite the user's stored choice"
+        )
+    }
+
+    func testNemotron3HasNoDurationGuardAndRunsTheCompleteFileOnce() async throws {
+        let audioURL = makeTemporaryAudioPlaceholder()
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let runner = FakeLocalDiarizationRunner(
+            result: LocalDiarizationResult(
+                intervals: [LocalDiarizationInterval(speakerID: "speaker_0", startTime: 0, endTime: 1)]
+            )
+        )
+        let provider = FakeLocalDiarizationModelProvider(readyMethods: [.experimentalNemotron3], runner: runner)
+        let manager = LocalDiarizationManager(provider: provider)
+
+        let result = try await manager.diarize(
+            audioURL: audioURL,
+            method: .experimentalNemotron3,
+            audioDuration: 3 * 60 * 60,
+            progress: { _ in }
+        )
+
+        XCTAssertEqual(result.intervals.count, 1)
+        XCTAssertEqual(result.audioDuration, 3 * 60 * 60)
+        let processCallCount = await runner.processCallCount
+        let cleanupCallCount = await runner.cleanupCallCount
+        XCTAssertEqual(processCallCount, 1)
+        XCTAssertEqual(cleanupCallCount, 1)
     }
 
     func testDiarizationDoesNotPrepareOrDownloadWhenModelIsMissing() async {
@@ -116,19 +323,24 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
 
         try await firstManager.prepareModel(for: .offlineVBx, progress: { _ in })
         try await firstManager.prepareModel(for: .experimentalLSEEND, progress: { _ in })
+        try await firstManager.prepareModel(for: .experimentalNemotron3, progress: { _ in })
 
         let relaunchedManager = LocalDiarizationManager(provider: provider)
         let relaunchedVBxStatus = await relaunchedManager.modelStatus(for: .offlineVBx)
         let relaunchedLSEENDStatus = await relaunchedManager.modelStatus(for: .experimentalLSEEND)
+        let relaunchedNemotronStatus = await relaunchedManager.modelStatus(for: .experimentalNemotron3)
         XCTAssertTrue(relaunchedVBxStatus.isReady)
         XCTAssertTrue(relaunchedLSEENDStatus.isReady)
+        XCTAssertTrue(relaunchedNemotronStatus.isReady)
 
         try await relaunchedManager.deleteModel(for: .offlineVBx)
 
         let deletedVBxStatus = await relaunchedManager.modelStatus(for: .offlineVBx)
         let preservedLSEENDStatus = await relaunchedManager.modelStatus(for: .experimentalLSEEND)
+        let preservedNemotronStatus = await relaunchedManager.modelStatus(for: .experimentalNemotron3)
         XCTAssertFalse(deletedVBxStatus.isReady)
         XCTAssertTrue(preservedLSEENDStatus.isReady)
+        XCTAssertTrue(preservedNemotronStatus.isReady)
     }
 
     func testExperimentalMethodRejectsFilesLongerThanOneHourBeforeCreatingRunner() async {
@@ -298,14 +510,22 @@ final class LocalDiarizationModelManagerTests: XCTestCase {
         return url
     }
 
+    /// Polls against a real deadline. The conditions are changed by other
+    /// tasks — the preparation hops through a new task, the manager actor, its
+    /// inner task and the provider actor — and `Task.yield()` guarantees none of
+    /// them runs, so a fixed number of yields could expire before the
+    /// preparation started on a loaded machine.
     private func waitUntil(
-        attempts: Int = 200,
+        timeout: Duration = .seconds(5),
         condition: @escaping () async -> Bool
     ) async {
-        for _ in 0..<attempts {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
             if await condition() { return }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(10))
         }
+        if await condition() { return }
         XCTFail("Timed out waiting for asynchronous test condition")
     }
 }

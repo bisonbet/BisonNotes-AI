@@ -437,6 +437,9 @@ struct ContentView: View {
 
                     // Set up the enhanced file manager with the coordinator
                     EnhancedFileManager.shared.setCoordinator(appCoordinator)
+                    // Queued transcript cleanups read and save through the
+                    // coordinator, so they resume only once it is set.
+                    TranscriptCleanupQueue.shared.start()
 
                     // Add a small delay to ensure everything is properly set up
                     try await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds

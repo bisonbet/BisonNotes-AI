@@ -1,17 +1,39 @@
 import Foundation
 
+/// Where the Nemotron 3 preset's files must sit inside its method cache, and
+/// what they must contain. Built from the SDK's constants in production and
+/// from literals in tests, so the validator itself stays SDK-independent.
+struct Nemotron3AssetLayout: Equatable, Sendable {
+    let repoDirectory: URL
+    let modelBundle: URL
+    let silenceEmbedding: URL
+    let preEncodeProjection: URL
+    let weightsVersionMarker: URL
+    let expectedWeightsVersion: String
+
+    /// Exact fp32 sizes, derived from the pinned SDK's config in production so
+    /// an SDK bump that reshapes the checkpoint moves the check with it.
+    let silenceEmbeddingByteCount: Int
+    /// nil for presets that do not use the host-side projection; such a
+    /// preset's readiness does not depend on that file.
+    let preEncodeProjectionByteCount: Int?
+}
+
 enum LocalDiarizationAssetValidator {
     // These are the required artifacts emitted by Core ML for the pinned
     // FluidAudio compiled models. A partially populated bundle must not report
     // Ready merely because its directory contains one nonempty file.
     private static let requiredCompiledModelFiles = [
         "model.mil",
-        "metadata.json",
         "coremldata.bin"
     ]
 
+    /// `requiresMetadata` is false only for bundles published without a
+    /// `metadata.json` (the Nemotron 3 conversions); every other check still
+    /// applies to them.
     static func compiledModelBundleIsValid(
         at url: URL,
+        requiresMetadata: Bool = true,
         fileManager: FileManager = .default
     ) -> Bool {
         var isDirectory: ObjCBool = false
@@ -28,7 +50,7 @@ enum LocalDiarizationAssetValidator {
                 fileManager: fileManager
             )
         }),
-        metadataJSONIsValid(
+        !requiresMetadata || metadataJSONIsValid(
             at: url.appendingPathComponent("metadata.json", isDirectory: false),
             fileManager: fileManager
         ),
@@ -56,6 +78,109 @@ enum LocalDiarizationAssetValidator {
             return false
         }
         return true
+    }
+
+    /// Ready only when the compiled preset, both fp32 assets at their exact
+    /// sizes, and a weights marker naming the checkpoint the pinned SDK expects
+    /// are all present. A cache from a superseded checkpoint reports Download
+    /// Required rather than feeding old weights to newer inference code.
+    static func nemotron3AssetsAreValid(
+        _ layout: Nemotron3AssetLayout,
+        fileManager: FileManager = .default
+    ) -> Bool {
+        // Called on every readiness check, so it stops at the first failure;
+        // `nemotron3LayoutProblems` collects them all for the log.
+        guard compiledModelBundleIsValid(
+            at: layout.modelBundle,
+            requiresMetadata: false,
+            fileManager: fileManager
+        ),
+        regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
+            == layout.silenceEmbeddingByteCount,
+        layout.preEncodeProjectionByteCount.map({
+            regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager) == $0
+        }) ?? true,
+        let marker = try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8)
+        else {
+            return false
+        }
+        return marker.trimmingCharacters(in: .whitespacesAndNewlines) == layout.expectedWeightsVersion
+    }
+
+    /// Each way the cache differs from `layout`, for the log. Empty when valid.
+    /// Must check the same conditions as `nemotron3AssetsAreValid`.
+    static func nemotron3LayoutProblems(
+        _ layout: Nemotron3AssetLayout,
+        fileManager: FileManager = .default
+    ) -> [String] {
+        var problems: [String] = []
+        if !compiledModelBundleIsValid(at: layout.modelBundle, requiresMetadata: false, fileManager: fileManager) {
+            problems.append("model bundle \(layout.modelBundle.lastPathComponent) missing or incomplete")
+        }
+        let silenceSize = regularFileSize(at: layout.silenceEmbedding, fileManager: fileManager)
+        if silenceSize != layout.silenceEmbeddingByteCount {
+            problems.append(
+                "\(layout.silenceEmbedding.lastPathComponent) is \(silenceSize.map(String.init) ?? "missing"), "
+                    + "expected \(layout.silenceEmbeddingByteCount) bytes"
+            )
+        }
+        if let expected = layout.preEncodeProjectionByteCount {
+            let size = regularFileSize(at: layout.preEncodeProjection, fileManager: fileManager)
+            if size != expected {
+                problems.append(
+                    "\(layout.preEncodeProjection.lastPathComponent) is \(size.map(String.init) ?? "missing"), "
+                        + "expected \(expected) bytes"
+                )
+            }
+        }
+        let marker = (try? String(contentsOf: layout.weightsVersionMarker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if marker != layout.expectedWeightsVersion {
+            problems.append("weights marker is \(marker ?? "missing"), expected \(layout.expectedWeightsVersion)")
+        }
+        return problems
+    }
+
+    /// Reads a raw fp32 asset of an exact size. A file that is missing,
+    /// unreadable, or the wrong size throws `downloadRequired(method)` — what
+    /// the user can act on — with the underlying error logged, never a raw
+    /// Cocoa error.
+    static func readFloatAsset(
+        at url: URL,
+        byteCount: Int,
+        method: LocalDiarizationMethod
+    ) throws -> [Float] {
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            AppLog.shared.transcription(
+                "\(method.displayName) asset \(url.lastPathComponent) could not be read: \(error.localizedDescription)",
+                level: .error
+            )
+            throw LocalDiarizationError.downloadRequired(method)
+        }
+        guard data.count == byteCount else {
+            AppLog.shared.transcription(
+                "\(method.displayName) asset \(url.lastPathComponent) is \(data.count) bytes, expected \(byteCount)",
+                level: .error
+            )
+            throw LocalDiarizationError.downloadRequired(method)
+        }
+        return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+    }
+
+    /// Read through the file manager rather than `URL.resourceValues`, which
+    /// caches per URL instance and would keep reporting a size the file no
+    /// longer has when a stored layout is checked again after a download.
+    private static func regularFileSize(at url: URL, fileManager: FileManager) -> Int? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber
+        else {
+            return nil
+        }
+        return size.intValue
     }
 
     private static func isNonEmptyRegularFile(
