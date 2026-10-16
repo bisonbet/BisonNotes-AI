@@ -36,6 +36,7 @@ struct AudioPlayerView: View {
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
     @State private var hasStoppedPlayback = false
+    @State private var showingTrimSheet = false
 
     private var isNativeMacModelessWindow: Bool {
         if case .modelessWindow = presentationContext {
@@ -91,7 +92,10 @@ struct AudioPlayerView: View {
                         localOnlyPreferenceRow
                             .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerKeepOnThisDevice)
 
-                        transcriptActionRow
+                        HStack(spacing: 10) {
+                            transcriptActionRow
+                            trimActionButton
+                        }
                     }
                     .padding(16)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -214,6 +218,12 @@ struct AudioPlayerView: View {
                 ShareSheet(activityItems: [audioExportURL])
                     .nativeMacModalSizing(width: 560, height: 440)
             }
+        }
+        .sheet(isPresented: $showingTrimSheet) {
+            TrimRecordingView(recording: recording)
+                .environmentObject(appCoordinator)
+                .environmentObject(recorderVM)
+                .nativeMacModalSizing(width: 720, height: 760)
         }
         .sheet(item: $selectedRecordingForTranscript) { entry in
             if let recordingId = entry.id,
@@ -426,6 +436,32 @@ struct AudioPlayerView: View {
             .accessibilityHint("Opens options before generating a transcript from this audio.")
             .id("transcript-action-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
+    }
+
+    /// Opens the trim sheet. The trimmed clip becomes a new recording, so this
+    /// is offered whether or not the recording already has a transcript.
+    private var trimActionButton: some View {
+        Button {
+            stopPlaybackIfNeeded()
+            hasStoppedPlayback = false
+            showingTrimSheet = true
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "scissors")
+                Text("Trim")
+            }
+            .font(.subheadline)
+            .fontWeight(.medium)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.accentColor.opacity(0.12), in: Capsule())
+            .foregroundColor(.accentColor)
+        }
+        .buttonStyle(.plain)
+        .disabled(audioLoadError != nil)
+        .accessibilityLabel("Trim \(displayTitle)")
+        .accessibilityHint("Choose a start and end and save that part as a new recording.")
+        .accessibilityIdentifier("bisonnotes.audioPlayer.trim")
     }
 
     private func setupAudio() {
