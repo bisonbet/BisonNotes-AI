@@ -48,12 +48,16 @@ struct ProcessingJob: Identifiable, Codable {
     /// queued, so a delayed or resumed job cannot change behavior after a
     /// settings edit.
     let transcriptCleanupEnabled: Bool
+    /// The Summary Prompt template a summarization job was queued with (for
+    /// example, a regenerated summary's own). Nil uses the default for new
+    /// summaries when the job runs.
+    let summaryPromptTemplate: SummaryPromptTemplate?
 
     // Exclude processingStartTime from Codable to avoid forward-compatibility issues
     private enum CodingKeys: String, CodingKey {
         case id, type, recordingPath, recordingName, modelName, sourceAudioPath, status, progress,
              startTime, completionTime, chunks, error, localSpeakerLabelsConfiguration,
-             transcriptCleanupEnabled
+             transcriptCleanupEnabled, summaryPromptTemplate
     }
 
     init(from decoder: Decoder) throws {
@@ -81,6 +85,10 @@ struct ProcessingJob: Identifiable, Codable {
             localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
         transcriptCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .transcriptCleanupEnabled) ?? false
+        summaryPromptTemplate = try container.decodeIfPresent(
+            SummaryPromptTemplate.self,
+            forKey: .summaryPromptTemplate
+        )
     }
 
     // Computed property to get absolute URL when needed
@@ -110,7 +118,8 @@ struct ProcessingJob: Identifiable, Codable {
         sourceAudioURL: URL? = nil,
         chunks: [AudioChunk]? = nil,
         localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration(),
-        transcriptCleanupEnabled: Bool = false
+        transcriptCleanupEnabled: Bool = false,
+        summaryPromptTemplate: SummaryPromptTemplate? = nil
     ) {
         self.id = UUID()
         self.type = type
@@ -132,6 +141,7 @@ struct ProcessingJob: Identifiable, Codable {
             self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
         self.transcriptCleanupEnabled = transcriptCleanupEnabled
+        self.summaryPromptTemplate = summaryPromptTemplate
     }
 
     func withStatus(_ status: JobProcessingStatus) -> ProcessingJob {
@@ -150,7 +160,8 @@ struct ProcessingJob: Identifiable, Codable {
             chunks: self.chunks,
             error: status.errorMessage,
             localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration,
-            transcriptCleanupEnabled: self.transcriptCleanupEnabled
+            transcriptCleanupEnabled: self.transcriptCleanupEnabled,
+            summaryPromptTemplate: self.summaryPromptTemplate
         )
     }
 
@@ -170,7 +181,8 @@ struct ProcessingJob: Identifiable, Codable {
             chunks: self.chunks,
             error: self.error,
             localSpeakerLabelsConfiguration: self.localSpeakerLabelsConfiguration,
-            transcriptCleanupEnabled: self.transcriptCleanupEnabled
+            transcriptCleanupEnabled: self.transcriptCleanupEnabled,
+            summaryPromptTemplate: self.summaryPromptTemplate
         )
     }
 
@@ -189,7 +201,8 @@ struct ProcessingJob: Identifiable, Codable {
         chunks: [AudioChunk]?,
         error: String?,
         localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration(),
-        transcriptCleanupEnabled: Bool = false
+        transcriptCleanupEnabled: Bool = false,
+        summaryPromptTemplate: SummaryPromptTemplate? = nil
     ) {
         self.id = id
         self.type = type
@@ -210,6 +223,7 @@ struct ProcessingJob: Identifiable, Codable {
             self.localSpeakerLabelsConfiguration = LocalSpeakerLabelsConfiguration()
         }
         self.transcriptCleanupEnabled = transcriptCleanupEnabled
+        self.summaryPromptTemplate = summaryPromptTemplate
     }
 }
 
@@ -218,6 +232,7 @@ private struct ProcessingJobPersistenceEnvelope: Codable {
     let modelName: String?
     let localSpeakerLabelsConfiguration: LocalSpeakerLabelsConfiguration
     let transcriptCleanupEnabled: Bool?
+    let summaryPromptTemplate: SummaryPromptTemplate?
 }
 
 extension ProcessingJob {
@@ -228,14 +243,20 @@ extension ProcessingJob {
     /// optional model-name field while preserving the caller's actual model
     /// name inside a tagged envelope. This avoids a Core Data migration.
     var persistedModelNameValue: String? {
-        guard case .transcription = type else {
-            return modelName
+        switch type {
+        case .transcription:
+            break
+        case .summarization:
+            // A summary job without a chosen template keeps its plain model
+            // name, exactly as before templates existed.
+            guard summaryPromptTemplate != nil else { return modelName }
         }
         let envelope = ProcessingJobPersistenceEnvelope(
             version: 1,
             modelName: modelName,
             localSpeakerLabelsConfiguration: localSpeakerLabelsConfiguration,
-            transcriptCleanupEnabled: transcriptCleanupEnabled
+            transcriptCleanupEnabled: transcriptCleanupEnabled,
+            summaryPromptTemplate: summaryPromptTemplate
         )
         guard let data = try? JSONEncoder().encode(envelope) else {
             return modelName
@@ -248,22 +269,24 @@ extension ProcessingJob {
     ) -> (
         modelName: String?,
         configuration: LocalSpeakerLabelsConfiguration,
-        transcriptCleanupEnabled: Bool
+        transcriptCleanupEnabled: Bool,
+        summaryPromptTemplate: SummaryPromptTemplate?
     ) {
         guard let persistedModelName,
               persistedModelName.hasPrefix(persistenceEnvelopePrefix) else {
-            return (persistedModelName, LocalSpeakerLabelsConfiguration(), false)
+            return (persistedModelName, LocalSpeakerLabelsConfiguration(), false, nil)
         }
         let encoded = String(persistedModelName.dropFirst(persistenceEnvelopePrefix.count))
         guard let data = Data(base64Encoded: encoded),
               let envelope = try? JSONDecoder().decode(ProcessingJobPersistenceEnvelope.self, from: data),
               envelope.version == 1 else {
-            return (nil, LocalSpeakerLabelsConfiguration(), false)
+            return (nil, LocalSpeakerLabelsConfiguration(), false, nil)
         }
         return (
             envelope.modelName,
             envelope.localSpeakerLabelsConfiguration,
-            envelope.transcriptCleanupEnabled ?? false
+            envelope.transcriptCleanupEnabled ?? false,
+            envelope.summaryPromptTemplate
         )
     }
 }
@@ -880,7 +903,14 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     @discardableResult
-    func startSummarizationJob(recordingURL: URL, recordingName: String, engine: String, modelName: String? = nil, replacingSummaryId: UUID? = nil) async throws -> UUID {
+    func startSummarizationJob(
+        recordingURL: URL,
+        recordingName: String,
+        engine: String,
+        modelName: String? = nil,
+        replacingSummaryId: UUID? = nil,
+        promptTemplate: SummaryPromptTemplate? = nil
+    ) async throws -> UUID {
         try requireLoadedJobStore()
 
         // A summary job must attach to an existing recording. A throwing URL
@@ -902,7 +932,8 @@ class BackgroundProcessingManager: ObservableObject {
             type: .summarization(engine: engine),
             recordingURL: recordingURL,
             recordingName: recordingName,
-            modelName: modelName
+            modelName: modelName,
+            summaryPromptTemplate: promptTemplate
         )
 
         // Track old summary ID for regeneration (delete before saving new)
@@ -2048,7 +2079,8 @@ class BackgroundProcessingManager: ObservableObject {
                 for: job.recordingURL,
                 recordingName: job.recordingName,
                 recordingDate: resolvedRecordingDate,
-                engineName: engine
+                engineName: engine,
+                promptTemplate: job.summaryPromptTemplate
             )
         } catch {
             // If the task was cancelled but the error got wrapped, re-throw as CancellationError
@@ -2077,6 +2109,7 @@ class BackgroundProcessingManager: ObservableObject {
             contentType: enhancedSummary.contentType,
             aiEngine: enhancedSummary.aiEngine,
             aiModel: enhancedSummary.aiModel,
+            promptTemplate: enhancedSummary.promptTemplate,
             originalLength: enhancedSummary.originalLength,
             processingTime: enhancedSummary.processingTime
         )
@@ -2137,6 +2170,7 @@ class BackgroundProcessingManager: ObservableObject {
         var tasks: [TaskItem] = []
         var reminders: [ReminderItem] = []
         var titles: [TitleItem] = []
+        var promptTemplate: SummaryPromptTemplate?
 
         switch BackgroundSummarizationRoute(engineName: engine) {
         case .ollama:
@@ -2160,6 +2194,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = result.reminders
             titles = result.titles
             contentType = result.contentType
+            promptTemplate = result.promptTemplate
 
         case .selectedEngine:
             // Use the SummaryManager's currently selected engine
@@ -2176,6 +2211,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = result.reminders
             titles = result.titles
             contentType = result.contentType
+            promptTemplate = result.promptTemplate
         }
 
         let processingTime = Date().timeIntervalSince(startTime)
@@ -2206,6 +2242,7 @@ class BackgroundProcessingManager: ObservableObject {
             contentType: contentType,
             aiEngine: engineType,
             aiModel: engine,
+            promptTemplate: promptTemplate,
             originalLength: transcriptText.count,
             processingTime: processingTime
         )
@@ -2998,7 +3035,8 @@ class BackgroundProcessingManager: ObservableObject {
             chunks: nil,
             error: jobEntry.error,
             localSpeakerLabelsConfiguration: restoredValues.configuration,
-            transcriptCleanupEnabled: restoredValues.transcriptCleanupEnabled
+            transcriptCleanupEnabled: restoredValues.transcriptCleanupEnabled,
+            summaryPromptTemplate: restoredValues.summaryPromptTemplate
         )
     }
 

@@ -9,6 +9,7 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable {
     case aiSettings
     case storage
     case advanced
+    case beta
 
     var id: String { rawValue }
 
@@ -26,6 +27,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable {
             return "Storage"
         case .advanced:
             return "Advanced"
+        case .beta:
+            return "Beta"
         }
     }
 
@@ -43,6 +46,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable {
             return "internaldrive"
         case .advanced:
             return "wrench.and.screwdriver"
+        case .beta:
+            return "flask"
         }
     }
 
@@ -60,6 +65,8 @@ private enum MacSettingsPane: String, CaseIterable, Identifiable {
             return BisonNotesAccessibilityID.settingsPaneStorage
         case .advanced:
             return BisonNotesAccessibilityID.settingsPaneAdvanced
+        case .beta:
+            return BisonNotesAccessibilityID.settingsPaneBeta
         }
     }
 }
@@ -123,6 +130,15 @@ struct MacSettingsRootView: View {
                         .accessibilityIdentifier(MacSettingsPane.advanced.accessibilityIdentifier)
                 }
                 .tag(MacSettingsPane.advanced.rawValue)
+
+            BetaFeaturesView()
+                .nativeMacPresentationContext(.embedded)
+                .accessibilityIdentifier(MacSettingsPane.beta.accessibilityIdentifier)
+                .tabItem {
+                    Label(MacSettingsPane.beta.title, systemImage: MacSettingsPane.beta.systemImage)
+                        .accessibilityIdentifier(MacSettingsPane.beta.accessibilityIdentifier)
+                }
+                .tag(MacSettingsPane.beta.rawValue)
         }
         .frame(minWidth: 760, idealWidth: 920, minHeight: 600)
         .onAppear {

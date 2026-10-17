@@ -813,7 +813,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         // Combine all summaries into a final meta-summary
         let combinedSummary = summaries.joined(separator: "\n\n")
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
         let finalSummary: String
@@ -873,7 +873,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     // MARK: - Private Helper Methods
 
     private func createSummaryPrompt(text: String, contentType: ContentType) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
 
@@ -1030,7 +1030,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
 
@@ -1068,7 +1068,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
+          "summary": "\(SummaryPromptComposer.current.schemaSummaryDescription)",
           "tasks": ["personal task1", "personal task2", "personal task3"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],

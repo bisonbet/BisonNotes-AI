@@ -268,7 +268,11 @@ class DataMigrationManager: ObservableObject {
             summaryEntry.recordingId = recordingEntry.id
             summaryEntry.transcriptId = summary.transcriptId
             summaryEntry.generatedAt = summary.generatedAt
-            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+                aiEngine: summary.aiEngine,
+                aiModel: summary.aiModel,
+                promptTemplate: summary.promptTemplate
+            )
             summaryEntry.processingTime = summary.processingTime
             summaryEntry.confidence = summary.confidence
             summaryEntry.summary = summary.summary

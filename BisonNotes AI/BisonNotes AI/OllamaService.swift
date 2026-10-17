@@ -134,7 +134,7 @@ struct OllamaJSONSchemas {
         "properties": [
             "summary": [
                 "type": "string",
-                "description": SummaryDetailLevel.current.schemaDescription,
+                "description": SummaryPromptComposer.current.schemaSummaryDescription,
                 "minLength": 100
             ],
             "tasks": [
@@ -946,16 +946,16 @@ class OllamaService: ObservableObject {
     private func comedyPromptModifier(for type: String) -> String {
         switch type {
         case "summary":
-            return ComedyMode.current.promptModifier ?? ""
+            return SummaryPromptComposer.current.systemModifier
         case "complete":
-            return ComedyMode.current.structuredPromptModifier ?? ""
+            return SummaryPromptComposer.current.structuredModifier
         default:
             return ""
         }
     }
 
     private func summaryDetailInstructions(for text: String) -> String {
-        SummaryDetailLevel.current.promptInstructions(
+        SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
     }
@@ -971,7 +971,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            SummaryPromptComposer.current.schemaSummaryDescription + " Use Markdown headers, bold text, and bullets where useful."
                         )
                     ],
                     required: ["summary"]
@@ -991,7 +991,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            SummaryPromptComposer.current.schemaSummaryDescription + " Use Markdown headers, bold text, and bullets where useful."
                         ),
                         "tasks": OllamaProperty.array(
                             "array",
@@ -1051,7 +1051,7 @@ class OllamaService: ObservableObject {
 
     private func createRobustSummaryPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+        let comedyModifier = SummaryPromptComposer.current.systemModifier
 
         return """
         <INSTRUCTIONS>
@@ -1105,7 +1105,7 @@ class OllamaService: ObservableObject {
 
     private func createRobustCompleteProcessingPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
+        let comedyModifier = SummaryPromptComposer.current.structuredModifier
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
@@ -1430,9 +1430,14 @@ class OllamaService: ObservableObject {
         // Standard Ollama tool calling
         let tools = [createCompleteAnalysisTool()]
         let comedyModifier = comedyPromptModifier(for: "complete")
+        // The default prompt carries no detail block here; a selected summary
+        // prompt must still reach the model, so add it only when one is active.
+        let summaryPromptGuidance = SummaryPromptComposer.current.preset == .standard
+            ? ""
+            : "\n" + summaryDetailInstructions(for: text)
         let prompt = """
         Please analyze the following transcript and provide a complete analysis using the complete_analysis function.
-        \(comedyModifier)
+        \(summaryPromptGuidance)\(comedyModifier)
 
         \(text)
         """
@@ -1682,7 +1687,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
                       }
                     },
                     "required": ["summary"]
@@ -1727,7 +1732,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
+                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets"
                       },
                       "tasks": {
                         "type": "array",
@@ -2056,7 +2061,7 @@ class OllamaService: ObservableObject {
             Available function: create_summary
             Description: Create a comprehensive summary of the transcript with proper Markdown formatting
             Parameters:
-            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure
+            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure
 
             SUMMARY DETAIL REQUIREMENT:
             \(detailInstructions)
@@ -2077,7 +2082,7 @@ class OllamaService: ObservableObject {
             Available function: complete_analysis
             Description: Perform complete analysis extracting summary, tasks, reminders, titles, and content type
             Parameters:
-            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets
+            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets
 
             SUMMARY DETAIL REQUIREMENT:
             \(detailInstructions)
@@ -2296,7 +2301,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
                     }
                   },
                   "required": ["summary"]
@@ -2334,7 +2339,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
+                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets"
                     },
                     "tasks": {
                       "type": "array",
@@ -2770,7 +2775,7 @@ class OllamaService: ObservableObject {
 
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
+        let comedyModifier = SummaryPromptComposer.current.structuredModifier
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 

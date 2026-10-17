@@ -37,7 +37,17 @@ enum TranscriptCleanupSettings {
         ]
     }
 
+    /// Automatic cleanup runs only while the Transcript Cleanup beta is on and
+    /// the user has turned cleanup on within it.
     static func isEnabled(in defaults: UserDefaults = .standard) -> Bool {
+        guard BetaFeatures.isEnabled(.transcriptCleanup, defaults: defaults) else {
+            return false
+        }
+        return isOptedIn(in: defaults)
+    }
+
+    /// The cleanup toggle's own stored value, regardless of the beta gate.
+    static func isOptedIn(in defaults: UserDefaults = .standard) -> Bool {
         guard let value = defaults.object(forKey: Keys.enabled) as? Bool else {
             return defaultEnabled
         }

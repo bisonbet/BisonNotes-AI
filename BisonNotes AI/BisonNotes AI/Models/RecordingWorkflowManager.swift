@@ -142,7 +142,7 @@ class RecordingWorkflowManager: ObservableObject {
     // MARK: - Summary Workflow
 
     /// Creates a summary linked to both recording and transcript with proper UUID relationships
-    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
+    func createSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
 
         guard let recordingEntry = try coreDataManager.fetchRecording(id: recordingId) else {
             AppLog.shared.backgroundProcessing("Recording not found for ID: \(recordingId)", level: .error)
@@ -204,6 +204,7 @@ class RecordingWorkflowManager: ObservableObject {
             contentType: contentType,
             aiEngine: aiEngine,
             aiModel: aiModel,
+            promptTemplate: promptTemplate,
             originalLength: originalLength,
             processingTime: processingTime
         )
@@ -223,7 +224,11 @@ class RecordingWorkflowManager: ObservableObject {
             summaryEntry.recordingId = recordingId
             summaryEntry.transcriptId = transcriptId
             summaryEntry.generatedAt = summaryData.generatedAt
-            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+                aiEngine: aiEngine,
+                aiModel: aiModel,
+                promptTemplate: summaryData.promptTemplate
+            )
 
             summaryEntry.processingTime = processingTime
             summaryEntry.confidence = summaryData.confidence

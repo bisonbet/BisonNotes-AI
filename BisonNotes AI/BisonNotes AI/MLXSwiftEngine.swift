@@ -815,7 +815,7 @@ private actor MLXSwiftService {
 
     private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> SummarizationResult {
         let wordCount = transcript.split(whereSeparator: { $0.isWhitespace }).count
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: wordCount
         )
 
@@ -892,7 +892,7 @@ private actor MLXSwiftService {
             """
         }.joined(separator: "\n\n")
 
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: originalWordCount
         )
 
@@ -961,7 +961,7 @@ private actor MLXSwiftService {
 
     Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker \
     and actually appears in the transcript.
-    """ + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    """ + "\n\n" + SummaryPromptComposer.current.detailInstructions()
     }
 
     private func generate(prompt: String) async throws -> String {

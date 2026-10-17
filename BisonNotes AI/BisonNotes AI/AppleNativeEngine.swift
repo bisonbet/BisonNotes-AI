@@ -34,7 +34,7 @@ final class AppleNativeEngine: SummarizationEngine {
         let chunks = chunkText(text)
 
         if chunks.count == 1 {
-            let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            let detailInstructions = SummaryPromptComposer.current.detailInstructions(
                 forSourceWordCount: wordCount(of: text)
             )
             let prompt = """
@@ -55,7 +55,7 @@ final class AppleNativeEngine: SummarizationEngine {
         )
         var chunkSummaries: [String] = []
         for (index, chunk) in chunks.enumerated() {
-            let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+            let detailInstructions = SummaryPromptComposer.current.detailInstructions(
                 forSourceWordCount: wordCount(of: chunk)
             )
             let chunkPrompt = """
@@ -73,7 +73,7 @@ final class AppleNativeEngine: SummarizationEngine {
         let combined = chunkSummaries.enumerated()
             .map { "Part \($0.offset + 1):\n\($0.element)" }
             .joined(separator: "\n\n")
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: wordCount(of: text)
         )
 
