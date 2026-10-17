@@ -43,7 +43,6 @@ struct PreferencesView: View {
                 timeFormatSection
                 #if os(macOS)
                 behaviorSection
-                betaSection
                 #endif
             }
             .padding(.horizontal, 20)
@@ -123,31 +122,6 @@ struct PreferencesView: View {
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
-    }
-
-    private var betaSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                Image(systemName: "flask")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.orange)
-                    .frame(width: 30, height: 30)
-                    .background(Color.orange.opacity(0.14))
-                    .clipShape(RoundedRectangle(cornerRadius: 9))
-
-                Text("Beta Features")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                    .accessibilityAddTraits(.isHeader)
-            }
-
-            BetaFeaturesControls()
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaSection)
     }
     #endif
 

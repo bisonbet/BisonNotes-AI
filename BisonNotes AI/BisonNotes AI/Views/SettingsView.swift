@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var showingBackgroundProcessing = false
     @State private var showingAdvancedTroubleshooting = false
     @State private var showingPreferences = false
+    @State private var showingBetaFeatures = false
     @State private var showingAcknowledgements = false
     @State private var logExportError: String?
     @State private var isPreparingLogs = false
@@ -42,6 +43,7 @@ struct SettingsView: View {
     @AppStorage("iCloudBackupIncludeSensitiveSettings") private var iCloudBackupIncludeSensitiveSettings: Bool = false
     @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
     @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
+    @AppStorage(BetaFeatures.masterStorageKey) private var betaFeaturesEnabled = false
     @State private var isRunningCloudBackupAction = false
     @State private var cloudBackupActionMessage = ""
     @State private var cloudBackupActionIsError = false
@@ -153,6 +155,9 @@ struct SettingsView: View {
         .sheet(isPresented: $showingPreferences) {
             PreferencesView()
         }
+        .sheet(isPresented: $showingBetaFeatures) {
+            BetaFeaturesView()
+        }
         .sheet(isPresented: $showingAcknowledgements) {
             AcknowledgementsView()
         }
@@ -202,7 +207,6 @@ struct SettingsView: View {
                 modernRecordingSection
                 moderniCloudSection
                 modernBehaviorSection
-                modernBetaSection
                 modernMaintenanceSection
                 modernAboutSection
             }
@@ -257,6 +261,21 @@ struct SettingsView: View {
                 tint: .orange,
                 action: { showingTranscriptionSettings = true }
             )
+
+            ModernSettingsNavigationRow(
+                title: "Beta Features",
+                subtitle: "Try early features that may not work as intended",
+                systemImage: "flask",
+                tint: .orange,
+                trailing: {
+                    ModernStatusPill(
+                        text: betaFeaturesEnabled ? "On" : "Off",
+                        tint: betaFeaturesEnabled ? .orange : .secondary
+                    )
+                },
+                action: { showingBetaFeatures = true }
+            )
+            .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaRow)
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsConfigurationSection)
     }
@@ -514,13 +533,6 @@ struct SettingsView: View {
             CustomSummaryPromptNotice()
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
-    }
-
-    private var modernBetaSection: some View {
-        ModernSettingsCard(title: "Beta Features", systemImage: "flask", tint: .orange) {
-            BetaFeaturesControls()
-        }
-        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaSection)
     }
 
     private var modernMaintenanceSection: some View {

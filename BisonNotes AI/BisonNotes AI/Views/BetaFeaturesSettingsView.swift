@@ -7,35 +7,113 @@
 
 import SwiftUI
 
-// MARK: - Beta Features Controls
+// MARK: - Beta Features Page
 
-/// Master switch plus one opt-in per `BetaFeature`. Hosts wrap it in their
-/// own card so it matches the surrounding settings screen.
-struct BetaFeaturesControls: View {
+/// The Beta Features settings page: the master switch, then one card per
+/// `BetaFeature` holding its opt-in and, once enabled, its own settings.
+struct BetaFeaturesView: View {
+    @Environment(\.dismiss) private var dismiss
     @AppStorage(BetaFeatures.masterStorageKey) private var masterEnabled = false
+    @State private var showingEnableWarning = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("Beta Features", isOn: $masterEnabled)
-                .accessibilityValue(AccessibilitySupport.statusValue(isOn: masterEnabled))
-                .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaMasterToggle)
+        #if os(macOS)
+        pageContent
+        #else
+        PlatformSettingsNavigationStack {
+            pageContent
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            dismiss()
+                        }
+                        .fontWeight(.medium)
+                    }
+                }
+        }
+        #endif
+    }
 
-            Text("Early features that may change or be removed. Turning this off restores default behavior and keeps your choices for later.")
+    private var pageContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                masterCard
+                if masterEnabled {
+                    ForEach(BetaFeature.allCases) { feature in
+                        BetaFeatureCard(feature: feature)
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 36)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .background(Color(.systemGroupedBackground))
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaSection)
+        .alert("Turn On Beta Features?", isPresented: $showingEnableWarning) {
+            Button("Cancel", role: .cancel) {}
+            Button("Turn On") {
+                masterEnabled = true
+            }
+        } message: {
+            Text(
+                "Beta features are still in development and might not work as intended. "
+                    + "They may change or be removed in a future update. "
+                    + "You can turn them off here at any time."
+            )
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Beta Features")
+                .font(.largeTitle.weight(.bold))
+                .foregroundColor(.primary)
+                .accessibilityAddTraits(.isHeader)
+
+            Text("Try early features before they are finished.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var masterCard: some View {
+        BetaSettingsCard(title: "Beta Features", systemImage: "flask") {
+            Toggle("Enable Beta Features", isOn: Binding(
+                get: { masterEnabled },
+                set: { newValue in
+                    // Turning on asks first; turning off is immediate.
+                    if newValue && !masterEnabled {
+                        showingEnableWarning = true
+                    } else {
+                        masterEnabled = newValue
+                    }
+                }
+            ))
+            .accessibilityValue(AccessibilitySupport.statusValue(isOn: masterEnabled))
+            .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaMasterToggle)
+
+            Text(
+                masterEnabled
+                    ? "Turn on the features you want to try below. Turning Beta Features off restores "
+                        + "default behavior and keeps your choices for later."
+                    : "Early features that may change or be removed. Turning this off restores "
+                        + "default behavior and keeps your choices for later."
+            )
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if masterEnabled {
-                Divider()
-                ForEach(BetaFeature.allCases) { feature in
-                    BetaFeatureToggleRow(feature: feature)
-                }
-            }
         }
     }
 }
 
-private struct BetaFeatureToggleRow: View {
+/// One beta feature: its opt-in, then its settings while it is on.
+private struct BetaFeatureCard: View {
     let feature: BetaFeature
     @AppStorage private var isEnabled: Bool
 
@@ -45,22 +123,81 @@ private struct BetaFeatureToggleRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Toggle(feature.title, isOn: $isEnabled)
+        BetaSettingsCard(title: feature.title, systemImage: feature.systemImage, showsBadge: true) {
+            Toggle("Enable \(feature.title)", isOn: $isEnabled)
                 .accessibilityValue(AccessibilitySupport.statusValue(isOn: isEnabled))
                 .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaFeatureToggle(feature))
+
             Text(feature.summary)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if isEnabled {
+                Divider()
+                settings
+            }
         }
+    }
+
+    @ViewBuilder
+    private var settings: some View {
+        switch feature {
+        case .customSummaryPrompt:
+            SummaryPromptControls()
+                .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptSection)
+        }
+    }
+}
+
+private struct BetaSettingsCard<Content: View>: View {
+    let title: String
+    let systemImage: String
+    var showsBadge = false
+    @ViewBuilder let content: Content
+
+    init(title: String, systemImage: String, showsBadge: Bool = false, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.systemImage = systemImage
+        self.showsBadge = showsBadge
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.orange)
+                    .frame(width: 30, height: 30)
+                    .background(Color.orange.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .accessibilityAddTraits(.isHeader)
+
+                Spacer()
+
+                if showsBadge {
+                    BetaBadge()
+                }
+            }
+
+            content
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 }
 
 // MARK: - Summary Prompt Controls
 
-/// Picker over the summary prompt presets, with an editor for Custom. Render
-/// inside `BetaGated(.customSummaryPrompt)`.
+/// Picker over the summary prompt presets, with an editor for Custom. Shown on
+/// the Beta Features page once the Summary Prompt beta is on.
 struct SummaryPromptControls: View {
     @AppStorage(SummaryPromptPreset.storageKey)
     private var presetRawValue = SummaryPromptPreset.standard.rawValue

@@ -13,9 +13,10 @@ import SwiftUI
 /// and then opts in to this feature specifically.
 ///
 /// To gate a new feature: add a case here, give it a title and summary, read
-/// `BetaFeatures.isEnabled(_:)` wherever the feature changes behavior, and wrap
-/// its settings in `BetaGated`. The per-feature key is added to iCloud settings
-/// backup automatically through `BetaFeatures.allStorageKeys`.
+/// `BetaFeatures.isEnabled(_:)` wherever the feature changes behavior, and add
+/// its settings to `BetaFeatureCard` on the Beta Features page. The per-feature
+/// key is added to iCloud settings backup automatically through
+/// `BetaFeatures.allStorageKeys`.
 enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
     case customSummaryPrompt
 
@@ -32,6 +33,13 @@ enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .customSummaryPrompt:
             return "Choose a Personal Notes, Business Meeting, or custom prompt for AI summaries."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .customSummaryPrompt:
+            return "text.bubble"
         }
     }
 

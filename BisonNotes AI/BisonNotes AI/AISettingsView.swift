@@ -419,7 +419,6 @@ struct AISettingsView: View {
                 modernCurrentEngineSection
                 modernTimeoutSection
                 modernSummaryDetailSection
-                modernSummaryPromptSection
                 modernSummaryThinkingSection
                 modernSummaryManagementSection
             }
@@ -595,7 +594,6 @@ struct AISettingsView: View {
                 modernEngineLibrarySection
                 modernTimeoutSection
                 modernSummaryDetailSection
-                modernSummaryPromptSection
                 modernSummaryThinkingSection
                 modernSummaryManagementSection
             }
@@ -776,19 +774,6 @@ struct AISettingsView: View {
 
                 CustomSummaryPromptNotice()
             }
-        }
-    }
-
-    private var modernSummaryPromptSection: some View {
-        BetaGated(.customSummaryPrompt) {
-            AISettingsCard(title: "Summary Prompt", systemImage: "text.bubble", tint: .orange) {
-                SummaryPromptControls()
-            }
-            .overlay(alignment: .topTrailing) {
-                BetaBadge()
-                    .padding(18)
-            }
-            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptSection)
         }
     }
 

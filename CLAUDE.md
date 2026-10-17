@@ -167,7 +167,7 @@ Summary prompt text comes only from `SummaryPromptComposer` (`Models/SummaryProm
 
 ### Beta Features
 
-`BetaFeatures` (`Models/BetaFeatures.swift`) is a master switch plus one opt-in per `BetaFeature`; `BetaFeatures.isEnabled(_:)` is true only when both are on. Turning the master off restores default behavior but never clears a feature's own flag or settings. To gate a new feature: add a `BetaFeature` case, read `isEnabled` wherever it changes behavior, and wrap its settings in `BetaGated(.feature) { … }`. Its key joins iCloud settings backup automatically through `BetaFeatures.allStorageKeys`. Already-shipped Experimental features (Nemotron 3, LS-EEND, transcript cleanup) keep their own opt-ins and are not behind Beta.
+`BetaFeatures` (`Models/BetaFeatures.swift`) is a master switch plus one opt-in per `BetaFeature`; `BetaFeatures.isEnabled(_:)` is true only when both are on. Turning the master off restores default behavior but never clears a feature's own flag or settings. All beta settings live on the Beta Features page (`Views/BetaFeaturesSettingsView.swift`), a sheet from Settings › Configuration on iOS and the Beta tab on macOS. Turning the master on asks for confirmation first, with a warning that beta features might not work as intended. To gate a new feature: add a `BetaFeature` case, read `isEnabled` wherever it changes behavior, and add its controls to `BetaFeatureCard.settings`. `BetaGated(.feature) { … }` is available if a beta sub-setting ever has to sit inside another screen. Its key joins iCloud settings backup automatically through `BetaFeatures.allStorageKeys`. Already-shipped Experimental features (Nemotron 3, LS-EEND, transcript cleanup) keep their own opt-ins and are not behind Beta.
 
 ### Native macOS Build Notes
 
