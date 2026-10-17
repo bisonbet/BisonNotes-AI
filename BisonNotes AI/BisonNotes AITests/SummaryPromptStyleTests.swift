@@ -152,6 +152,45 @@ final class SummaryPromptStyleTests: XCTestCase {
         }
     }
 
+    func testChosenRecordingTypeReplacesTheAutomaticFocus() {
+        enableSummaryPromptBeta()
+
+        select(.standard)
+        for type in [PromptTypeCase.summary, .complete] {
+            let prompt = ChatCompletionPromptGenerator.createSystemPrompt(for: type.value, contentType: .meeting)
+            XCTAssertTrue(prompt.contains("Meeting Analysis Focus"), "Default keeps the classifier's focus")
+        }
+
+        select(.custom, customText: "Short bullets.")
+        XCTAssertTrue(
+            ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .meeting)
+                .contains("Meeting Analysis Focus"),
+            "Custom keeps the classifier's focus"
+        )
+
+        for preset in [SummaryPromptPreset.personalNotes, .businessMeeting] {
+            select(preset)
+            for type in [PromptTypeCase.summary, .complete] {
+                for contentType in [ContentType.meeting, .personalJournal, .technical, .general] {
+                    let prompt = ChatCompletionPromptGenerator.createSystemPrompt(for: type.value, contentType: contentType)
+                    XCTAssertFalse(prompt.contains("Analysis Focus"), "\(preset) must not carry the automatic focus")
+                    XCTAssertTrue(prompt.contains("Recording Type:"))
+                    XCTAssertTrue(prompt.contains("Treat the recording as this type"))
+                }
+            }
+        }
+    }
+
+    private enum PromptTypeCase {
+        case summary, complete
+        var value: ChatCompletionPromptGenerator.PromptType {
+            switch self {
+            case .summary: return .summary
+            case .complete: return .complete
+            }
+        }
+    }
+
     func testPresetsKeepComedyMode() {
         let composer = SummaryPromptComposer(preset: .businessMeeting, detailLevel: .balanced, comedyMode: .snarky)
         XCTAssertEqual(composer.effectiveComedyMode, .snarky)

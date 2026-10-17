@@ -112,6 +112,19 @@ struct SummaryPromptComposer: Sendable {
         )
     }
 
+    /// Whether the summary prompt should include the focus block for the
+    /// automatically classified content type. A recording type the user picked
+    /// (Personal Notes, Business Meeting) is honored instead of the guess, so
+    /// the two never give the model conflicting instructions.
+    var usesAutomaticContentFocus: Bool {
+        switch preset {
+        case .standard, .custom:
+            return true
+        case .personalNotes, .businessMeeting:
+            return false
+        }
+    }
+
     /// A Custom prompt replaces Comedy Mode; the presets keep it.
     var effectiveComedyMode: ComedyMode {
         preset == .custom ? .off : configuredComedyMode
@@ -175,7 +188,7 @@ struct SummaryPromptComposer: Sendable {
     // MARK: - Prompt Blocks
 
     private static let summaryScopeRules = """
-    - The user's selection takes precedence over any automatic content-type guess when writing the summary.
+    - The user chose this recording type. Treat the recording as this type even if the content suggests otherwise.
     - Apply this only to the narrative `summary` field or Summary section.
     - Extract tasks, reminders, titles, and content type only from the transcript and keep them concise.
     """

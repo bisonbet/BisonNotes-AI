@@ -190,12 +190,14 @@ enum ChatCompletionPromptGenerator {
         - Prioritize the most important information first
         """
 
-        let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
         let summaryPrompt = SummaryPromptComposer.current
+        let contentTypePrompt = summaryPrompt.usesAutomaticContentFocus
+            ? createContentTypeSpecificPrompt(contentType) + "\n\n"
+            : ""
 
         switch type {
         case .summary:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n"
+            return basePrompt + "\n\n" + contentTypePrompt
                 + createSummaryPrompt(summaryPrompt) + summaryPrompt.systemModifier
         case .tasks:
             return basePrompt + "\n\n" + createTasksPrompt()
@@ -204,7 +206,7 @@ enum ChatCompletionPromptGenerator {
         case .titles:
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n"
+            return basePrompt + "\n\n" + contentTypePrompt
                 + createCompletePrompt(summaryPrompt) + summaryPrompt.structuredModifier
         }
     }
