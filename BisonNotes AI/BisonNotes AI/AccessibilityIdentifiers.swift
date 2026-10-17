@@ -37,6 +37,15 @@ enum BisonNotesAccessibilityID {
     static let iCloudEnableToggle = "bisonnotes.settings.icloud.enable"
     static let iCloudReviewItemsButton = "bisonnotes.settings.icloud.review-items"
     static let settingsBehaviorSection = "bisonnotes.settings.behavior.section"
+    static let settingsBetaSection = "bisonnotes.settings.beta.section"
+    static let settingsBetaMasterToggle = "bisonnotes.settings.beta.master"
+    static func settingsBetaFeatureToggle(_ feature: BetaFeature) -> String {
+        "bisonnotes.settings.beta.feature.\(feature.rawValue)"
+    }
+    static let summaryPromptSection = "bisonnotes.settings.summary-prompt.section"
+    static let summaryPromptPicker = "bisonnotes.settings.summary-prompt.picker"
+    static let summaryPromptCustomText = "bisonnotes.settings.summary-prompt.custom-text"
+    static let summaryPromptResetButton = "bisonnotes.settings.summary-prompt.reset"
     static let settingsMaintenanceSection = "bisonnotes.settings.maintenance.section"
     static let settingsPaneGeneral = "bisonnotes.settings.pane.general"
     static let settingsPaneRecording = "bisonnotes.settings.pane.recording"

@@ -202,6 +202,7 @@ struct SettingsView: View {
                 modernRecordingSection
                 moderniCloudSection
                 modernBehaviorSection
+                modernBetaSection
                 modernMaintenanceSection
                 modernAboutSection
             }
@@ -510,8 +511,16 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
+            CustomSummaryPromptNotice()
         }
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
+    }
+
+    private var modernBetaSection: some View {
+        ModernSettingsCard(title: "Beta Features", systemImage: "flask", tint: .orange) {
+            BetaFeaturesControls()
+        }
+        .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBetaSection)
     }
 
     private var modernMaintenanceSection: some View {

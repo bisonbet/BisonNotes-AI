@@ -689,7 +689,9 @@ class SummaryManager: ObservableObject {
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
         AppLog.shared.summarization(
-            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), comedy=\(ComedyMode.current.rawValue)",
+            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), "
+                + "comedy=\(SummaryPromptComposer.current.effectiveComedyMode.rawValue), "
+                + SummaryPromptComposer.current.logDescription,
             level: .debug
         )
 

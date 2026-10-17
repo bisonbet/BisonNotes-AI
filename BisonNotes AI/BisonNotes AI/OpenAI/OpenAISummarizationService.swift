@@ -39,7 +39,7 @@ actor OpenAICompatibleService {
     // MARK: - Public Methods
 
     func generateSummary(from text: String, contentType: ContentType) async throws -> String {
-        let comedyMode = ComedyMode.current
+        let comedyMode = SummaryPromptComposer.current.effectiveComedyMode
         let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: contentType)
         let userPrompt = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: text)
 
@@ -132,8 +132,9 @@ actor OpenAICompatibleService {
     func processComplete(text: String) async throws -> SummarizationResult {
         // First classify the content
         let contentType = try await classifyContent(text)
-        let comedyMode = ComedyMode.current
-        let detailLevel = SummaryDetailLevel.current
+        let summaryPrompt = SummaryPromptComposer.current
+        let comedyMode = summaryPrompt.effectiveComedyMode
+        let detailLevel = summaryPrompt.detailLevel
 
         // Create a comprehensive prompt for all tasks
         let systemPrompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: contentType)
@@ -143,7 +144,7 @@ actor OpenAICompatibleService {
         let temperatureDescription = completionTemperature.map { String(format: "%.1f", $0) } ?? "reasoning-default"
         AppLog.shared.networking(
             "Compatible API complete prompt settings: detail=\(detailLevel.displayName), "
-                + "comedy=\(comedyMode.rawValue), temperature=\(temperatureDescription)",
+                + "comedy=\(comedyMode.rawValue), \(summaryPrompt.logDescription), temperature=\(temperatureDescription)",
             level: .debug
         )
 

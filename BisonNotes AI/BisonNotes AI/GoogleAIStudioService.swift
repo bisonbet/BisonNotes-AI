@@ -327,7 +327,7 @@ actor GoogleAIStudioService {
             "properties": [
                 "summary": [
                     "type": "string",
-                    "description": SummaryDetailLevel.current.schemaDescription
+                    "description": SummaryPromptComposer.current.schemaSummaryDescription
                 ],
                 "tasks": [
                     "type": "array",
@@ -421,7 +421,7 @@ actor GoogleAIStudioService {
     }
 
     private func createStructuredPrompt(_ text: String) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions()
+        let detailInstructions = SummaryPromptComposer.current.detailInstructions()
 
         return """
         Analyze the following text and extract key information in a structured format:
@@ -464,7 +464,7 @@ actor GoogleAIStudioService {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
+          "summary": "\(SummaryPromptComposer.current.schemaSummaryDescription)",
           "tasks": ["personal task1", "personal task2"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -475,7 +475,7 @@ actor GoogleAIStudioService {
         - Return ONLY personal, relevant content for tasks and reminders
         - If no personal tasks exist, use an empty array: "tasks": []
         - If no personal reminders exist, use an empty array: "reminders": []
-        \(ComedyMode.current.structuredPromptModifier ?? "")
+        \(SummaryPromptComposer.current.structuredModifier)
         """
     }
 

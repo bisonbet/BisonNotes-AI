@@ -157,6 +157,18 @@ Every provider's output cap covers the model's **reasoning pass and its answer t
 - **Read the provider's own truncation signal; never infer it from the payload.** `finish_reason` of `length`/`max_tokens` (Compatible API, Mistral), `finishReason` of `MAX_TOKENS` (Gemini), `done_reason` of `length` (Ollama). Each is exposed as `wasTruncatedByTokenLimit` next to its response model.
 - **Retry once with a doubled budget, then fail loudly.** Reasoning length is unpredictable, so a single growth pass (capped at `maximumCompletionTokenBudget`) recovers the common case. What remains truncated throws `SummarizationError.responseTruncated`, which names the limit and the reasoning cost. Truncated content never reaches a parser. `SummaryManager` deliberately skips its blind retry for this error — the engine already grew the budget, so another pass would fail identically.
 
+### Summary Prompt Composition
+
+Summary prompt text comes only from `SummaryPromptComposer` (`Models/SummaryPromptStyle.swift`). Every summary prompt site reads `detailInstructions(forSourceWordCount:)`, `schemaSummaryDescription` and the `systemModifier` / `structuredModifier` / `userModifier` comedy hooks from it, never from `SummaryDetailLevel.current` or `ComedyMode.current` directly. Task, reminder and title prompts never go through it. `SummaryPromptStyleTests` covers it.
+
+- **The Default preset is byte-identical to the pre-composer prompts.** For `.standard` every composer output equals what `SummaryDetailLevel` and `ComedyMode` produce on their own.
+- **Presets ride inside the detail block.** Personal Notes and Business Meeting prepend their framing to the detail instructions, so every engine that already includes detail instructions gets them, chunk and meta-summary passes included.
+- **Custom replaces Summary Detail and Comedy Mode.** The user's text (trimmed, capped at 2,000 characters, empty → "Please summarize this recording.") is fenced between `<<<` and `>>>` and scoped to the narrative `summary`. JSON schemas and format rules stay outside it, and `effectiveComedyMode` is `.off`. Logs record only `logDescription`, never the text.
+
+### Beta Features
+
+`BetaFeatures` (`Models/BetaFeatures.swift`) is a master switch plus one opt-in per `BetaFeature`; `BetaFeatures.isEnabled(_:)` is true only when both are on. Turning the master off restores default behavior but never clears a feature's own flag or settings. To gate a new feature: add a `BetaFeature` case, read `isEnabled` wherever it changes behavior, and wrap its settings in `BetaGated(.feature) { … }`. Its key joins iCloud settings backup automatically through `BetaFeatures.allStorageKeys`. Already-shipped Experimental features (Nemotron 3, LS-EEND, transcript cleanup) keep their own opt-ins and are not behind Beta.
+
 ### Native macOS Build Notes
 
 Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target supports only iPhone and iPad destinations; the `BisonNotes AI macOS` scheme is the sole Mac product.
