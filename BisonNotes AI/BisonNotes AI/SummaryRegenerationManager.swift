@@ -123,6 +123,7 @@ class SummaryRegenerationManager: ObservableObject {
                     contentType: newEnhancedSummary.contentType,
                     aiEngine: newEnhancedSummary.aiEngine,
                     aiModel: newEnhancedSummary.aiModel,
+                    promptTemplate: newEnhancedSummary.promptTemplate,
                     originalLength: newEnhancedSummary.originalLength,
                     processingTime: newEnhancedSummary.processingTime
                 )
@@ -211,6 +212,7 @@ class SummaryRegenerationManager: ObservableObject {
                 contentType: newEnhancedSummary.contentType,
                 aiEngine: newEnhancedSummary.aiEngine,
                 aiModel: newEnhancedSummary.aiModel,
+                promptTemplate: newEnhancedSummary.promptTemplate,
                 originalLength: newEnhancedSummary.originalLength,
                 processingTime: newEnhancedSummary.processingTime
             )

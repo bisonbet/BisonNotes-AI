@@ -744,6 +744,7 @@ class SummaryManager: ObservableObject {
                 contentType: .general,
                 aiEngine: "Local Processing",
                 aiModel: "Short Transcript (Displayed As-Is)",
+                promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -964,6 +965,7 @@ class SummaryManager: ObservableObject {
                 contentType: .general,
                 aiEngine: "Local Processing",
             aiModel: "Short Transcript (Displayed As-Is)",
+                promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -1011,6 +1013,7 @@ class SummaryManager: ObservableObject {
             contentType: contentType,
             aiEngine: "Local Processing",
             aiModel: "Basic Extraction",
+            promptTemplate: nil, // No model prompt was used
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )

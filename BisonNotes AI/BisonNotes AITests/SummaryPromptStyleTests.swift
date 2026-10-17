@@ -24,6 +24,12 @@ final class SummaryPromptStyleTests: XCTestCase {
             }
             defaults.removeObject(forKey: key)
         }
+        // Set the beta switches off explicitly: a value in another defaults
+        // domain (one written with `simctl defaults write`, for example)
+        // would otherwise show through a removed key.
+        for key in BetaFeatures.allStorageKeys {
+            defaults.set(false, forKey: key)
+        }
     }
 
     override func tearDown() {

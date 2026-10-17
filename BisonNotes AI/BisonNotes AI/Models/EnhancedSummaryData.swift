@@ -356,7 +356,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
 
     // Legacy initializer for backward compatibility
-    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate? = nil, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = nil
         self.transcriptId = nil
@@ -388,7 +388,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
 
     // New initializer for unified architecture
-    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate? = nil, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = recordingId
         self.transcriptId = transcriptId

@@ -73,6 +73,71 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         XCTAssertEqual(complete.summary?.transcriptId, transcriptId)
     }
 
+    /// A summary saved through the workflow keeps the Summary Prompt template
+    /// it was generated with. The workflow used to rebuild the summary from
+    /// loose fields and drop the template, so a Business Meeting summary read
+    /// back as Default.
+    @MainActor
+    func testSavedSummaryKeepsItsPromptTemplate() throws {
+        let audioURL = tempDirectory.appendingPathComponent("template-recording.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = try appCoordinator.addRecording(
+            url: audioURL,
+            name: "Template Recording",
+            date: Date(timeIntervalSince1970: 1_770_000_000),
+            fileSize: 1_024,
+            duration: 60,
+            quality: .whisperOptimized
+        )
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
+            for: recordingId,
+            segments: [
+                TranscriptSegment(speaker: "Speaker 1", text: "Decide on the GPU purchase.", startTime: 0, endTime: 3)
+            ],
+            engine: .fluidAudio,
+            processingTime: 0.2,
+            confidence: 0.95
+        ))
+
+        let business = SummaryPromptTemplate(preset: .businessMeeting)
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Procurement meeting summary with enough detail to be saved as a real summary.",
+            contentType: .meeting,
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: business,
+            originalLength: 80
+        ))
+        XCTAssertEqual(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate, business)
+
+        // Regenerating with a custom template replaces it, and the text survives.
+        let custom = SummaryPromptTemplate(preset: .custom, customText: "Only the decisions.")
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Regenerated procurement summary with enough detail to be saved as a real summary.",
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: custom,
+            originalLength: 80
+        ))
+        XCTAssertEqual(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate, custom)
+
+        // Default reads back as nil, the same as a summary from before templates.
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Default procurement summary with enough detail to be saved as a real summary.",
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: .standard,
+            originalLength: 80
+        ))
+        XCTAssertNil(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate)
+    }
+
     @MainActor
     func testTranscriptReplacementPreservesTranscriptIdAndUpdatesSegments() throws {
         let recordingId = try createRecording(named: "Transcript Replacement")

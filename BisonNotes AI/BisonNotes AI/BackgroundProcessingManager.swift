@@ -2109,6 +2109,7 @@ class BackgroundProcessingManager: ObservableObject {
             contentType: enhancedSummary.contentType,
             aiEngine: enhancedSummary.aiEngine,
             aiModel: enhancedSummary.aiModel,
+            promptTemplate: enhancedSummary.promptTemplate,
             originalLength: enhancedSummary.originalLength,
             processingTime: enhancedSummary.processingTime
         )
@@ -2169,6 +2170,7 @@ class BackgroundProcessingManager: ObservableObject {
         var tasks: [TaskItem] = []
         var reminders: [ReminderItem] = []
         var titles: [TitleItem] = []
+        var promptTemplate: SummaryPromptTemplate?
 
         switch BackgroundSummarizationRoute(engineName: engine) {
         case .ollama:
@@ -2192,6 +2194,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = result.reminders
             titles = result.titles
             contentType = result.contentType
+            promptTemplate = result.promptTemplate
 
         case .selectedEngine:
             // Use the SummaryManager's currently selected engine
@@ -2208,6 +2211,7 @@ class BackgroundProcessingManager: ObservableObject {
             reminders = result.reminders
             titles = result.titles
             contentType = result.contentType
+            promptTemplate = result.promptTemplate
         }
 
         let processingTime = Date().timeIntervalSince(startTime)
@@ -2238,6 +2242,7 @@ class BackgroundProcessingManager: ObservableObject {
             contentType: contentType,
             aiEngine: engineType,
             aiModel: engine,
+            promptTemplate: promptTemplate,
             originalLength: transcriptText.count,
             processingTime: processingTime
         )

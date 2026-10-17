@@ -609,6 +609,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             summary: "A cloud-only summary retained locally until its recording can be restored.",
             aiEngine: "Fixture",
             aiModel: "cloud-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
 
