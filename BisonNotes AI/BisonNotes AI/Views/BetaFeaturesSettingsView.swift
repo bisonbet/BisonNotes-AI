@@ -146,6 +146,8 @@ private struct BetaFeatureCard: View {
         case .customSummaryPrompt:
             SummaryPromptControls()
                 .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptSection)
+        case .transcriptCleanup:
+            TranscriptCleanupControls()
         }
     }
 }

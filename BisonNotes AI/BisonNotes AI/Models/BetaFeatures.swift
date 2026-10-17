@@ -19,6 +19,7 @@ import SwiftUI
 /// `BetaFeatures.allStorageKeys`.
 enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
     case customSummaryPrompt
+    case transcriptCleanup
 
     var id: String { rawValue }
 
@@ -26,6 +27,8 @@ enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .customSummaryPrompt:
             return "Summary Prompt"
+        case .transcriptCleanup:
+            return "Transcript Cleanup"
         }
     }
 
@@ -33,6 +36,8 @@ enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .customSummaryPrompt:
             return "Choose a Personal Notes, Business Meeting, or custom prompt for AI summaries."
+        case .transcriptCleanup:
+            return "Clean up English transcripts on this device with S1-mini: punctuation, fillers, and spoken corrections."
         }
     }
 
@@ -40,6 +45,8 @@ enum BetaFeature: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .customSummaryPrompt:
             return "text.bubble"
+        case .transcriptCleanup:
+            return "wand.and.stars"
         }
     }
 
@@ -64,6 +71,21 @@ enum BetaFeatures {
     /// feature's own flag or settings, so turning it back on restores them.
     static func isEnabled(_ feature: BetaFeature, defaults: UserDefaults = .standard) -> Bool {
         isMasterEnabled(defaults: defaults) && defaults.bool(forKey: feature.storageKey)
+    }
+
+    static let legacyOptInMigrationKey = "betaFeaturesLegacyOptInMigrated"
+
+    /// Transcript Cleanup shipped as its own Experimental opt-in before it moved
+    /// behind Beta. Anyone who had it on keeps it: their beta switches are
+    /// turned on once, so the move does not silently stop their cleanup.
+    static func migrateLegacyOptIns(defaults: UserDefaults = .standard) {
+        guard !defaults.bool(forKey: legacyOptInMigrationKey) else { return }
+        defer { defaults.set(true, forKey: legacyOptInMigrationKey) }
+
+        if defaults.bool(forKey: TranscriptCleanupSettings.Keys.enabled) {
+            defaults.set(true, forKey: masterStorageKey)
+            defaults.set(true, forKey: BetaFeature.transcriptCleanup.storageKey)
+        }
     }
 }
 

@@ -29,9 +29,53 @@ final class TranscriptCleanupTests: XCTestCase {
         )
 
         defaults.set(true, forKey: TranscriptCleanupSettings.Keys.enabled)
+        XCTAssertFalse(
+            TranscriptCleanupSettings.isEnabled(in: defaults),
+            "Cleanup stays off until the Transcript Cleanup beta is on"
+        )
+        XCTAssertTrue(TranscriptCleanupSettings.isOptedIn(in: defaults))
+
+        defaults.set(true, forKey: BetaFeatures.masterStorageKey)
+        defaults.set(true, forKey: BetaFeature.transcriptCleanup.storageKey)
         XCTAssertTrue(TranscriptCleanupSettings.isEnabled(in: defaults))
+        XCTAssertTrue(TranscriptCleanupConfiguration.automatic(defaults: defaults).enabled)
+
+        defaults.set(false, forKey: BetaFeatures.masterStorageKey)
+        XCTAssertFalse(TranscriptCleanupSettings.isEnabled(in: defaults))
+        XCTAssertFalse(TranscriptCleanupConfiguration.automatic(defaults: defaults).enabled)
+        defaults.set(true, forKey: BetaFeatures.masterStorageKey)
+
         TranscriptCleanupSettings.reset(in: defaults)
         XCTAssertFalse(TranscriptCleanupSettings.isEnabled(in: defaults))
+    }
+
+    func testExistingCleanupUsersAreMovedIntoTheBetaOnce() {
+        let suite = "TranscriptCleanupBetaMigrationTests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set(true, forKey: TranscriptCleanupSettings.Keys.enabled)
+        BetaFeatures.migrateLegacyOptIns(defaults: defaults)
+        XCTAssertTrue(BetaFeatures.isEnabled(.transcriptCleanup, defaults: defaults))
+        XCTAssertTrue(TranscriptCleanupSettings.isEnabled(in: defaults))
+
+        // Runs once: a later choice to turn Beta off is never undone.
+        defaults.set(false, forKey: BetaFeatures.masterStorageKey)
+        BetaFeatures.migrateLegacyOptIns(defaults: defaults)
+        XCTAssertFalse(BetaFeatures.isMasterEnabled(defaults: defaults))
+    }
+
+    func testUsersWithoutCleanupAreNotOptedIntoTheBeta() {
+        let suite = "TranscriptCleanupBetaMigrationOffTests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        BetaFeatures.migrateLegacyOptIns(defaults: defaults)
+        XCTAssertFalse(BetaFeatures.isMasterEnabled(defaults: defaults))
+        XCTAssertFalse(defaults.bool(forKey: BetaFeature.transcriptCleanup.storageKey))
+        XCTAssertTrue(defaults.bool(forKey: BetaFeatures.legacyOptInMigrationKey))
     }
 
     func testDisabledCleanupDoesNotAskTheNormalizerToLoadOrTokenize() async {

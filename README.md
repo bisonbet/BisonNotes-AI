@@ -34,7 +34,7 @@ Your recordings can stay entirely on-device: Parakeet handles transcription loca
 - ⌚️ **Independent Watch Recorder** — The watch records on its own and transfers complete files back to the phone, surviving offline, relaunch, and reconnect
 - 🖥️ **Native Mac Meeting Capture** — Optional ScreenCaptureKit system-audio capture mixed with your microphone, with selectable inputs and stall/device-recovery monitoring
 - 🔒 **Fully On-Device Path** — Parakeet transcription plus MLX Swift summarization run locally; no audio leaves the device unless you choose a cloud engine
-- ✨ **Optional English Transcript Cleanup (Experimental)** — Explicitly download S1-mini by Superwhisper, then clean completed file transcripts on-device while retaining the original
+- ✨ **Optional English Transcript Cleanup (Beta)** — Explicitly download S1-mini by Superwhisper, then clean completed file transcripts on-device while retaining the original
 - 🤖 **Pluggable AI Engines** — On-device MLX Swift, Apple Foundation Models, OpenAI-compatible, Mistral AI, Google AI Studio, Whisper, Wyoming, and Ollama on native macOS
 - 📝 **Summaries, Tasks & Reminders** — Structured extraction from transcripts, rendered with MarkdownUI
 - 🔗 **Import From Link** — Direct audio/video files, transcript documents, and public YouTube captions
@@ -56,7 +56,7 @@ In-app Help links derive both the page slug and the anchor from the installed ma
 
 ## Transcript Cleanup
 
-The optional, experimental **Clean up transcripts (English only)** setting runs S1-mini by Superwhisper on completed file transcriptions on supported Apple-silicon Mac and physical iPhone/iPad targets. It is off by default and never downloads the model when enabled; download S1-mini explicitly from Transcription Settings or the transcript editor first.
+Transcript Cleanup is a beta feature. Open Settings › Beta Features, turn on Beta Features and then Transcript Cleanup, and use **Clean up transcripts automatically (English only)** to run S1-mini by Superwhisper on completed file transcriptions on supported Apple-silicon Mac and physical iPhone/iPad targets. It is off by default and never downloads the model when enabled; download S1-mini explicitly from the Beta Features page or the transcript editor first. If you had cleanup turned on before it moved to Beta, it stays on.
 
 Cleanup preserves the original transcript, segment timing, speaker labels, and raw text. Existing editors open on **Original** and can switch to **Cleaned** when a revision exists. Copy, share, and ordinary text export follow the selected representation. The one-time **Clean up English transcript** action also works for imported text without enabling automatic cleanup or rerunning ASR/diarization. Automatic summaries continue to use original text.
 
