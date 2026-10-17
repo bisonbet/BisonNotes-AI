@@ -11,7 +11,7 @@ import Foundation
 
 /// How the narrative summary should be framed. Only the summary changes:
 /// tasks, reminders, titles, and content type keep their fixed prompts.
-enum SummaryPromptPreset: String, CaseIterable, Identifiable, Sendable {
+enum SummaryPromptPreset: String, CaseIterable, Identifiable, Codable, Sendable {
     case standard
     case personalNotes
     case businessMeeting
@@ -71,6 +71,42 @@ enum SummaryPromptPreset: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Summary Prompt Template
+
+/// The template one summary was, or should be, generated with. Stored on the
+/// summary (inside its metadata) and on a queued summary job, so regenerating
+/// keeps the summary's own template rather than the current default.
+struct SummaryPromptTemplate: Codable, Equatable, Sendable {
+    let preset: SummaryPromptPreset
+    /// Only meaningful for `.custom`; stored normalized.
+    let customText: String?
+
+    init(preset: SummaryPromptPreset, customText: String? = nil) {
+        self.preset = preset
+        self.customText = preset == .custom
+            ? SummaryPromptPreset.normalizedCustomText(customText)
+            : nil
+    }
+
+    static let standard = SummaryPromptTemplate(preset: .standard)
+
+    /// The default template for new summaries, from the Beta Features page.
+    static func configured(defaults: UserDefaults = .standard) -> SummaryPromptTemplate {
+        SummaryPromptTemplate(
+            preset: SummaryPromptPreset.configured(defaults: defaults),
+            customText: SummaryPromptPreset.configuredCustomText(defaults: defaults)
+        )
+    }
+
+    /// What a summary records about how it was made. Default is recorded as
+    /// nil, so summaries made without the beta keep their metadata unchanged.
+    var recordedValue: SummaryPromptTemplate? {
+        preset == .standard ? nil : self
+    }
+
+    var displayName: String { preset.displayName }
+}
+
 // MARK: - Summary Prompt Composer
 
 /// The single source of summary-specific prompt text for every engine.
@@ -97,19 +133,36 @@ struct SummaryPromptComposer: Sendable {
         self.configuredComedyMode = comedyMode
     }
 
-    /// Resolves the settings at request time. The preset is `.standard` unless
-    /// Beta Features and the Summary Prompt beta are both on.
+    /// A template chosen for one request (regenerating a summary with its own
+    /// template, or one the user picked). Set it around the whole summary
+    /// generation with `SummaryPromptComposer.$requestTemplate.withValue`;
+    /// every prompt built inside that scope uses it. Engines need no changes.
+    @TaskLocal static var requestTemplate: SummaryPromptTemplate?
+
+    /// The template in effect: `.standard` unless Beta Features and the Summary
+    /// Prompt beta are both on; otherwise the request's template, or the
+    /// configured default for new summaries.
+    static func effectiveTemplate(defaults: UserDefaults = .standard) -> SummaryPromptTemplate {
+        guard BetaFeatures.isEnabled(.customSummaryPrompt, defaults: defaults) else {
+            return .standard
+        }
+        return requestTemplate ?? .configured(defaults: defaults)
+    }
+
+    /// Resolves the settings at request time.
     static var current: SummaryPromptComposer {
-        let defaults = UserDefaults.standard
-        let preset = BetaFeatures.isEnabled(.customSummaryPrompt, defaults: defaults)
-            ? SummaryPromptPreset.configured(defaults: defaults)
-            : .standard
+        let template = effectiveTemplate()
         return SummaryPromptComposer(
-            preset: preset,
-            customText: SummaryPromptPreset.configuredCustomText(defaults: defaults),
+            preset: template.preset,
+            customText: template.customText ?? SummaryPromptPreset.defaultCustomText,
             detailLevel: .current,
             comedyMode: .current
         )
+    }
+
+    /// The template this composer represents, for recording on a summary.
+    var template: SummaryPromptTemplate {
+        SummaryPromptTemplate(preset: preset, customText: customText)
     }
 
     /// Whether the summary prompt should include the focus block for the

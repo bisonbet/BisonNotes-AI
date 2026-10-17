@@ -97,11 +97,14 @@ class SummaryRegenerationManager: ObservableObject {
 
             do {
                 // Generate new summary using the current AI engine
+                // Each summary keeps the template it was made with; one made
+                // before templates existed (nil) stays on Default.
                 let newEnhancedSummary = try await summaryManager.generateEnhancedSummary(
                     from: transcript.textForSummarization,
                     for: summary.recordingURL,
                     recordingName: summary.recordingName,
-                    recordingDate: summary.recordingDate
+                    recordingDate: summary.recordingDate,
+                    promptTemplate: summary.promptTemplate ?? .standard
                 )
 
                 // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary
@@ -189,7 +192,8 @@ class SummaryRegenerationManager: ObservableObject {
                 from: transcript.textForSummarization,
                 for: recordingURL,
                 recordingName: summary.recordingName,
-                recordingDate: summary.recordingDate
+                recordingDate: summary.recordingDate,
+                promptTemplate: summary.promptTemplate ?? .standard
             )
 
             // Note: Old summary cleanup now happens in RecordingWorkflowManager.createSummary

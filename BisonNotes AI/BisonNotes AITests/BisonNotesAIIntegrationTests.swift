@@ -150,6 +150,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This legacy summary contains enough content to be migrated safely.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
         let data = try JSONEncoder().encode([legacySummary])
@@ -204,6 +205,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This stale legacy summary must not replace newer Core Data content.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 70,
             generatedAt: Date(timeIntervalSince1970: 1_760_000_000)
         )
@@ -335,6 +337,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This legacy summary contains enough content to be migrated safely.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
     }

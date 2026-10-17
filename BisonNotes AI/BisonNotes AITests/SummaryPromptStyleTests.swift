@@ -280,6 +280,116 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertEqual(composer.logDescription, "prompt=custom(15 chars)")
     }
 
+    // MARK: - Per-summary templates
+
+    func testRequestTemplateOverridesTheDefaultOnlyWhileTheBetaIsOn() async {
+        select(.personalNotes)
+        let business = SummaryPromptTemplate(preset: .businessMeeting)
+
+        await SummaryPromptComposer.$requestTemplate.withValue(business) {
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .standard, "Beta off ignores the request template")
+        }
+
+        enableSummaryPromptBeta()
+        XCTAssertEqual(SummaryPromptComposer.current.preset, .personalNotes)
+        await SummaryPromptComposer.$requestTemplate.withValue(business) {
+            // Reaches prompts built from a child task, as engines do.
+            let prompt = await Task {
+                ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .general)
+            }.value
+            XCTAssertTrue(prompt.contains("Recording Type: Business Meeting"))
+            XCTAssertFalse(prompt.contains("Recording Type: Personal Notes"))
+        }
+        await SummaryPromptComposer.$requestTemplate.withValue(.standard) {
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .standard, "An explicit Default beats the global setting")
+        }
+        let custom = SummaryPromptTemplate(preset: .custom, customText: "Only the decisions.")
+        await SummaryPromptComposer.$requestTemplate.withValue(custom) {
+            XCTAssertEqual(SummaryPromptComposer.current.customText, "Only the decisions.")
+        }
+    }
+
+    func testSummaryMetadataRecordsTheTemplateAndKeepsDefaultUnchanged() throws {
+        let legacy = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: nil)
+        let defaultEncoded = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: .standard)
+        for encoded in [legacy, defaultEncoded] {
+            // Default must carry exactly the pre-template keys.
+            let object = try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: String]
+            )
+            XCTAssertEqual(object, ["engine": "MLX Swift", "model": "Bonsai"])
+        }
+        XCTAssertNil(SummaryMetadataCodec.decode(legacy).promptTemplate)
+
+        let custom = SummaryPromptTemplate(preset: .custom, customText: "Three bullets.")
+        let decoded = SummaryMetadataCodec.decode(
+            SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: custom)
+        )
+        XCTAssertEqual(decoded.engine, "MLX Swift")
+        XCTAssertEqual(decoded.model, "Bonsai")
+        XCTAssertEqual(decoded.promptTemplate, custom)
+
+        // A pre-template value still decodes.
+        XCTAssertNil(SummaryMetadataCodec.decode(#"{"engine":"Google AI","model":"gemini"}"#).promptTemplate)
+        XCTAssertNil(SummaryMetadataCodec.decode("plain model name").promptTemplate)
+    }
+
+    func testEnhancedSummaryDataCarriesItsTemplateThroughCoding() throws {
+        let business = SummaryPromptTemplate(preset: .businessMeeting)
+        let summary = EnhancedSummaryData(
+            recordingId: UUID(),
+            recordingURL: URL(fileURLWithPath: "/tmp/a.m4a"),
+            recordingName: "A",
+            recordingDate: Date(),
+            summary: "Text",
+            aiModel: "model",
+            promptTemplate: business,
+            originalLength: 10
+        )
+        let roundTripped = try JSONDecoder().decode(
+            EnhancedSummaryData.self,
+            from: JSONEncoder().encode(summary)
+        )
+        XCTAssertEqual(roundTripped.promptTemplate, business)
+
+        let defaultSummary = EnhancedSummaryData(
+            recordingId: UUID(),
+            recordingURL: URL(fileURLWithPath: "/tmp/b.m4a"),
+            recordingName: "B",
+            recordingDate: Date(),
+            summary: "Text",
+            aiModel: "model",
+            promptTemplate: .standard,
+            originalLength: 10
+        )
+        XCTAssertNil(defaultSummary.promptTemplate, "Default is stored as nil")
+        let encoded = try JSONEncoder().encode(defaultSummary)
+        XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("promptTemplate"))
+    }
+
+    func testSummaryJobsPersistTheirTemplate() {
+        let template = SummaryPromptTemplate(preset: .custom, customText: "Action items only.")
+        let job = ProcessingJob(
+            type: .summarization(engine: "MLX Swift"),
+            recordingURL: URL(fileURLWithPath: "/tmp/c.m4a"),
+            recordingName: "C",
+            modelName: "Bonsai",
+            summaryPromptTemplate: template
+        )
+        let restored = ProcessingJob.restoredPersistenceValues(from: job.persistedModelNameValue)
+        XCTAssertEqual(restored.modelName, "Bonsai")
+        XCTAssertEqual(restored.summaryPromptTemplate, template)
+
+        let plainJob = ProcessingJob(
+            type: .summarization(engine: "MLX Swift"),
+            recordingURL: URL(fileURLWithPath: "/tmp/d.m4a"),
+            recordingName: "D",
+            modelName: "Bonsai"
+        )
+        XCTAssertEqual(plainJob.persistedModelNameValue, "Bonsai", "A job with no template persists as before")
+        XCTAssertNil(ProcessingJob.restoredPersistenceValues(from: "Bonsai").summaryPromptTemplate)
+    }
+
     // MARK: - Sync
 
     @MainActor

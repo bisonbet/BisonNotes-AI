@@ -212,7 +212,7 @@ struct SummaryPromptControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Choose how AI summaries are written. Tasks, reminders, and titles are not affected.")
+            Text("The default prompt for new AI summaries. You can choose a different one for any summary when you regenerate it. Tasks, reminders, and titles are not affected.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -289,6 +289,74 @@ struct CustomSummaryPromptNotice: View {
                 .font(.caption)
                 .foregroundColor(.orange)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - Per-Summary Template Picker
+
+/// Chooses the template for one summary, such as when regenerating it. Starts
+/// from that summary's own template; the global setting is untouched.
+struct SummaryTemplatePicker: View {
+    @Binding var template: SummaryPromptTemplate
+
+    private var presetBinding: Binding<SummaryPromptPreset> {
+        Binding(
+            get: { template.preset },
+            set: { newPreset in
+                let customText = newPreset == .custom
+                    ? (template.customText ?? SummaryPromptPreset.configuredCustomText())
+                    : nil
+                template = SummaryPromptTemplate(preset: newPreset, customText: customText)
+            }
+        )
+    }
+
+    private var customTextBinding: Binding<String> {
+        Binding(
+            get: { template.customText ?? SummaryPromptPreset.defaultCustomText },
+            set: { newText in
+                // Normalized when the summary is generated; keep what the user
+                // is typing, including trailing spaces, while editing.
+                template = SummaryPromptTemplate(
+                    preset: .custom,
+                    customText: String(newText.prefix(SummaryPromptPreset.maxCustomTextLength))
+                )
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Summary Prompt")
+                    .font(.subheadline.weight(.semibold))
+                BetaBadge()
+                Spacer()
+                Picker("Summary Prompt", selection: presetBinding) {
+                    ForEach(SummaryPromptPreset.allCases) { preset in
+                        Text(preset.displayName).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .accessibilityIdentifier(BisonNotesAccessibilityID.summaryTemplatePicker)
+            }
+
+            Text(template.preset.userDescription)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if template.preset == .custom {
+                TextEditor(text: customTextBinding)
+                    .frame(minHeight: 90)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .background(Color(.tertiarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .accessibilityLabel("Custom summary prompt for this summary")
+            }
         }
     }
 }

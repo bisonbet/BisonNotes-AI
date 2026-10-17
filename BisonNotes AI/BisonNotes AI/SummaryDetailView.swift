@@ -39,6 +39,10 @@ struct SummaryDetailView: View {
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
+    /// The template Regenerate uses, starting from this summary's own.
+    @State private var regenerationTemplate: SummaryPromptTemplate
+    @AppStorage(BetaFeatures.masterStorageKey) private var betaFeaturesEnabled = false
+    @AppStorage(BetaFeature.customSummaryPrompt.storageKey) private var summaryPromptBetaEnabled = false
     @State private var regeneratingJobId: UUID?
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
@@ -108,6 +112,11 @@ struct SummaryDetailView: View {
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
         self._summaryData = State(initialValue: summaryData)
+        self._regenerationTemplate = State(initialValue: summaryData.promptTemplate ?? .standard)
+    }
+
+    private var isSummaryPromptBetaEnabled: Bool {
+        betaFeaturesEnabled && summaryPromptBetaEnabled
     }
 
     private var isNativeMacSummaryWindow: Bool {
@@ -772,6 +781,13 @@ struct SummaryDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 metadataRow(title: "AI Engine", value: summaryData.aiEngine, icon: "cpu")
                 metadataRow(title: "AI Model", value: summaryData.aiModel, icon: "brain.head.profile")
+                if isSummaryPromptBetaEnabled {
+                    metadataRow(
+                        title: "Summary Prompt",
+                        value: (summaryData.promptTemplate ?? .standard).displayName,
+                        icon: "text.bubble"
+                    )
+                }
                 metadataRow(title: "Generation Time", value: formatDate(summaryData.generatedAt), icon: "clock.arrow.circlepath")
                 metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
                 metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
@@ -1174,6 +1190,12 @@ struct SummaryDetailView: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
+                if isSummaryPromptBetaEnabled {
+                    SummaryTemplatePicker(template: $regenerationTemplate)
+                        .padding(.horizontal)
+                        .disabled(isRegenerating)
+                }
+
                 Button(action: {
                     // Check if AI engine is configured before allowing regeneration
                     if !ConfigurationWarningHelper.isAIEngineConfigured() {
@@ -1422,6 +1444,8 @@ struct SummaryDetailView: View {
         let oldSummaryId = summaryData.id
         let recordingURL = summaryData.recordingURL
         let recordingName = summaryData.recordingName
+        // With the beta off the job keeps today's behavior (no template).
+        let promptTemplate = isSummaryPromptBetaEnabled ? regenerationTemplate : nil
 
         AppLog.shared.summarization("Queueing summary regeneration", level: .debug)
 
@@ -1432,7 +1456,8 @@ struct SummaryDetailView: View {
                     recordingName: recordingName,
                     engine: selectedEngine,
                     modelName: selectedModel,
-                    replacingSummaryId: oldSummaryId
+                    replacingSummaryId: oldSummaryId,
+                    promptTemplate: promptTemplate
                 )
                 await MainActor.run {
                     regeneratingJobId = jobId
@@ -1527,6 +1552,7 @@ struct SummaryDetailView: View {
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
+                        promptTemplate: summaryData.promptTemplate,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1593,6 +1619,7 @@ struct SummaryDetailView: View {
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
+                        promptTemplate: summaryData.promptTemplate,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1816,6 +1843,7 @@ struct SummaryDetailView: View {
             contentType: summaryData.contentType,
             aiEngine: summaryData.aiEngine,
             aiModel: summaryData.aiModel,
+            promptTemplate: summaryData.promptTemplate,
             originalLength: summaryData.originalLength,
             processingTime: summaryData.processingTime,
             generatedAt: summaryData.generatedAt,

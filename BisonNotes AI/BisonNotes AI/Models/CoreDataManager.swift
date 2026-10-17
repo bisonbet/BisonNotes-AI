@@ -1426,7 +1426,8 @@ class CoreDataManager: ObservableObject {
             isolatedSummary.contentType = summary.contentType.rawValue
             isolatedSummary.aiMethod = SummaryMetadataCodec.encode(
                 aiEngine: summary.aiEngine,
-                aiModel: summary.aiModel
+                aiModel: summary.aiModel,
+                promptTemplate: summary.promptTemplate
             )
             isolatedSummary.generatedAt = summary.generatedAt
             isolatedSummary.version = Int32(summary.version)
@@ -1614,7 +1615,11 @@ class CoreDataManager: ObservableObject {
             summaryEntry.recordingId = recordingId
             summaryEntry.transcriptId = summary.transcriptId
             summaryEntry.generatedAt = summary.generatedAt
-            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: summary.aiEngine, aiModel: summary.aiModel)
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+                aiEngine: summary.aiEngine,
+                aiModel: summary.aiModel,
+                promptTemplate: summary.promptTemplate
+            )
             summaryEntry.processingTime = summary.processingTime
             summaryEntry.confidence = summary.confidence
             summaryEntry.summary = summary.summary
@@ -2389,6 +2394,7 @@ class CoreDataManager: ObservableObject {
             contentType: contentType,
             aiEngine: engine,
             aiModel: decodedMetadata.model,
+            promptTemplate: decodedMetadata.promptTemplate,
             originalLength: Int(summaryEntry.originalLength),
             processingTime: summaryEntry.processingTime,
             generatedAt: summaryEntry.generatedAt,

@@ -223,7 +223,11 @@ class RecordingWorkflowManager: ObservableObject {
             summaryEntry.recordingId = recordingId
             summaryEntry.transcriptId = transcriptId
             summaryEntry.generatedAt = summaryData.generatedAt
-            summaryEntry.aiMethod = SummaryMetadataCodec.encode(aiEngine: aiEngine, aiModel: aiModel)
+            summaryEntry.aiMethod = SummaryMetadataCodec.encode(
+                aiEngine: aiEngine,
+                aiModel: aiModel,
+                promptTemplate: summaryData.promptTemplate
+            )
 
             summaryEntry.processingTime = processingTime
             summaryEntry.confidence = summaryData.confidence

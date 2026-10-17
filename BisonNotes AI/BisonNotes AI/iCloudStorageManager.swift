@@ -880,6 +880,7 @@ class iCloudStorageManager: ObservableObject {
             contentType: summary.contentType,
             aiEngine: summary.aiEngine,
             aiModel: summary.aiModel,
+            promptTemplate: summary.promptTemplate,
             originalLength: summary.originalLength,
             processingTime: summary.processingTime,
             generatedAt: summary.generatedAt,
@@ -2141,7 +2142,8 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
         record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
             aiEngine: summary.aiEngine,
-            aiModel: summary.aiModel
+            aiModel: summary.aiModel,
+            promptTemplate: summary.promptTemplate
         )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
@@ -2180,7 +2182,8 @@ class iCloudStorageManager: ObservableObject {
         record[CloudKitSummaryRecord.contentTypeField] = summary.contentType.rawValue
         record[CloudKitSummaryRecord.aiMethodField] = SummaryMetadataCodec.encode(
             aiEngine: summary.aiEngine,
-            aiModel: summary.aiModel
+            aiModel: summary.aiModel,
+            promptTemplate: summary.promptTemplate
         )
         record[CloudKitSummaryRecord.generatedAtField] = summary.generatedAt
         record[CloudKitSummaryRecord.versionField] = summary.version
@@ -2277,6 +2280,7 @@ class iCloudStorageManager: ObservableObject {
             contentType: contentType,
             aiEngine: engine,
             aiModel: decodedMetadata.model,
+            promptTemplate: decodedMetadata.promptTemplate,
             originalLength: originalLength,
             processingTime: processingTime,
             generatedAt: generatedAt,

@@ -47,6 +47,7 @@ enum BisonNotesAccessibilityID {
     static let summaryPromptPicker = "bisonnotes.settings.summary-prompt.picker"
     static let summaryPromptCustomText = "bisonnotes.settings.summary-prompt.custom-text"
     static let summaryPromptResetButton = "bisonnotes.settings.summary-prompt.reset"
+    static let summaryTemplatePicker = "bisonnotes.summary.template-picker"
     static let transcriptCleanupToggle = "bisonnotes.settings.transcript-cleanup.toggle"
     static let settingsMaintenanceSection = "bisonnotes.settings.maintenance.section"
     static let settingsPaneGeneral = "bisonnotes.settings.pane.general"

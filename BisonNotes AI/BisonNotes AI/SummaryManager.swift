@@ -684,7 +684,35 @@ class SummaryManager: ObservableObject {
 
     // MARK: - Enhanced Summary Generation
 
-    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
+    /// - Parameter promptTemplate: The Summary Prompt template for this summary
+    ///   (a regenerated summary's own, or one the user picked). Nil uses the
+    ///   default for new summaries. Ignored while the Summary Prompt beta is off.
+    func generateEnhancedSummary(
+        from text: String,
+        for recordingURL: URL,
+        recordingName: String,
+        recordingDate: Date,
+        coordinator: AppDataCoordinator? = nil,
+        engineName: String? = nil,
+        promptTemplate: SummaryPromptTemplate? = nil
+    ) async throws -> EnhancedSummaryData {
+        // Every prompt built below, in any engine, reads the template from
+        // this scope through SummaryPromptComposer.current.
+        try await SummaryPromptComposer.$requestTemplate.withValue(
+            promptTemplate ?? SummaryPromptComposer.requestTemplate
+        ) {
+            try await generateEnhancedSummaryInTemplateScope(
+                from: text,
+                for: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                coordinator: coordinator,
+                engineName: engineName
+            )
+        }
+    }
+
+    private func generateEnhancedSummaryInTemplateScope(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator?, engineName: String?) async throws -> EnhancedSummaryData {
         // Sync engine from settings before logging to avoid "No current engine set" warning
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
@@ -845,6 +873,7 @@ class SummaryManager: ObservableObject {
             contentType: result.contentType,
             aiEngine: engine.engineType,
             aiModel: engine.metadataName,
+            promptTemplate: SummaryPromptComposer.current.template,
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )
