@@ -9,6 +9,9 @@ final class SummaryPromptStyleTests: XCTestCase {
         BetaFeatures.allStorageKeys + [
             SummaryPromptPreset.storageKey,
             SummaryPromptPreset.customTextStorageKey,
+            SummaryPromptLibrary.storageKey,
+            SummaryPromptLibrary.defaultPromptIDKey,
+            SummaryPromptLibrary.legacyMigrationKey,
             SummaryDetailLevel.storageKey,
             ComedyMode.SettingsKeys.enabled,
             ComedyMode.SettingsKeys.style
@@ -48,11 +51,34 @@ final class SummaryPromptStyleTests: XCTestCase {
         defaults.set(true, forKey: BetaFeature.customSummaryPrompt.storageKey)
     }
 
+    private static let testCustomID = "test-custom"
+
+    /// Makes `preset` the default for new summaries. A custom selection saves
+    /// one custom prompt with `customText`.
     private func select(_ preset: SummaryPromptPreset, customText: String? = nil) {
-        defaults.set(preset.rawValue, forKey: SummaryPromptPreset.storageKey)
-        if let customText {
-            defaults.set(customText, forKey: SummaryPromptPreset.customTextStorageKey)
+        switch preset {
+        case .standard:
+            SummaryPromptLibrary.setDefaultPrompt(id: SummaryPrompt.defaultID)
+        case .businessMeeting:
+            SummaryPromptLibrary.setDefaultPrompt(id: SummaryPrompt.businessMeetingID)
+        case .personalNotes:
+            SummaryPromptLibrary.setDefaultPrompt(id: SummaryPrompt.personalNotesID)
+        case .custom:
+            _ = customTemplate(customText ?? SummaryPromptPreset.defaultCustomText)
+            SummaryPromptLibrary.setDefaultPrompt(id: Self.testCustomID)
         }
+    }
+
+    /// Saves (or rewrites) the test's custom prompt and returns its reference.
+    private func customTemplate(
+        _ text: String,
+        recordingType: SummaryRecordingType = .auto
+    ) -> SummaryPromptTemplate {
+        var prompt = SummaryPrompt.newCustom(number: 1, id: Self.testCustomID)
+        prompt.text = text
+        prompt.recordingType = recordingType
+        SummaryPromptLibrary.save(prompt)
+        return SummaryPromptTemplate(prompt: prompt.normalized())
     }
 
     // MARK: - Beta gate
@@ -283,14 +309,14 @@ final class SummaryPromptStyleTests: XCTestCase {
             comedyMode: .off
         )
         XCTAssertFalse(composer.logDescription.contains("Private"))
-        XCTAssertEqual(composer.logDescription, "prompt=custom(15 chars)")
+        XCTAssertEqual(composer.logDescription, "prompt=custom(15 chars, type=auto)")
     }
 
     // MARK: - Per-summary templates
 
     func testRequestTemplateOverridesTheDefaultOnlyWhileTheBetaIsOn() async {
         select(.personalNotes)
-        let business = SummaryPromptTemplate(preset: .businessMeeting)
+        let business = SummaryPromptTemplate(prompt: .originalBusinessMeeting)
 
         await SummaryPromptComposer.$requestTemplate.withValue(business) {
             XCTAssertEqual(SummaryPromptComposer.current.preset, .standard, "Beta off ignores the request template")
@@ -309,7 +335,7 @@ final class SummaryPromptStyleTests: XCTestCase {
         await SummaryPromptComposer.$requestTemplate.withValue(.standard) {
             XCTAssertEqual(SummaryPromptComposer.current.preset, .standard, "An explicit Default beats the global setting")
         }
-        let custom = SummaryPromptTemplate(preset: .custom, customText: "Only the decisions.")
+        let custom = customTemplate("Only the decisions.")
         await SummaryPromptComposer.$requestTemplate.withValue(custom) {
             XCTAssertEqual(SummaryPromptComposer.current.customText, "Only the decisions.")
         }
@@ -327,7 +353,7 @@ final class SummaryPromptStyleTests: XCTestCase {
         }
         XCTAssertNil(SummaryMetadataCodec.decode(legacy).promptTemplate)
 
-        let custom = SummaryPromptTemplate(preset: .custom, customText: "Three bullets.")
+        let custom = customTemplate("Three bullets.")
         let decoded = SummaryMetadataCodec.decode(
             SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: custom)
         )
@@ -341,7 +367,7 @@ final class SummaryPromptStyleTests: XCTestCase {
     }
 
     func testEnhancedSummaryDataCarriesItsTemplateThroughCoding() throws {
-        let business = SummaryPromptTemplate(preset: .businessMeeting)
+        let business = SummaryPromptTemplate(prompt: .originalBusinessMeeting)
         let summary = EnhancedSummaryData(
             recordingId: UUID(),
             recordingURL: URL(fileURLWithPath: "/tmp/a.m4a"),
@@ -374,10 +400,10 @@ final class SummaryPromptStyleTests: XCTestCase {
     }
 
     func testContentTypeSaysWhetherItWasDetectedOrChosen() {
-        XCTAssertEqual(SummaryPromptPreset.personalNotes.declaredContentType, .personalJournal)
-        XCTAssertEqual(SummaryPromptPreset.businessMeeting.declaredContentType, .meeting)
-        XCTAssertNil(SummaryPromptPreset.standard.declaredContentType)
-        XCTAssertNil(SummaryPromptPreset.custom.declaredContentType)
+        XCTAssertEqual(SummaryPrompt.originalPersonalNotes.declaredContentType, .personalJournal)
+        XCTAssertEqual(SummaryPrompt.originalBusinessMeeting.declaredContentType, .meeting)
+        XCTAssertNil(SummaryPrompt.standard.declaredContentType)
+        XCTAssertNil(SummaryPrompt.newCustom(number: 1).declaredContentType)
 
         func summary(_ contentType: ContentType, _ template: SummaryPromptTemplate?) -> EnhancedSummaryData {
             EnhancedSummaryData(
@@ -395,21 +421,21 @@ final class SummaryPromptStyleTests: XCTestCase {
 
         XCTAssertEqual(summary(.meeting, nil).contentTypeLabel, "Meeting (Detected)")
         XCTAssertEqual(
-            summary(.meeting, SummaryPromptTemplate(preset: .businessMeeting)).contentTypeLabel,
+            summary(.meeting, SummaryPromptTemplate(prompt: .originalBusinessMeeting)).contentTypeLabel,
             "Meeting (Set by Summary Prompt)"
         )
         XCTAssertEqual(
-            summary(.personalJournal, SummaryPromptTemplate(preset: .personalNotes)).contentTypeLabel,
+            summary(.personalJournal, SummaryPromptTemplate(prompt: .originalPersonalNotes)).contentTypeLabel,
             "Personal Journal (Set by Summary Prompt)"
         )
         XCTAssertFalse(
-            summary(.technical, SummaryPromptTemplate(preset: .custom, customText: "x")).isContentTypeChosen,
+            summary(.technical, customTemplate("x")).isContentTypeChosen,
             "Custom never declares a type"
         )
     }
 
     func testSummaryJobsPersistTheirTemplate() {
-        let template = SummaryPromptTemplate(preset: .custom, customText: "Action items only.")
+        let template = customTemplate("Action items only.")
         let job = ProcessingJob(
             type: .summarization(engine: "MLX Swift"),
             recordingURL: URL(fileURLWithPath: "/tmp/c.m4a"),
@@ -431,6 +457,142 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertNil(ProcessingJob.restoredPersistenceValues(from: "Bonsai").summaryPromptTemplate)
     }
 
+    // MARK: - Prompt library
+
+    func testLibraryStartsWithTheThreeBuiltIns() {
+        let prompts = SummaryPromptLibrary.prompts()
+        XCTAssertEqual(prompts.map(\.id), [SummaryPrompt.defaultID, SummaryPrompt.businessMeetingID, SummaryPrompt.personalNotesID])
+        XCTAssertEqual(SummaryPromptLibrary.defaultPrompt().id, SummaryPrompt.defaultID)
+    }
+
+    func testBuiltInsKeepTheirNamesButTheirWordingCanBeEditedAndRestored() throws {
+        var business = try XCTUnwrap(SummaryPromptLibrary.prompt(id: SummaryPrompt.businessMeetingID))
+        business.name = "Renamed"
+        business.text = "- Focus on the budget decisions only."
+        SummaryPromptLibrary.save(business)
+
+        let saved = try XCTUnwrap(SummaryPromptLibrary.prompt(id: SummaryPrompt.businessMeetingID))
+        XCTAssertEqual(saved.name, "Business Meeting", "Built-in names can't change")
+        XCTAssertEqual(saved.text, "- Focus on the budget decisions only.")
+        XCTAssertTrue(saved.isEdited)
+
+        // The edited wording sits inside the fixed header and rules.
+        let composer = SummaryPromptComposer(prompt: saved, detailLevel: .balanced, comedyMode: .off)
+        let block = composer.detailInstructions()
+        XCTAssertTrue(block.contains("Recording Type: Business Meeting (selected by the user)"))
+        XCTAssertTrue(block.contains("- Focus on the budget decisions only."))
+        XCTAssertTrue(block.contains("Treat the recording as this type"))
+        XCTAssertFalse(block.contains("Attribute positions to speakers"))
+        XCTAssertEqual(composer.declaredContentType, .meeting)
+
+        SummaryPromptLibrary.restoreOriginal(id: SummaryPrompt.businessMeetingID)
+        let restored = try XCTUnwrap(SummaryPromptLibrary.prompt(id: SummaryPrompt.businessMeetingID))
+        XCTAssertEqual(restored, .originalBusinessMeeting)
+        XCTAssertFalse(restored.isEdited)
+    }
+
+    func testBuiltInsCannotBeDeletedAndDefaultCannotBeEdited() {
+        SummaryPromptLibrary.delete(id: SummaryPrompt.businessMeetingID)
+        SummaryPromptLibrary.delete(id: SummaryPrompt.defaultID)
+        XCTAssertNotNil(SummaryPromptLibrary.prompt(id: SummaryPrompt.businessMeetingID))
+        XCTAssertNotNil(SummaryPromptLibrary.prompt(id: SummaryPrompt.defaultID))
+
+        var standard = SummaryPrompt.standard
+        standard.text = "Changed"
+        SummaryPromptLibrary.save(standard)
+        XCTAssertEqual(SummaryPromptLibrary.prompt(id: SummaryPrompt.defaultID), .standard)
+    }
+
+    func testAtMostFiveCustomPrompts() {
+        let added = (0..<7).compactMap { _ in SummaryPromptLibrary.addCustom() }
+        XCTAssertEqual(added.count, SummaryPromptLibrary.maxCustomPrompts)
+        XCTAssertEqual(added.map(\.name), ["Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5"])
+        XCTAssertEqual(SummaryPromptLibrary.customCount(), 5)
+        XCTAssertNil(SummaryPromptLibrary.addCustom())
+    }
+
+    func testDeletingTheDefaultCustomPromptFallsBackToDefault() throws {
+        let custom = try XCTUnwrap(SummaryPromptLibrary.addCustom())
+        SummaryPromptLibrary.setDefaultPrompt(id: custom.id)
+        XCTAssertEqual(SummaryPromptLibrary.defaultPrompt().id, custom.id)
+
+        SummaryPromptLibrary.delete(id: custom.id)
+        XCTAssertNil(SummaryPromptLibrary.prompt(id: custom.id))
+        XCTAssertEqual(SummaryPromptLibrary.defaultPrompt().id, SummaryPrompt.defaultID)
+    }
+
+    func testRegeneratingUsesTheCurrentWordingAndADeletedPromptUsesDefault() async {
+        enableSummaryPromptBeta()
+        let template = customTemplate("First wording.")
+        _ = customTemplate("Second wording.")
+
+        await SummaryPromptComposer.$requestTemplate.withValue(template) {
+            XCTAssertEqual(SummaryPromptComposer.current.customText, "Second wording.", "Edits apply to regeneration")
+        }
+
+        SummaryPromptLibrary.delete(id: template.id)
+        await SummaryPromptComposer.$requestTemplate.withValue(template) {
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .standard, "A deleted prompt regenerates with Default")
+        }
+    }
+
+    func testCustomRecordingTypeReplacesTheGuessLikeTheBuiltIns() {
+        enableSummaryPromptBeta()
+        let meeting = customTemplate("Short bullets.", recordingType: .meeting)
+        XCTAssertEqual(meeting.declaredContentType, .meeting)
+        SummaryPromptLibrary.setDefaultPrompt(id: meeting.id)
+
+        let composer = SummaryPromptComposer.current
+        XCTAssertEqual(composer.declaredContentType, .meeting)
+        XCTAssertFalse(composer.usesAutomaticContentFocus)
+        XCTAssertEqual(composer.effectiveComedyMode, .off)
+
+        let prompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .personalJournal)
+        XCTAssertTrue(prompt.contains("Recording Type: Meeting (selected by the user)"))
+        XCTAssertTrue(prompt.contains("<<<\nShort bullets.\n>>>"))
+        XCTAssertFalse(prompt.contains("Analysis Focus"))
+
+        let auto = customTemplate("Short bullets.", recordingType: .auto)
+        XCTAssertNil(auto.declaredContentType)
+        XCTAssertTrue(SummaryPromptComposer.current.usesAutomaticContentFocus)
+    }
+
+    func testTemplatesFromEarlierBuildsStillDecode() throws {
+        let business = try JSONDecoder().decode(
+            SummaryPromptTemplate.self,
+            from: Data(#"{"preset":"businessMeeting"}"#.utf8)
+        )
+        XCTAssertEqual(business.id, SummaryPrompt.businessMeetingID)
+        XCTAssertEqual(business.declaredContentType, .meeting)
+
+        let custom = try JSONDecoder().decode(
+            SummaryPromptTemplate.self,
+            from: Data(#"{"preset":"custom","customText":"Old text"}"#.utf8)
+        )
+        XCTAssertEqual(custom.id, SummaryPrompt.legacyCustomID)
+        XCTAssertNil(custom.declaredContentType)
+    }
+
+    func testEarlierSettingsMigrateIntoTheLibraryOnce() throws {
+        defaults.set("custom", forKey: SummaryPromptPreset.storageKey)
+        defaults.set("Only the risks.", forKey: SummaryPromptPreset.customTextStorageKey)
+
+        SummaryPromptLibrary.migrateLegacySettingsIfNeeded()
+
+        let custom = try XCTUnwrap(SummaryPromptLibrary.prompt(id: SummaryPrompt.legacyCustomID))
+        XCTAssertEqual(custom.name, "Custom 1")
+        XCTAssertEqual(custom.text, "Only the risks.")
+        XCTAssertEqual(SummaryPromptLibrary.defaultPrompt().id, SummaryPrompt.legacyCustomID)
+        XCTAssertNil(defaults.string(forKey: SummaryPromptPreset.storageKey))
+        XCTAssertNil(defaults.string(forKey: SummaryPromptPreset.customTextStorageKey))
+
+        // Runs once: a later change is never overwritten.
+        SummaryPromptLibrary.setDefaultPrompt(id: SummaryPrompt.personalNotesID)
+        defaults.set("businessMeeting", forKey: SummaryPromptPreset.storageKey)
+        SummaryPromptLibrary.migrateLegacySettingsIfNeeded()
+        XCTAssertEqual(SummaryPromptLibrary.defaultPrompt().id, SummaryPrompt.personalNotesID)
+    }
+
     // MARK: - Sync
 
     @MainActor
@@ -438,11 +600,11 @@ final class SummaryPromptStyleTests: XCTestCase {
         let keys = Set(iCloudStorageManager.backedUpSettingsKeys)
         XCTAssertTrue(keys.contains(BetaFeatures.masterStorageKey))
         XCTAssertTrue(keys.contains(BetaFeature.customSummaryPrompt.storageKey))
-        XCTAssertTrue(keys.contains(SummaryPromptPreset.storageKey))
-        XCTAssertTrue(keys.contains(SummaryPromptPreset.customTextStorageKey))
+        XCTAssertTrue(keys.contains(SummaryPromptLibrary.storageKey))
+        XCTAssertTrue(keys.contains(SummaryPromptLibrary.defaultPromptIDKey))
 
         let manager = iCloudStorageManager()
-        for key in BetaFeatures.allStorageKeys + [SummaryPromptPreset.storageKey, SummaryPromptPreset.customTextStorageKey] {
+        for key in BetaFeatures.allStorageKeys + [SummaryPromptLibrary.storageKey, SummaryPromptLibrary.defaultPromptIDKey] {
             XCTAssertFalse(manager.isSensitiveSettingKey(key), "\(key) must not be treated as a credential")
         }
     }

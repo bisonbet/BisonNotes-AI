@@ -853,7 +853,7 @@ class SummaryManager: ObservableObject {
 
         // A recording type chosen through the Summary Prompt (Personal Notes,
         // Business Meeting) replaces the automatic guess everywhere below.
-        let contentType = SummaryPromptComposer.current.preset.declaredContentType ?? result.contentType
+        let contentType = SummaryPromptComposer.current.declaredContentType ?? result.contentType
 
         // Generate intelligent recording name using AI analysis
         let intelligentName = generateIntelligentRecordingName(

@@ -454,7 +454,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     /// True when the content type was set by the summary's template (Personal
     /// Notes, Business Meeting) rather than detected from the transcript.
     var isContentTypeChosen: Bool {
-        guard let declared = promptTemplate?.preset.declaredContentType else { return false }
+        guard let declared = promptTemplate?.declaredContentType else { return false }
         return declared == contentType
     }
 

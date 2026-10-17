@@ -3172,10 +3172,10 @@ extension iCloudStorageManager {
         MLXSwiftSettingsKeys.topK,
         MLXSwiftSettingsKeys.topP,
         MLXSwiftSettingsKeys.repetitionPenalty,
-        // Beta: a selected summary prompt and its custom text follow the user
-        // to their other devices, along with the switches that gate them.
-        SummaryPromptPreset.storageKey,
-        SummaryPromptPreset.customTextStorageKey
+        // Beta: the user's summary prompts and the default for new summaries
+        // follow them to their other devices, with the switches that gate them.
+        SummaryPromptLibrary.storageKey,
+        SummaryPromptLibrary.defaultPromptIDKey
     ] + BetaFeatures.allStorageKeys
 
     private static let sensitiveSettingKeyFragments: [String] = [

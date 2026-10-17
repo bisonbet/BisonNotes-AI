@@ -99,7 +99,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             confidence: 0.95
         ))
 
-        let business = SummaryPromptTemplate(preset: .businessMeeting)
+        let business = SummaryPromptTemplate(prompt: .originalBusinessMeeting)
         _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,
@@ -113,7 +113,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         XCTAssertEqual(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate, business)
 
         // Regenerating with a custom template replaces it, and the text survives.
-        let custom = SummaryPromptTemplate(preset: .custom, customText: "Only the decisions.")
+        let custom = SummaryPromptTemplate(id: "custom-decisions", name: "Decisions")
         _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,

@@ -681,6 +681,7 @@ struct BisonNotesAIApp: App {
 #endif
         KeychainSecretStore.shared.migrateLegacySecretsFromUserDefaults()
         BetaFeatures.migrateLegacyOptIns()
+        SummaryPromptLibrary.migrateLegacySettingsIfNeeded()
 
         // Log device capabilities on startup
         logDeviceCapabilities()

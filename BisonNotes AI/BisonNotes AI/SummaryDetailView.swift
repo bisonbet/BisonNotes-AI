@@ -39,8 +39,8 @@ struct SummaryDetailView: View {
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
-    /// The template Regenerate uses, starting from this summary's own.
-    @State private var regenerationTemplate: SummaryPromptTemplate
+    /// The prompt Regenerate uses, starting from this summary's own.
+    @State private var regenerationPromptID: String
     @AppStorage(BetaFeatures.masterStorageKey) private var betaFeaturesEnabled = false
     @AppStorage(BetaFeature.customSummaryPrompt.storageKey) private var summaryPromptBetaEnabled = false
     @State private var regeneratingJobId: UUID?
@@ -112,7 +112,26 @@ struct SummaryDetailView: View {
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
         self._summaryData = State(initialValue: summaryData)
-        self._regenerationTemplate = State(initialValue: summaryData.promptTemplate ?? .standard)
+        self._regenerationPromptID = State(initialValue: Self.regenerationPromptID(for: summaryData))
+    }
+
+    /// The summary's own prompt if it still exists; otherwise Default.
+    private static func regenerationPromptID(for summary: EnhancedSummaryData) -> String {
+        guard let id = summary.promptTemplate?.id,
+              SummaryPromptLibrary.prompt(id: id) != nil else {
+            return SummaryPrompt.defaultID
+        }
+        return id
+    }
+
+    /// The prompt name the summary was made with, noting a deleted prompt.
+    private var summaryPromptDisplayName: String {
+        guard let template = summaryData.promptTemplate else {
+            return SummaryPromptTemplate.standard.displayName
+        }
+        return SummaryPromptLibrary.prompt(id: template.id) == nil
+            ? "\(template.displayName) (deleted)"
+            : template.displayName
     }
 
     private var isSummaryPromptBetaEnabled: Bool {
@@ -784,7 +803,7 @@ struct SummaryDetailView: View {
                 if isSummaryPromptBetaEnabled {
                     metadataRow(
                         title: "Summary Prompt",
-                        value: (summaryData.promptTemplate ?? .standard).displayName,
+                        value: summaryPromptDisplayName,
                         icon: "text.bubble"
                     )
                 }
@@ -1191,7 +1210,7 @@ struct SummaryDetailView: View {
                     .multilineTextAlignment(.center)
 
                 if isSummaryPromptBetaEnabled {
-                    SummaryTemplatePicker(template: $regenerationTemplate)
+                    SummaryTemplatePicker(promptID: $regenerationPromptID)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                         .disabled(isRegenerating)
@@ -1430,6 +1449,7 @@ struct SummaryDetailView: View {
         if latestSummary.id != summaryData.id {
             AppLog.shared.summarization("Refreshing summary from Core Data, new length: \(latestSummary.summary.count) chars, new model: \(latestSummary.aiModel)", level: .debug)
             summaryData = latestSummary
+            regenerationPromptID = Self.regenerationPromptID(for: latestSummary)
         }
     }
 
@@ -1446,7 +1466,9 @@ struct SummaryDetailView: View {
         let recordingURL = summaryData.recordingURL
         let recordingName = summaryData.recordingName
         // With the beta off the job keeps today's behavior (no template).
-        let promptTemplate = isSummaryPromptBetaEnabled ? regenerationTemplate : nil
+        let promptTemplate = isSummaryPromptBetaEnabled
+            ? SummaryPromptLibrary.prompt(id: regenerationPromptID).map(SummaryPromptTemplate.init(prompt:)) ?? .standard
+            : nil
 
         AppLog.shared.summarization("Queueing summary regeneration", level: .debug)
 

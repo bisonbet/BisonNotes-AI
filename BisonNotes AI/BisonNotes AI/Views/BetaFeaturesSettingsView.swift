@@ -198,94 +198,99 @@ private struct BetaSettingsCard<Content: View>: View {
 
 // MARK: - Summary Prompt Controls
 
-/// Picker over the summary prompt presets, with an editor for Custom. Shown on
-/// the Beta Features page once the Summary Prompt beta is on.
+/// The Summary Prompt beta's card: the default prompt for new summaries and
+/// the way into the prompt list. Choosing and editing are kept apart.
 struct SummaryPromptControls: View {
-    @AppStorage(SummaryPromptPreset.storageKey)
-    private var presetRawValue = SummaryPromptPreset.standard.rawValue
-    @AppStorage(SummaryPromptPreset.customTextStorageKey)
-    private var customText = SummaryPromptPreset.defaultCustomText
+    // Read so the card refreshes when prompts change elsewhere.
+    @AppStorage(SummaryPromptLibrary.storageKey) private var libraryJSON = ""
+    @AppStorage(SummaryPromptLibrary.defaultPromptIDKey)
+    private var defaultPromptID = SummaryPrompt.defaultID
+    @State private var showingPromptList = false
 
-    private var selectedPreset: SummaryPromptPreset {
-        SummaryPromptPreset(rawValue: presetRawValue) ?? .standard
+    private var prompts: [SummaryPrompt] {
+        _ = libraryJSON
+        return SummaryPromptLibrary.prompts()
+    }
+
+    /// The stored choice, or Default when it names a deleted prompt.
+    private var selectedPrompt: SummaryPrompt {
+        prompts.first { $0.id == defaultPromptID } ?? .standard
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("The default prompt for new AI summaries. You can choose a different one for any summary when you regenerate it. Tasks, reminders, and titles are not affected.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            Text("Default for new summaries")
+                .font(.subheadline.weight(.semibold))
 
-            Picker("Prompt", selection: $presetRawValue) {
-                ForEach(SummaryPromptPreset.allCases) { preset in
-                    Text(preset.displayName).tag(preset.rawValue)
+            Picker("Default for new summaries", selection: Binding(
+                get: { selectedPrompt.id },
+                set: { defaultPromptID = $0 }
+            )) {
+                ForEach(prompts) { prompt in
+                    Text(prompt.name).tag(prompt.id)
                 }
             }
             .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
             .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptPicker)
 
-            Text(selectedPreset.userDescription)
+            Text(selectedPrompt.userDescription)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if selectedPreset == .custom {
-                customEditor
-            }
-        }
-    }
+            Divider()
 
-    private var customEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextEditor(text: Binding(
-                get: { customText },
-                set: { customText = String($0.prefix(SummaryPromptPreset.maxCustomTextLength)) }
-            ))
-            .frame(minHeight: 120)
-            .scrollContentBackground(.hidden)
-            .padding(8)
-            .background(Color(.tertiarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .accessibilityLabel("Custom summary prompt")
-            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptCustomText)
-
-            HStack {
-                Button("Reset to Default") {
-                    customText = SummaryPromptPreset.defaultCustomText
+            Button {
+                showingPromptList = true
+            } label: {
+                HStack {
+                    Label("Edit prompts", systemImage: "square.and.pencil")
+                    Spacer()
+                    Text("\(SummaryPromptLibrary.customCount()) of \(SummaryPromptLibrary.maxCustomPrompts) custom")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.secondary)
                 }
-                .buttonStyle(.borderless)
-                .disabled(customText == SummaryPromptPreset.defaultCustomText)
-                .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptResetButton)
-
-                Spacer()
-
-                Text("\(customText.count)/\(SummaryPromptPreset.maxCustomTextLength)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.secondary)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.borderless)
+            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryPromptEditButton)
 
-            Text("Replaces Summary Detail and Comedy Mode. An empty prompt uses \"\(SummaryPromptPreset.defaultCustomText)\"")
+            Text("You can choose a different prompt for any summary when you regenerate it. Tasks, reminders, and titles are not affected.")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+        .sheet(isPresented: $showingPromptList) {
+            SummaryPromptsListView()
         }
     }
 }
 
 // MARK: - Custom Prompt Notice
 
-/// Shown on settings a Custom summary prompt replaces (Summary Detail, Comedy
-/// Mode). Those controls stay editable so their values survive.
+/// Shown on settings a custom prompt replaces (Summary Detail, Comedy Mode)
+/// while a custom prompt is the default for new summaries. Those controls stay
+/// editable so their values survive.
 struct CustomSummaryPromptNotice: View {
     @AppStorage(BetaFeatures.masterStorageKey) private var masterEnabled = false
     @AppStorage(BetaFeature.customSummaryPrompt.storageKey) private var featureEnabled = false
-    @AppStorage(SummaryPromptPreset.storageKey)
-    private var presetRawValue = SummaryPromptPreset.standard.rawValue
+    @AppStorage(SummaryPromptLibrary.storageKey) private var libraryJSON = ""
+    @AppStorage(SummaryPromptLibrary.defaultPromptIDKey)
+    private var defaultPromptID = SummaryPrompt.defaultID
+
+    private var defaultIsCustom: Bool {
+        _ = libraryJSON
+        return SummaryPromptLibrary.prompt(id: defaultPromptID)?.kind == .custom
+    }
 
     var body: some View {
-        if masterEnabled && featureEnabled && presetRawValue == SummaryPromptPreset.custom.rawValue {
-            Label("Not used while a Custom summary prompt is active.", systemImage: "info.circle")
+        if masterEnabled && featureEnabled && defaultIsCustom {
+            Label("Not used while a custom prompt is the default for new summaries.", systemImage: "info.circle")
                 .font(.caption)
                 .foregroundColor(.orange)
                 .fixedSize(horizontal: false, vertical: true)
@@ -295,35 +300,19 @@ struct CustomSummaryPromptNotice: View {
 
 // MARK: - Per-Summary Template Picker
 
-/// Chooses the template for one summary, such as when regenerating it. Starts
-/// from that summary's own template; the global setting is untouched.
+/// Chooses the prompt for one summary, such as when regenerating it. Starts
+/// from that summary's own prompt; the default for new summaries is untouched.
 struct SummaryTemplatePicker: View {
-    @Binding var template: SummaryPromptTemplate
+    @Binding var promptID: String
+    @AppStorage(SummaryPromptLibrary.storageKey) private var libraryJSON = ""
 
-    private var presetBinding: Binding<SummaryPromptPreset> {
-        Binding(
-            get: { template.preset },
-            set: { newPreset in
-                let customText = newPreset == .custom
-                    ? (template.customText ?? SummaryPromptPreset.configuredCustomText())
-                    : nil
-                template = SummaryPromptTemplate(preset: newPreset, customText: customText)
-            }
-        )
+    private var prompts: [SummaryPrompt] {
+        _ = libraryJSON
+        return SummaryPromptLibrary.prompts()
     }
 
-    private var customTextBinding: Binding<String> {
-        Binding(
-            get: { template.customText ?? SummaryPromptPreset.defaultCustomText },
-            set: { newText in
-                // Normalized when the summary is generated; keep what the user
-                // is typing, including trailing spaces, while editing.
-                template = SummaryPromptTemplate(
-                    preset: .custom,
-                    customText: String(newText.prefix(SummaryPromptPreset.maxCustomTextLength))
-                )
-            }
-        )
+    private var selectedPrompt: SummaryPrompt {
+        prompts.first { $0.id == promptID } ?? .standard
     }
 
     var body: some View {
@@ -336,10 +325,13 @@ struct SummaryTemplatePicker: View {
             }
 
             // On its own line: sharing a row with the title squeezed the menu
-            // until longer names like "Business Meeting" wrapped and overlapped.
-            Picker("Summary Prompt", selection: presetBinding) {
-                ForEach(SummaryPromptPreset.allCases) { preset in
-                    Text(preset.displayName).tag(preset)
+            // until longer names wrapped and overlapped the description.
+            Picker("Summary Prompt", selection: Binding(
+                get: { selectedPrompt.id },
+                set: { promptID = $0 }
+            )) {
+                ForEach(prompts) { prompt in
+                    Text(prompt.name).tag(prompt.id)
                 }
             }
             .pickerStyle(.menu)
@@ -347,21 +339,11 @@ struct SummaryTemplatePicker: View {
             .fixedSize()
             .accessibilityIdentifier(BisonNotesAccessibilityID.summaryTemplatePicker)
 
-            Text(template.preset.userDescription)
+            Text(selectedPrompt.userDescription)
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
-
-            if template.preset == .custom {
-                TextEditor(text: customTextBinding)
-                    .frame(minHeight: 90)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(Color(.tertiarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .accessibilityLabel("Custom summary prompt for this summary")
-            }
         }
     }
 }
