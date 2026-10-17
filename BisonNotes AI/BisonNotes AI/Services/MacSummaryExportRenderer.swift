@@ -145,7 +145,7 @@ private extension MacSummaryExportRenderer {
             "Recording Date: \(formatter.string(from: summary.recordingDate))",
             "AI Provider: \(summary.aiEngine)",
             "AI Model: \(summary.aiModel)",
-            "Content Type: \(summary.contentType.rawValue)",
+            "Content Type: \(summary.contentTypeLabel)",
             "Generated: " + DateFormatter.localizedString(
                 from: summary.generatedAt,
                 dateStyle: .medium,

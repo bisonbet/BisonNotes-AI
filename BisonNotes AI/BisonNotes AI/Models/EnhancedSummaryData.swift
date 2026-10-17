@@ -451,6 +451,18 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         }()
     }
 
+    /// True when the content type was set by the summary's template (Personal
+    /// Notes, Business Meeting) rather than detected from the transcript.
+    var isContentTypeChosen: Bool {
+        guard let declared = promptTemplate?.preset.declaredContentType else { return false }
+        return declared == contentType
+    }
+
+    /// Content type with where it came from, for display and export.
+    var contentTypeLabel: String {
+        "\(contentType.rawValue) (\(isContentTypeChosen ? "Set by Summary Prompt" : "Detected"))"
+    }
+
     /// Presents the summary's size relative to its source transcript in user-facing language.
     var formattedSummaryLength: String {
         return String(format: "%.1f%% of transcript", compressionRatio * 100)

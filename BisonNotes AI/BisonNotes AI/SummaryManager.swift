@@ -851,10 +851,14 @@ class SummaryManager: ObservableObject {
 
         let processingTime = Date().timeIntervalSince(startTime)
 
+        // A recording type chosen through the Summary Prompt (Personal Notes,
+        // Business Meeting) replaces the automatic guess everywhere below.
+        let contentType = SummaryPromptComposer.current.preset.declaredContentType ?? result.contentType
+
         // Generate intelligent recording name using AI analysis
         let intelligentName = generateIntelligentRecordingName(
             from: text,
-            contentType: result.contentType,
+            contentType: contentType,
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles
@@ -871,7 +875,7 @@ class SummaryManager: ObservableObject {
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles,
-            contentType: result.contentType,
+            contentType: contentType,
             aiEngine: engine.engineType,
             aiModel: engine.metadataName,
             promptTemplate: SummaryPromptComposer.current.template,
@@ -892,7 +896,7 @@ class SummaryManager: ObservableObject {
                 from: recordingName,
                 recordingURL: recordingURL,
                 transcript: text,
-                contentType: result.contentType,
+                contentType: contentType,
                 tasks: result.tasks,
                 reminders: result.reminders,
                 titles: result.titles,
@@ -904,7 +908,7 @@ class SummaryManager: ObservableObject {
         AppLog.shared.summarization("Summary length: \(result.summary.count) characters", level: .debug)
         AppLog.shared.summarization("Tasks extracted: \(result.tasks.count)", level: .debug)
         AppLog.shared.summarization("Reminders extracted: \(result.reminders.count)", level: .debug)
-        AppLog.shared.summarization("Content type: \(result.contentType.rawValue)", level: .debug)
+        AppLog.shared.summarization("Content type: \(contentType.rawValue)", level: .debug)
         AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
         AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
 

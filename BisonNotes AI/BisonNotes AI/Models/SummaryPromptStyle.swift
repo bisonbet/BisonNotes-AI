@@ -50,6 +50,19 @@ enum SummaryPromptPreset: String, CaseIterable, Identifiable, Codable, Sendable 
         }
     }
 
+    /// The recording type this preset declares. The summary records it in
+    /// place of the automatic guess; Default and Custom declare none.
+    var declaredContentType: ContentType? {
+        switch self {
+        case .personalNotes:
+            return .personalJournal
+        case .businessMeeting:
+            return .meeting
+        case .standard, .custom:
+            return nil
+        }
+    }
+
     /// The preset the user picked, regardless of whether the beta is on.
     static func configured(defaults: UserDefaults = .standard) -> SummaryPromptPreset {
         guard let rawValue = defaults.string(forKey: storageKey),

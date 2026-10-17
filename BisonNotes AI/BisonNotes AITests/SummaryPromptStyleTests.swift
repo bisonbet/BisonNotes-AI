@@ -373,6 +373,41 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("promptTemplate"))
     }
 
+    func testContentTypeSaysWhetherItWasDetectedOrChosen() {
+        XCTAssertEqual(SummaryPromptPreset.personalNotes.declaredContentType, .personalJournal)
+        XCTAssertEqual(SummaryPromptPreset.businessMeeting.declaredContentType, .meeting)
+        XCTAssertNil(SummaryPromptPreset.standard.declaredContentType)
+        XCTAssertNil(SummaryPromptPreset.custom.declaredContentType)
+
+        func summary(_ contentType: ContentType, _ template: SummaryPromptTemplate?) -> EnhancedSummaryData {
+            EnhancedSummaryData(
+                recordingId: UUID(),
+                recordingURL: URL(fileURLWithPath: "/tmp/e.m4a"),
+                recordingName: "E",
+                recordingDate: Date(),
+                summary: "Text",
+                contentType: contentType,
+                aiModel: "model",
+                promptTemplate: template,
+                originalLength: 10
+            )
+        }
+
+        XCTAssertEqual(summary(.meeting, nil).contentTypeLabel, "Meeting (Detected)")
+        XCTAssertEqual(
+            summary(.meeting, SummaryPromptTemplate(preset: .businessMeeting)).contentTypeLabel,
+            "Meeting (Set by Summary Prompt)"
+        )
+        XCTAssertEqual(
+            summary(.personalJournal, SummaryPromptTemplate(preset: .personalNotes)).contentTypeLabel,
+            "Personal Journal (Set by Summary Prompt)"
+        )
+        XCTAssertFalse(
+            summary(.technical, SummaryPromptTemplate(preset: .custom, customText: "x")).isContentTypeChosen,
+            "Custom never declares a type"
+        )
+    }
+
     func testSummaryJobsPersistTheirTemplate() {
         let template = SummaryPromptTemplate(preset: .custom, customText: "Action items only.")
         let job = ProcessingJob(
