@@ -1192,6 +1192,7 @@ struct SummaryDetailView: View {
 
                 if isSummaryPromptBetaEnabled {
                     SummaryTemplatePicker(template: $regenerationTemplate)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
                         .disabled(isRegenerating)
                 }

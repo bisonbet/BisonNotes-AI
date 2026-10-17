@@ -328,24 +328,29 @@ struct SummaryTemplatePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("Summary Prompt")
                     .font(.subheadline.weight(.semibold))
                 BetaBadge()
-                Spacer()
-                Picker("Summary Prompt", selection: presetBinding) {
-                    ForEach(SummaryPromptPreset.allCases) { preset in
-                        Text(preset.displayName).tag(preset)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .accessibilityIdentifier(BisonNotesAccessibilityID.summaryTemplatePicker)
+                Spacer(minLength: 0)
             }
+
+            // On its own line: sharing a row with the title squeezed the menu
+            // until longer names like "Business Meeting" wrapped and overlapped.
+            Picker("Summary Prompt", selection: presetBinding) {
+                ForEach(SummaryPromptPreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+            .accessibilityIdentifier(BisonNotesAccessibilityID.summaryTemplatePicker)
 
             Text(template.preset.userDescription)
                 .font(.caption)
                 .foregroundColor(.secondary)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
 
             if template.preset == .custom {
