@@ -48,6 +48,28 @@ In Linux cloud sessions without Xcode, `.claude/swift-check/swift-check.sh`
 offers `parse`, `typecheck`, and `test` for Foundation-only sources; anything
 else still needs an Xcode build.
 
+### Agent-driven builds and tests
+
+The project registers Sentry's [MobileBuildMCP](https://github.com/getsentry/MobileBuildMCP)
+(formerly XcodeBuildMCP) in `.mcp.json`, pinned to a fixed version with
+Sentry telemetry turned off. `.mobilebuildmcp/config.yaml` sets the project,
+scheme, and default simulator, so its tools run without extra arguments. The
+same tools are available from the command line:
+
+```bash
+npx -y mobilebuildmcp@2.7.1 simulator build-and-run
+```
+
+- **Simulator**: build, run, test, LLDB debugging, and UI automation (read the
+  accessibility tree, tap, type, swipe, take screenshots). The app's
+  `AccessibilityIdentifiers` show up as element ids.
+- **Physical device**: build, install, launch, stop, and run XCTest. UI
+  automation and debugger attach work only in the simulator, so to drive a
+  device, use the UI test target with `test_device`. Pass the device's UDID
+  with `--device-id`; it isn't committed.
+- A Debug build on a device uses the CloudKit development environment and
+  replaces any TestFlight or App Store install of the app.
+
 Release validation follows the [regression testing regimen](testing-regimen.md),
 including the app and watch test plans and the manual hardware checks.
 

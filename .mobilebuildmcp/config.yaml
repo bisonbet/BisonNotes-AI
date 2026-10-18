@@ -1,0 +1,12 @@
+schemaVersion: 1
+enabledWorkflows:
+  - simulator
+  - device
+  - macos
+  - project-discovery
+  - ui-automation
+  - debugging
+sessionDefaults:
+  projectPath: BisonNotes AI/BisonNotes AI.xcodeproj
+  scheme: BisonNotes AI
+  simulatorName: iPhone 18 Pro

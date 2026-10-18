@@ -4,8 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current Environment Context
 - **Year**: 2026
-- **Current iOS**: iOS 26 / iPadOS 26
-- **Latest Devices**: iPhone models through iPhone 17 series, iPad models with M4 chips and A17 Pro
+- **Current OS**: iOS 27 / iPadOS 27 / macOS 27 / watchOS 27 (the app still supports iOS 18.5, macOS 15 and watchOS 11.5)
+- **Latest Devices**: iPhone models through the iPhone 18 series, iPad Pro with M5
+- **Toolchain**: Xcode 27.1; the project builds with Xcode 26.6 or later
 
 ## Build and Development Commands
 
@@ -66,7 +67,7 @@ BisonNotes AI/
 ├── Views/               # SwiftUI views
 │   ├── RecordingsView.swift
 │   ├── AudioPlayerView.swift
-│   ├── AITextView.swift         # MarkdownUI-powered AI content rendering
+│   ├── AITextView.swift         # Textual-powered AI content rendering
 │   └── AdvancedTroubleshootingView.swift
 ├── ViewModels/          # View model layer
 ├── FluidAudio/          # Parakeet plus Local Speaker Labels adapters/settings
@@ -197,8 +198,8 @@ All file operations should coordinate with Core Data to maintain data integrity.
 
 ### UI and Content Rendering
 For AI-generated content display:
-- Use `AITextView` with MarkdownUI for all AI summaries, transcripts, and formatted content
-- MarkdownUI handles headers, lists, bold text, links, and complex formatting automatically
+- Use `AITextView` (built on Textual) for all AI summaries, transcripts, and formatted content
+- Textual handles headers, lists, bold text, links, and complex formatting automatically
 - Text preprocessing in `AITextView.cleanTextForMarkdown()` removes JSON artifacts and normalizes content
 - Supports all configured AI engines, including Gemini, Apple Intelligence, and compatible APIs.
 
@@ -210,7 +211,7 @@ For AI-generated content display:
 - `Models/AppDataCoordinator.swift`: Unified data coordination
 - `iCloudStorageManager.swift`: CloudKit backup, restore, reconcile, and multi-device arbitration
 - `Services/CloudKitTransport.swift`, `Services/CloudKitBatchExecutor.swift`, `Services/CloudContentIndexCoordinator.swift`, `Services/CloudSyncOperationCoordinator.swift`, `Services/CloudSyncMetrics.swift`, `Services/CloudAudioAssetStaging.swift`: the sync engine the manager runs on
-- `Views/AITextView.swift`: MarkdownUI-powered content rendering
+- `Views/AITextView.swift`: Textual-powered content rendering
 - `EnhancedTranscriptionManager.swift`: Transcription orchestration
 - `FluidAudio/FluidAudioSettingsView.swift`: Parakeet and Local Speaker Labels settings
 - `FluidAudio/LocalDiarizationManager.swift`: Independent VBx, Nemotron 3 and LS-EEND model lifecycle
