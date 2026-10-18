@@ -696,11 +696,10 @@ class SummaryManager: ObservableObject {
         engineName: String? = nil,
         promptTemplate: SummaryPromptTemplate? = nil
     ) async throws -> EnhancedSummaryData {
-        // Every prompt built below, in any engine, reads the template from
-        // this scope through SummaryPromptComposer.current.
-        try await SummaryPromptComposer.$requestTemplate.withValue(
-            promptTemplate ?? SummaryPromptComposer.requestTemplate
-        ) {
+        // Every prompt built below, in any engine, reads the composer resolved
+        // here through SummaryPromptComposer.current, so a settings change
+        // mid-run cannot mix prompts across chunks.
+        try await SummaryPromptComposer.withRequestSnapshot(template: promptTemplate) {
             try await generateEnhancedSummaryInTemplateScope(
                 from: text,
                 for: recordingURL,
@@ -717,7 +716,7 @@ class SummaryManager: ObservableObject {
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
         AppLog.shared.summarization(
-            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), "
+            "Summary generation settings: detail=\(SummaryPromptComposer.current.detailLevel.displayName), "
                 + "comedy=\(SummaryPromptComposer.current.effectiveComedyMode.rawValue), "
                 + SummaryPromptComposer.current.logDescription,
             level: .debug

@@ -497,9 +497,38 @@ struct SummaryPromptComposer: Sendable {
         return SummaryPromptLibrary.defaultPrompt(defaults: defaults)
     }
 
-    /// Resolves the settings at request time.
+    /// The composer resolved once when a summary generation starts. Set by
+    /// `withRequestSnapshot`, so a long or queued generation keeps one prompt,
+    /// detail level and comedy mode for every chunk even if settings change
+    /// mid-run, and the summary records the prompt that actually produced it.
+    @TaskLocal static var requestSnapshot: SummaryPromptComposer?
+
+    /// The request's snapshot when one is installed; otherwise resolves the
+    /// settings at request time.
     static var current: SummaryPromptComposer {
+        requestSnapshot ?? resolveSettings()
+    }
+
+    private static func resolveSettings() -> SummaryPromptComposer {
         SummaryPromptComposer(prompt: effectivePrompt(), detailLevel: .current, comedyMode: .current)
+    }
+
+    /// Resolves the composer once for `template` (nil keeps an enclosing
+    /// request's snapshot or template, else the default for new summaries)
+    /// and runs `operation` with it installed as `requestSnapshot`.
+    static func withRequestSnapshot<R>(
+        template: SummaryPromptTemplate?,
+        operation: () async throws -> R
+    ) async rethrows -> R {
+        let snapshot: SummaryPromptComposer
+        if let template {
+            snapshot = $requestTemplate.withValue(template) { resolveSettings() }
+        } else {
+            snapshot = current
+        }
+        return try await $requestTemplate.withValue(template ?? requestTemplate) {
+            try await $requestSnapshot.withValue(snapshot, operation: operation)
+        }
     }
 
     var preset: SummaryPromptPreset { prompt.kind }

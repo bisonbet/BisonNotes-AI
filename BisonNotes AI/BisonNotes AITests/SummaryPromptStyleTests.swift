@@ -341,6 +341,29 @@ final class SummaryPromptStyleTests: XCTestCase {
         }
     }
 
+    func testRequestSnapshotHoldsThePromptWhenSettingsChangeMidRun() async {
+        enableSummaryPromptBeta()
+        select(.personalNotes)
+
+        await SummaryPromptComposer.withRequestSnapshot(template: nil) {
+            select(.businessMeeting)
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .personalNotes, "A new default waits for the next summary")
+            defaults.set(false, forKey: BetaFeature.customSummaryPrompt.storageKey)
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .personalNotes, "Turning the beta off mid-run keeps this run's prompt")
+            let chunkPreset = await Task { SummaryPromptComposer.current.preset }.value
+            XCTAssertEqual(chunkPreset, .personalNotes, "Child tasks see the same snapshot")
+        }
+        XCTAssertEqual(SummaryPromptComposer.current.preset, .standard)
+
+        enableSummaryPromptBeta()
+        let business = SummaryPromptTemplate(prompt: .originalBusinessMeeting)
+        await SummaryPromptComposer.withRequestSnapshot(template: nil) {
+            await SummaryPromptComposer.withRequestSnapshot(template: business) {
+                XCTAssertEqual(SummaryPromptComposer.current.preset, .businessMeeting, "An explicit template beats an enclosing snapshot")
+            }
+        }
+    }
+
     func testSummaryMetadataRecordsTheTemplateAndKeepsDefaultUnchanged() throws {
         let legacy = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: nil)
         let defaultEncoded = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: .standard)
