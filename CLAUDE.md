@@ -16,7 +16,7 @@ This is an iOS application built with Xcode. Use standard Xcode commands to buil
 - **Test**: Run unit tests with ⌘+U
 - **Clean**: Clean build folder (⌘+Shift+K)
 
-In Linux cloud sessions (no Xcode), the SessionStart hook prepares a Swift toolchain in Docker. Run `.claude/swift-check/swift-check.sh parse` (syntax of files changed vs `origin/main`), `typecheck`, and `test [filter]` before pushing Swift changes. Only Foundation-only sources type-check and run there (`FOUNDATION_SOURCES` in the script); anything using SwiftUI, UIKit, CoreData, CloudKit, AVFoundation or MLX is parse-only and still needs an Xcode build.
+In Linux cloud sessions (no Xcode), the SessionStart hook prepares a Swift toolchain in Docker in the background (each check command also starts it if it is not ready). Run `.claude/swift-check/swift-check.sh parse` (syntax of files changed vs `origin/main`), `typecheck`, and `test [filter]` before pushing Swift changes. Only Foundation-only sources type-check and run there (`FOUNDATION_SOURCES` in the script); anything using SwiftUI, UIKit, CoreData, CloudKit, AVFoundation or MLX is parse-only and still needs an Xcode build.
 
 The project uses Swift Package Manager for dependencies, including Textual, FluidAudio, and MLX Swift for content rendering, transcription, and on-device AI.
 
