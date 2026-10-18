@@ -41,6 +41,9 @@ struct SummaryDetailView: View {
     @State private var isRegenerating = false
     /// The prompt Regenerate uses, starting from this summary's own.
     @State private var regenerationPromptID: String
+    /// A transcript this short is shown as-is, so no prompt would run and the
+    /// picker is hidden.
+    @State private var transcriptIsShownAsIs = false
     @AppStorage(BetaFeatures.masterStorageKey) private var betaFeaturesEnabled = false
     @AppStorage(BetaFeature.customSummaryPrompt.storageKey) private var summaryPromptBetaEnabled = false
     @State private var regeneratingJobId: UUID?
@@ -1210,10 +1213,19 @@ struct SummaryDetailView: View {
                     .multilineTextAlignment(.center)
 
                 if isSummaryPromptBetaEnabled {
-                    SummaryTemplatePicker(promptID: $regenerationPromptID)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .disabled(isRegenerating)
+                    if transcriptIsShownAsIs {
+                        Text("Transcripts of \(SummaryManager.shownAsIsWordLimit) words or fewer are shown as-is, so there's no Summary Prompt to choose.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal)
+                    } else {
+                        SummaryTemplatePicker(promptID: $regenerationPromptID)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                            .disabled(isRegenerating)
+                    }
                 }
 
                 Button(action: {
@@ -1442,8 +1454,14 @@ struct SummaryDetailView: View {
     private func refreshSummaryFromCoreData() {
         guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
               let recordingId = recordingEntry.id,
-              let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-              let latestSummary = completeData.summary else {
+              let completeData = appCoordinator.getCompleteRecordingData(id: recordingId) else {
+            return
+        }
+        // The transcript can change (an edit, a re-run) without a new summary.
+        transcriptIsShownAsIs = completeData.transcript.map {
+            SummaryManager.isShownAsIs($0.textForSummarization)
+        } ?? false
+        guard let latestSummary = completeData.summary else {
             return
         }
         if latestSummary.id != summaryData.id {

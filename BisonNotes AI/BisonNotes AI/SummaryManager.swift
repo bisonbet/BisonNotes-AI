@@ -684,6 +684,19 @@ class SummaryManager: ObservableObject {
 
     // MARK: - Enhanced Summary Generation
 
+    /// Transcripts at or under this many words are shown as-is instead of
+    /// being sent to a model.
+    nonisolated static let shownAsIsWordLimit = 50
+
+    /// Whether `text` is short enough to be shown as-is, so no prompt runs.
+    /// Regenerate uses this to hide the Summary Prompt picker for such
+    /// transcripts, since a chosen prompt would have nothing to change.
+    nonisolated static func isShownAsIs(_ text: String) -> Bool {
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        return words.count <= shownAsIsWordLimit
+    }
+
     /// - Parameter promptTemplate: The Summary Prompt template for this summary
     ///   (a regenerated summary's own, or one the user picked). Nil uses the
     ///   default for new summaries. Ignored while the Summary Prompt beta is off.
@@ -729,7 +742,7 @@ class SummaryManager: ObservableObject {
             .filter { !$0.isEmpty && $0.count > 1 }
 
         // If transcript has 50 words or less, return it as-is as the summary
-        if words.count <= 50 {
+        if Self.isShownAsIs(text) {
             AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
 
             let shortTranscriptSummary = EnhancedSummaryData(
@@ -954,7 +967,7 @@ class SummaryManager: ObservableObject {
             .filter { !$0.isEmpty && $0.count > 1 }
 
         // If transcript has 50 words or less, return it as-is as the summary
-        if words.count <= 50 {
+        if Self.isShownAsIs(text) {
             AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
 
             let shortTranscriptSummary = EnhancedSummaryData(
