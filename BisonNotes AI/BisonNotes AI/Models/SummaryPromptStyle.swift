@@ -261,13 +261,17 @@ enum SummaryPromptLibrary {
     }
 
     /// Saves an edited prompt. Built-ins store only their wording, and only
-    /// while it differs from the original.
-    static func save(_ prompt: SummaryPrompt, defaults: UserDefaults = .standard) {
+    /// while it differs from the original. Returns false when nothing was
+    /// saved: Default, or a new custom prompt when five already exist (another
+    /// device or a settings restore can fill the library while an editor is
+    /// open).
+    @discardableResult
+    static func save(_ prompt: SummaryPrompt, defaults: UserDefaults = .standard) -> Bool {
         let prompt = prompt.normalized()
         var stored = load(defaults)
         switch prompt.kind {
         case .standard:
-            return
+            return false
         case .businessMeeting, .personalNotes:
             if prompt.isEdited {
                 stored.builtInText[prompt.id] = prompt.text
@@ -278,11 +282,12 @@ enum SummaryPromptLibrary {
             if let index = stored.customs.firstIndex(where: { $0.id == prompt.id }) {
                 stored.customs[index] = prompt
             } else {
-                guard stored.customs.count < maxCustomPrompts else { return }
+                guard stored.customs.count < maxCustomPrompts else { return false }
                 stored.customs.append(prompt)
             }
         }
         store(stored, defaults)
+        return true
     }
 
     /// A new, unsaved custom prompt with the next free "Custom N" name, or
@@ -299,8 +304,8 @@ enum SummaryPromptLibrary {
     /// Adds a new custom prompt, or returns nil when there are already five.
     @discardableResult
     static func addCustom(defaults: UserDefaults = .standard) -> SummaryPrompt? {
-        guard let prompt = makeCustomDraft(defaults: defaults) else { return nil }
-        save(prompt, defaults: defaults)
+        guard let prompt = makeCustomDraft(defaults: defaults),
+              save(prompt, defaults: defaults) else { return nil }
         return prompt
     }
 
@@ -578,12 +583,24 @@ struct SummaryPromptComposer: Sendable {
         }
     }
 
+    /// Whether the prompt's own instructions set the narrative summary's
+    /// structure, format, length and focus (a custom prompt). Engines then drop
+    /// their fixed summary guidance rather than contradict the user.
+    var ownsSummaryFormat: Bool { preset == .custom }
+
+    /// How engine prompts refer to the user's text when it owns the summary.
+    static let customInstructions = "the user's summary instructions"
+
+    /// The line engines put in place of fixed formatting rules for a custom
+    /// prompt. Callers add their own list marker or closing punctuation.
+    static let customFormatInstruction = "Follow \(customInstructions) for the summary's structure and formatting"
+
     /// Formatting or section guidance an engine adds for the narrative
-    /// summary. A custom prompt owns the summary's structure, so for it the
-    /// guidance is dropped (or replaced by `customReplacement`) instead of
-    /// contradicting the user's instructions.
+    /// summary. When the prompt owns the summary's format the guidance is
+    /// dropped (or replaced by `customReplacement`) instead of contradicting
+    /// the user's instructions.
     func summaryFormatting(_ guidance: String, customReplacement: String = "") -> String {
-        preset == .custom ? customReplacement : guidance
+        ownsSummaryFormat ? customReplacement : guidance
     }
 
     /// Short description for a structured-output `summary` field.

@@ -159,7 +159,7 @@ class AppDataCoordinator: ObservableObject {
         return result
     }
 
-    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate? = nil, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
+    func addSummary(for recordingId: UUID, transcriptId: UUID, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) throws -> UUID? {
         let result = try workflowManager.createSummary(
             for: recordingId,
             transcriptId: transcriptId,

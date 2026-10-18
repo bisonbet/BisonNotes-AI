@@ -823,15 +823,15 @@ private actor MLXSwiftService {
         // fixed outline; the other section headers stay for the parser.
         let summaryRequest: String
         let summaryFormat: String
-        if composer.preset == .custom {
+        if composer.ownsSummaryFormat {
             summaryRequest = """
-            1. A SUMMARY written according to the user's summary instructions
+            1. A SUMMARY written according to \(SummaryPromptComposer.customInstructions)
                \(detailInstructions)
                - Write about what was ACTUALLY discussed in the transcript, not generic examples.
             """
             summaryFormat = """
             ## Summary
-            [Write the summary exactly as the user's summary instructions describe]
+            [Write the summary exactly as \(SummaryPromptComposer.customInstructions) describe]
             """
         } else {
             summaryRequest = """
@@ -920,10 +920,10 @@ private actor MLXSwiftService {
             forSourceWordCount: originalWordCount
         )
         let summaryFormat: String
-        if composer.preset == .custom {
+        if composer.ownsSummaryFormat {
             summaryFormat = """
             ## Summary
-            [One unified summary written exactly as the user's summary instructions describe]
+            [One unified summary written exactly as \(SummaryPromptComposer.customInstructions) describe]
             """
         } else {
             summaryFormat = """
@@ -979,12 +979,12 @@ private actor MLXSwiftService {
         // these system lines defer to it instead of contradicting it.
         let summaryItem = composer.summaryFormatting(
             "1. A summary at the selected detail level using Markdown formatting based on what was actually discussed",
-            customReplacement: "1. A summary written as the user's summary instructions describe, based on what was actually discussed"
+            customReplacement: "1. A summary written as \(SummaryPromptComposer.customInstructions) describe, based on what was actually discussed"
         )
         let summaryGuidance = composer.summaryFormatting(
             "Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker "
                 + "and actually appears in the transcript.",
-            customReplacement: "Follow the user's summary instructions for the narrative summary, using only what actually appears in the transcript."
+            customReplacement: "Follow \(SummaryPromptComposer.customInstructions) for the narrative summary, using only what actually appears in the transcript."
         )
         return """
     You are an AI assistant specialized in processing audio transcripts. \

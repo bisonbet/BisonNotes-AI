@@ -826,7 +826,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
             // Generate a meta-summary from all chunk summaries
             let closing = summaryPrompt.summaryFormatting(
                 "Create a cohesive, well-structured summary using proper Markdown formatting.",
-                customReplacement: "Create one cohesive summary. Follow the user's summary instructions for the summary's structure and formatting."
+                customReplacement: "Create one cohesive summary. \(SummaryPromptComposer.customFormatInstruction)."
             )
             let metaPrompt = """
             Please create a summary by combining these section summaries at the selected detail level.
@@ -895,12 +895,17 @@ class GoogleAIStudioEngine: SummarizationEngine {
             - > Blockquotes for important quotes or statements
             - `Code formatting` for technical terms or specific names
             """,
-            customReplacement: "Follow the user's summary instructions for the summary's structure and formatting."
+            customReplacement: "\(SummaryPromptComposer.customFormatInstruction)."
         )
         let closing = summaryPrompt.summaryFormatting(
             "Keep the summary clear, informative, and well-structured with proper Markdown formatting.",
-            customReplacement: "Keep the summary clear and informative, written as the user's summary instructions describe."
+            customReplacement: "Keep the summary clear and informative, written as \(SummaryPromptComposer.customInstructions) describe."
         )
+        // A recording type the prompt chose replaces the classifier's guess,
+        // as in the other engines, so the two never conflict.
+        let contentTypeLine = summaryPrompt.usesAutomaticContentFocus
+            ? "\n\nContent type: \(contentType.rawValue)"
+            : ""
 
         return """
         Please provide a summary of the following content\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")).
@@ -910,9 +915,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
         \(formatting)
 
         Content to summarize:
-        \(text)
-
-        Content type: \(contentType.rawValue)
+        \(text)\(contentTypeLine)
 
         \(closing)
         """
@@ -1062,7 +1065,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
                - Use > blockquotes for important statements
                - Keep the summary well-structured and informative
             """,
-            customReplacement: "   - Follow the user's summary instructions for the summary's structure and formatting"
+            customReplacement: "   - \(SummaryPromptComposer.customFormatInstruction)"
         )
 
         return """

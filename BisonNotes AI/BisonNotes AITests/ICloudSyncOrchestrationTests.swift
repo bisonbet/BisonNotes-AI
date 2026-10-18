@@ -121,6 +121,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "Summary for \(name) with enough content to satisfy validation rules and exercise backup selection.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 60
         )
         return recordingId

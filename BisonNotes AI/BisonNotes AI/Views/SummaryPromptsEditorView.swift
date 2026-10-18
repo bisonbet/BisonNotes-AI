@@ -73,9 +73,10 @@ struct SummaryPromptsListView: View {
                         }
                     }
                     .onDelete { offsets in
-                        let doomed = offsets.map { customs[$0] }
-                        for prompt in doomed {
-                            SummaryPromptLibrary.delete(id: prompt.id)
+                        // Confirm first, like the context menu: the prompt may
+                        // be the default for new summaries.
+                        if let first = offsets.first {
+                            pendingDeletion = customs[first]
                         }
                     }
 
@@ -148,11 +149,17 @@ struct SummaryPromptEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: SummaryPrompt?
     @State private var showingDeleteConfirmation = false
+    @State private var showingLibraryFull = false
+    /// Set once onAppear has looked for the draft, so a failed lookup shows
+    /// why instead of a spinner that never ends.
+    @State private var didLoadDraft = false
 
     var body: some View {
         Group {
             if let draft {
                 editor(for: draft)
+            } else if didLoadDraft {
+                unavailableMessage
             } else {
                 ProgressView()
             }
@@ -168,13 +175,22 @@ struct SummaryPromptEditorView: View {
             }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
-                    if let draft {
-                        SummaryPromptLibrary.save(draft)
+                    guard let draft else { return }
+                    if SummaryPromptLibrary.save(draft) {
+                        dismiss()
+                    } else {
+                        // Keep the draft so the user can delete a prompt and
+                        // save again instead of losing what they wrote.
+                        showingLibraryFull = true
                     }
-                    dismiss()
                 }
                 .disabled(draft == nil)
             }
+        }
+        .alert("Can't Save Prompt", isPresented: $showingLibraryFull) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("You already have \(SummaryPromptLibrary.maxCustomPrompts) custom prompts. Delete one, then save again.")
         }
         .onAppear {
             if draft == nil {
@@ -182,10 +198,27 @@ struct SummaryPromptEditorView: View {
                     ? SummaryPromptLibrary.makeCustomDraft()
                     : SummaryPromptLibrary.prompt(id: promptID)
             }
+            didLoadDraft = true
         }
     }
 
     private var isNewPrompt: Bool { promptID == Self.newPromptID }
+
+    /// Shown when there is nothing to edit: the library already holds five
+    /// custom prompts, or the prompt was deleted elsewhere.
+    private var unavailableMessage: some View {
+        VStack(spacing: 8) {
+            Text(isNewPrompt ? "No Room for a New Prompt" : "Prompt Not Found")
+                .font(.headline)
+            Text(isNewPrompt
+                 ? "You already have \(SummaryPromptLibrary.maxCustomPrompts) custom prompts. Delete one to add another."
+                 : "This prompt was deleted.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+    }
 
     private var draftBinding: Binding<SummaryPrompt> {
         Binding(

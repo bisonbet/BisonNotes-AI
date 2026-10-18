@@ -410,6 +410,20 @@ final class SummaryPromptStyleTests: XCTestCase {
         }
     }
 
+    func testAnUnreadableTemplateNeverCostsEngineOrModel() {
+        // A template from a newer build (unknown content type) and a damaged one.
+        for template in [
+            #"{"id":"x","name":"Future","declaredContentType":"Podcast"}"#,
+            #"{}"#,
+        ] {
+            let stored = #"{"engine":"MLX Swift","model":"Bonsai","promptTemplate":"# + template + "}"
+            let decoded = SummaryMetadataCodec.decode(stored)
+            XCTAssertEqual(decoded.engine, "MLX Swift")
+            XCTAssertEqual(decoded.model, "Bonsai")
+            XCTAssertNil(decoded.promptTemplate, "An unreadable template reads as Default")
+        }
+    }
+
     func testSummaryMetadataRecordsTheTemplateAndKeepsDefaultUnchanged() throws {
         let legacy = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: nil)
         let defaultEncoded = SummaryMetadataCodec.encode(aiEngine: "MLX Swift", aiModel: "Bonsai", promptTemplate: .standard)
@@ -488,7 +502,26 @@ final class SummaryPromptStyleTests: XCTestCase {
             )
         }
 
+        XCTAssertEqual(
+            summary(.meeting, SummaryPromptTemplate(prompt: .originalBusinessMeeting)).contentTypeLabel,
+            "Meeting",
+            "Beta off reads exactly as before"
+        )
+
+        enableSummaryPromptBeta()
         XCTAssertEqual(summary(.meeting, nil).contentTypeLabel, "Meeting (Detected)")
+        let shortTranscript = EnhancedSummaryData(
+            recordingId: UUID(),
+            recordingURL: URL(fileURLWithPath: "/tmp/s.m4a"),
+            recordingName: "S",
+            recordingDate: Date(),
+            summary: "Short",
+            contentType: .general,
+            aiModel: EnhancedSummaryData.shortTranscriptModelName,
+            promptTemplate: nil,
+            originalLength: 3
+        )
+        XCTAssertEqual(shortTranscript.contentTypeLabel, "General", "Nothing was detected for a transcript shown as-is")
         XCTAssertEqual(
             summary(.meeting, SummaryPromptTemplate(prompt: .originalBusinessMeeting)).contentTypeLabel,
             "Meeting (Set by Summary Prompt)"
@@ -578,6 +611,19 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertEqual(added.map(\.name), ["Custom 1", "Custom 2", "Custom 3", "Custom 4", "Custom 5"])
         XCTAssertEqual(SummaryPromptLibrary.customCount(), 5)
         XCTAssertNil(SummaryPromptLibrary.addCustom())
+    }
+
+    func testSavingANewCustomPromptReportsAFullLibrary() throws {
+        let draft = try XCTUnwrap(SummaryPromptLibrary.makeCustomDraft())
+        // Another device or a settings restore fills the library meanwhile.
+        while SummaryPromptLibrary.addCustom() != nil {}
+        XCTAssertFalse(SummaryPromptLibrary.save(draft), "The editor must be told so it keeps the draft")
+        XCTAssertNil(SummaryPromptLibrary.prompt(id: draft.id))
+
+        var existing = try XCTUnwrap(SummaryPromptLibrary.prompts().first { $0.kind == .custom })
+        existing.text = "Edited while full."
+        XCTAssertTrue(SummaryPromptLibrary.save(existing), "Editing an existing prompt still works when full")
+        XCTAssertFalse(SummaryPromptLibrary.save(.standard), "Default is never saved")
     }
 
     func testDeletingTheDefaultCustomPromptFallsBackToDefault() throws {

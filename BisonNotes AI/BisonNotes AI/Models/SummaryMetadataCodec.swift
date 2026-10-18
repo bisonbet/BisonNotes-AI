@@ -6,6 +6,25 @@ struct SummaryMetadataPayload: Codable {
     /// The Summary Prompt template, when it was not Default. Older app versions
     /// ignore the key, and an absent key reads as Default.
     var promptTemplate: SummaryPromptTemplate?
+
+    init(engine: String, model: String, promptTemplate: SummaryPromptTemplate?) {
+        self.engine = engine
+        self.model = model
+        self.promptTemplate = promptTemplate
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case engine, model, promptTemplate
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        engine = try container.decode(String.self, forKey: .engine)
+        model = try container.decode(String.self, forKey: .model)
+        // A template this build cannot read (one from a newer build, or a
+        // damaged one) reads as Default rather than costing engine and model.
+        promptTemplate = (try? container.decodeIfPresent(SummaryPromptTemplate.self, forKey: .promptTemplate)) ?? nil
+    }
 }
 
 /// Constants for AI engine type names used throughout the app

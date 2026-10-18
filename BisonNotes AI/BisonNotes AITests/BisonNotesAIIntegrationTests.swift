@@ -60,6 +60,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             contentType: .meeting,
             aiEngine: "Test",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 80,
             processingTime: 0.1
         ))
@@ -171,6 +172,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "This existing summary is long enough to be persisted before a failed regeneration attempt.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 60
         ))
 
@@ -179,6 +181,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "Too short",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 9
         )
 
@@ -258,6 +261,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "The current Core Data summary must remain authoritative over stale legacy storage.",
             aiModel: "current-fixture",
+            promptTemplate: nil,
             originalLength: 80
         ))
         let legacySummary = EnhancedSummaryData(

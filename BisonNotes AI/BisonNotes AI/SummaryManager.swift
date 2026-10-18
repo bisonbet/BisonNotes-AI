@@ -755,7 +755,7 @@ class SummaryManager: ObservableObject {
                 titles: [],
                 contentType: .general,
                 aiEngine: "Local Processing",
-                aiModel: "Short Transcript (Displayed As-Is)",
+                aiModel: EnhancedSummaryData.shortTranscriptModelName,
                 promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
@@ -980,7 +980,7 @@ class SummaryManager: ObservableObject {
                 titles: [],
                 contentType: .general,
                 aiEngine: "Local Processing",
-            aiModel: "Short Transcript (Displayed As-Is)",
+            aiModel: EnhancedSummaryData.shortTranscriptModelName,
                 promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
@@ -1113,7 +1113,7 @@ class SummaryManager: ObservableObject {
         // Select top sentences based on boosted importance score
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
+            .prefix(SummaryPromptComposer.current.detailLevel.basicSentenceLimit)
             .map { $0.sentence }
 
         if topSentences.isEmpty {

@@ -434,7 +434,7 @@ actor GoogleAIStudioService {
                - Use 1. numbered lists for sequential items
                - Use > blockquotes for important quotes or statements
             """,
-            customReplacement: "   - Follow the user's summary instructions for the summary's structure and formatting"
+            customReplacement: "   - \(SummaryPromptComposer.customFormatInstruction)"
         )
 
         return """

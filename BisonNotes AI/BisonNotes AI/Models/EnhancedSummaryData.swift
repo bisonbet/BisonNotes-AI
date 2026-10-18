@@ -458,9 +458,24 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         return declared == contentType
     }
 
-    /// Content type with where it came from, for display and export.
+    /// The model name of a summary that shows a short transcript as-is: no
+    /// model ran and no content type was detected.
+    static let shortTranscriptModelName = "Short Transcript (Displayed As-Is)"
+
+    /// Content type for display and export: with the Summary Prompt beta on,
+    /// it also says where it came from; with it off it reads as before.
     var contentTypeLabel: String {
-        "\(contentType.rawValue) (\(isContentTypeChosen ? "Set by Summary Prompt" : "Detected"))"
+        contentTypeLabel(betaEnabled: BetaFeatures.isEnabled(.customSummaryPrompt))
+    }
+
+    func contentTypeLabel(betaEnabled: Bool) -> String {
+        guard betaEnabled else { return contentType.rawValue }
+        if isContentTypeChosen {
+            return "\(contentType.rawValue) (Set by Summary Prompt)"
+        }
+        // A short transcript is shown as-is; nothing classified it.
+        guard aiModel != Self.shortTranscriptModelName else { return contentType.rawValue }
+        return "\(contentType.rawValue) (Detected)"
     }
 
     /// Presents the summary's size relative to its source transcript in user-facing language.

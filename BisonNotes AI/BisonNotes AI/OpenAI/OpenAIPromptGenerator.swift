@@ -269,7 +269,7 @@ enum ChatCompletionPromptGenerator {
             - Use > blockquotes for important quotes or statements
             - Keep the summary well-structured and informative
             """,
-            customReplacement: "- Follow the user's summary instructions for the summary's structure and formatting"
+            customReplacement: "- \(SummaryPromptComposer.customFormatInstruction)"
         )
         return """
         **Summary Generation Guidelines:**
@@ -466,7 +466,7 @@ enum ChatCompletionPromptGenerator {
         let comedyInstructions = summaryPrompt.userModifier
         let summaryFormatRule = summaryPrompt.summaryFormatting(
             "- The \"summary\" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.",
-            customReplacement: "- The \"summary\" field must follow the user's summary instructions for the summary's structure and formatting"
+            customReplacement: "- The \"summary\" field must follow \(SummaryPromptComposer.customInstructions) for the summary's structure and formatting"
         )
 
         return """

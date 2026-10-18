@@ -189,6 +189,7 @@ enum BisonNotesUITestSupport {
                 contentType: .meeting,
                 aiEngine: "UITest",
                 aiModel: "fixture",
+                promptTemplate: nil,
                 originalLength: segments.first?.text.count ?? 0,
                 processingTime: 0.1
             ) != nil else {
