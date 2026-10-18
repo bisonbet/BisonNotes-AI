@@ -257,18 +257,25 @@ enum ChatCompletionPromptGenerator {
     // MARK: - Specific Prompt Generators
 
     private static func createSummaryPrompt(_ summaryPrompt: SummaryPromptComposer) -> String {
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+            - Use **bold** for key points and important information
+            - Use *italic* for emphasis and highlights
+            - Use ## headers for main sections
+            - Use ### subheaders for subsections
+            - Use • bullet points for lists and key takeaways
+            - Use 1. numbered lists for sequential items
+            - Use > blockquotes for important quotes or statements
+            - Keep the summary well-structured and informative
+            """,
+            customReplacement: "- Follow the user's summary instructions for the summary's structure and formatting"
+        )
         return """
         **Summary Generation Guidelines:**
-        - Create a summary using Markdown formatting at the selected detail level.
+        - Create a summary\(summaryPrompt.summaryFormatting(" using Markdown formatting")) at the selected detail level.
         \(summaryPrompt.detailInstructions())
-        - Use **bold** for key points and important information
-        - Use *italic* for emphasis and highlights
-        - Use ## headers for main sections
-        - Use ### subheaders for subsections
-        - Use • bullet points for lists and key takeaways
-        - Use 1. numbered lists for sequential items
-        - Use > blockquotes for important quotes or statements
-        - Keep the summary well-structured and informative
+        \(formatting)
         """
     }
 
@@ -368,7 +375,7 @@ enum ChatCompletionPromptGenerator {
         let comedyInstructions = summaryPrompt.userModifier
 
         return """
-        Please provide a summary of the following content using proper Markdown formatting.
+        Please provide a summary of the following content\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")).
 
         \(detailInstructions)
         \(comedyInstructions)
@@ -457,12 +464,16 @@ enum ChatCompletionPromptGenerator {
             forSourceWordCount: wordCount(of: text)
         )
         let comedyInstructions = summaryPrompt.userModifier
+        let summaryFormatRule = summaryPrompt.summaryFormatting(
+            "- The \"summary\" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.",
+            customReplacement: "- The \"summary\" field must follow the user's summary instructions for the summary's structure and formatting"
+        )
 
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "\(summaryPrompt.schemaSummaryDescription) Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes.",
+            "summary": "\(summaryPrompt.schemaSummaryDescription)\(summaryPrompt.summaryFormatting(" Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes."))",
             "tasks": [
                 {
                     "text": "task description",
@@ -491,7 +502,7 @@ enum ChatCompletionPromptGenerator {
 
         IMPORTANT:
         - Return ONLY valid JSON, no additional text or explanations
-        - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
+        \(summaryFormatRule)
         - Tasks must be PERSONAL and ACTIONABLE to the speaker — do NOT include tasks about news, public figures, or world events
         - Reminders must be PERSONAL and TIME-SENSITIVE to the speaker — do NOT include reminders about news events or public happenings
         - If no personal tasks are found, use an empty array: "tasks": []

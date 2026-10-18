@@ -34,11 +34,12 @@ final class AppleNativeEngine: SummarizationEngine {
         let chunks = chunkText(text)
 
         if chunks.count == 1 {
-            let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+            let summaryPrompt = SummaryPromptComposer.current
+            let detailInstructions = summaryPrompt.detailInstructions(
                 forSourceWordCount: wordCount(of: text)
             )
             let prompt = """
-            Summarize the following transcript at the selected detail level. Use clear bullets or short sections as appropriate. Keep factual details, decisions, action owners, and deadlines if present.
+            Summarize the following transcript at the selected detail level.\(summaryPrompt.summaryFormatting(" Use clear bullets or short sections as appropriate.")) Keep factual details, decisions, action owners, and deadlines if present.
 
             \(detailInstructions)
 

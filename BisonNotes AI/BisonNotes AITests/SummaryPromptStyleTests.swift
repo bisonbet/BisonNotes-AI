@@ -301,6 +301,23 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertLessThan(schemaRange.lowerBound, customRange.lowerBound, "User text must follow the schema, not sit inside it")
     }
 
+    func testChatCompletionPromptsDropTheMarkdownOutlineOnlyForCustomPrompts() {
+        enableSummaryPromptBeta()
+        select(.businessMeeting)
+        XCTAssertTrue(ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .general).contains("- Use ## headers for main sections"))
+        XCTAssertTrue(ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "A transcript.").contains("must use Markdown formatting"))
+
+        select(.custom, customText: "One paragraph, no headings.")
+        let system = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .general)
+        let complete = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "A transcript.")
+        let summary = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "A transcript.")
+        for prompt in [system, complete, summary] {
+            XCTAssertFalse(prompt.contains("## headers"), "A custom prompt owns the summary's structure")
+        }
+        XCTAssertTrue(system.contains("Follow the user's summary instructions for the summary's structure and formatting"))
+        XCTAssertTrue(complete.contains("\"tasks\": ["), "The JSON schema itself stays")
+    }
+
     func testEngineSummaryFormattingIsDroppedOnlyForCustomPrompts() {
         let guidance = " Use ## headers, **bold** text, and • bullets"
         for preset in [SummaryPromptPreset.standard, .businessMeeting, .personalNotes] {

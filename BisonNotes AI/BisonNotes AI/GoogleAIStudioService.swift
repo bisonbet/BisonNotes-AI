@@ -421,7 +421,21 @@ actor GoogleAIStudioService {
     }
 
     private func createStructuredPrompt(_ text: String) -> String {
-        let detailInstructions = SummaryPromptComposer.current.detailInstructions()
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions()
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+               - Use **bold** for key points and important information
+               - Use *italic* for emphasis
+               - Use ## headers for main sections
+               - Use ### subheaders for subsections
+               - Use • bullet points for lists
+               - Use 1. numbered lists for sequential items
+               - Use > blockquotes for important quotes or statements
+            """,
+            customReplacement: "   - Follow the user's summary instructions for the summary's structure and formatting"
+        )
 
         return """
         Analyze the following text and extract key information in a structured format:
@@ -429,15 +443,9 @@ actor GoogleAIStudioService {
         \(text)
 
         Please provide:
-        1. A summary using proper Markdown formatting at the selected detail level:
+        1. A summary\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")) at the selected detail level:
            \(detailInstructions)
-           - Use **bold** for key points and important information
-           - Use *italic* for emphasis
-           - Use ## headers for main sections
-           - Use ### subheaders for subsections
-           - Use • bullet points for lists
-           - Use 1. numbered lists for sequential items
-           - Use > blockquotes for important quotes or statements
+        \(formatting)
            - Include only information supported by the source text
 
         2. Personal and relevant actionable tasks — extract ONLY if the speaker mentions THEIR OWN action items:

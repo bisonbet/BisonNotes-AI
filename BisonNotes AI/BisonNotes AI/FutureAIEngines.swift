@@ -813,7 +813,8 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
         // Combine all summaries into a final meta-summary
         let combinedSummary = summaries.joined(separator: "\n\n")
-        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
         let finalSummary: String
@@ -823,6 +824,10 @@ class GoogleAIStudioEngine: SummarizationEngine {
             finalSummary = summaries.first ?? "Summary not available"
         } else {
             // Generate a meta-summary from all chunk summaries
+            let closing = summaryPrompt.summaryFormatting(
+                "Create a cohesive, well-structured summary using proper Markdown formatting.",
+                customReplacement: "Create one cohesive summary. Follow the user's summary instructions for the summary's structure and formatting."
+            )
             let metaPrompt = """
             Please create a summary by combining these section summaries at the selected detail level.
 
@@ -830,7 +835,7 @@ class GoogleAIStudioEngine: SummarizationEngine {
 
             \(combinedSummary)
 
-            Create a cohesive, well-structured summary using proper Markdown formatting.
+            \(closing)
             """
 
             do {
@@ -873,31 +878,43 @@ class GoogleAIStudioEngine: SummarizationEngine {
     // MARK: - Private Helper Methods
 
     private func createSummaryPrompt(text: String, contentType: ContentType) -> String {
-        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+            Use the following Markdown elements as appropriate:
+            - **Bold text** for key points and important information
+            - *Italic text* for emphasis
+            - ## Headers for main sections
+            - ### Subheaders for subsections
+            - • Bullet points for lists
+            - 1. Numbered lists for sequential items
+            - > Blockquotes for important quotes or statements
+            - `Code formatting` for technical terms or specific names
+            """,
+            customReplacement: "Follow the user's summary instructions for the summary's structure and formatting."
+        )
+        let closing = summaryPrompt.summaryFormatting(
+            "Keep the summary clear, informative, and well-structured with proper Markdown formatting.",
+            customReplacement: "Keep the summary clear and informative, written as the user's summary instructions describe."
         )
 
         return """
-        Please provide a summary of the following content using proper Markdown formatting.
+        Please provide a summary of the following content\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")).
 
         \(detailInstructions)
 
-        Use the following Markdown elements as appropriate:
-        - **Bold text** for key points and important information
-        - *Italic text* for emphasis
-        - ## Headers for main sections
-        - ### Subheaders for subsections
-        - • Bullet points for lists
-        - 1. Numbered lists for sequential items
-        - > Blockquotes for important quotes or statements
-        - `Code formatting` for technical terms or specific names
+        \(formatting)
 
         Content to summarize:
         \(text)
 
         Content type: \(contentType.rawValue)
 
-        Keep the summary clear, informative, and well-structured with proper Markdown formatting.
+        \(closing)
         """
     }
 
@@ -1030,8 +1047,22 @@ class GoogleAIStudioEngine: SummarizationEngine {
     }
 
     private func createCompleteProcessingPrompt(text: String) -> String {
-        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
+        )
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+               - Use **bold** for key points and important information
+               - Use *italic* for emphasis
+               - Use ## headers for main sections
+               - Use ### subheaders for subsections
+               - Use • bullet points for lists
+               - Use > blockquotes for important statements
+               - Keep the summary well-structured and informative
+            """,
+            customReplacement: "   - Follow the user's summary instructions for the summary's structure and formatting"
         )
 
         return """
@@ -1040,15 +1071,9 @@ class GoogleAIStudioEngine: SummarizationEngine {
         \(text)
 
         Please provide a structured response with:
-        1. A summary using proper Markdown formatting at the selected detail level:
+        1. A summary\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")) at the selected detail level:
            \(detailInstructions)
-           - Use **bold** for key points and important information
-           - Use *italic* for emphasis
-           - Use ## headers for main sections
-           - Use ### subheaders for subsections
-           - Use • bullet points for lists
-           - Use > blockquotes for important statements
-           - Keep the summary well-structured and informative
+        \(formatting)
 
         2. Personal and relevant actionable tasks (not general news or public events):
            - Focus on tasks that are personal to the speaker or their immediate context
