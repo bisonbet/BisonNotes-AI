@@ -971,7 +971,8 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryPromptComposer.current.schemaSummaryDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            SummaryPromptComposer.current.schemaSummaryDescription
+                                + SummaryPromptComposer.current.summaryFormatting(" Use Markdown headers, bold text, and bullets where useful.")
                         )
                     ],
                     required: ["summary"]
@@ -991,7 +992,8 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryPromptComposer.current.schemaSummaryDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            SummaryPromptComposer.current.schemaSummaryDescription
+                                + SummaryPromptComposer.current.summaryFormatting(" Use Markdown headers, bold text, and bullets where useful.")
                         ),
                         "tasks": OllamaProperty.array(
                             "array",
@@ -1052,6 +1054,40 @@ class OllamaService: ObservableObject {
     private func createRobustSummaryPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
         let comedyModifier = SummaryPromptComposer.current.systemModifier
+        // A custom prompt owns the summary's sections, so it skips this outline.
+        let structureGuidance = SummaryPromptComposer.current.summaryFormatting(
+            """
+            CRITICAL REQUIREMENTS:
+            1. Focus on main points, key decisions, important information, and actionable items
+            2. Use proper Markdown formatting throughout your response
+            3. Structure your response logically with clear sections
+            4. Match the selected detail level without padding or repeating the transcript
+            5. Maintain professional, clear language
+
+            MARKDOWN FORMATTING RULES:
+            - Use ## for main section headers (e.g., ## Key Points, ## Decisions Made)
+            - Use **bold text** for emphasis on important information
+            - Use *italic text* for secondary emphasis or highlights
+            - Use • bullet points for lists and key takeaways
+            - Use > blockquotes for important statements or direct quotes
+            - Use --- for section dividers if needed
+            - Ensure proper spacing between sections
+
+            STRUCTURE YOUR SUMMARY WITH THESE SECTIONS (use only relevant sections):
+            - ## Overview (brief context and main topic)
+            - ## Key Points (main discussion points and topics)
+            - ## Decisions Made (any decisions, conclusions, or resolutions)
+            - ## Action Items (tasks, follow-ups, or next steps mentioned)
+            - ## Important Details (specific information, dates, names, numbers)
+            - ## Outcomes (results, agreements, or conclusions reached)
+            """,
+            customReplacement: """
+            CRITICAL REQUIREMENTS:
+            1. Follow the user's summary instructions above for the summary's focus, length, structure, and tone
+            2. Use Markdown formatting where it fits those instructions
+            3. Base the summary only on what the transcript actually says
+            """
+        )
 
         return """
         <INSTRUCTIONS>
@@ -1060,29 +1096,7 @@ class OllamaService: ObservableObject {
         SUMMARY DETAIL REQUIREMENT:
         \(detailInstructions)
 
-        CRITICAL REQUIREMENTS:
-        1. Focus on main points, key decisions, important information, and actionable items
-        2. Use proper Markdown formatting throughout your response
-        3. Structure your response logically with clear sections
-        4. Match the selected detail level without padding or repeating the transcript
-        5. Maintain professional, clear language
-
-        MARKDOWN FORMATTING RULES:
-        - Use ## for main section headers (e.g., ## Key Points, ## Decisions Made)
-        - Use **bold text** for emphasis on important information
-        - Use *italic text* for secondary emphasis or highlights
-        - Use • bullet points for lists and key takeaways
-        - Use > blockquotes for important statements or direct quotes
-        - Use --- for section dividers if needed
-        - Ensure proper spacing between sections
-
-        STRUCTURE YOUR SUMMARY WITH THESE SECTIONS (use only relevant sections):
-        - ## Overview (brief context and main topic)
-        - ## Key Points (main discussion points and topics)
-        - ## Decisions Made (any decisions, conclusions, or resolutions)
-        - ## Action Items (tasks, follow-ups, or next steps mentioned)
-        - ## Important Details (specific information, dates, names, numbers)
-        - ## Outcomes (results, agreements, or conclusions reached)
+        \(structureGuidance)
 
         QUALITY STANDARDS:
         - Extract the most important information first
@@ -1106,6 +1120,19 @@ class OllamaService: ObservableObject {
     private func createRobustCompleteProcessingPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
         let comedyModifier = SummaryPromptComposer.current.structuredModifier
+        let summaryFormat = SummaryPromptComposer.current.summaryFormatting(
+            """
+            Create a markdown-formatted summary using:
+            - ## for headers
+            - **bold** for emphasis
+            - • for bullet points
+            - \\n for line breaks in the JSON string
+            """,
+            customReplacement: """
+            Write the summary as the user's summary instructions describe.
+            - \\n for line breaks in the JSON string
+            """
+        )
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
@@ -1147,11 +1174,7 @@ class OllamaService: ObservableObject {
         }
 
         SUMMARY FORMAT:
-        Create a markdown-formatted summary using:
-        - ## for headers
-        - **bold** for emphasis
-        - • for bullet points
-        - \\n for line breaks in the JSON string
+        \(summaryFormat)
         \(detailInstructions)
 
         CONTENT TYPE: Choose one: "Meeting", "Personal", "Technical", or "General"
@@ -1687,7 +1710,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, • bullet points, and proper structure"))"
                       }
                     },
                     "required": ["summary"]
@@ -1732,7 +1755,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets"
+                        "description": "\(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, and • bullets"))"
                       },
                       "tasks": {
                         "type": "array",
@@ -2061,7 +2084,7 @@ class OllamaService: ObservableObject {
             Available function: create_summary
             Description: Create a comprehensive summary of the transcript with proper Markdown formatting
             Parameters:
-            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure
+            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, • bullet points, and proper structure"))
 
             SUMMARY DETAIL REQUIREMENT:
             \(detailInstructions)
@@ -2082,7 +2105,7 @@ class OllamaService: ObservableObject {
             Available function: complete_analysis
             Description: Perform complete analysis extracting summary, tasks, reminders, titles, and content type
             Parameters:
-            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets
+            - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, and • bullets"))
 
             SUMMARY DETAIL REQUIREMENT:
             \(detailInstructions)
@@ -2301,7 +2324,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, • bullet points, and proper structure"))"
                     }
                   },
                   "required": ["summary"]
@@ -2339,7 +2362,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription) Use ## headers, **bold** text, and • bullets"
+                      "description": "\(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, and • bullets"))"
                     },
                     "tasks": {
                       "type": "array",
@@ -2776,6 +2799,13 @@ class OllamaService: ObservableObject {
     private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
         let detailInstructions = summaryDetailInstructions(for: text)
         let comedyModifier = SummaryPromptComposer.current.structuredModifier
+        let summaryStructure = SummaryPromptComposer.current.summaryFormatting(
+            """
+            - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
+            - Structure the summary logically by topic or chronologically
+            """,
+            customReplacement: "- Structure the summary as the user's summary instructions describe"
+        )
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
@@ -2795,8 +2825,7 @@ class OllamaService: ObservableObject {
         - Follow the selected summary detail level:
         \(detailInstructions)
         - Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level
-        - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
-        - Structure the summary logically by topic or chronologically
+        \(summaryStructure)
 
         TASKS - Extract ONLY if the speaker mentions THEIR OWN action items:
         - "I need to call John" → YES, extract this

@@ -567,6 +567,14 @@ struct SummaryPromptComposer: Sendable {
         }
     }
 
+    /// Formatting or section guidance an engine adds for the narrative
+    /// summary. A custom prompt owns the summary's structure, so for it the
+    /// guidance is dropped (or replaced by `customReplacement`) instead of
+    /// contradicting the user's instructions.
+    func summaryFormatting(_ guidance: String, customReplacement: String = "") -> String {
+        preset == .custom ? customReplacement : guidance
+    }
+
     /// Short description for a structured-output `summary` field.
     var schemaSummaryDescription: String {
         switch preset {

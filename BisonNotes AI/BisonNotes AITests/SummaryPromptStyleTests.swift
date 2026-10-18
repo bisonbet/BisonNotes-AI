@@ -301,6 +301,17 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertLessThan(schemaRange.lowerBound, customRange.lowerBound, "User text must follow the schema, not sit inside it")
     }
 
+    func testEngineSummaryFormattingIsDroppedOnlyForCustomPrompts() {
+        let guidance = " Use ## headers, **bold** text, and • bullets"
+        for preset in [SummaryPromptPreset.standard, .businessMeeting, .personalNotes] {
+            let composer = SummaryPromptComposer(preset: preset, detailLevel: .balanced, comedyMode: .off)
+            XCTAssertEqual(composer.summaryFormatting(guidance, customReplacement: "x"), guidance)
+        }
+        let custom = SummaryPromptComposer(preset: .custom, customText: "One paragraph.", detailLevel: .balanced, comedyMode: .off)
+        XCTAssertEqual(custom.summaryFormatting(guidance), "")
+        XCTAssertEqual(custom.summaryFormatting(guidance, customReplacement: "x"), "x")
+    }
+
     func testLogDescriptionNeverIncludesCustomText() {
         let composer = SummaryPromptComposer(
             preset: .custom,
