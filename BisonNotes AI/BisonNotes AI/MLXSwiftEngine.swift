@@ -1304,23 +1304,31 @@ enum MLXSwiftResponseParser {
 
         for line in text.components(separatedBy: "\n") {
             if line.hasPrefix("## ") {
-                // Save previous section
-                if let key = currentKey {
-                    sections[key] = currentContent.joined(separator: "\n")
-                }
                 let header = line.dropFirst(3).trimmingCharacters(in: .whitespaces).lowercased()
                 // Normalize header names
+                let key: String
                 if header.contains("summary") {
-                    currentKey = "summary"
+                    key = "summary"
                 } else if header.contains("task") {
-                    currentKey = "tasks"
+                    key = "tasks"
                 } else if header.contains("reminder") {
-                    currentKey = "reminders"
+                    key = "reminders"
                 } else if header.contains("title") {
-                    currentKey = "titles"
+                    key = "titles"
+                } else if currentKey == "summary" {
+                    // A heading of the summary's own, such as a custom prompt's
+                    // "## Risks", stays part of the summary instead of being
+                    // split off and dropped.
+                    currentContent.append(line)
+                    continue
                 } else {
-                    currentKey = header
+                    key = header
                 }
+                // Save previous section
+                if let currentKey {
+                    sections[currentKey] = currentContent.joined(separator: "\n")
+                }
+                currentKey = key
                 currentContent = []
             } else {
                 currentContent.append(line)
