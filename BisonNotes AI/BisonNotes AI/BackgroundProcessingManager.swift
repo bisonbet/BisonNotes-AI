@@ -933,7 +933,7 @@ class BackgroundProcessingManager: ObservableObject {
             recordingURL: recordingURL,
             recordingName: recordingName,
             modelName: modelName,
-            summaryPromptTemplate: promptTemplate
+            summaryPromptTemplate: promptTemplate ?? SummaryPromptComposer.templateForNewSummary()
         )
 
         // Track old summary ID for regeneration (delete before saving new)

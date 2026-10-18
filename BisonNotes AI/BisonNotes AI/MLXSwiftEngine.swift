@@ -974,7 +974,19 @@ private actor MLXSwiftService {
     }
 
     private var systemInstruction: String {
-        """
+        let composer = SummaryPromptComposer.current
+        // A custom prompt replaces Summary Detail and the summary's format, so
+        // these system lines defer to it instead of contradicting it.
+        let summaryItem = composer.summaryFormatting(
+            "1. A summary at the selected detail level using Markdown formatting based on what was actually discussed",
+            customReplacement: "1. A summary written as the user's summary instructions describe, based on what was actually discussed"
+        )
+        let summaryGuidance = composer.summaryFormatting(
+            "Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker "
+                + "and actually appears in the transcript.",
+            customReplacement: "Follow the user's summary instructions for the narrative summary, using only what actually appears in the transcript."
+        )
+        return """
     You are an AI assistant specialized in processing audio transcripts. \
     Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
@@ -989,14 +1001,13 @@ private actor MLXSwiftService {
     - Base titles on the ACTUAL topics discussed, not generic examples
 
     Provide:
-    1. A summary at the selected detail level using Markdown formatting based on what was actually discussed
+    \(summaryItem)
     2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
     3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
     4. Suggested titles based on the ACTUAL main topics discussed
 
-    Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker \
-    and actually appears in the transcript.
-    """ + "\n\n" + SummaryPromptComposer.current.detailInstructions()
+    \(summaryGuidance)
+    """ + "\n\n" + composer.detailInstructions()
     }
 
     private func generate(prompt: String) async throws -> String {

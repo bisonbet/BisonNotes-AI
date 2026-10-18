@@ -513,6 +513,17 @@ struct SummaryPromptComposer: Sendable {
         SummaryPromptComposer(prompt: effectivePrompt(), detailLevel: .current, comedyMode: .current)
     }
 
+    /// The template to record on a new summary job when the caller chose none:
+    /// the default for new summaries as of now, so a queued job keeps it even
+    /// if the default changes or the app relaunches before the job runs. Nil
+    /// while the beta is off, which keeps today's behavior.
+    static func templateForNewSummary(defaults: UserDefaults = .standard) -> SummaryPromptTemplate? {
+        guard BetaFeatures.isEnabled(.customSummaryPrompt, defaults: defaults) else {
+            return nil
+        }
+        return SummaryPromptTemplate(prompt: SummaryPromptLibrary.defaultPrompt(defaults: defaults))
+    }
+
     /// Resolves the composer once for `template` (nil keeps an enclosing
     /// request's snapshot or template, else the default for new summaries)
     /// and runs `operation` with it installed as `requestSnapshot`.

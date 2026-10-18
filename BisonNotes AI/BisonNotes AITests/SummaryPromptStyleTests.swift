@@ -369,6 +369,24 @@ final class SummaryPromptStyleTests: XCTestCase {
         }
     }
 
+    func testNewSummaryJobsRecordTheDefaultAsOfEnqueueTime() {
+        select(.businessMeeting)
+        XCTAssertNil(SummaryPromptComposer.templateForNewSummary(), "Beta off keeps jobs template-free")
+
+        enableSummaryPromptBeta()
+        let queued = SummaryPromptComposer.templateForNewSummary()
+        XCTAssertEqual(queued?.id, SummaryPrompt.businessMeetingID)
+
+        // A later default change must not reach the already-queued job.
+        select(.personalNotes)
+        SummaryPromptComposer.$requestTemplate.withValue(queued) {
+            XCTAssertEqual(SummaryPromptComposer.current.preset, .businessMeeting)
+        }
+
+        select(.standard)
+        XCTAssertEqual(SummaryPromptComposer.templateForNewSummary(), .standard, "Default is recorded explicitly too")
+    }
+
     func testRequestSnapshotHoldsThePromptWhenSettingsChangeMidRun() async {
         enableSummaryPromptBeta()
         select(.personalNotes)
