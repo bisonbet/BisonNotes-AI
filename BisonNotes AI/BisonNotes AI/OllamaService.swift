@@ -954,6 +954,21 @@ class OllamaService: ObservableObject {
         }
     }
 
+    /// The create_summary tool's description. A custom prompt owns the
+    /// summary's format, so it gets no "comprehensive Markdown" demand.
+    private var summaryToolDescription: String {
+        SummaryPromptComposer.current.summaryFormatting(
+            "Create a comprehensive summary of the transcript with proper Markdown formatting",
+            customReplacement: "Create a summary of the transcript as the user's summary instructions describe"
+        )
+    }
+
+    /// `style` for Default and the built-ins; dropped for a custom prompt,
+    /// whose instructions set the summary's structure and format.
+    private func summaryStyle(_ style: String) -> String {
+        SummaryPromptComposer.current.summaryFormatting(style)
+    }
+
     private func summaryDetailInstructions(for text: String) -> String {
         SummaryPromptComposer.current.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
@@ -965,7 +980,7 @@ class OllamaService: ObservableObject {
             type: "function",
             function: OllamaFunction(
                 name: "create_summary",
-                description: "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                description: summaryToolDescription,
                 parameters: OllamaFunctionParameters(
                     type: "object",
                     properties: [
@@ -1091,7 +1106,7 @@ class OllamaService: ObservableObject {
 
         return """
         <INSTRUCTIONS>
-        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create well-structured summaries at the requested detail level.
+        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create \(summaryStyle("well-structured "))summaries at the requested detail level.
 
         SUMMARY DETAIL REQUIREMENT:
         \(detailInstructions)
@@ -1113,7 +1128,7 @@ class OllamaService: ObservableObject {
         </TRANSCRIPT>
 
         <OUTPUT>
-        Please provide your well-formatted summary at the selected detail level below:
+        Please provide your \(summaryStyle("well-formatted "))summary at the selected detail level below:
         """
     }
 
@@ -1138,7 +1153,7 @@ class OllamaService: ObservableObject {
 
         REQUIRED JSON SCHEMA - You must use these exact field names and structure:
         {
-          "summary": "string with markdown formatting",
+          "summary": "string\(summaryStyle(" with markdown formatting"))",
           "tasks": [array of task objects],
           "reminders": [array of reminder objects],
           "titles": [array of title objects],
@@ -1704,7 +1719,7 @@ class OllamaService: ObservableObject {
                 "type": "function",
                 "function": {
                   "name": "create_summary",
-                  "description": "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                  "description": "\(summaryToolDescription)",
                   "parameters": {
                     "type": "object",
                     "properties": {
@@ -1727,7 +1742,7 @@ class OllamaService: ObservableObject {
 
             IMPORTANT: You MUST respond by calling the create_summary function using this exact format:
             <tool_call>
-            {"name": "create_summary", "arguments": {"summary": "your markdown summary here"}}
+            {"name": "create_summary", "arguments": {"summary": "your \(summaryStyle("markdown "))summary here"}}
             </tool_call>
 
             Do not provide a direct response. Use the tool call format.<|im_end|>
@@ -2082,7 +2097,7 @@ class OllamaService: ObservableObject {
             You have access to custom analysis tools via the commentary channel.
 
             Available function: create_summary
-            Description: Create a comprehensive summary of the transcript with proper Markdown formatting
+            Description: \(summaryToolDescription)
             Parameters:
             - summary (string): \(SummaryPromptComposer.current.schemaSummaryDescription)\(SummaryPromptComposer.current.summaryFormatting(" Use ## headers, **bold** text, • bullet points, and proper structure"))
 
@@ -2091,7 +2106,7 @@ class OllamaService: ObservableObject {
 
             \(comedyModifier)
 
-            Please analyze the following transcript and use the create_summary function to generate a well-structured summary:
+            Please analyze the following transcript and use the create_summary function to generate a \(summaryStyle("well-structured "))summary:
 
             \(text)
 
@@ -2318,7 +2333,7 @@ class OllamaService: ObservableObject {
             [
               {
                 "name": "create_summary",
-                "description": "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                "description": "\(summaryToolDescription)",
                 "parameters": {
                   "type": "object",
                   "properties": {
@@ -2337,12 +2352,12 @@ class OllamaService: ObservableObject {
 
             \(comedyModifier)
 
-            [INST]Please analyze the following transcript and use the create_summary tool to generate a well-structured summary:
+            [INST]Please analyze the following transcript and use the create_summary tool to generate a \(summaryStyle("well-structured "))summary:
 
             \(text)[/INST]
 
             <think>
-            I need to analyze this transcript and create a comprehensive summary using the create_summary tool. Let me process the content and structure it properly.
+            I need to analyze this transcript and create a \(summaryStyle("comprehensive "))summary using the create_summary tool.\(summaryStyle(" Let me process the content and structure it properly."))
             </think>
 
             """
@@ -2806,13 +2821,21 @@ class OllamaService: ObservableObject {
             """,
             customReplacement: "- Structure the summary as the user's summary instructions describe"
         )
+        let summaryContentDescription = SummaryPromptComposer.current.summaryFormatting(
+            "Comprehensive Markdown summary",
+            customReplacement: "Summary, written as the user's summary instructions describe,"
+        )
+        let summaryCoverage = SummaryPromptComposer.current.summaryFormatting(
+            "- Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level",
+            customReplacement: "- Include what the user's summary instructions ask for, using only what the transcript says"
+        )
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
         Return ONLY a valid JSON object (no other text):
 
         {
-          "summary": "Comprehensive Markdown summary of the CONTENT and TOPICS discussed",
+          "summary": "\(summaryContentDescription) of the CONTENT and TOPICS discussed",
           "tasks": [{"text": "Specific action item", "priority": "High|Medium|Low", "category": "Call|Email|Meeting|Purchase|Research|Travel|Health|General", "timeReference": null}],
           "reminders": [{"text": "Time-sensitive item", "urgency": "Immediate|Today|This Week|Later", "timeReference": null}],
           "titles": [{"text": "Descriptive title", "category": "Meeting|Personal|Technical|General", "confidence": 0.8}],
@@ -2824,7 +2847,7 @@ class OllamaService: ObservableObject {
         - DO write what was ACTUALLY DISCUSSED in the content
         - Follow the selected summary detail level:
         \(detailInstructions)
-        - Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level
+        \(summaryCoverage)
         \(summaryStructure)
 
         TASKS - Extract ONLY if the speaker mentions THEIR OWN action items:
