@@ -39,7 +39,7 @@ final class AppleNativeEngine: SummarizationEngine {
                 forSourceWordCount: wordCount(of: text)
             )
             let prompt = """
-            Summarize the following transcript at the selected detail level.\(summaryPrompt.summaryFormatting(" Use clear bullets or short sections as appropriate.")) Keep factual details, decisions, action owners, and deadlines if present.
+            Summarize the following transcript at the selected detail level.\(summaryPrompt.summaryFormatting(" Use clear bullets or short sections as appropriate. Keep factual details, decisions, action owners, and deadlines if present."))
 
             \(detailInstructions)
 
@@ -54,14 +54,17 @@ final class AppleNativeEngine: SummarizationEngine {
             "[AppleNativeEngine] Transcript too long – processing in \(chunks.count) chunks",
             category: "AppleNativeEngine"
         )
+        // A custom prompt owns the summary's focus, so it skips the fixed
+        // coverage lists below.
+        let summaryPrompt = SummaryPromptComposer.current
         var chunkSummaries: [String] = []
         for (index, chunk) in chunks.enumerated() {
-            let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+            let detailInstructions = summaryPrompt.detailInstructions(
                 forSourceWordCount: wordCount(of: chunk)
             )
             let chunkPrompt = """
             This is part \(index + 1) of \(chunks.count) of a longer transcript. \
-            Summarize this section at the selected detail level, covering key facts, decisions, and action items.
+            Summarize this section at the selected detail level\(summaryPrompt.summaryFormatting(", covering key facts, decisions, and action items")).
 
             \(detailInstructions)
 
@@ -74,14 +77,15 @@ final class AppleNativeEngine: SummarizationEngine {
         let combined = chunkSummaries.enumerated()
             .map { "Part \($0.offset + 1):\n\($0.element)" }
             .joined(separator: "\n\n")
-        let detailInstructions = SummaryPromptComposer.current.detailInstructions(
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: wordCount(of: text)
         )
 
+        let preserving = summaryPrompt.summaryFormatting(", preserving all key decisions, action items, and deadlines")
+
         let finalPrompt = """
         The following are summaries of sequential sections of a transcript. \
-        Combine them into a single cohesive summary at the selected detail level, \
-        preserving all key decisions, action items, and deadlines.
+        Combine them into a single cohesive summary at the selected detail level\(preserving).
 
         \(detailInstructions)
 
