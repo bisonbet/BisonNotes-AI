@@ -327,7 +327,7 @@ actor GoogleAIStudioService {
             "properties": [
                 "summary": [
                     "type": "string",
-                    "description": SummaryDetailLevel.current.schemaDescription
+                    "description": SummaryPromptComposer.current.schemaSummaryDescription
                 ],
                 "tasks": [
                     "type": "array",
@@ -421,7 +421,21 @@ actor GoogleAIStudioService {
     }
 
     private func createStructuredPrompt(_ text: String) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions()
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions()
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+               - Use **bold** for key points and important information
+               - Use *italic* for emphasis
+               - Use ## headers for main sections
+               - Use ### subheaders for subsections
+               - Use • bullet points for lists
+               - Use 1. numbered lists for sequential items
+               - Use > blockquotes for important quotes or statements
+            """,
+            customReplacement: "   - \(SummaryPromptComposer.customFormatInstruction)"
+        )
 
         return """
         Analyze the following text and extract key information in a structured format:
@@ -429,15 +443,9 @@ actor GoogleAIStudioService {
         \(text)
 
         Please provide:
-        1. A summary using proper Markdown formatting at the selected detail level:
+        1. A summary\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")) at the selected detail level:
            \(detailInstructions)
-           - Use **bold** for key points and important information
-           - Use *italic* for emphasis
-           - Use ## headers for main sections
-           - Use ### subheaders for subsections
-           - Use • bullet points for lists
-           - Use 1. numbered lists for sequential items
-           - Use > blockquotes for important quotes or statements
+        \(formatting)
            - Include only information supported by the source text
 
         2. Personal and relevant actionable tasks — extract ONLY if the speaker mentions THEIR OWN action items:
@@ -464,7 +472,7 @@ actor GoogleAIStudioService {
 
         Format your response as a JSON object with the following structure:
         {
-          "summary": "\(SummaryDetailLevel.current.schemaDescription)",
+          "summary": "\(SummaryPromptComposer.current.schemaSummaryDescription)",
           "tasks": ["personal task1", "personal task2"],
           "reminders": ["personal reminder1", "personal reminder2"],
           "titles": ["title1", "title2", "title3"],
@@ -475,7 +483,7 @@ actor GoogleAIStudioService {
         - Return ONLY personal, relevant content for tasks and reminders
         - If no personal tasks exist, use an empty array: "tasks": []
         - If no personal reminders exist, use an empty array: "reminders": []
-        \(ComedyMode.current.structuredPromptModifier ?? "")
+        \(SummaryPromptComposer.current.structuredModifier)
         """
     }
 

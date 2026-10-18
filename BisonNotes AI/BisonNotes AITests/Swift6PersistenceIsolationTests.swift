@@ -551,6 +551,7 @@ extension Swift6PersistenceIsolationTests {
             transcriptId: transcriptID,
             summary: "This summary is long enough to exercise the failed durable save path.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 32
         ))
         CoreDataManager.injectedSaveFailure = nil
@@ -687,7 +688,7 @@ extension Swift6PersistenceIsolationTests {
         _ = try coordinator.addSummary(
             for: recordingID, transcriptId: transcriptID,
             summary: "A sufficiently long summary for the isolated workflow save regression.",
-            aiModel: "fixture", originalLength: 40
+            aiModel: "fixture", promptTemplate: nil, originalLength: 40
         )
         XCTAssertEqual(recording.recordingName, "Pending rename")
         XCTAssertTrue(pending.isInserted)
@@ -802,6 +803,7 @@ extension Swift6PersistenceIsolationTests {
             transcriptId: transcriptID,
             summary: "A durable summary that should remain available after closing and reopening the store.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 40
         ))
         let jobID = UUID()
@@ -1000,7 +1002,7 @@ extension Swift6PersistenceIsolationTests {
         let summaryID = try XCTUnwrap(try coordinator.addSummary(
             for: recordingID, transcriptId: transcriptID,
             summary: "Committed summary output must survive restart without repeating the provider request.",
-            aiModel: "fixture", originalLength: 80
+            aiModel: "fixture", promptTemplate: nil, originalLength: 80
         ))
         for status in ["Processing", "Interrupted"] {
             let job = try coordinator.coreDataManager.createProcessingJob(

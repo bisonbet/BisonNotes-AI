@@ -39,6 +39,13 @@ struct SummaryDetailView: View {
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var isRegenerating = false
+    /// The prompt Regenerate uses, starting from this summary's own.
+    @State private var regenerationPromptID: String
+    /// A transcript this short is shown as-is, so no prompt would run and the
+    /// picker is hidden.
+    @State private var transcriptIsShownAsIs = false
+    @AppStorage(BetaFeatures.masterStorageKey) private var betaFeaturesEnabled = false
+    @AppStorage(BetaFeature.customSummaryPrompt.storageKey) private var summaryPromptBetaEnabled = false
     @State private var regeneratingJobId: UUID?
     @State private var showingRegenerationAlert = false
     @State private var regenerationError: String?
@@ -108,6 +115,30 @@ struct SummaryDetailView: View {
     init(recording: RecordingFile, summaryData: EnhancedSummaryData) {
         self.recording = recording
         self._summaryData = State(initialValue: summaryData)
+        self._regenerationPromptID = State(initialValue: Self.regenerationPromptID(for: summaryData))
+    }
+
+    /// The summary's own prompt if it still exists; otherwise Default.
+    private static func regenerationPromptID(for summary: EnhancedSummaryData) -> String {
+        guard let id = summary.promptTemplate?.id,
+              SummaryPromptLibrary.prompt(id: id) != nil else {
+            return SummaryPrompt.defaultID
+        }
+        return id
+    }
+
+    /// The prompt name the summary was made with, noting a deleted prompt.
+    private var summaryPromptDisplayName: String {
+        guard let template = summaryData.promptTemplate else {
+            return SummaryPromptTemplate.standard.displayName
+        }
+        return SummaryPromptLibrary.prompt(id: template.id) == nil
+            ? "\(template.displayName) (deleted)"
+            : template.displayName
+    }
+
+    private var isSummaryPromptBetaEnabled: Bool {
+        betaFeaturesEnabled && summaryPromptBetaEnabled
     }
 
     private var isNativeMacSummaryWindow: Bool {
@@ -772,8 +803,15 @@ struct SummaryDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 metadataRow(title: "AI Engine", value: summaryData.aiEngine, icon: "cpu")
                 metadataRow(title: "AI Model", value: summaryData.aiModel, icon: "brain.head.profile")
+                if isSummaryPromptBetaEnabled {
+                    metadataRow(
+                        title: "Summary Prompt",
+                        value: summaryPromptDisplayName,
+                        icon: "text.bubble"
+                    )
+                }
                 metadataRow(title: "Generation Time", value: formatDate(summaryData.generatedAt), icon: "clock.arrow.circlepath")
-                metadataRow(title: "Content Type", value: summaryData.contentType.rawValue, icon: "doc.text")
+                metadataRow(title: "Content Type", value: summaryData.contentTypeLabel, icon: "doc.text")
                 metadataRow(title: "Word Count", value: "\(summaryData.wordCount) words", icon: "text.word.spacing")
                 metadataRow(title: "Summary Length", value: summaryData.formattedSummaryLength, icon: "chart.bar.fill")
                 metadataRow(title: "Audio Length", value: recording.durationString, icon: "waveform")
@@ -1174,6 +1212,22 @@ struct SummaryDetailView: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
 
+                if isSummaryPromptBetaEnabled {
+                    if transcriptIsShownAsIs {
+                        Text("Transcripts of \(SummaryManager.shownAsIsWordLimit) words or fewer are shown as-is, so there's no Summary Prompt to choose.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal)
+                    } else {
+                        SummaryTemplatePicker(promptID: $regenerationPromptID)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                            .disabled(isRegenerating)
+                    }
+                }
+
                 Button(action: {
                     // Check if AI engine is configured before allowing regeneration
                     if !ConfigurationWarningHelper.isAIEngineConfigured() {
@@ -1400,13 +1454,20 @@ struct SummaryDetailView: View {
     private func refreshSummaryFromCoreData() {
         guard let recordingEntry = appCoordinator.getRecording(url: recording.url),
               let recordingId = recordingEntry.id,
-              let completeData = appCoordinator.getCompleteRecordingData(id: recordingId),
-              let latestSummary = completeData.summary else {
+              let completeData = appCoordinator.getCompleteRecordingData(id: recordingId) else {
+            return
+        }
+        // The transcript can change (an edit, a re-run) without a new summary.
+        transcriptIsShownAsIs = completeData.transcript.map {
+            SummaryManager.isShownAsIs($0.textForSummarization)
+        } ?? false
+        guard let latestSummary = completeData.summary else {
             return
         }
         if latestSummary.id != summaryData.id {
             AppLog.shared.summarization("Refreshing summary from Core Data, new length: \(latestSummary.summary.count) chars, new model: \(latestSummary.aiModel)", level: .debug)
             summaryData = latestSummary
+            regenerationPromptID = Self.regenerationPromptID(for: latestSummary)
         }
     }
 
@@ -1422,6 +1483,10 @@ struct SummaryDetailView: View {
         let oldSummaryId = summaryData.id
         let recordingURL = summaryData.recordingURL
         let recordingName = summaryData.recordingName
+        // With the beta off the job keeps today's behavior (no template).
+        let promptTemplate = isSummaryPromptBetaEnabled
+            ? SummaryPromptLibrary.prompt(id: regenerationPromptID).map(SummaryPromptTemplate.init(prompt:)) ?? .standard
+            : nil
 
         AppLog.shared.summarization("Queueing summary regeneration", level: .debug)
 
@@ -1432,7 +1497,8 @@ struct SummaryDetailView: View {
                     recordingName: recordingName,
                     engine: selectedEngine,
                     modelName: selectedModel,
-                    replacingSummaryId: oldSummaryId
+                    replacingSummaryId: oldSummaryId,
+                    promptTemplate: promptTemplate
                 )
                 await MainActor.run {
                     regeneratingJobId = jobId
@@ -1527,6 +1593,7 @@ struct SummaryDetailView: View {
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
+                        promptTemplate: summaryData.promptTemplate,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1593,6 +1660,7 @@ struct SummaryDetailView: View {
                         contentType: summaryData.contentType,
                         aiEngine: summaryData.aiEngine,
                         aiModel: summaryData.aiModel,
+                        promptTemplate: summaryData.promptTemplate,
                         originalLength: summaryData.originalLength,
                         processingTime: summaryData.processingTime,
                         generatedAt: summaryData.generatedAt,
@@ -1816,6 +1884,7 @@ struct SummaryDetailView: View {
             contentType: summaryData.contentType,
             aiEngine: summaryData.aiEngine,
             aiModel: summaryData.aiModel,
+            promptTemplate: summaryData.promptTemplate,
             originalLength: summaryData.originalLength,
             processingTime: summaryData.processingTime,
             generatedAt: summaryData.generatedAt,

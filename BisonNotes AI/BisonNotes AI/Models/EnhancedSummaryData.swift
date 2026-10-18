@@ -330,6 +330,9 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     let contentType: ContentType
     let aiEngine: String
     let aiModel: String
+    /// The Summary Prompt template this summary was generated with; nil means
+    /// Default (including every summary made before templates existed).
+    let promptTemplate: SummaryPromptTemplate?
     let generatedAt: Date
     let version: Int
     let wordCount: Int
@@ -353,7 +356,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
 
     // Legacy initializer for backward compatibility
-    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = nil
         self.transcriptId = nil
@@ -369,6 +372,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
+        self.promptTemplate = promptTemplate?.recordedValue
         self.generatedAt = Date()
         self.version = 1
         self.wordCount = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -384,7 +388,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
 
     // New initializer for unified architecture
-    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0) {
+    init(recordingId: UUID, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0) {
         self.id = UUID()
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -400,6 +404,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
+        self.promptTemplate = promptTemplate?.recordedValue
         self.generatedAt = Date()
         self.version = 1
         self.wordCount = summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -415,7 +420,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     }
 
     // Initializer for Core Data conversion that preserves the original ID
-    init(id: UUID, recordingId: UUID?, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
+    init(id: UUID, recordingId: UUID?, transcriptId: UUID? = nil, recordingURL: URL, recordingName: String, recordingDate: Date, summary: String, tasks: [TaskItem] = [], reminders: [ReminderItem] = [], titles: [TitleItem] = [], attachments: [SummaryAttachment] = [], userNotes: String? = nil, contentType: ContentType = .general, aiEngine: String = "Unknown", aiModel: String, promptTemplate: SummaryPromptTemplate?, originalLength: Int, processingTime: TimeInterval = 0, generatedAt: Date? = nil, version: Int = 1, wordCount: Int? = nil, compressionRatio: Double? = nil, confidence: Double? = nil) {
         self.id = id
         self.recordingId = recordingId
         self.transcriptId = transcriptId
@@ -431,6 +436,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         self.contentType = contentType
         self.aiEngine = aiEngine
         self.aiModel = aiModel
+        self.promptTemplate = promptTemplate?.recordedValue
         self.generatedAt = generatedAt ?? Date()
         self.version = version
         self.wordCount = wordCount ?? summary.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count
@@ -443,6 +449,33 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
             let titleConfidence = titles.isEmpty ? 0.5 : titles.map { $0.confidence }.reduce(0, +) / Double(titles.count)
             return (taskConfidence + reminderConfidence + titleConfidence) / 3.0
         }()
+    }
+
+    /// True when the content type was set by the summary's template (Personal
+    /// Notes, Business Meeting) rather than detected from the transcript.
+    var isContentTypeChosen: Bool {
+        guard let declared = promptTemplate?.declaredContentType else { return false }
+        return declared == contentType
+    }
+
+    /// The model name of a summary that shows a short transcript as-is: no
+    /// model ran and no content type was detected.
+    static let shortTranscriptModelName = "Short Transcript (Displayed As-Is)"
+
+    /// Content type for display and export: with the Summary Prompt beta on,
+    /// it also says where it came from; with it off it reads as before.
+    var contentTypeLabel: String {
+        contentTypeLabel(betaEnabled: BetaFeatures.isEnabled(.customSummaryPrompt))
+    }
+
+    func contentTypeLabel(betaEnabled: Bool) -> String {
+        guard betaEnabled else { return contentType.rawValue }
+        if isContentTypeChosen {
+            return "\(contentType.rawValue) (Set by Summary Prompt)"
+        }
+        // A short transcript is shown as-is; nothing classified it.
+        guard aiModel != Self.shortTranscriptModelName else { return contentType.rawValue }
+        return "\(contentType.rawValue) (Detected)"
     }
 
     /// Presents the summary's size relative to its source transcript in user-facing language.
@@ -460,7 +493,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, recordingId, transcriptId, recordingURL, recordingName, recordingDate
         case summary, tasks, reminders, titles, attachments, userNotes
-        case contentType, aiEngine, aiModel, generatedAt, version
+        case contentType, aiEngine, aiModel, promptTemplate, generatedAt, version
         case wordCount, originalLength, compressionRatio, confidence, processingTime
     }
 
@@ -482,6 +515,7 @@ public struct EnhancedSummaryData: Codable, Identifiable, Sendable {
         contentType = try c.decode(ContentType.self, forKey: .contentType)
         aiEngine = try c.decode(String.self, forKey: .aiEngine)
         aiModel = try c.decode(String.self, forKey: .aiModel)
+        promptTemplate = try c.decodeIfPresent(SummaryPromptTemplate.self, forKey: .promptTemplate)?.recordedValue
         generatedAt = try c.decode(Date.self, forKey: .generatedAt)
         version = try c.decode(Int.self, forKey: .version)
         wordCount = try c.decode(Int.self, forKey: .wordCount)

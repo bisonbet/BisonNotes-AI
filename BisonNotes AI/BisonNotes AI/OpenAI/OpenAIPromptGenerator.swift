@@ -190,12 +190,15 @@ enum ChatCompletionPromptGenerator {
         - Prioritize the most important information first
         """
 
-        let contentTypePrompt = createContentTypeSpecificPrompt(contentType)
+        let summaryPrompt = SummaryPromptComposer.current
+        let contentTypePrompt = summaryPrompt.usesAutomaticContentFocus
+            ? createContentTypeSpecificPrompt(contentType) + "\n\n"
+            : ""
 
         switch type {
         case .summary:
-            let comedyModifier = ComedyMode.current.promptModifier ?? ""
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createSummaryPrompt() + comedyModifier
+            return basePrompt + "\n\n" + contentTypePrompt
+                + createSummaryPrompt(summaryPrompt) + summaryPrompt.systemModifier
         case .tasks:
             return basePrompt + "\n\n" + createTasksPrompt()
         case .reminders:
@@ -203,8 +206,8 @@ enum ChatCompletionPromptGenerator {
         case .titles:
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
-            let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
-            return basePrompt + "\n\n" + contentTypePrompt + "\n\n" + createCompletePrompt() + comedyModifier
+            return basePrompt + "\n\n" + contentTypePrompt
+                + createCompletePrompt(summaryPrompt) + summaryPrompt.structuredModifier
         }
     }
 
@@ -253,19 +256,26 @@ enum ChatCompletionPromptGenerator {
 
     // MARK: - Specific Prompt Generators
 
-    private static func createSummaryPrompt() -> String {
+    private static func createSummaryPrompt(_ summaryPrompt: SummaryPromptComposer) -> String {
+        // A custom prompt owns the summary's structure, so it skips the outline.
+        let formatting = summaryPrompt.summaryFormatting(
+            """
+            - Use **bold** for key points and important information
+            - Use *italic* for emphasis and highlights
+            - Use ## headers for main sections
+            - Use ### subheaders for subsections
+            - Use • bullet points for lists and key takeaways
+            - Use 1. numbered lists for sequential items
+            - Use > blockquotes for important quotes or statements
+            - Keep the summary well-structured and informative
+            """,
+            customReplacement: "- \(SummaryPromptComposer.customFormatInstruction)"
+        )
         return """
         **Summary Generation Guidelines:**
-        - Create a summary using Markdown formatting at the selected detail level.
-        \(SummaryDetailLevel.current.promptInstructions())
-        - Use **bold** for key points and important information
-        - Use *italic* for emphasis and highlights
-        - Use ## headers for main sections
-        - Use ### subheaders for subsections
-        - Use • bullet points for lists and key takeaways
-        - Use 1. numbered lists for sequential items
-        - Use > blockquotes for important quotes or statements
-        - Keep the summary well-structured and informative
+        - Create a summary\(summaryPrompt.summaryFormatting(" using Markdown formatting")) at the selected detail level.
+        \(summaryPrompt.detailInstructions())
+        \(formatting)
         """
     }
 
@@ -327,11 +337,11 @@ enum ChatCompletionPromptGenerator {
         """
     }
 
-    private static func createCompletePrompt() -> String {
+    private static func createCompletePrompt(_ summaryPrompt: SummaryPromptComposer) -> String {
         return """
         **Complete Analysis Guidelines:**
         - Provide a complete analysis in a single response.
-        \(SummaryDetailLevel.current.promptInstructions())
+        \(summaryPrompt.detailInstructions())
         - Include summary, tasks, reminders, and titles
         - Use the standardized title generation logic
         - Ensure all components are properly formatted
@@ -358,13 +368,14 @@ enum ChatCompletionPromptGenerator {
     }
 
     private static func createSummaryUserPrompt(_ text: String) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: wordCount(of: text)
         )
-        let comedyInstructions = ComedyMode.current.userPromptModifier ?? ""
+        let comedyInstructions = summaryPrompt.userModifier
 
         return """
-        Please provide a summary of the following content using proper Markdown formatting.
+        Please provide a summary of the following content\(summaryPrompt.summaryFormatting(" using proper Markdown formatting")).
 
         \(detailInstructions)
         \(comedyInstructions)
@@ -448,16 +459,21 @@ enum ChatCompletionPromptGenerator {
     }
 
     private static func createCompleteUserPrompt(_ text: String) -> String {
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let summaryPrompt = SummaryPromptComposer.current
+        let detailInstructions = summaryPrompt.detailInstructions(
             forSourceWordCount: wordCount(of: text)
         )
-        let comedyInstructions = ComedyMode.current.userPromptModifier ?? ""
+        let comedyInstructions = summaryPrompt.userModifier
+        let summaryFormatRule = summaryPrompt.summaryFormatting(
+            "- The \"summary\" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.",
+            customReplacement: "- The \"summary\" field must follow \(SummaryPromptComposer.customInstructions) for the summary's structure and formatting"
+        )
 
         return """
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "\(SummaryDetailLevel.current.schemaDescription) Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes.",
+            "summary": "\(summaryPrompt.schemaSummaryDescription)\(summaryPrompt.summaryFormatting(" Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes."))",
             "tasks": [
                 {
                     "text": "task description",
@@ -486,7 +502,7 @@ enum ChatCompletionPromptGenerator {
 
         IMPORTANT:
         - Return ONLY valid JSON, no additional text or explanations
-        - The "summary" field must use Markdown formatting: **bold**, *italic*, ## headers, • bullets, etc.
+        \(summaryFormatRule)
         - Tasks must be PERSONAL and ACTIONABLE to the speaker — do NOT include tasks about news, public figures, or world events
         - Reminders must be PERSONAL and TIME-SENSITIVE to the speaker — do NOT include reminders about news events or public happenings
         - If no personal tasks are found, use an empty array: "tasks": []

@@ -684,12 +684,54 @@ class SummaryManager: ObservableObject {
 
     // MARK: - Enhanced Summary Generation
 
-    func generateEnhancedSummary(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator? = nil, engineName: String? = nil) async throws -> EnhancedSummaryData {
+    /// Transcripts at or under this many words are shown as-is instead of
+    /// being sent to a model.
+    nonisolated static let shownAsIsWordLimit = 50
+
+    /// Whether `text` is short enough to be shown as-is, so no prompt runs.
+    /// Regenerate uses this to hide the Summary Prompt picker for such
+    /// transcripts, since a chosen prompt would have nothing to change.
+    nonisolated static func isShownAsIs(_ text: String) -> Bool {
+        let words = text.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty && $0.count > 1 }
+        return words.count <= shownAsIsWordLimit
+    }
+
+    /// - Parameter promptTemplate: The Summary Prompt template for this summary
+    ///   (a regenerated summary's own, or one the user picked). Nil uses the
+    ///   default for new summaries. Ignored while the Summary Prompt beta is off.
+    func generateEnhancedSummary(
+        from text: String,
+        for recordingURL: URL,
+        recordingName: String,
+        recordingDate: Date,
+        coordinator: AppDataCoordinator? = nil,
+        engineName: String? = nil,
+        promptTemplate: SummaryPromptTemplate? = nil
+    ) async throws -> EnhancedSummaryData {
+        // Every prompt built below, in any engine, reads the composer resolved
+        // here through SummaryPromptComposer.current, so a settings change
+        // mid-run cannot mix prompts across chunks.
+        try await SummaryPromptComposer.withRequestSnapshot(template: promptTemplate) {
+            try await generateEnhancedSummaryInTemplateScope(
+                from: text,
+                for: recordingURL,
+                recordingName: recordingName,
+                recordingDate: recordingDate,
+                coordinator: coordinator,
+                engineName: engineName
+            )
+        }
+    }
+
+    private func generateEnhancedSummaryInTemplateScope(from text: String, for recordingURL: URL, recordingName: String, recordingDate: Date, coordinator: AppDataCoordinator?, engineName: String?) async throws -> EnhancedSummaryData {
         // Sync engine from settings before logging to avoid "No current engine set" warning
         syncCurrentEngineWithSettings()
         AppLog.shared.summarization("Starting enhanced summary generation using \(getCurrentEngineName())")
         AppLog.shared.summarization(
-            "Summary generation settings: detail=\(SummaryDetailLevel.current.displayName), comedy=\(ComedyMode.current.rawValue)",
+            "Summary generation settings: detail=\(SummaryPromptComposer.current.detailLevel.displayName), "
+                + "comedy=\(SummaryPromptComposer.current.effectiveComedyMode.rawValue), "
+                + SummaryPromptComposer.current.logDescription,
             level: .debug
         )
 
@@ -700,7 +742,7 @@ class SummaryManager: ObservableObject {
             .filter { !$0.isEmpty && $0.count > 1 }
 
         // If transcript has 50 words or less, return it as-is as the summary
-        if words.count <= 50 {
+        if Self.isShownAsIs(text) {
             AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
 
             let shortTranscriptSummary = EnhancedSummaryData(
@@ -713,7 +755,8 @@ class SummaryManager: ObservableObject {
                 titles: [],
                 contentType: .general,
                 aiEngine: "Local Processing",
-                aiModel: "Short Transcript (Displayed As-Is)",
+                aiModel: EnhancedSummaryData.shortTranscriptModelName,
+                promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -820,10 +863,14 @@ class SummaryManager: ObservableObject {
 
         let processingTime = Date().timeIntervalSince(startTime)
 
+        // A recording type chosen through the Summary Prompt (Personal Notes,
+        // Business Meeting) replaces the automatic guess everywhere below.
+        let contentType = SummaryPromptComposer.current.declaredContentType ?? result.contentType
+
         // Generate intelligent recording name using AI analysis
         let intelligentName = generateIntelligentRecordingName(
             from: text,
-            contentType: result.contentType,
+            contentType: contentType,
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles
@@ -840,9 +887,10 @@ class SummaryManager: ObservableObject {
             tasks: result.tasks,
             reminders: result.reminders,
             titles: result.titles,
-            contentType: result.contentType,
+            contentType: contentType,
             aiEngine: engine.engineType,
             aiModel: engine.metadataName,
+            promptTemplate: SummaryPromptComposer.current.template,
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )
@@ -860,7 +908,7 @@ class SummaryManager: ObservableObject {
                 from: recordingName,
                 recordingURL: recordingURL,
                 transcript: text,
-                contentType: result.contentType,
+                contentType: contentType,
                 tasks: result.tasks,
                 reminders: result.reminders,
                 titles: result.titles,
@@ -872,7 +920,7 @@ class SummaryManager: ObservableObject {
         AppLog.shared.summarization("Summary length: \(result.summary.count) characters", level: .debug)
         AppLog.shared.summarization("Tasks extracted: \(result.tasks.count)", level: .debug)
         AppLog.shared.summarization("Reminders extracted: \(result.reminders.count)", level: .debug)
-        AppLog.shared.summarization("Content type: \(result.contentType.rawValue)", level: .debug)
+        AppLog.shared.summarization("Content type: \(contentType.rawValue)", level: .debug)
         AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
         AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
 
@@ -919,7 +967,7 @@ class SummaryManager: ObservableObject {
             .filter { !$0.isEmpty && $0.count > 1 }
 
         // If transcript has 50 words or less, return it as-is as the summary
-        if words.count <= 50 {
+        if Self.isShownAsIs(text) {
             AppLog.shared.summarization("Transcript has 50 words or less (\(words.count) words) - returning transcript as-is")
 
             let shortTranscriptSummary = EnhancedSummaryData(
@@ -932,7 +980,8 @@ class SummaryManager: ObservableObject {
                 titles: [],
                 contentType: .general,
                 aiEngine: "Local Processing",
-            aiModel: "Short Transcript (Displayed As-Is)",
+            aiModel: EnhancedSummaryData.shortTranscriptModelName,
+                promptTemplate: nil, // No model prompt was used
                 originalLength: words.count,
                 processingTime: Date().timeIntervalSince(startTime)
             )
@@ -980,6 +1029,7 @@ class SummaryManager: ObservableObject {
             contentType: contentType,
             aiEngine: "Local Processing",
             aiModel: "Basic Extraction",
+            promptTemplate: nil, // No model prompt was used
             originalLength: text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.count,
             processingTime: processingTime
         )
@@ -1063,7 +1113,7 @@ class SummaryManager: ObservableObject {
         // Select top sentences based on boosted importance score
         let topSentences = scoredSentences
             .sorted { $0.score > $1.score }
-            .prefix(SummaryDetailLevel.current.basicSentenceLimit)
+            .prefix(SummaryPromptComposer.current.detailLevel.basicSentenceLimit)
             .map { $0.sentence }
 
         if topSentences.isEmpty {

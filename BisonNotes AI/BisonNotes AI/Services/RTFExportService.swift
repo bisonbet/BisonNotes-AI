@@ -190,7 +190,7 @@ final class RTFExportService {
 
         // Center-aligned section: Other metadata
         let centerItems = [
-            ("Content Type: ", summaryData.contentType.rawValue),
+            ("Content Type: ", summaryData.contentTypeLabel),
             ("Generated: ", DateFormatter.localizedString(from: summaryData.generatedAt, dateStyle: .medium, timeStyle: .short))
         ]
 

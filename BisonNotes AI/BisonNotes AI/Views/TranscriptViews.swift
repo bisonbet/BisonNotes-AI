@@ -2286,6 +2286,7 @@ struct EditableTranscriptView: View {
                     .foregroundColor(.secondary)
             }
 
+            BetaGated(.transcriptCleanup) {
             HStack {
                 Button {
                     cleanTranscript()
@@ -2296,7 +2297,8 @@ struct EditableTranscriptView: View {
                             Text("Cleaning English Transcript…")
                         } else {
                             Image(systemName: "wand.and.stars")
-                            Text("Clean up English transcript (Experimental)")
+                            Text("Clean up English transcript")
+                            BetaBadge()
                         }
                         Spacer()
                     }
@@ -2317,6 +2319,7 @@ struct EditableTranscriptView: View {
                     .buttonStyle(.bordered)
                     .disabled(transcriptCleanupModelManager.isDownloading)
                 }
+            }
             }
 
             if isCleaningTranscript {
@@ -2342,7 +2345,8 @@ struct EditableTranscriptView: View {
                     }
                     .buttonStyle(.bordered)
                 }
-            } else if transcriptCleanupModelManager.state != .ready {
+            } else if BetaFeatures.isEnabled(.transcriptCleanup),
+                      transcriptCleanupModelManager.state != .ready {
                 Text(transcriptCleanupModelManager.statusDescription)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -2364,7 +2368,11 @@ struct EditableTranscriptView: View {
         } header: {
             Text("Transcript Text")
         } footer: {
-            Text("Automatic cleanup uses the original text. Summaries use the version you save here, so saving Cleaned sends the cleaned text to your summary engine. Cleanup is on-device and English only.")
+            if BetaFeatures.isEnabled(.transcriptCleanup) {
+                Text("Automatic cleanup uses the original text. Summaries use the version you save here, so saving Cleaned sends the cleaned text to your summary engine. Cleanup is on-device and English only.")
+            } else if transcript.hasCleanedText {
+                Text("Summaries use the version you save here, so saving Cleaned sends the cleaned text to your summary engine.")
+            }
         }
     }
 

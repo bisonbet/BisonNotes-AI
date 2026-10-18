@@ -771,6 +771,8 @@ struct AISettingsView: View {
                 )
                     .font(.caption)
                     .foregroundColor(.secondary)
+
+                CustomSummaryPromptNotice()
             }
         }
     }

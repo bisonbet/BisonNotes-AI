@@ -609,6 +609,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             summary: "A cloud-only summary retained locally until its recording can be restored.",
             aiEngine: "Fixture",
             aiModel: "cloud-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
 
@@ -622,6 +623,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             summary: "Updated cloud content must replace the prior orphaned summary without creating another row.",
             aiEngine: "Fixture",
             aiModel: "cloud-fixture-v2",
+            promptTemplate: nil,
             originalLength: 90,
             generatedAt: summary.generatedAt.addingTimeInterval(60)
         )
@@ -655,6 +657,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             summary: "The restored cloud summary should become the authoritative local identity and content.",
             aiEngine: "Cloud",
             aiModel: "cloud-authoritative",
+            promptTemplate: nil,
             originalLength: 100
         )
 
@@ -987,6 +990,7 @@ final class ICloudBackupRegressionTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "Summary for \(name) with enough content to satisfy validation rules and exercise backup selection.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 60
         )
         return recordingId

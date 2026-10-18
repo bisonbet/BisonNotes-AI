@@ -118,4 +118,34 @@ final class MLXSwiftResponseCleanerTests: XCTestCase {
             "Workspace Archiving and Licensing"
         ])
     }
+
+    func testParserKeepsASummarysOwnHeadings() {
+        // A custom prompt may ask for its own top-level sections.
+        let response = """
+        ## Summary
+        The vendor contract renews in March.
+
+        ## Risks
+        - The price may rise 12%.
+
+        ## Decisions
+        Bob negotiates before Thursday.
+
+        ## Tasks
+        - Email the vendor
+
+        ## Suggested Titles
+        - Vendor Contract Renewal
+        """
+
+        let result = MLXSwiftResponseParser.parseMarkdown(response, fallbackText: "Vendor contract.")
+
+        XCTAssertTrue(result.summary.contains("The vendor contract renews in March."))
+        XCTAssertTrue(result.summary.contains("## Risks"))
+        XCTAssertTrue(result.summary.contains("The price may rise 12%."))
+        XCTAssertTrue(result.summary.contains("Bob negotiates before Thursday."))
+        XCTAssertFalse(result.summary.contains("Email the vendor"), "Tasks still split off")
+        XCTAssertEqual(result.tasks.map(\.text), ["Email the vendor"])
+        XCTAssertEqual(result.titles.map(\.text), ["Vendor Contract Renewal"])
+    }
 }

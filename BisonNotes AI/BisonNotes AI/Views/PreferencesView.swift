@@ -114,6 +114,8 @@ struct PreferencesView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            CustomSummaryPromptNotice()
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)

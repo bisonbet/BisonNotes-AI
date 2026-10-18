@@ -114,6 +114,7 @@ struct TestHelpers {
             contentType: .meeting,
             aiEngine: "Mock Engine",
             aiModel: "Test Model",
+            promptTemplate: nil,
             originalLength: 60,
             processingTime: 5.0,
             generatedAt: Date(),

@@ -129,14 +129,19 @@ extension OllamaGenerateRequest {
 struct OllamaJSONSchemas {
 
     static var completeAnalysisSchema: [String: Any] {
-        [
+        let composer = SummaryPromptComposer.current
+        var summary: [String: Any] = [
+            "type": "string",
+            "description": composer.schemaSummaryDescription
+        ]
+        // A custom prompt sets the summary's length, so it gets no minimum.
+        if !composer.ownsSummaryFormat {
+            summary["minLength"] = 100
+        }
+        return [
         "type": "object",
         "properties": [
-            "summary": [
-                "type": "string",
-                "description": SummaryDetailLevel.current.schemaDescription,
-                "minLength": 100
-            ],
+            "summary": summary,
             "tasks": [
                 "type": "array",
                 "description": "Array of unique, specific action items. Each task must be different from the others.",
@@ -888,6 +893,7 @@ class OllamaService: ObservableObject {
     }
 
     private func generateSummaryWithTools(from text: String) async throws -> String? {
+        let composer = SummaryPromptComposer.current
         // Check model type and use appropriate tool calling method
         if isQwenModel(config.modelName) {
             return try await generateSummaryWithQwenTools(from: text)
@@ -898,9 +904,9 @@ class OllamaService: ObservableObject {
         }
 
         // Standard Ollama tool calling
-        let tools = [createSummaryTool()]
-        let comedyModifier = comedyPromptModifier(for: "summary")
-        let detailInstructions = summaryDetailInstructions(for: text)
+        let tools = [createSummaryTool(composer)]
+        let comedyModifier = comedyPromptModifier(for: "summary", composer)
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
         let prompt = """
         Please analyze the following transcript and create a summary using the create_summary function.
         Follow these summary detail instructions:
@@ -943,35 +949,72 @@ class OllamaService: ObservableObject {
 
     // MARK: - Tool Definitions
 
-    private func comedyPromptModifier(for type: String) -> String {
+    // Every prompt builder resolves `SummaryPromptComposer.current` once and
+    // passes it to these helpers, so one prompt never mixes two settings reads.
+    // The prompt builders below are internal, not private, so
+    // OllamaDefaultPromptGoldenTests can pin their Default output.
+
+    private func comedyPromptModifier(for type: String, _ composer: SummaryPromptComposer) -> String {
         switch type {
         case "summary":
-            return ComedyMode.current.promptModifier ?? ""
+            return composer.systemModifier
         case "complete":
-            return ComedyMode.current.structuredPromptModifier ?? ""
+            return composer.structuredModifier
         default:
             return ""
         }
     }
 
-    private func summaryDetailInstructions(for text: String) -> String {
-        SummaryDetailLevel.current.promptInstructions(
+    /// The create_summary tool's description. A custom prompt owns the
+    /// summary's format, so it gets no "comprehensive Markdown" demand.
+    private func summaryToolDescription(_ composer: SummaryPromptComposer) -> String {
+        composer.summaryFormatting(
+            "Create a comprehensive summary of the transcript with proper Markdown formatting",
+            customReplacement: "Create a summary of the transcript as \(SummaryPromptComposer.customInstructions) describe"
+        )
+    }
+
+    /// The format hints tool and schema definitions append to the summary
+    /// field, one per model family's existing wording.
+    private enum SummaryFieldStyle: String {
+        case markdownWhereUseful = " Use Markdown headers, bold text, and bullets where useful."
+        case fullStructure = " Use ## headers, **bold** text, • bullet points, and proper structure"
+        case compact = " Use ## headers, **bold** text, and • bullets"
+    }
+
+    /// The summary field's description: the composer's schema text plus the
+    /// format hint, which a custom prompt drops.
+    private func summaryFieldDescription(_ composer: SummaryPromptComposer, _ style: SummaryFieldStyle) -> String {
+        composer.schemaSummaryDescription + composer.summaryFormatting(style.rawValue)
+    }
+
+    private func summaryDetailInstructions(for text: String, _ composer: SummaryPromptComposer) -> String {
+        composer.detailInstructions(
             forSourceWordCount: text.split(whereSeparator: { $0.isWhitespace }).count
         )
     }
 
-    private func createSummaryTool() -> OllamaTool {
+    /// `value` as a quoted, escaped JSON string, for the tool definitions some
+    /// model families get written out by hand inside their prompt.
+    private static func jsonString(_ value: String) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .withoutEscapingSlashes
+        guard let data = try? encoder.encode(value) else { return "\"\"" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func createSummaryTool(_ composer: SummaryPromptComposer) -> OllamaTool {
         return OllamaTool(
             type: "function",
             function: OllamaFunction(
                 name: "create_summary",
-                description: "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                description: summaryToolDescription(composer),
                 parameters: OllamaFunctionParameters(
                     type: "object",
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            summaryFieldDescription(composer, .markdownWhereUseful)
                         )
                     ],
                     required: ["summary"]
@@ -980,7 +1023,7 @@ class OllamaService: ObservableObject {
         )
     }
 
-    private func createCompleteAnalysisTool() -> OllamaTool {
+    func createCompleteAnalysisTool(_ composer: SummaryPromptComposer) -> OllamaTool {
         return OllamaTool(
             type: "function",
             function: OllamaFunction(
@@ -991,7 +1034,7 @@ class OllamaService: ObservableObject {
                     properties: [
                         "summary": OllamaProperty.simple(
                             "string",
-                            SummaryDetailLevel.current.schemaDescription + " Use Markdown headers, bold text, and bullets where useful."
+                            summaryFieldDescription(composer, .markdownWhereUseful)
                         ),
                         "tasks": OllamaProperty.array(
                             "array",
@@ -1049,40 +1092,53 @@ class OllamaService: ObservableObject {
 
     // MARK: - Robust Prompt Generation
 
-    private func createRobustSummaryPrompt(from text: String) -> String {
-        let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.promptModifier ?? ""
+    func createRobustSummaryPrompt(from text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
+        let comedyModifier = composer.systemModifier
+        // A custom prompt owns the summary's sections, so it skips this outline.
+        let structureGuidance = composer.summaryFormatting(
+            """
+            CRITICAL REQUIREMENTS:
+            1. Focus on main points, key decisions, important information, and actionable items
+            2. Use proper Markdown formatting throughout your response
+            3. Structure your response logically with clear sections
+            4. Match the selected detail level without padding or repeating the transcript
+            5. Maintain professional, clear language
+
+            MARKDOWN FORMATTING RULES:
+            - Use ## for main section headers (e.g., ## Key Points, ## Decisions Made)
+            - Use **bold text** for emphasis on important information
+            - Use *italic text* for secondary emphasis or highlights
+            - Use • bullet points for lists and key takeaways
+            - Use > blockquotes for important statements or direct quotes
+            - Use --- for section dividers if needed
+            - Ensure proper spacing between sections
+
+            STRUCTURE YOUR SUMMARY WITH THESE SECTIONS (use only relevant sections):
+            - ## Overview (brief context and main topic)
+            - ## Key Points (main discussion points and topics)
+            - ## Decisions Made (any decisions, conclusions, or resolutions)
+            - ## Action Items (tasks, follow-ups, or next steps mentioned)
+            - ## Important Details (specific information, dates, names, numbers)
+            - ## Outcomes (results, agreements, or conclusions reached)
+            """,
+            customReplacement: """
+            CRITICAL REQUIREMENTS:
+            1. Follow \(SummaryPromptComposer.customInstructions) above for the summary's focus, length, structure, and tone
+            2. Use Markdown formatting where it fits those instructions
+            3. Base the summary only on what the transcript actually says
+            """
+        )
 
         return """
         <INSTRUCTIONS>
-        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create well-structured summaries at the requested detail level.
+        You are a professional AI assistant specialized in analyzing and summarizing conversations, meetings, and transcripts. Your goal is to create \(composer.summaryFormatting("well-structured "))summaries\(composer.summaryFormatting(" at the requested detail level", customReplacement: " that follow \(SummaryPromptComposer.customInstructions)")).
 
-        SUMMARY DETAIL REQUIREMENT:
+        \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
         \(detailInstructions)
 
-        CRITICAL REQUIREMENTS:
-        1. Focus on main points, key decisions, important information, and actionable items
-        2. Use proper Markdown formatting throughout your response
-        3. Structure your response logically with clear sections
-        4. Match the selected detail level without padding or repeating the transcript
-        5. Maintain professional, clear language
-
-        MARKDOWN FORMATTING RULES:
-        - Use ## for main section headers (e.g., ## Key Points, ## Decisions Made)
-        - Use **bold text** for emphasis on important information
-        - Use *italic text* for secondary emphasis or highlights
-        - Use • bullet points for lists and key takeaways
-        - Use > blockquotes for important statements or direct quotes
-        - Use --- for section dividers if needed
-        - Ensure proper spacing between sections
-
-        STRUCTURE YOUR SUMMARY WITH THESE SECTIONS (use only relevant sections):
-        - ## Overview (brief context and main topic)
-        - ## Key Points (main discussion points and topics)
-        - ## Decisions Made (any decisions, conclusions, or resolutions)
-        - ## Action Items (tasks, follow-ups, or next steps mentioned)
-        - ## Important Details (specific information, dates, names, numbers)
-        - ## Outcomes (results, agreements, or conclusions reached)
+        \(structureGuidance)
 
         QUALITY STANDARDS:
         - Extract the most important information first
@@ -1099,19 +1155,33 @@ class OllamaService: ObservableObject {
         </TRANSCRIPT>
 
         <OUTPUT>
-        Please provide your well-formatted summary at the selected detail level below:
+        Please provide your \(composer.summaryFormatting("well-formatted "))summary\(composer.summaryFormatting(" at the selected detail level")) below:
         """
     }
 
-    private func createRobustCompleteProcessingPrompt(from text: String) -> String {
-        let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
+    func createRobustCompleteProcessingPrompt(from text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
+        let comedyModifier = composer.structuredModifier
+        let summaryFormat = composer.summaryFormatting(
+            """
+            Create a markdown-formatted summary using:
+            - ## for headers
+            - **bold** for emphasis
+            - • for bullet points
+            - \\n for line breaks in the JSON string
+            """,
+            customReplacement: """
+            Write the summary as \(SummaryPromptComposer.customInstructions) describe.
+            - \\n for line breaks in the JSON string
+            """
+        )
         return """
         You MUST return ONLY valid JSON in the EXACT format specified below. Do not include any other text, explanations, or additional fields.
 
         REQUIRED JSON SCHEMA - You must use these exact field names and structure:
         {
-          "summary": "string with markdown formatting",
+          "summary": "string\(composer.summaryFormatting(" with markdown formatting"))",
           "tasks": [array of task objects],
           "reminders": [array of reminder objects],
           "titles": [array of title objects],
@@ -1147,11 +1217,7 @@ class OllamaService: ObservableObject {
         }
 
         SUMMARY FORMAT:
-        Create a markdown-formatted summary using:
-        - ## for headers
-        - **bold** for emphasis
-        - • for bullet points
-        - \\n for line breaks in the JSON string
+        \(summaryFormat)
         \(detailInstructions)
 
         CONTENT TYPE: Choose one: "Meeting", "Personal", "Technical", or "General"
@@ -1418,6 +1484,7 @@ class OllamaService: ObservableObject {
     }
 
     private func processCompleteWithTools(from text: String) async throws -> SummarizationResult? {
+        let composer = SummaryPromptComposer.current
         // Check model type and use appropriate tool calling method
         if isQwenModel(config.modelName) {
             return try await processCompleteWithQwenTools(from: text)
@@ -1428,11 +1495,16 @@ class OllamaService: ObservableObject {
         }
 
         // Standard Ollama tool calling
-        let tools = [createCompleteAnalysisTool()]
-        let comedyModifier = comedyPromptModifier(for: "complete")
+        let tools = [createCompleteAnalysisTool(composer)]
+        let comedyModifier = comedyPromptModifier(for: "complete", composer)
+        // The default prompt carries no detail block here; a selected summary
+        // prompt must still reach the model, so add it only when one is active.
+        let summaryPromptGuidance = composer.preset == .standard
+            ? ""
+            : "\n" + summaryDetailInstructions(for: text, composer)
         let prompt = """
         Please analyze the following transcript and provide a complete analysis using the complete_analysis function.
-        \(comedyModifier)
+        \(summaryPromptGuidance)\(comedyModifier)
 
         \(text)
         """
@@ -1660,9 +1732,10 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func createQwenToolPrompt(for type: String, text: String) -> String {
-        let comedyModifier = comedyPromptModifier(for: type)
-        let detailInstructions = summaryDetailInstructions(for: text)
+    func createQwenToolPrompt(for type: String, text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let comedyModifier = comedyPromptModifier(for: type, composer)
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
 
         switch type {
         case "summary":
@@ -1676,13 +1749,13 @@ class OllamaService: ObservableObject {
                 "type": "function",
                 "function": {
                   "name": "create_summary",
-                  "description": "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                  "description": \(Self.jsonString(summaryToolDescription(composer))),
                   "parameters": {
                     "type": "object",
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                        "description": \(Self.jsonString(summaryFieldDescription(composer, .fullStructure)))
                       }
                     },
                     "required": ["summary"]
@@ -1692,14 +1765,14 @@ class OllamaService: ObservableObject {
             ]
             </tools>
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
 
             \(comedyModifier)
 
             IMPORTANT: You MUST respond by calling the create_summary function using this exact format:
             <tool_call>
-            {"name": "create_summary", "arguments": {"summary": "your markdown summary here"}}
+            {"name": "create_summary", "arguments": {"summary": "your \(composer.summaryFormatting("markdown "))summary here"}}
             </tool_call>
 
             Do not provide a direct response. Use the tool call format.<|im_end|>
@@ -1727,7 +1800,7 @@ class OllamaService: ObservableObject {
                     "properties": {
                       "summary": {
                         "type": "string",
-                        "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
+                        "description": \(Self.jsonString(summaryFieldDescription(composer, .compact)))
                       },
                       "tasks": {
                         "type": "array",
@@ -1781,7 +1854,7 @@ class OllamaService: ObservableObject {
             ]
             </tools>
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
 
             \(comedyModifier)
@@ -1793,7 +1866,7 @@ class OllamaService: ObservableObject {
 
             Do not provide a direct response. Use the tool call format.<|im_end|>
             <|im_start|>user
-            Please analyze this transcript comprehensively:
+            Please analyze this transcript\(composer.summaryFormatting(" comprehensively")):
 
             \(text)<|im_end|>
             <|im_start|>assistant
@@ -2044,9 +2117,10 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func createGPTOSSToolPrompt(for type: String, text: String) -> String {
-        let comedyModifier = comedyPromptModifier(for: type)
-        let detailInstructions = summaryDetailInstructions(for: text)
+    func createGPTOSSToolPrompt(for type: String, text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let comedyModifier = comedyPromptModifier(for: type, composer)
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
 
         switch type {
         case "summary":
@@ -2054,16 +2128,16 @@ class OllamaService: ObservableObject {
             You have access to custom analysis tools via the commentary channel.
 
             Available function: create_summary
-            Description: Create a comprehensive summary of the transcript with proper Markdown formatting
+            Description: \(summaryToolDescription(composer))
             Parameters:
-            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure
+            - summary (string): \(summaryFieldDescription(composer, .fullStructure))
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
 
             \(comedyModifier)
 
-            Please analyze the following transcript and use the create_summary function to generate a well-structured summary:
+            Please analyze the following transcript and use the create_summary function to generate a \(composer.summaryFormatting("well-structured "))summary:
 
             \(text)
 
@@ -2077,9 +2151,9 @@ class OllamaService: ObservableObject {
             Available function: complete_analysis
             Description: Perform complete analysis extracting summary, tasks, reminders, titles, and content type
             Parameters:
-            - summary (string): \(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets
+            - summary (string): \(summaryFieldDescription(composer, .compact))
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
             - tasks (array): Array of task objects with text, priority (High/Medium/Low), category (Call/Email/Meeting/Purchase/Research/Travel/Health/General), timeReference
             - reminders (array): Array of reminder objects with text, urgency (Immediate/Today/This Week/Later), timeReference
@@ -2088,7 +2162,7 @@ class OllamaService: ObservableObject {
 
             \(comedyModifier)
 
-            Please analyze the following transcript and use the complete_analysis function to provide comprehensive analysis:
+            Please analyze the following transcript and use the complete_analysis function to provide \(composer.summaryFormatting("comprehensive "))analysis:
 
             \(text)
 
@@ -2276,9 +2350,10 @@ class OllamaService: ObservableObject {
         }
     }
 
-    private func createMagistralToolPrompt(for type: String, text: String) -> String {
-        let comedyModifier = comedyPromptModifier(for: type)
-        let detailInstructions = summaryDetailInstructions(for: text)
+    func createMagistralToolPrompt(for type: String, text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let comedyModifier = comedyPromptModifier(for: type, composer)
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
 
         switch type {
         case "summary":
@@ -2290,13 +2365,13 @@ class OllamaService: ObservableObject {
             [
               {
                 "name": "create_summary",
-                "description": "Create a comprehensive summary of the transcript with proper Markdown formatting",
+                "description": \(Self.jsonString(summaryToolDescription(composer))),
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, • bullet points, and proper structure"
+                      "description": \(Self.jsonString(summaryFieldDescription(composer, .fullStructure)))
                     }
                   },
                   "required": ["summary"]
@@ -2304,17 +2379,17 @@ class OllamaService: ObservableObject {
               }
             ]
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
 
             \(comedyModifier)
 
-            [INST]Please analyze the following transcript and use the create_summary tool to generate a well-structured summary:
+            [INST]Please analyze the following transcript and use the create_summary tool to generate a \(composer.summaryFormatting("well-structured "))summary:
 
             \(text)[/INST]
 
             <think>
-            I need to analyze this transcript and create a comprehensive summary using the create_summary tool. Let me process the content and structure it properly.
+            I need to analyze this transcript and create a \(composer.summaryFormatting("comprehensive "))summary using the create_summary tool.\(composer.summaryFormatting(" Let me process the content and structure it properly."))
             </think>
 
             """
@@ -2322,7 +2397,7 @@ class OllamaService: ObservableObject {
         case "complete":
             return """
             [SYSTEM_PROMPT]
-            You are a helpful assistant that can use tools to perform comprehensive content analysis.
+            You are a helpful assistant that can use tools to perform \(composer.summaryFormatting("comprehensive "))content analysis.
 
             [AVAILABLE_TOOLS]
             [
@@ -2334,7 +2409,7 @@ class OllamaService: ObservableObject {
                   "properties": {
                     "summary": {
                       "type": "string",
-                      "description": "\(SummaryDetailLevel.current.schemaDescription) Use ## headers, **bold** text, and • bullets"
+                      "description": \(Self.jsonString(summaryFieldDescription(composer, .compact)))
                     },
                     "tasks": {
                       "type": "array",
@@ -2380,12 +2455,12 @@ class OllamaService: ObservableObject {
               }
             ]
 
-            SUMMARY DETAIL REQUIREMENT:
+            \(composer.summaryFormatting("SUMMARY DETAIL REQUIREMENT:", customReplacement: "SUMMARY INSTRUCTIONS:"))
             \(detailInstructions)
 
             \(comedyModifier)
 
-            [INST]Please analyze the following transcript and use the complete_analysis tool to provide comprehensive analysis:
+            [INST]Please analyze the following transcript and use the complete_analysis tool to provide \(composer.summaryFormatting("comprehensive "))analysis:
 
             \(text)[/INST]
 
@@ -2768,16 +2843,32 @@ class OllamaService: ObservableObject {
 
     // MARK: - Structured Output Helper Methods
 
-    private func createStructuredCompleteProcessingPrompt(from text: String) -> String {
-        let detailInstructions = summaryDetailInstructions(for: text)
-        let comedyModifier = ComedyMode.current.structuredPromptModifier ?? ""
+    func createStructuredCompleteProcessingPrompt(from text: String) -> String {
+        let composer = SummaryPromptComposer.current
+        let detailInstructions = summaryDetailInstructions(for: text, composer)
+        let comedyModifier = composer.structuredModifier
+        let summaryStructure = composer.summaryFormatting(
+            """
+            - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
+            - Structure the summary logically by topic or chronologically
+            """,
+            customReplacement: "- Structure the summary as \(SummaryPromptComposer.customInstructions) describe"
+        )
+        let summaryContentDescription = composer.summaryFormatting(
+            "Comprehensive Markdown summary",
+            customReplacement: "Summary, written as \(SummaryPromptComposer.customInstructions) describe,"
+        )
+        let summaryCoverage = composer.summaryFormatting(
+            "- Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level",
+            customReplacement: "- Include what \(SummaryPromptComposer.customInstructions) ask for, using only what the transcript says"
+        )
         return """
         You are analyzing a transcript. Extract and summarize the ACTUAL CONTENT discussed, not a description of what type of document it is.
 
         Return ONLY a valid JSON object (no other text):
 
         {
-          "summary": "Comprehensive Markdown summary of the CONTENT and TOPICS discussed",
+          "summary": "\(summaryContentDescription) of the CONTENT and TOPICS discussed",
           "tasks": [{"text": "Specific action item", "priority": "High|Medium|Low", "category": "Call|Email|Meeting|Purchase|Research|Travel|Health|General", "timeReference": null}],
           "reminders": [{"text": "Time-sensitive item", "urgency": "Immediate|Today|This Week|Later", "timeReference": null}],
           "titles": [{"text": "Descriptive title", "category": "Meeting|Personal|Technical|General", "confidence": 0.8}],
@@ -2787,11 +2878,10 @@ class OllamaService: ObservableObject {
         CRITICAL INSTRUCTIONS FOR SUMMARY:
         - DO NOT write "This is a transcript of..." or "The text appears to be..."
         - DO write what was ACTUALLY DISCUSSED in the content
-        - Follow the selected summary detail level:
+        - \(composer.summaryFormatting("Follow the selected summary detail level:", customReplacement: "Follow \(SummaryPromptComposer.customInstructions):"))
         \(detailInstructions)
-        - Include the major topics, key points, important details, names, dates, decisions, and conclusions that fit that level
-        - Use Markdown: ## headers for sections, **bold** for key terms, • bullets for lists
-        - Structure the summary logically by topic or chronologically
+        \(summaryCoverage)
+        \(summaryStructure)
 
         TASKS - Extract ONLY if the speaker mentions THEIR OWN action items:
         - "I need to call John" → YES, extract this

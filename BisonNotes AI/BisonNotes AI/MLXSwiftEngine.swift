@@ -815,18 +815,52 @@ private actor MLXSwiftService {
 
     private func runCompletePrompt(transcript: String, contentHint: ContentType) async throws -> SummarizationResult {
         let wordCount = transcript.split(whereSeparator: { $0.isWhitespace }).count
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let composer = SummaryPromptComposer.current
+        let detailInstructions = composer.detailInstructions(
             forSourceWordCount: wordCount
         )
+        // A custom prompt owns the Summary section's structure, so it gets no
+        // fixed outline; the other section headers stay for the parser.
+        let summaryRequest: String
+        let summaryFormat: String
+        if composer.ownsSummaryFormat {
+            summaryRequest = """
+            1. A SUMMARY written according to \(SummaryPromptComposer.customInstructions)
+               \(detailInstructions)
+               - Write about what was ACTUALLY discussed in the transcript, not generic examples.
+            """
+            summaryFormat = """
+            ## Summary
+            [Write the summary exactly as \(SummaryPromptComposer.customInstructions) describe]
+            """
+        } else {
+            summaryRequest = """
+            1. A STRUCTURED OUTLINE SUMMARY at the selected detail level
+               \(detailInstructions)
+               - Use sections: Overview, Key Facts, Important Notes, Conclusions.
+               - Write about what was ACTUALLY discussed in the transcript, not generic examples.
+            """
+            summaryFormat = """
+            ## Summary
+            ### 1. Overview
+            [Write a detailed overview based on what was actually discussed]
+
+            ### 2. Key Facts & Details
+            - [Extract specific facts, numbers, dates, and names that were mentioned]
+
+            ### 3. Important Notes
+            - [Extract important context or observations from the transcript]
+
+            ### 4. Conclusions
+            [Summarize conclusions or decisions that were actually made]
+            """
+        }
 
         let prompt = """
         Analyze the following transcript and extract the actual content discussed. \
         Base your response ONLY on what is actually mentioned in the transcript.
 
-        1. A STRUCTURED OUTLINE SUMMARY at the selected detail level
-           \(detailInstructions)
-           - Use sections: Overview, Key Facts, Important Notes, Conclusions.
-           - Write about what was ACTUALLY discussed in the transcript, not generic examples.
+        \(summaryRequest)
         2. A list of actionable tasks (personal items only) - ONLY include tasks that are actually mentioned
         3. Time-sensitive reminders and deadlines - ONLY include reminders that are actually mentioned
         4. 3-5 suggested titles - Based on the ACTUAL topics discussed
@@ -840,18 +874,7 @@ private actor MLXSwiftService {
 
         Format your response with clear sections:
 
-        ## Summary
-        ### 1. Overview
-        [Write a detailed overview based on what was actually discussed]
-
-        ### 2. Key Facts & Details
-        - [Extract specific facts, numbers, dates, and names that were mentioned]
-
-        ### 3. Important Notes
-        - [Extract important context or observations from the transcript]
-
-        ### 4. Conclusions
-        [Summarize conclusions or decisions that were actually made]
+        \(summaryFormat)
 
         ## Tasks
         [Only include tasks that are explicitly mentioned in the transcript. If none, leave empty.]
@@ -892,9 +915,32 @@ private actor MLXSwiftService {
             """
         }.joined(separator: "\n\n")
 
-        let detailInstructions = SummaryDetailLevel.current.promptInstructions(
+        let composer = SummaryPromptComposer.current
+        let detailInstructions = composer.detailInstructions(
             forSourceWordCount: originalWordCount
         )
+        let summaryFormat: String
+        if composer.ownsSummaryFormat {
+            summaryFormat = """
+            ## Summary
+            [One unified summary written exactly as \(SummaryPromptComposer.customInstructions) describe]
+            """
+        } else {
+            summaryFormat = """
+            ## Summary
+            ### 1. Overview
+            [Combined overview]
+
+            ### 2. Key Facts & Details
+            - [Merged facts from all chunks]
+
+            ### 3. Important Notes
+            - [Merged notes]
+
+            ### 4. Conclusions
+            [Combined conclusions]
+            """
+        }
 
         let prompt = """
         Merge these partial transcript analyses into one cohesive final result.
@@ -908,18 +954,7 @@ private actor MLXSwiftService {
 
         Use this format:
 
-        ## Summary
-        ### 1. Overview
-        [Combined overview]
-
-        ### 2. Key Facts & Details
-        - [Merged facts from all chunks]
-
-        ### 3. Important Notes
-        - [Merged notes]
-
-        ### 4. Conclusions
-        [Combined conclusions]
+        \(summaryFormat)
 
         ## Tasks
         [Deduplicated tasks, or empty if none]
@@ -939,7 +974,19 @@ private actor MLXSwiftService {
     }
 
     private var systemInstruction: String {
-        """
+        let composer = SummaryPromptComposer.current
+        // A custom prompt replaces Summary Detail and the summary's format, so
+        // these system lines defer to it instead of contradicting it.
+        let summaryItem = composer.summaryFormatting(
+            "1. A summary at the selected detail level using Markdown formatting based on what was actually discussed",
+            customReplacement: "1. A summary written as \(SummaryPromptComposer.customInstructions) describe, based on what was actually discussed"
+        )
+        let summaryGuidance = composer.summaryFormatting(
+            "Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker "
+                + "and actually appears in the transcript.",
+            customReplacement: "Follow \(SummaryPromptComposer.customInstructions) for the narrative summary, using only what actually appears in the transcript."
+        )
+        return """
     You are an AI assistant specialized in processing audio transcripts. \
     Analyze the ACTUAL CONTENT of the transcript and extract only what is explicitly mentioned.
 
@@ -954,14 +1001,13 @@ private actor MLXSwiftService {
     - Base titles on the ACTUAL topics discussed, not generic examples
 
     Provide:
-    1. A summary at the selected detail level using Markdown formatting based on what was actually discussed
+    \(summaryItem)
     2. Actionable tasks (personal items only) - ONLY if explicitly mentioned in the transcript
     3. Time-sensitive reminders (personal appointments and deadlines) - ONLY if explicitly mentioned
     4. Suggested titles based on the ACTUAL main topics discussed
 
-    Follow the selected summary detail level for the narrative summary. Focus on information that is personally relevant to the speaker \
-    and actually appears in the transcript.
-    """ + "\n\n" + SummaryDetailLevel.current.promptInstructions()
+    \(summaryGuidance)
+    """ + "\n\n" + composer.detailInstructions()
     }
 
     private func generate(prompt: String) async throws -> String {
@@ -1258,23 +1304,31 @@ enum MLXSwiftResponseParser {
 
         for line in text.components(separatedBy: "\n") {
             if line.hasPrefix("## ") {
-                // Save previous section
-                if let key = currentKey {
-                    sections[key] = currentContent.joined(separator: "\n")
-                }
                 let header = line.dropFirst(3).trimmingCharacters(in: .whitespaces).lowercased()
                 // Normalize header names
+                let key: String
                 if header.contains("summary") {
-                    currentKey = "summary"
+                    key = "summary"
                 } else if header.contains("task") {
-                    currentKey = "tasks"
+                    key = "tasks"
                 } else if header.contains("reminder") {
-                    currentKey = "reminders"
+                    key = "reminders"
                 } else if header.contains("title") {
-                    currentKey = "titles"
+                    key = "titles"
+                } else if currentKey == "summary" {
+                    // A heading of the summary's own, such as a custom prompt's
+                    // "## Risks", stays part of the summary instead of being
+                    // split off and dropped.
+                    currentContent.append(line)
+                    continue
                 } else {
-                    currentKey = header
+                    key = header
                 }
+                // Save previous section
+                if let currentKey {
+                    sections[currentKey] = currentContent.joined(separator: "\n")
+                }
+                currentKey = key
                 currentContent = []
             } else {
                 currentContent.append(line)

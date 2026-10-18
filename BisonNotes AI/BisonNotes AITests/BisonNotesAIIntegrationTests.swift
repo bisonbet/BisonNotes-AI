@@ -60,6 +60,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             contentType: .meeting,
             aiEngine: "Test",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 80,
             processingTime: 0.1
         ))
@@ -71,6 +72,71 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
         XCTAssertEqual(complete.transcript?.recordingId, recordingId)
         XCTAssertEqual(complete.summary?.recordingId, recordingId)
         XCTAssertEqual(complete.summary?.transcriptId, transcriptId)
+    }
+
+    /// A summary saved through the workflow keeps the Summary Prompt template
+    /// it was generated with. The workflow used to rebuild the summary from
+    /// loose fields and drop the template, so a Business Meeting summary read
+    /// back as Default.
+    @MainActor
+    func testSavedSummaryKeepsItsPromptTemplate() throws {
+        let audioURL = tempDirectory.appendingPathComponent("template-recording.m4a")
+        try TestHelpers.createMockAudioFile(at: audioURL)
+        let recordingId = try appCoordinator.addRecording(
+            url: audioURL,
+            name: "Template Recording",
+            date: Date(timeIntervalSince1970: 1_770_000_000),
+            fileSize: 1_024,
+            duration: 60,
+            quality: .whisperOptimized
+        )
+        let transcriptId = try XCTUnwrap(try appCoordinator.addTranscript(
+            for: recordingId,
+            segments: [
+                TranscriptSegment(speaker: "Speaker 1", text: "Decide on the GPU purchase.", startTime: 0, endTime: 3)
+            ],
+            engine: .fluidAudio,
+            processingTime: 0.2,
+            confidence: 0.95
+        ))
+
+        let business = SummaryPromptTemplate(prompt: .originalBusinessMeeting)
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Procurement meeting summary with enough detail to be saved as a real summary.",
+            contentType: .meeting,
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: business,
+            originalLength: 80
+        ))
+        XCTAssertEqual(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate, business)
+
+        // Regenerating with a custom template replaces it, and the text survives.
+        let custom = SummaryPromptTemplate(id: "custom-decisions", name: "Decisions")
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Regenerated procurement summary with enough detail to be saved as a real summary.",
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: custom,
+            originalLength: 80
+        ))
+        XCTAssertEqual(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate, custom)
+
+        // Default reads back as nil, the same as a summary from before templates.
+        _ = try XCTUnwrap(try appCoordinator.workflowManager.createSummary(
+            for: recordingId,
+            transcriptId: transcriptId,
+            summary: "Default procurement summary with enough detail to be saved as a real summary.",
+            aiEngine: "Test",
+            aiModel: "fixture",
+            promptTemplate: .standard,
+            originalLength: 80
+        ))
+        XCTAssertNil(appCoordinator.getCompleteRecordingData(id: recordingId)?.summary?.promptTemplate)
     }
 
     @MainActor
@@ -106,6 +172,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "This existing summary is long enough to be persisted before a failed regeneration attempt.",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 60
         ))
 
@@ -114,6 +181,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "Too short",
             aiModel: "fixture",
+            promptTemplate: nil,
             originalLength: 9
         )
 
@@ -150,6 +218,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This legacy summary contains enough content to be migrated safely.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
         let data = try JSONEncoder().encode([legacySummary])
@@ -192,6 +261,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             transcriptId: transcriptId,
             summary: "The current Core Data summary must remain authoritative over stale legacy storage.",
             aiModel: "current-fixture",
+            promptTemplate: nil,
             originalLength: 80
         ))
         let legacySummary = EnhancedSummaryData(
@@ -204,6 +274,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This stale legacy summary must not replace newer Core Data content.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 70,
             generatedAt: Date(timeIntervalSince1970: 1_760_000_000)
         )
@@ -335,6 +406,7 @@ final class BisonNotesAIIntegrationTests: XCTestCase {
             summary: "This legacy summary contains enough content to be migrated safely.",
             aiEngine: "Legacy",
             aiModel: "legacy-fixture",
+            promptTemplate: nil,
             originalLength: 80
         )
     }
