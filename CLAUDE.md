@@ -185,6 +185,10 @@ Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target su
 
 The historical Catalyst guards in the `bisonbet/textual` fork are no longer required by this app and can be dropped when that separate repository is next rebased.
 
+### User Guide Releases
+
+Every app release ships with its own complete user guide in `docs/user-guide/bisonnotes-ai-v<major>-<minor>.html`, published at the same slug on bisonnetworking.com; `/bisonnotes-ai/` redirects to the current App Store release's guide. In-app Help opens the installed version's guide through `BisonNotesDocumentation`, using section anchors (`bn-ai`) that are identical in every guide. Bumping `MARKETING_VERSION` to a new minor version without adding its guide fails `BisonNotesDocumentationTests`. Never rename or remove a `bn-*` id or the legacy `bn23-ai`/`bn24-ai`/`bn25-ai` aliases. The process is in `docs/user-guide/README.md`.
+
 ### Background Processing
 For long-running operations, use `BackgroundProcessingManager` to queue jobs and track progress.
 

@@ -1,8 +1,7 @@
 # Release history
 
-Highlights by release. Current usage is in [features](features.md); the
-illustrated release guides are `bisonnotes-ai-v2-2.html` through
-`bisonnotes-ai-v2-5.html` in this folder.
+Highlights by release. Current usage is in [features](features.md), and each
+release's complete user guide is in [user-guide](user-guide/README.md).
 
 ## 3.0
 

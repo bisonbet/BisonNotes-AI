@@ -1,9 +1,9 @@
-<!-- BisonNotes AI - Complete User Guide -->
+<!-- BisonNotes AI 3.0 - Complete User Guide -->
+<!-- Publish at /bisonnotes-ai-v3-0/. See docs/user-guide/README.md for the release process. -->
 <!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
 <!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
-<!-- This is the current v2.4 full guide. Publish it at /bisonnotes-ai/, which is the unversioned landing page BisonNotes opens when an installed build's version cannot be read. -->
-<!-- Versioned release snapshots (bisonnotes-ai-v2-4.html and earlier) stay on their own /bisonnotes-ai-v2-N/ pages; this page deliberately carries none of their bnNN-* anchors. -->
-<!-- Once published, a snapshot page is permanent: never delete it, never change its slug, and never rename a bnNN-* id. Installed builds keep opening their own version's page. -->
+<!-- Section ids (bn-*) are the same in every release guide and the app links to them. Never rename or remove one. -->
+<!-- The bn23-ai, bn24-ai and bn25-ai spans are anchors that shipped 2.3-2.5 builds still open. Keep them in every guide. -->
 
 <style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
 
@@ -13,7 +13,7 @@
 <div class="bn-hero">
   <h1>BisonNotes AI</h1>
   <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
-  <span class="bn-ver">v2.4</span>
+  <span class="bn-ver">Version 3.0</span>
 </div>
 
 <!-- ===== TOC ===== -->
@@ -34,12 +34,19 @@
         <li><a href="#bn-import-link">Import From Link</a></li>
         <li><a href="#bn-share-ext">Share Extension</a></li>
         <li><a href="#bn-combine">Combining Recordings</a></li>
+        <li><a href="#bn-trim">Trimming a Recording</a></li>
       </ul>
     </li>
     <li><a href="#bn-ai">AI Engine Configuration</a>
       <ul><li><a href="#bn-ollama">Ollama on Mac</a></li></ul>
     </li>
     <li><a href="#bn-transcription">Transcription Configuration</a></li>
+    <li><a href="#bn-beta">Beta Features</a>
+      <ul>
+        <li><a href="#bn-summary-prompt">Summary Prompt</a></li>
+        <li><a href="#bn-cleanup">Transcript Cleanup</a></li>
+      </ul>
+    </li>
     <li><a href="#bn-summaries">Working with Summaries</a></li>
     <li><a href="#bn-playback">Audio Playback</a></li>
     <li><a href="#bn-settings">Setup &amp; Configuration</a></li>
@@ -49,54 +56,33 @@
     <li><a href="#bn-advanced">Advanced Features</a></li>
     <li><a href="#bn-best">Best Practices</a></li>
     <li><a href="#bn-resources">External Resources</a></li>
+    <li><a href="#bn-versions">Guides for Other Versions</a></li>
   </ol>
 </div>
 
 <!-- ============================================================ -->
-<!-- WHAT'S NEW IN V2.4                                           -->
+<!-- WHAT'S NEW IN 3.0                                            -->
 <!-- ============================================================ -->
 <div class="bn-ok">
-  <strong>What&rsquo;s new in v2.4:</strong>
+  <strong>What&rsquo;s new in 3.0:</strong>
   <ul>
-    <li><strong>Much faster iCloud sync.</strong> Routine sync now reads and writes in batched requests instead of one record at a time, so a normal pass finishes in a fraction of the time it used to take. Actual times still depend on library size, network, and iCloud availability.</li>
-    <li><strong>Throttling is respected.</strong> When iCloud asks BisonNotes to wait, it waits exactly that long; a long wait is recorded as a deferred run and retried later instead of holding up the app.</li>
-    <li><strong>Devices stop overwriting each other.</strong> The shared index of synced content is updated as a change rather than rewritten wholesale, so two devices syncing at once no longer remove each other&rsquo;s entries.</li>
-    <li><strong>One sync operation at a time.</strong> A backup or restore you start while a sync is already running shows <em>Waiting for the sync already in progress</em> and begins as soon as that run finishes, instead of returning an empty result that looks like success.</li>
-    <li><strong>Audio no longer holds up metadata.</strong> Recording details sync without waiting on audio files, and audio transfer is tracked separately.</li>
-    <li><strong>Interruption recovery on iPhone and iPad.</strong> A phone call or an unexpected background stop now produces one coordinated recovery, always preserves the completed part of the recording, and never reports a recovery that restored nothing as a success.</li>
-    <li><strong>Mac microphone fallback.</strong> If the microphone cannot start for a meeting recording, BisonNotes refreshes the input list, retries meeting devices, and keeps system-audio capture running rather than failing the recording. A microphone that reconnects mid-recording can rejoin its own recovery, and the Mac audio import picker is fixed.</li>
-    <li><strong>Reclaimed storage.</strong> Local AI model downloads are no longer stored twice, deleting a model reclaims all of it, iCloud&rsquo;s own copies of transferred audio are bounded, and the diagnostic error log no longer grows without limit.</li>
-    <li><strong>Interrupted model downloads resume.</strong> A multi-part on-device model interrupted mid-copy is recognized as incomplete instead of being offered as ready.</li>
-    <li><strong>Deletions stay deleted.</strong> Deleting an imported transcript no longer leaves anything behind for a later sync to restore.</li>
-    <li><strong>Version-aware help.</strong> In-app <strong>Learn More</strong> links open the release guide that matches the installed version, at the section that answers the question.</li>
+    <li><strong>Beta Features.</strong> A new page in Settings collects features that are still being finished. Turn on Beta Features, then each feature you want to try. See <a href="#bn-beta">Beta Features</a>.</li>
+    <li><strong>Summary Prompt (beta).</strong> Choose Business Meeting, Personal Notes, or up to five prompts of your own for AI summaries. Each summary remembers the prompt it was made with. See <a href="#bn-summary-prompt">Summary Prompt</a>.</li>
+    <li><strong>Transcript Cleanup is now a beta feature.</strong> If you already used it, it stays on. Summaries now use whichever version of a transcript you saved, Original or Cleaned, and cleanup pauses in the background and picks up where it left off. See <a href="#bn-cleanup">Transcript Cleanup</a>.</li>
+    <li><strong>Trim Recording.</strong> Keep just the part of a recording you want, saved as a new recording. See <a href="#bn-trim">Trimming a Recording</a>.</li>
+    <li><strong>Nemotron 3 speaker labels (experimental).</strong> A new on-device speaker-label method from NVIDIA for groups of up to 8 speakers.</li>
+    <li><strong>More reliable processing.</strong> A finished summary or transcript is never redone or billed twice because of a problem after it was saved, and recordings recover more cleanly after interruptions.</li>
   </ul>
-  <p>For the full detail on each of these, plus the upgrade checklist, see the <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-4/">v2.4 release and upgrade guide</a>.</p>
 </div>
 
 <details>
-  <summary>What&rsquo;s new in v2.3</summary>
+  <summary>What changed in 2.5 and 2.4</summary>
   <div class="dd">
   <ul>
-    <li><strong>Native Mac app.</strong> BisonNotes now runs as a native macOS app with Mac windows, dedicated Settings, standard File/Edit commands and shortcuts, native export and sharing, persistent archive access, and continuity with the data used by the previous Catalyst build.</li>
-    <li><strong>Mac Share extension and recording widget.</strong> Import supported audio or transcript files from the macOS Share menu, or use a small or medium desktop widget to open BisonNotes and start recording.</li>
-    <li><strong>Safer Mac recording.</strong> Selectable microphones, saved-input recovery, first-buffer and stall detection, bounded reconnection, and independent microphone/system-audio validation help preserve a usable recording when one capture source fails.</li>
-    <li><strong>Guided meeting-audio permission.</strong> Record Meeting Audio explains the Screen &amp; System Audio Recording requirement and the quit-and-reopen step. With Live Transcription enabled, the finalized combined recording is queued for transcription.</li>
-    <li><strong>Larger local Mac model.</strong> Macs with at least 16 GB RAM can select Ternary Bonsai 27B for local MLX processing.</li>
-    <li><strong>More reliable on-device transcription setup.</strong> Parakeet reuses complete cached models, clears stale missing-file state, and waits for model preparation before transcription begins.</li>
-    <li><strong>Opt-in local speaker labels.</strong> Completed Parakeet recordings, imports, and transcript re-runs can be labeled locally after transcription. Offline VBx is recommended; Nemotron 3 is experimental and supports up to 8 speakers; LS-EEND is experimental, supports up to 10 speakers, and is limited to complete files up to one hour. Failed labeling keeps the complete unlabeled transcript.</li>
-    <li><strong>Shared summary controls.</strong> Brief, Balanced, and Detailed settings apply across the active engines. Off or Light thinking is sent only when the selected model exposes a supported control, and reasoning output is kept out of visible summaries and structured metadata.</li>
-    <li><strong>Provider migration.</strong> AWS Bedrock/Transcribe and the embedded legacy llama.cpp engine are no longer shipped. Existing selections migrate to supported replacements; Ollama is available only on native macOS, while external llama.cpp servers remain usable through Compatible API.</li>
-    <li><strong>Clean local-AI output.</strong> Thinking-capable MLX models keep their reasoning internal; partial reasoning traces and preambles are removed before summaries, tasks, reminders, and suggested titles are shown.</li>
-    <li><strong>Durable summary deletion.</strong> Deleting only a summary now queues removal of its live and backup iCloud records so an offline deletion can finish the next time iCloud is available.</li>
-    <li><strong>Accessibility-ready task flows.</strong> Recording, playback, imports, recordings, transcripts, summaries, setup, settings, and Apple Watch recording now expose clearer VoiceOver labels, values, hints, and non-color status cues.</li>
-    <li><strong>Import from web links.</strong> Direct audio, video, and transcript URLs can be imported from the Recordings screen or Mac File menu. Downloads are size-bounded and validated before they are saved. YouTube links are parsed for public caption import, with a guided pasted-transcript recovery flow if YouTube blocks automated caption downloads.</li>
-    <li><strong>Voice Control-friendly action names.</strong> Repeated actions now include context such as the recording, transcript, or summary title, making commands easier to target by name.</li>
-    <li><strong>Adjustable playback scrubber.</strong> The custom audio scrubber now announces elapsed and remaining time and supports 15-second accessibility seek increments.</li>
-    <li><strong>Reduce Motion support.</strong> Recording indicators on iPhone, iPad, and Apple Watch keep their meaning when Reduce Motion is enabled.</li>
-    <li><strong>Accessibility evidence.</strong> BisonNotes now includes an accessibility matrix, App Store accessibility artifact, public accessibility page, and automated accessibility UI audit coverage for the main app surfaces.</li>
+    <li><strong>2.5:</strong> on-device English transcript cleanup, deletions that survive a crash, clearer messages when a device is nearly full, and safer cache cleanup.</li>
+    <li><strong>2.4:</strong> much faster iCloud sync, sync that respects iCloud&rsquo;s requests to wait, one coordinated recovery after a phone call, a microphone fallback for Mac meeting recordings, and reclaimed storage from model downloads.</li>
   </ul>
-  <p><strong>Also retained from v2.1:</strong> stronger iCloud sync controls, crash-safe recording recovery, and the documented regression testing regimen.</p>
-  <p>Earlier release pages stay published: <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-3/">v2.3</a> and <a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-2/">v2.2</a>.</p>
+  <p>Guides for earlier versions are listed in <a href="#bn-versions">Guides for Other Versions</a>.</p>
   </div>
 </details>
 
@@ -207,8 +193,8 @@
 <!-- ============================================================ -->
 <h2 id="bn-recording">Recording Features</h2>
 
-<h3 id="bn-mac">Native Mac App (v2.3)</h3>
-<p>BisonNotes AI now runs as a native Apple Silicon macOS app. It keeps the same app identity, local data container, Core Data store, and iCloud container used by the previous Catalyst release, so installing the matching v2.3 release upgrades the app instead of creating a separate empty library.</p>
+<h3 id="bn-mac">Native Mac App</h3>
+<p>BisonNotes AI is a native macOS app for Apple silicon Macs running macOS 15 or later. It shares its library with the earlier Mac Catalyst version, so updating keeps your existing recordings.</p>
 <ul>
   <li><strong>Mac-native workspace</strong> &mdash; Summaries, transcripts, players, library views, location details, and processing views can use movable and resizable windows. Settings opens in its own Mac Settings window.</li>
   <li><strong>Commands and shortcuts</strong> &mdash; Standard File and Edit menus provide import, export, navigation, and editing commands where available.</li>
@@ -238,7 +224,7 @@
 
 <h3 id="bn-action-btn">iPhone Action Button Integration</h3>
 
-<div class="bn-info"><strong>Available on:</strong> iPhone 15 Pro, iPhone 15 Pro Max, iPhone 16 Pro, iPhone 16 Pro Max, and future iPhone Pro models with Action Button.</div>
+<div class="bn-info"><strong>Available on:</strong> any iPhone with an Action Button (iPhone 15 Pro and later).</div>
 
 <p>Start recording instantly without opening the app first — perfect for capturing thoughts, meetings, or voice notes.</p>
 
@@ -339,10 +325,21 @@
   </div>
 </details>
 
+<h3 id="bn-trim">Trimming a Recording</h3>
+
+<div class="bn-info"><strong>When to use:</strong> Keep only the part of a recording you need &mdash; for example, to cut silence after a meeting ended. The trimmed part is saved as a new recording, and the original is not changed.</div>
+
+<ol class="bn-sl">
+  <li><strong>Open Trim</strong> &mdash; Tap <strong>Trim</strong> in the audio player, or touch and hold a recording in the Recordings list and choose <strong>Trim Recording&hellip;</strong>. The recording&rsquo;s audio must be on this device.</li>
+  <li><strong>Choose the part to keep</strong> &mdash; Move the start and end points. The sheet shows how long the kept part will be.</li>
+  <li><strong>Find trailing silence (optional)</strong> &mdash; Tap <strong>Find Trailing Silence</strong>. If speech appears to end before the recording does, tap <strong>Use Suggested End</strong>.</li>
+  <li><strong>Save</strong> &mdash; Tap <strong>Save as New Recording</strong>. Transcribe and summarize the new recording as usual.</li>
+</ol>
+
 <!-- ============================================================ -->
 <!-- AI ENGINE CONFIGURATION                                       -->
 <!-- ============================================================ -->
-<span id="bn23-ai"></span>
+<span id="bn23-ai"></span><span id="bn24-ai"></span><span id="bn25-ai"></span>
 <h2 id="bn-ai">AI Engine Configuration</h2>
 
 <div class="bn-info"><strong>Overview:</strong> BisonNotes AI supports multiple AI engines for transcription and summarization. Each has different capabilities, requirements, and pricing.</div>
@@ -640,6 +637,75 @@
 </ul>
 
 <!-- ============================================================ -->
+<!-- BETA FEATURES                                                 -->
+<!-- ============================================================ -->
+<h2 id="bn-beta">Beta Features</h2>
+
+<div class="bn-warn"><strong>Beta features might not work as intended.</strong> They are features we are still finishing. Try them on recordings you can afford to redo, and report anything that goes wrong.</div>
+
+<h3>Turning beta features on</h3>
+<ol class="bn-sl">
+  <li><strong>Open the Beta Features page</strong> &mdash; On iPhone and iPad, go to Settings &rarr; Configuration &rarr; Beta Features. On Mac, open Settings and choose the Beta tab.</li>
+  <li><strong>Turn on Enable Beta Features</strong> &mdash; BisonNotes asks you to confirm first.</li>
+  <li><strong>Turn on each feature you want</strong> &mdash; Each feature has its own switch and settings on the same page.</li>
+</ol>
+<p>Turning Enable Beta Features off returns everything to the standard behavior. Your choices for each feature are kept, so turning it back on restores them.</p>
+
+<h3 id="bn-summary-prompt">Summary Prompt</h3>
+<p>A summary prompt tells the AI what kind of summary to write. Pick the default for new summaries on the Beta Features page:</p>
+<ul>
+  <li><strong>Default</strong> &mdash; The standard summary, with Summary Detail and Comedy Mode applied as usual.</li>
+  <li><strong>Business Meeting</strong> &mdash; Decisions, owners, and next steps.</li>
+  <li><strong>Personal Notes</strong> &mdash; Ideas, reflections, and things to remember.</li>
+  <li><strong>Your own prompts</strong> &mdash; Up to five, each with a name, your wording, and a recording type: Auto-detect, Meeting, or Personal Notes.</li>
+</ul>
+<p>Choose <strong>Edit prompts</strong> to change the wording of Business Meeting and Personal Notes (with an option to restore the original), or to add, rename, and delete your own prompts.</p>
+<ul>
+  <li><strong>Only the summary changes.</strong> Tasks, reminders, and suggested titles always use the standard prompts.</li>
+  <li><strong>Each summary remembers its prompt.</strong> The summary shows which prompt made it. <strong>Regenerate</strong> starts with that prompt and lets you pick another, and always uses the prompt&rsquo;s current wording. If you delete a prompt, its summaries regenerate with Default.</li>
+  <li><strong>Your own prompts take over format and tone.</strong> Summary Detail and Comedy Mode are not used with a custom prompt.</li>
+</ul>
+
+<h3 id="bn-cleanup">Transcript Cleanup</h3>
+<p>Speech-to-text writes down exactly what was said, which is not always easy to read. Transcript Cleanup rewrites a finished English transcript into written English: it adds punctuation and sentence breaks, removes fillers such as &ldquo;um&rdquo; and &ldquo;uh&rdquo;, and resolves spoken corrections. It runs entirely on your device using <strong>S1-mini by Superwhisper</strong>; nothing is uploaded.</p>
+
+<div class="bn-ok"><strong>Your original transcript is always kept.</strong> The cleaned text is stored next to the original, along with the original timing and speaker labels.</div>
+
+<h4>Setting it up</h4>
+<ol class="bn-sl">
+  <li><strong>Turn on Transcript Cleanup</strong> on the Beta Features page.</li>
+  <li><strong>Download S1-mini</strong> from the same page, or from the transcript editor. BisonNotes never downloads it on its own.</li>
+  <li><strong>Turn on Clean up transcripts automatically (English only)</strong> if you want every new file transcript cleaned. You can also clean one transcript at a time with <strong>Clean up English transcript</strong> in the transcript editor, including imported transcripts.</li>
+</ol>
+
+<h4>Original and Cleaned</h4>
+<ul>
+  <li>When a transcript has cleaned text, the editor lets you switch between <strong>Original</strong> and <strong>Cleaned</strong>. It opens on the version you last saved, and a finished cleanup saves Cleaned.</li>
+  <li>Summaries, copy, share, and text export use the version you saved.</li>
+</ul>
+
+<h4>How automatic cleanup runs</h4>
+<ul>
+  <li>The raw transcript is always saved first, so cleanup never holds it up.</li>
+  <li>Cleanup runs while BisonNotes is open. iOS does not allow on-device AI in the background, so it pauses when you leave the app and continues from where it stopped when you come back. It also waits while you are recording or transcribing.</li>
+  <li>The editor shows progress, such as &ldquo;Cleaning&hellip; 12 of 40 passages&rdquo;.</li>
+  <li>If a passage cannot be cleaned, it keeps its original text and the rest of the transcript is still cleaned. The editor says how many passages were kept.</li>
+</ul>
+
+<h4>Where it works</h4>
+<p>Transcript Cleanup needs a Mac with Apple silicon or a supported iPhone or iPad. It is not available on Apple Watch or in the iOS Simulator. On a device that cannot run it, the setting explains why.</p>
+
+<h4>What it will not do</h4>
+<ul>
+  <li>It does not translate. Transcripts in other languages are left alone, with a note explaining why.</li>
+  <li>It does not change speaker labels or timing.</li>
+  <li>It does not add facts or summarize.</li>
+  <li>It never runs on Live Transcription text.</li>
+</ul>
+
+<p>To reclaim the space, choose <strong>Remove Download</strong>. Transcripts you already cleaned keep their cleaned text.</p>
+
+<!-- ============================================================ -->
 <!-- WORKING WITH SUMMARIES                                        -->
 <!-- ============================================================ -->
 <h2 id="bn-summaries">Working with Summaries</h2>
@@ -764,7 +830,7 @@
 </ul>
 
 <h3>Comedy Mode</h3>
-<p>On native macOS, Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick <em>Snarky</em> or <em>Funny</em>, and supported engines will rewrite only the narrative summary in that voice. Tasks, reminders, titles, and facts remain grounded in the transcript. Disable it to return to the standard, neutral summary style.</p>
+<p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick <em>Snarky</em> or <em>Funny</em>, and supported engines will rewrite only the narrative summary in that voice. A custom <a href="#bn-summary-prompt">Summary Prompt</a> replaces Comedy Mode. Tasks, reminders, titles, and facts remain grounded in the transcript. Disable it to return to the standard, neutral summary style.</p>
 
 <!-- ============================================================ -->
 <!-- ACCESSIBILITY                                                 -->
@@ -901,6 +967,19 @@
 </details>
 
 <details>
+  <summary>Transcript Cleanup Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>The cleanup setting is unavailable:</strong> This device cannot run the on-device model &mdash; for example an Intel Mac, a device without enough memory, or the Simulator. The setting shows the reason. Check that Beta Features and Transcript Cleanup are both turned on.</li>
+      <li><strong>A transcript finished but was not cleaned:</strong> S1-mini may not be downloaded on this device, the text may not be confirmed as English, or the app was in the background. Cleanup resumes when you return to the app; the transcript itself is always saved.</li>
+      <li><strong>The language could not be confirmed as English:</strong> Very short transcripts do not give the language check enough to work with. Use <strong>Clean up English transcript</strong> in the editor to run it anyway; text that is clearly another language is still refused.</li>
+      <li><strong>Some passages were kept as they were:</strong> S1-mini could not clean those passages, so they keep their original text. The rest of the transcript is cleaned.</li>
+      <li><strong>Cleanup is slow on a long recording:</strong> It works through the transcript one passage at a time and waits while you record or transcribe. Leave BisonNotes open to let it finish.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
   <summary>Data Issues</summary>
   <div class="dd">
     <ul>
@@ -909,7 +988,8 @@
       <li><strong>Sync Problems:</strong> Check iCloud settings</li>
       <li><strong>A backup says it is waiting:</strong> An automatic sync was already running. Your request starts as soon as that run finishes; leave the app open.</li>
       <li><strong>Sync reported as deferred:</strong> iCloud asked BisonNotes to wait before sending more requests. The work is kept and retried &mdash; most common right after a large first sync.</li>
-      <li><strong>A deleted imported transcript came back:</strong> Fixed in v2.4. If it reappears from a device still on an older version, update that device and delete the item once more.</li>
+      <li><strong>A deleted item came back:</strong> Since 2.5, a deletion and the note telling your other devices about it are saved together, so deleted items stay deleted. If one reappears from a device still on an older version, update that device and delete the item once more.</li>
+      <li><strong>Not enough space to upload audio:</strong> BisonNotes tells you once and keeps syncing text, summaries, and settings. Audio uploads resume when there is free space.</li>
     </ul>
   </div>
 </details>
@@ -1112,8 +1192,20 @@
   <strong>Need help?</strong> Report issues on <a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">GitHub</a> or use the in-app help documentation.
 </div>
 
+<!-- ============================================================ -->
+<!-- OTHER VERSIONS                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-versions">Guides for Other Versions</h2>
+<p>This guide is for BisonNotes AI 3.0. To check your version on Mac, open Settings &rarr; Advanced. On iPhone and iPad, open BisonNotes AI in the App Store and check Version History. The Help buttons in the app always open the guide for the version you have installed.</p>
+<ul>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai/">Current App Store version</a></li>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai-v3-0/">Version 3.0</a></li>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-5/">Version 2.5</a></li>
+</ul>
+<p>Older versions open the guide for the current App Store version.</p>
+
 <hr>
-<p style="text-align:center;font-size:0.85rem;opacity:0.6;"><em>This documentation is regularly updated. For the latest information, check the app's built-in help.</em></p>
+<p style="text-align:center;font-size:0.85rem;opacity:0.6;"><em>Written for BisonNotes AI 3.0. Features can vary by device, permissions, selected engine, and operating system version.</em></p>
 
 </div>
 <!-- End BisonNotes AI Guide -->

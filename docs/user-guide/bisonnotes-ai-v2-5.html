@@ -1,0 +1,1160 @@
+<!-- BisonNotes AI 2.5 - Complete User Guide -->
+<!-- Publish at /bisonnotes-ai-v2-5/. See docs/user-guide/README.md for the release process. -->
+<!-- Paste everything below into a WordPress Custom HTML block or HTML editor. -->
+<!-- Keep the CSS inside the style tag compact: WordPress auto-paragraph formatting can break multi-paragraph CSS. -->
+<!-- Section ids (bn-*) are the same in every release guide and the app links to them. Never rename or remove one. -->
+<!-- The bn23-ai, bn24-ai and bn25-ai spans are anchors that shipped 2.3-2.5 builds still open. Keep them in every guide. -->
+
+<style>.bn *,.bn *::before,.bn *::after{box-sizing:border-box;}.bn{max-width:960px;margin:0 auto;padding:0.75rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + 0.4vw,19px);line-height:1.7;color:#1a1a1a;word-wrap:break-word;overflow-wrap:break-word;}.entry-content>.bn,.post-inner .bn,.page-content .bn,.section-inner .bn,.wp-block-post-content .bn,.entry-content .bn{max-width:960px !important;width:100% !important;}.entry-content>*:has(.bn),.post-inner:has(.bn),.section-inner:has(.bn){max-width:none !important;width:100% !important;}.bn h2{font-size:1.35rem;font-weight:700;margin:2.2rem 0 0.8rem;padding-bottom:0.35rem;border-bottom:2px solid #c0392b;color:#111;}.bn h3{font-size:1.1rem;font-weight:600;margin:1.4rem 0 0.5rem;color:#222;}.bn h4{font-size:0.95rem;font-weight:600;margin:1rem 0 0.35rem;color:#333;}.bn p{margin:0.5rem 0;}.bn ul,.bn ol{margin:0.4rem 0 0.6rem;padding-left:1.4rem;}.bn li{margin:0.25rem 0;}.bn li ul,.bn li ol{margin:0.2rem 0 0.3rem;}.bn a{color:#c0392b;text-decoration:none;}.bn a:hover{text-decoration:underline;}.bn code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:0.88em;word-break:break-all;}.bn pre{background:#f0f0f0;padding:0.8rem;border-radius:6px;overflow-x:auto;font-size:0.85em;margin:0.6rem 0;}.bn pre code{background:none;padding:0;word-break:normal;}.bn hr{border:none;border-top:1px solid #ddd;margin:2rem 0;}.post-inner .entry-header,.singular .entry-header,.entry-header .entry-title,body.page .entry-header{display:none !important;}.bn-hero{text-align:center;padding:1.5rem 1rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);color:#fff;border-radius:10px;margin-bottom:1.5rem;}.bn-hero h1{color:#fff !important;font-size:1.5rem;margin:0 0 0.2rem;line-height:1.3;border:none !important;padding:0 !important;}.bn-hero p{margin:0;font-size:0.9rem;opacity:0.8;color:#fff;}.bn-hero .bn-ver{display:inline-block;background:#c0392b;color:#fff;padding:0.15rem 0.6rem;border-radius:20px;font-size:0.75rem;font-weight:600;margin-top:0.6rem;}.bn-toc{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin-bottom:1.8rem;}.bn-toc p{font-weight:700;margin:0 0 0.4rem;}.bn-toc ol{margin:0;padding-left:1.2rem;}.bn-toc li{margin:0.2rem 0;font-size:0.92rem;}.bn-toc a{color:#2563eb;}.bn-toc ul{list-style:disc;padding-left:1.2rem;margin:0.15rem 0 0;}.bn-info,.bn-warn,.bn-ok{border-radius:6px;padding:0.7rem 0.9rem;margin:0.7rem 0;font-size:0.94rem;}.bn-info{background:#eaf3fc;border-left:4px solid #2563eb;}.bn-warn{background:#fef7e0;border-left:4px solid #e6a817;}.bn-ok{background:#eaf7ec;border-left:4px solid #27ae60;}.bn-card{background:#f7f8f9;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;margin:0.6rem 0;}.bn-card-a{border-left:4px solid #c0392b;}.bn-card h4:first-child{margin-top:0;}.bn-g{display:grid;grid-template-columns:1fr;gap:0.6rem;margin:0.8rem 0;}.bn-gc{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:0.8rem 1rem;}.bn-gc h4{margin:0 0 0.2rem;font-size:0.95rem;}.bn-gc ul{font-size:0.92rem;margin:0.2rem 0;padding-left:1.2rem;}.bn-gc p{font-size:0.92rem;margin:0.2rem 0;}.bn-badge{display:inline-block;font-size:0.68rem;font-weight:600;padding:0.1rem 0.45rem;border-radius:10px;margin-bottom:0.3rem;text-transform:uppercase;letter-spacing:0.02em;}.bn-b-free{background:#d5edda;color:#155724;}.bn-b-cloud{background:#cce5ff;color:#004085;}.bn-b-local{background:#fff3cd;color:#856404;}.bn-b-paid{background:#f8d7da;color:#721c24;}.bn-tw{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0.6rem 0;border-radius:6px;border:1px solid #e0e0e0;}.bn table{width:100%;border-collapse:collapse;font-size:0.92rem;}.bn th,.bn td{text-align:left;padding:0.45rem 0.6rem;border-bottom:1px solid #eee;}.bn th{background:#f1f3f5;font-weight:600;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.02em;color:#555;white-space:nowrap;}.bn details{border:1px solid #e0e0e0;border-radius:8px;margin:0.5rem 0;background:#fff;}.bn details[open]{background:#fafbfc;}.bn summary{padding:0.65rem 0.9rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:0.4rem;font-size:0.97rem;-webkit-tap-highlight-color:transparent;}.bn summary::-webkit-details-marker{display:none;}.bn summary::before{content:"\25B6";font-size:0.6rem;transition:transform 0.15s;flex-shrink:0;}.bn details[open]>summary::before{transform:rotate(90deg);}.bn .dd{padding:0 0.9rem 0.8rem;}.bn-sl{counter-reset:st;list-style:none;padding-left:0;}.bn-sl>li{counter-increment:st;position:relative;padding-left:2.3rem;margin:0.7rem 0;}.bn-sl>li::before{content:counter(st);position:absolute;left:0;top:0;width:1.6rem;height:1.6rem;background:#c0392b;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.8rem;line-height:1;}.bn-sl>li ul{margin-top:0.3rem;}@media (min-width:540px){.bn-g{grid-template-columns:1fr 1fr;}.bn{padding:1rem;}}@media (max-width:539px){.bn h2{font-size:1.25rem;}.bn h3{font-size:1.08rem;}.bn-hero h1{font-size:1.3rem;}.bn-hero{padding:1.2rem 0.7rem;}}</style>
+
+<div class="bn">
+
+<!-- ===== HERO ===== -->
+<div class="bn-hero">
+  <h1>BisonNotes AI</h1>
+  <p>Complete User Guide &mdash; iPhone, iPad, Apple Watch, and Mac</p>
+  <span class="bn-ver">Version 2.5</span>
+</div>
+
+<!-- ===== TOC ===== -->
+<div class="bn-toc">
+  <p>Contents</p>
+  <ol>
+    <li><a href="#bn-start">Getting Started</a>
+      <ul>
+        <li><a href="#bn-first-recording">Your First Recording</a></li>
+        <li><a href="#bn-first-transcript">First Transcript &amp; Summary</a></li>
+      </ul>
+    </li>
+    <li><a href="#bn-recording">Recording Features</a>
+      <ul>
+        <li><a href="#bn-mac">Native Mac App</a></li>
+        <li><a href="#bn-pause">Pause &amp; Resume</a></li>
+        <li><a href="#bn-action-btn">Action Button</a></li>
+        <li><a href="#bn-import-link">Import From Link</a></li>
+        <li><a href="#bn-share-ext">Share Extension</a></li>
+        <li><a href="#bn-combine">Combining Recordings</a></li>
+      </ul>
+    </li>
+    <li><a href="#bn-ai">AI Engine Configuration</a>
+      <ul><li><a href="#bn-ollama">Ollama on Mac</a></li></ul>
+    </li>
+    <li><a href="#bn-transcription">Transcription Configuration</a></li>
+    <li><a href="#bn-cleanup">Transcript Cleanup</a></li>
+    <li><a href="#bn-summaries">Working with Summaries</a></li>
+    <li><a href="#bn-playback">Audio Playback</a></li>
+    <li><a href="#bn-settings">Setup &amp; Configuration</a></li>
+    <li><a href="#bn-accessibility">Accessibility</a></li>
+    <li><a href="#bn-privacy">Privacy &amp; Security</a></li>
+    <li><a href="#bn-trouble">Troubleshooting</a></li>
+    <li><a href="#bn-advanced">Advanced Features</a></li>
+    <li><a href="#bn-best">Best Practices</a></li>
+    <li><a href="#bn-resources">External Resources</a></li>
+    <li><a href="#bn-versions">Guides for Other Versions</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- WHAT'S NEW IN 2.5                                            -->
+<!-- ============================================================ -->
+<div class="bn-ok">
+  <strong>What&rsquo;s new in 2.5:</strong>
+  <ul>
+    <li><strong>Transcript Cleanup.</strong> An optional on-device pass turns a finished English transcript into readable written English. Your original transcript is always kept. See <a href="#bn-cleanup">Transcript Cleanup</a>.</li>
+    <li><strong>Deletions that survive a crash.</strong> A deletion and the note telling your other devices about it are saved together, so a deleted recording cannot come back from iCloud.</li>
+    <li><strong>Clearer storage messages.</strong> When a device is too full to stage audio for upload, BisonNotes says so once and keeps syncing everything else.</li>
+    <li><strong>Safer cache cleanup.</strong> Background cleanup can no longer remove files that a download or sync is still using.</li>
+  </ul>
+</div>
+
+<details>
+  <summary>What changed in 2.4</summary>
+  <div class="dd">
+  <ul>
+    <li>Much faster iCloud sync that respects iCloud&rsquo;s requests to wait, and devices that no longer overwrite each other.</li>
+    <li>One coordinated recovery after a phone call or unexpected background stop, which always keeps the completed part of the recording.</li>
+    <li>A microphone fallback for Mac meeting recordings, and reclaimed storage from model downloads.</li>
+  </ul>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- GETTING STARTED                                               -->
+<!-- ============================================================ -->
+<h2 id="bn-start">Getting Started</h2>
+
+<h3>First Launch Setup</h3>
+
+<ol class="bn-sl">
+  <li><strong>Install the App</strong> — Download BisonNotes AI from the App Store.</li>
+  <li><strong>Simple Settings Welcome Screen</strong> — You'll see a streamlined setup with three options:
+    <div class="bn-card bn-card-a">
+      <h4>Initial Setup Options</h4>
+      <ul>
+        <li><strong>Mistral AI (Free):</strong> Free cloud AI &mdash; no credit card required. A guided wizard walks you through creating a free Mistral account and API key in about 2 minutes. Includes transcription (Voxtral Mini with speaker diarization) and AI summaries (Mistral Medium). Paid tiers available for higher rate limits.</li>
+        <li><strong>On Device AI:</strong> Private, on-device processing. No data leaves your device. Uses MLX Swift for summaries on 4GB+ devices and Parakeet for transcription. Models download once, then run locally.</li>
+        <li><strong>Advanced &amp; Other Options:</strong> Configure providers manually. Includes Google AI Studio, Mistral AI, Compatible API, and Ollama on native macOS. If you already have an AI provider configured, your existing settings are preserved.</li>
+      </ul>
+    </div>
+    <div class="bn-info"><strong>Tip:</strong> The simple settings page automatically detects your current configuration. If you've configured something in advanced settings that doesn't match the simple options, it will automatically show "Advanced &amp; Other Options".</div>
+  </li>
+  <li><strong>Location Permission</strong> — The app will ask for location access if enabled:
+    <ul>
+      <li><strong>"Allow While Using App"</strong>: Recommended — captures location during recording</li>
+      <li><strong>"Don't Allow"</strong>: You can still add locations manually later</li>
+    </ul>
+  </li>
+  <li><strong>Automatic Migration</strong> — On first launch, the app scans for existing audio files and migrates them into the database.</li>
+</ol>
+
+<h3 id="bn-first-recording">Your First Recording</h3>
+
+<ol class="bn-sl">
+  <li><strong>Start Recording</strong> &mdash; Tap the large microphone button on the main screen.</li>
+  <li><strong>Microphone Permission</strong> &mdash; On your first recording, the system will ask for microphone access. Tap &ldquo;OK&rdquo;. If denied, re-enable in Settings &rarr; Privacy &amp; Security &rarr; Microphone (or System Settings &rarr; Privacy &amp; Security &rarr; Microphone on Mac).</li>
+  <li><strong>Recording Status</strong> &mdash; You&rsquo;ll see a red recording indicator, live timer, and location indicator (if enabled).</li>
+  <li><strong>Pause &amp; Resume</strong> &mdash; Tap the Pause button to pause without ending the file; tap Resume to continue. Works on iPhone, iPad, Apple Watch mute/resume, and Mac.</li>
+  <li><strong>Stop Recording</strong> &mdash; Tap the stop button to end.</li>
+  <li><strong>Background Recording</strong> &mdash; The app continues recording when minimized or the phone is locked. On Mac, the app keeps recording when in the background or behind other windows.</li>
+</ol>
+
+<h3 id="bn-first-transcript">First Transcript &amp; Summary</h3>
+
+<div class="bn-info"><strong>Current workflow:</strong> The &ldquo;Generate Transcript&rdquo; action lives on the <em>recording</em>; the &ldquo;Generate Summary&rdquo; action lives on the <em>transcript</em>. Each button only appears where it makes sense and disappears once the artifact exists &mdash; if you want to redo something, open the existing transcript or summary and regenerate from there.</div>
+
+<details>
+  <summary>Generate Your First Transcript</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Access Recording</strong> &mdash; After stopping, you&rsquo;ll see it in the Recordings list.</li>
+      <li><strong>Start Transcription</strong> &mdash; Tap &ldquo;Generate Transcript&rdquo; on the recording row, or open the audio player and tap it there. The app processes your audio using your selected transcription engine.</li>
+      <li><strong>Progress</strong> &mdash; You&rsquo;ll see processing status and an estimate. You can continue using the app while it processes.</li>
+      <li><strong>View Results</strong> &mdash; Open the Transcripts tab to read the full transcript with editable text and confidence indicators.</li>
+    </ol>
+  </div>
+</details>
+
+<details>
+  <summary>Generate Your First Summary</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Prerequisites</strong> &mdash; You need a transcript first.</li>
+      <li><strong>Start Summary</strong> &mdash; Open the transcript (Transcripts tab) and tap &ldquo;Generate Summary&rdquo;. A second &ldquo;Generate Summary&rdquo; button is also available directly on the transcript row.</li>
+      <li><strong>AI Processing</strong> &mdash; The app analyzes your transcript and creates:
+        <ul>
+          <li><strong>Enhanced Summary</strong>: Main content overview</li>
+          <li><strong>Action Items</strong>: Tasks with priority levels</li>
+          <li><strong>Reminders</strong>: Time-sensitive items with urgency indicators</li>
+          <li><strong>Alternative Titles</strong>: AI-generated recording names</li>
+        </ul>
+      </li>
+      <li><strong>Review Results</strong> &mdash; Expandable sections, priority indicators, interactive maps, attachments, and integration options (Apple Reminders, Apple Calendar, Google Calendar).</li>
+    </ol>
+  </div>
+</details>
+
+<details>
+  <summary>iCloud Sync Setup</summary>
+  <div class="dd">
+    <div class="bn-info"><strong>When does this appear?</strong> After generating your first successful summary.</div>
+    <ul>
+      <li><strong>"Enable iCloud Sync"</strong> — Eligible recordings, transcripts, summaries, and selected settings sync across your devices through your private iCloud account. BisonNotes shows a HIPAA notice before enabling this.</li>
+      <li><strong>"Keep Local Only"</strong> — Content stays on this device only. Better for privacy-sensitive content. Can be changed later.</li>
+      <li><strong>Per-recording exclusions</strong> — Use <em>Keep on This Device</em> from a recording row or audio player to keep that recording, transcript, and summary out of BisonNotes iCloud sync and backup.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Managing &amp; Deleting Recordings</summary>
+  <div class="dd">
+    <p>Long press on any recording, or tap and use the "..." menu. Storage options:</p>
+    <ul>
+      <li><strong>Archive to iCloud Drive</strong> — Copies audio to iCloud Drive, keeps transcript/summary and a saved restore location, and can optionally remove only the local audio file.</li>
+      <li><strong>Audio File Only</strong> — Keeps transcript/summary, removes audio. Good for saving storage.</li>
+      <li><strong>Everything</strong> — Removes audio, transcript, and summary. Cannot be undone.</li>
+      <li><strong>Summary Only</strong> — Keeps audio and transcript. Useful for regenerating with a different engine.</li>
+    </ul>
+    <div class="bn-info"><strong>Archive note:</strong> Audio archive targets are currently limited to iCloud Drive. Other Files providers such as Dropbox, Google Drive, and Proton Drive are not used for new archives until restore and cleanup behavior is reliable.</div>
+    <div class="bn-warn"><strong>Important:</strong> Deletion is permanent. Make sure you have backups if needed.</div>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- RECORDING FEATURES                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-recording">Recording Features</h2>
+
+<h3 id="bn-mac">Native Mac App</h3>
+<p>BisonNotes AI is a native macOS app for Apple silicon Macs running macOS 15 or later. It shares its library with the earlier Mac Catalyst version, so updating keeps your existing recordings.</p>
+<ul>
+  <li><strong>Mac-native workspace</strong> &mdash; Summaries, transcripts, players, library views, location details, and processing views can use movable and resizable windows. Settings opens in its own Mac Settings window.</li>
+  <li><strong>Commands and shortcuts</strong> &mdash; Standard File and Edit menus provide import, export, navigation, and editing commands where available.</li>
+  <li><strong>Data continuity</strong> &mdash; Existing Mac recordings, transcripts, summaries, settings, and iCloud configuration remain in the shared app container.</li>
+  <li><strong>Pause &amp; Resume</strong> &mdash; Full pause/resume support, the same as on iOS.</li>
+  <li><strong>Microphone selection</strong> &mdash; Choose your built-in mic, USB interface, or Bluetooth device from Transcription Settings. BisonNotes remembers that preference through a temporary disconnect and reselects the device when it returns.</li>
+  <li><strong>Device-change recovery</strong> &mdash; BisonNotes monitors the selected/default input. If an input changes or disconnects, it preserves completed PCM segments and attempts a bounded reconnection or fallback to the system default.</li>
+  <li><strong>Record Meeting Audio</strong> &mdash; Optionally capture audio playing from other Mac apps while your microphone records your local speech. BisonNotes combines usable tracks into one M4A recording.</li>
+  <li><strong>macOS permission</strong> &mdash; Meeting audio capture requires Screen &amp; System Audio Recording permission. The setting explains why access is needed, opens the correct System Settings pane if necessary, and tells you when to quit and reopen BisonNotes. BisonNotes records audio only and does not save screen video.</li>
+  <li><strong>Meeting transcription</strong> &mdash; When Live Transcription is enabled for a meeting-audio recording, BisonNotes queues transcription from the finalized combined file instead of transcribing only the live microphone.</li>
+  <li><strong>Track-safe finalization</strong> &mdash; Microphone and system audio are checked independently. If only one track is usable, that track is saved instead of discarding the entire meeting. Failed source media is retained in Application Support for recovery and is listed in exported diagnostic logs.</li>
+  <li><strong>Mac Share extension</strong> &mdash; Send supported audio and transcript files to BisonNotes from the macOS Share menu. The Mac and iOS extensions use the same protected, authorized import handoff.</li>
+  <li><strong>Desktop recording widget</strong> &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center, then select Record to open the app and begin a new audio note.</li>
+  <li><strong>Focused player</strong> &mdash; The Mac app keeps one recording player window and reuses it when you open a different recording, avoiding conflicting playback controls.</li>
+  <li><strong>Unsaved-edit protection</strong> &mdash; Closing an edited transcript asks for confirmation instead of silently discarding changes.</li>
+  <li><strong>Local AI</strong> &mdash; On Device AI uses MLX Swift by default. Macs with 16 GB or more RAM can select Ternary Bonsai 27B (~8.5 GB).</li>
+  <li><strong>Archive and export</strong> &mdash; Security-scoped archive locations survive relaunch, and native Mac RTF/PDF export and AppKit sharing are available.</li>
+</ul>
+
+<h3 id="bn-pause">Pause &amp; Resume Recording</h3>
+<p>Pause and resume the current recording without stopping the file:</p>
+<ul>
+  <li>Tap the <strong>Pause</strong> button while recording. The timer freezes; audio capture stops; the file stays open.</li>
+  <li>Tap <strong>Resume</strong> to keep adding to the same audio file from where you left off.</li>
+  <li>Works on iPhone, iPad, Apple Watch mute/resume, and Mac. On Mac the underlying pipeline uses <code>AVAudioEngine</code> for a clean pause boundary.</li>
+</ul>
+
+<h3 id="bn-action-btn">iPhone Action Button Integration</h3>
+
+<div class="bn-info"><strong>Available on:</strong> any iPhone with an Action Button (iPhone 15 Pro and later).</div>
+
+<p>Start recording instantly without opening the app first — perfect for capturing thoughts, meetings, or voice notes.</p>
+
+<details>
+  <summary>How to Configure the Action Button</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li>Open the <strong>Settings</strong> app on your iPhone.</li>
+      <li>Navigate to <strong>Action Button</strong>.</li>
+      <li>Select <strong>Shortcut</strong> as the Action Button function.</li>
+      <li>Tap "Choose a Shortcut" &rarr; Search for "Start Recording" or "BisonNotes AI" &rarr; Select it.</li>
+      <li>Press the Action Button to test!</li>
+    </ol>
+    <p><strong>What happens:</strong> The app launches, switches to the Recordings tab, and starts recording immediately. Recording continues even if you switch apps or lock your phone.</p>
+    <div class="bn-ok"><strong>Pro Tip:</strong> The Action Button works even when your phone is locked!</div>
+  </div>
+</details>
+
+<h3>Location Tracking</h3>
+<ul>
+  <li><strong>Automatic</strong> — GPS location captured with each recording</li>
+  <li><strong>Manual</strong> — Add or edit location later in the summary view</li>
+  <li><strong>Privacy</strong> — Location tracking can be disabled in settings</li>
+</ul>
+
+<h3>Import Existing Audio</h3>
+<ol class="bn-sl">
+  <li>Tap "Import Audio Files" on the main screen.</li>
+  <li>Select audio files from your device.</li>
+  <li>Files are automatically added to your recordings library.</li>
+</ol>
+
+<h3 id="bn-import-link">Import From Link</h3>
+<div class="bn-info"><strong>Use web addresses:</strong> BisonNotes can import direct links to audio, video, and transcript files. On Mac, use File &rarr; Import From Link; on iPhone and iPad, use Import From Link on the Recordings screen.</div>
+<ol class="bn-sl">
+  <li><strong>Paste a URL</strong> &mdash; Enter an HTTPS link to an audio/video file, transcript document, or YouTube video.</li>
+  <li><strong>Choose import type</strong> &mdash; Leave Automatic selected, or choose Audio or Video / Transcript when you know what the link contains.</li>
+  <li><strong>Review the result</strong> &mdash; Audio and video links become recordings; transcript links become imported transcripts that can be summarized immediately.</li>
+</ol>
+<p><strong>Supported web link types:</strong></p>
+<ul>
+  <li><strong>Audio:</strong> M4A, MP3, WAV, CAF, AIFF, AIF</li>
+  <li><strong>Video:</strong> MP4, MOV, M4V, AVI, MKV. BisonNotes extracts the audio to M4A.</li>
+  <li><strong>Transcripts/documents:</strong> TXT, MD, VTT, SRT, PDF, DOC, DOCX</li>
+</ul>
+<div class="bn-warn"><strong>YouTube note:</strong> YouTube audio/video is not downloaded directly. BisonNotes tries to import public captions as a transcript. If YouTube blocks the caption request, BisonNotes shows directions, an Open YouTube Video button, and a pasted-transcript box so you can copy the transcript from YouTube and import it for summary generation.</div>
+<div class="bn-info"><strong>Security:</strong> Public HTTP links are blocked. Use HTTPS, localhost, or private-network addresses.</div>
+
+<h3>Archive Audio to iCloud Drive</h3>
+<ol class="bn-sl">
+  <li>Select one or more recordings, or choose the archive option for recordings older than a selected age.</li>
+  <li>Choose an iCloud Drive location when the document picker opens.</li>
+  <li>Optionally remove the local audio after export. Transcripts, summaries, tasks, reminders, and metadata remain in BisonNotes.</li>
+  <li>Use the download button on an archived recording to restore the audio. After restore, BisonNotes removes the archived iCloud Drive copy.</li>
+</ol>
+<div class="bn-info"><strong>Current scope:</strong> New audio archives are iCloud Drive only. Other Files providers may appear in iOS, but BisonNotes leaves local audio untouched if the selected archive destination is not iCloud Drive.</div>
+
+<h3 id="bn-share-ext">Import via Share Extension</h3>
+
+<div class="bn-info"><strong>Share from other apps:</strong> Import audio and transcript files directly from Voice Memos, Files, and other apps using the iOS share sheet.</div>
+
+<ol class="bn-sl">
+  <li><strong>Open the source app</strong> — Voice Memos, Files, or any app with the audio or transcript file.</li>
+  <li><strong>Tap Share</strong> — Select "BisonNotes AI" from the share sheet.</li>
+  <li><strong>Automatic Import</strong> — The file is saved and BisonNotes AI opens to import it.</li>
+  <li><strong>Background Import</strong> — If BisonNotes AI is already running, it detects the new file immediately.</li>
+</ol>
+
+<p><strong>Supported file types:</strong></p>
+<ul>
+  <li><strong>Audio:</strong> M4A, MP3, WAV, CAF, AIFF, AIF</li>
+  <li><strong>Documents:</strong> TXT, MD, VTT, SRT, PDF, DOC, DOCX</li>
+</ul>
+
+<h3 id="bn-combine">Combining Recordings</h3>
+
+<div class="bn-info"><strong>When to use:</strong> Merge two separate recordings into one continuous file — useful if your recording was interrupted.</div>
+
+<details>
+  <summary>How to Combine Recordings</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Select recordings</strong> — Go to Recordings tab &rarr; tap "Select" &rarr; check two recordings.</li>
+      <li><strong>Tap "Combine"</strong> — A "Combine" button appears when two are selected.</li>
+      <li><strong>Choose order</strong> — The app recommends chronological order. Tap the "First" card to swap if needed.</li>
+      <li><strong>Review &amp; confirm</strong> — Check combined duration preview, tap "Combine Recordings".</li>
+      <li><strong>After combining</strong> — The new recording appears in your list. Original recordings remain unchanged. Generate new transcripts and summaries for the combined file.</li>
+    </ol>
+
+    <div class="bn-warn"><strong>Important:</strong> Recordings with existing transcripts or summaries cannot be combined. Delete any existing transcripts/summaries from both recordings first. Why? Transcripts and summaries are tied to specific audio files.</div>
+
+    <p><strong>Tips:</strong></p>
+    <ul>
+      <li>Make sure recordings are in the correct chronological order</li>
+      <li>Combined file size = sum of both originals</li>
+      <li>You'll need to generate new transcripts/summaries afterward</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- AI ENGINE CONFIGURATION                                       -->
+<!-- ============================================================ -->
+<span id="bn23-ai"></span><span id="bn24-ai"></span><span id="bn25-ai"></span>
+<h2 id="bn-ai">AI Engine Configuration</h2>
+
+<div class="bn-info"><strong>Overview:</strong> BisonNotes AI supports multiple AI engines for transcription and summarization. Each has different capabilities, requirements, and pricing.</div>
+
+<!-- On Device AI -->
+<details>
+  <summary>1. On Device AI — Free &amp; Private</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-free">Free</span>
+    <span class="bn-badge bn-b-local">On-Device</span>
+    <p><strong>Type:</strong> Local processing &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Only for initial model download</p>
+
+    <h4>Requirements</h4>
+    <ul>
+      <li><strong>Transcription:</strong> iOS 18.5+ or native macOS 15+, with a Parakeet model download. No additional Local Speaker Labels RAM/device guarantee is published without measured evidence.</li>
+      <li><strong>AI Summary (MLX Swift):</strong> 4GB+ RAM. Uses Ternary Bonsai models scaled to your device.</li>
+      <li><strong>Storage:</strong> MLX models are about 470 MB to 2.3 GB on iPhone and iPad. Native macOS also offers an optional 27B model of about 8.5 GB. Parakeet transcription downloads separately.</li>
+    </ul>
+
+    <h4>MLX Models (by RAM)</h4>
+    <ul>
+      <li><strong>4GB+:</strong> Ternary Bonsai 1.7B (~470 MB) — Compact local summaries for lower-memory devices</li>
+      <li><strong>6GB+:</strong> Ternary Bonsai 4B (~1.1 GB) — Default model for most supported devices</li>
+      <li><strong>8GB+:</strong> Ternary Bonsai 8B (~2.3 GB) — Slower but higher-quality summaries</li>
+      <li><strong>Native macOS, 16GB+:</strong> Ternary Bonsai 27B (~8.5 GB) — Laptop-class reasoning available only in the native Mac app</li>
+    </ul>
+
+    <div class="bn-info"><strong>Migration:</strong> Existing installations with a legacy llama.cpp selection are moved to the closest MLX model tier. Known legacy GGUF files and legacy settings are removed to reclaim storage. Stale selections on devices below 4GB use the Mistral AI fallback because MLX requires 4GB+ RAM.</div>
+
+    <p><strong>Best for:</strong> Privacy-conscious users, offline use, and local summaries without sending transcript text to a cloud provider.</p>
+  </div>
+</details>
+
+<!-- Google AI Studio -->
+<details>
+  <summary>2. Google AI Studio — Gemini Models</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-free">Free tier</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Free tier, then pay-per-use &bull; <strong>Privacy:</strong> Data sent to Google &bull; <strong>Internet:</strong> Required</p>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Get API key at <a href="https://aistudio.google.com" target="_blank" rel="noopener">aistudio.google.com</a></li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Google AI Studio</li>
+      <li>Enter API key, select model, test connection.</li>
+    </ol>
+
+    <h4>Available Models</h4>
+    <ul>
+      <li><strong>Gemini 3.7 Flash</strong> (Default) — Fast and efficient</li>
+      <li><strong>Gemini 3.5 Flash Lite</strong> — Lightweight variant for quick processing</li>
+    </ul>
+    <p><strong>Best for:</strong> Balanced performance and cost, with free tier for getting started</p>
+  </div>
+</details>
+
+<!-- Compatible API -->
+<details>
+  <summary>3. Compatible API — LiteLLM, llama.cpp, Groq, etc.</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud/Local</span>
+    <span class="bn-badge bn-b-free">Flexible</span>
+    <p><strong>Type:</strong> Compatible chat-completion endpoint &bull; <strong>Cost:</strong> Varies &bull; <strong>Privacy:</strong> Depends on provider &bull; <strong>Internet:</strong> Required unless local</p>
+
+    <div class="bn-info"><strong>Note:</strong> This is a single engine option that works with multiple providers. You don't select them as separate engines — just change the base URL and API key.</div>
+
+    <h4>Supported Providers</h4>
+    <ul>
+      <li><strong>LiteLLM</strong> — Base URL: your server (e.g., <code>http://localhost:4000/v1</code>)</li>
+      <li><strong>llama.cpp</strong> — Base URL: <code>http://localhost:8080</code>. API key: "no-key" or empty.</li>
+      <li><strong>Groq</strong> — Base URL: <code>https://api.groq.com/v1</code>. API key from <a href="https://console.groq.com" target="_blank" rel="noopener">console.groq.com</a></li>
+      <li><strong>Nebius</strong> — Your Nebius endpoint URL</li>
+      <li><strong>Custom</strong> — Any compatible chat-completion endpoint</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; AI Settings &rarr; Compatible API</li>
+      <li>Enter API key and base URL for your provider.</li>
+      <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
+      <li>Test the connection.</li>
+    </ol>
+
+    <div class="bn-info"><strong>llama.cpp setup:</strong> Clone from <a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">github.com/ggerganov/llama.cpp</a>, build, run <code>./server --model &lt;model.gguf&gt;</code>. Or use Python: <code>pip install 'llama-cpp-python[server]'</code></div>
+
+    <p><strong>Best for:</strong> Using LiteLLM, llama.cpp, Nebius, Groq, or other compatible services</p>
+  </div>
+</details>
+
+<!-- Mistral AI -->
+<details>
+  <summary>4. Mistral AI — Summarization &amp; Transcription <span class="bn-badge bn-b-free">Free Tier</span></summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-cloud">Cloud</span>
+    <span class="bn-badge bn-b-free">Free Tier Available</span>
+    <span class="bn-badge bn-b-paid">Paid Tiers Available</span>
+    <p><strong>Type:</strong> Cloud &bull; <strong>Cost:</strong> Free tier available (no credit card); paid tiers for higher rate limits &bull; <strong>Internet:</strong> Required</p>
+
+    <div class="bn-ok"><strong>Free Tier:</strong> Mistral AI offers a free Experiment plan with access to all models. No credit card required &mdash; just a verified phone number. Includes ~2 requests/second, 500K tokens/min, and 1B tokens/month. More than enough for personal use. You can upgrade to paid Build or Scale tiers anytime at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a> for higher rate limits and production use.</div>
+
+    <h4>Guided In-App Setup (Recommended)</h4>
+    <p>BisonNotes AI includes a step-by-step onboarding wizard that walks you through the entire process in about 2 minutes:</p>
+    <ol class="bn-sl">
+      <li><strong>Launch the wizard</strong> from any of these places:
+        <ul>
+          <li>First-time setup: Select "Mistral AI (Free)" and tap "Save &amp; Configure"</li>
+          <li>AI Settings: Tap Mistral AI (look for the orange "Free" badge), then "Configure" &rarr; "Set Up Free Account"</li>
+        </ul>
+      </li>
+      <li><strong>Create account</strong> &mdash; The wizard opens console.mistral.ai in an in-app browser. Sign up with email and verify your phone number.</li>
+      <li><strong>Generate API key</strong> &mdash; The wizard opens the API keys page. Create a key named "BisonNotes" and copy it.</li>
+      <li><strong>Paste &amp; validate</strong> &mdash; Paste your key (or use the clipboard button), then test the connection.</li>
+      <li><strong>Done!</strong> &mdash; The wizard auto-configures Mistral Medium for summaries, Voxtral Mini for transcription, and enables speaker diarization.</li>
+    </ol>
+
+    <h4>Summarization Models</h4>
+    <ul>
+      <li><strong>Mistral Large (25.12)</strong> — Most capable, 128K context (Premium)</li>
+      <li><strong>Mistral Medium (25.08)</strong> — Balanced, 128K context (Standard) &mdash; <em>default after guided setup</em></li>
+      <li><strong>Mistral Small 4 (26.03)</strong> — Efficient hybrid instruct/reasoning model with a controllable light reasoning pass (Standard)</li>
+      <li><strong>Mistral Medium 3.5</strong> — Current medium model with adjustable reasoning effort and a 128K app context cap (Standard)</li>
+      <li><strong>Magistral Medium (25.09)</strong> — Economy, 40K context</li>
+    </ul>
+
+    <h4>Transcription</h4>
+    <ul>
+      <li><strong>Voxtral Mini Transcribe</strong> — $0.003/min with optional speaker diarization</li>
+      <li>Supports MP3, MP4, M4A, WAV, FLAC, OGG, WebM</li>
+      <li>Automatic language detection or explicit language code</li>
+      <li>Files over 24MB automatically chunked</li>
+    </ul>
+
+    <h4>Manual Setup (Alternative)</h4>
+    <ol class="bn-sl">
+      <li>Get API key at <a href="https://console.mistral.ai" target="_blank" rel="noopener">console.mistral.ai</a></li>
+      <li>Go to Setup &rarr; AI Settings &rarr; Mistral AI &rarr; Configure</li>
+      <li>Enter API key, select model, test connection.</li>
+      <li>For transcription: Setup &rarr; Transcription Settings &rarr; select "Mistral AI".</li>
+    </ol>
+    <p><strong>Best for:</strong> Free cloud AI with fast summaries and affordable transcription with speaker diarization</p>
+  </div>
+</details>
+
+<!-- Apple Native -->
+<details>
+  <summary>5. Apple Native — Apple Intelligence</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-free">Free</span>
+    <span class="bn-badge bn-b-local">On-Device</span>
+    <p><strong>Type:</strong> On-device &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Not required</p>
+    <div class="bn-ok"><strong>New in v1.8:</strong> Apple Native uses Apple's Foundation Models framework to run AI summarization entirely on-device with no internet connection and no data leaving your device.</div>
+
+    <h4>Requirements</h4>
+    <ul>
+      <li>iOS 26.0 or later</li>
+      <li>iPhone 15 Pro or newer (Apple Intelligence–capable device)</li>
+      <li>Apple Intelligence enabled in Settings &rarr; Apple Intelligence &amp; Siri</li>
+    </ul>
+
+    <h4>Setup</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; AI Settings.</li>
+      <li>Select <strong>Apple Native</strong> from the engine library.</li>
+      <li>No API key or model download required — uses the built-in Foundation Model.</li>
+    </ol>
+
+    <h4>Limitations</h4>
+    <ul>
+      <li>Context window is 4,096 tokens. Long transcripts are automatically chunked and summarized in segments.</li>
+      <li>Only available on devices that support Apple Intelligence.</li>
+    </ul>
+
+    <p><strong>Best for:</strong> Maximum privacy, no setup, and users with Apple Intelligence–capable devices on iOS 26+</p>
+  </div>
+</details>
+
+<!-- Ollama -->
+<details id="bn-ollama">
+  <summary>6. Ollama — Local LLM Server (native Mac only)</summary>
+  <div class="dd">
+    <span class="bn-badge bn-b-local">Local</span>
+    <span class="bn-badge bn-b-free">Free</span>
+    <p><strong>Type:</strong> Local server on the native Mac app &bull; <strong>Cost:</strong> Free &bull; <strong>Privacy:</strong> 100% local &bull; <strong>Internet:</strong> Required for installation and model downloads only</p>
+
+    <div class="bn-info"><strong>Mac only:</strong> Ollama is available in BisonNotes only on native macOS. It is not offered as an iPhone or iPad engine. BisonNotes connects to Ollama running on the same Mac through the loopback address <code>http://localhost:11434</code>.</div>
+    <div class="bn-info"><strong>Existing iPhone/iPad users:</strong> If an older version saved Ollama as your engine, BisonNotes automatically switches to the best available on-device engine when you next launch the app. If the device cannot run an on-device model, it uses another configured fallback.</div>
+
+    <h4>Install Ollama on your Mac</h4>
+    <ol class="bn-sl">
+      <li>Open the official <a href="https://ollama.com/download/mac" target="_blank" rel="noopener">Ollama for macOS download</a> page. The current macOS app requires macOS 14 Sonoma or later.</li>
+      <li>Open the downloaded disk image, drag <strong>Ollama</strong> to <strong>Applications</strong>, and launch it.</li>
+      <li>Open Terminal and download at least one model, for example:
+        <pre><code>ollama pull llama3.2</code></pre>
+        You can choose another model from the <a href="https://ollama.com/library" target="_blank" rel="noopener">Ollama model library</a>; larger models need more memory and storage.
+      </li>
+      <li>Leave Ollama running. If you use the command line instead of the Mac app, <code>ollama serve</code> starts the local server.</li>
+    </ol>
+
+    <h4>Connect BisonNotes to Ollama</h4>
+    <ol class="bn-sl">
+      <li>Go to Setup &rarr; AI Settings &rarr; Ollama.</li>
+      <li>On the native Mac app, leave Server URL as <code>http://localhost</code> and Port as <code>11434</code>. BisonNotes seeds these values when you choose Ollama unless you already configured a custom server.</li>
+      <li>Choose <strong>Test Connection</strong>; once connected, the available model list loads. Select the model you downloaded, then save/dismiss Ollama Settings.</li>
+      <li>Select Ollama in the Engine Library and generate a summary from a transcript.</li>
+    </ol>
+
+    <div class="bn-info"><strong>Troubleshooting:</strong> If the connection test fails, open Ollama from Applications and try again. You can verify the local API in Terminal with <code>curl http://localhost:11434/api/tags</code>. The default loopback connection keeps transcript text on the Mac.</div>
+    <p><strong>Best for:</strong> Privacy, customizable models, offline use</p>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- TRANSCRIPTION CONFIGURATION                                   -->
+<!-- ============================================================ -->
+<h2 id="bn-transcription">Transcription Configuration</h2>
+
+<div class="bn-info"><strong>Privacy first:</strong> For complete privacy, use On Device transcription. Your audio is processed entirely on your device and never leaves your iPhone or iPad.</div>
+
+<h3>Engine Selection</h3>
+<ol class="bn-sl">
+  <li>Go to Setup &rarr; Transcription Settings.</li>
+  <li>Select your preferred transcription engine.</li>
+  <li>Configure and test the connection.</li>
+</ol>
+
+<h3>Available Engines</h3>
+<ul>
+  <li><strong>On Device (Parakeet)</strong> — Default. Free, private, works offline. Requires model download.</li>
+  <li><strong>Mistral AI</strong> — Voxtral Mini with optional speaker diarization. Free tier available; $0.003/min on paid tiers.</li>
+  <li><strong>Whisper (Local Server)</strong> — Your own Whisper server (REST API or Wyoming protocol).</li>
+</ul>
+
+<h3>Transcription Engine Comparison</h3>
+<div class="bn-tw">
+  <table>
+    <thead><tr><th>Engine</th><th>Type</th><th>Speakers</th><th>Cost</th></tr></thead>
+    <tbody>
+      <tr><td><strong>On-Device (Parakeet)</strong></td><td>Local</td><td>Optional Local Speaker Labels after completed audio</td><td>Free (Default)</td></tr>
+      <tr><td><strong>Mistral AI</strong> <span class="bn-badge bn-b-free">Free Tier</span></td><td>Cloud</td><td>Yes</td><td>Free tier included; paid tiers for higher limits (~$0.003/min transcription)</td></tr>
+      <tr><td><strong>Whisper (local)</strong></td><td>Local</td><td>No</td><td>Free</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- On Device Transcription Setup -->
+<details>
+  <summary>On Device Transcription (Parakeet) — Default</summary>
+  <div class="dd">
+    <div class="bn-ok"><strong>v2.1:</strong> Parakeet is the default on-device transcription path. BisonNotes now keeps valid cached model files across app updates or settings resets, clears stale download state when files are missing, and avoids tiny final tail chunks on long local transcriptions.</div>
+
+    <h4>Initial Setup</h4>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> Setup &rarr; Transcription Settings &rarr; select "On Device" &rarr; Parakeet is selected by default.</li>
+      <li><strong>Choose a model:</strong> Parakeet v2 is English-only with stronger long-form English recall. Parakeet v3 supports multilingual transcription across 25 European languages.</li>
+      <li><strong>Download the model:</strong> Tap "Download" to get the selected Parakeet model. Progress now shows checking, downloading, preparing, and ready states.</li>
+      <li><strong>Requirements:</strong> iOS 18.5+ or native macOS 15+, model download required.</li>
+    </ol>
+
+    <div class="bn-info"><strong>Migration note:</strong> WhisperKit was removed in v1.8. Users who had WhisperKit selected are automatically migrated to Parakeet on first launch.</div>
+    <div class="bn-ok"><strong>Benefits:</strong> Complete privacy, works offline, no API costs.</div>
+
+    <h4>Local Speaker Labels (Optional)</h4>
+    <p>Local Speaker Labels are opt-in and off by default. They run only after a completed Parakeet recording, imported audio file, or transcript re-run. They run once against the complete source audio after Parakeet ASR and reassembly; they never run during Live Transcription or in real time.</p>
+    <ol class="bn-sl">
+      <li><strong>Enable:</strong> In On Device settings, turn on <strong>Local Speaker Labels</strong>. Enabling the toggle does not download a model.</li>
+      <li><strong>Choose a method:</strong> <strong>Offline VBx — Recommended</strong> estimates the number of speakers without an app-side two- or three-speaker cap. <strong>LS-EEND — Experimental</strong> uses the DIHARD3 500 ms model and supports up to 10 speakers; labels may be over-segmented or less stable, and LS-EEND is limited to complete files up to one hour.</li>
+      <li><strong>Prepare explicitly:</strong> Tap <strong>Download Speaker Model</strong> for the selected method. This is the initial HTTPS download; cached use works offline afterward, audio stays on the device, and no API key is required.</li>
+      <li><strong>Manage models:</strong> Parakeet, Offline VBx, and LS-EEND have independent readiness, cached files, unload, and delete state. Deleting a speaker model does not delete Parakeet or the other speaker models. Switching methods preserves caches and does not silently prepare a model.</li>
+      <li><strong>Rename speakers:</strong> Open the completed transcript, use its existing speaker controls to rename a speaker, and save. The saved mapping is used by speaker-aware transcript and summary views.</li>
+    </ol>
+    <div class="bn-warn"><strong>Fallback:</strong> If the selected model is missing, LS-EEND exceeds one hour, or timing/alignment/diarization fails, BisonNotes keeps the complete unlabeled Parakeet transcript and shows a visible warning. It does not silently switch methods or upload audio.</div>
+    <div class="bn-info"><strong>Measured limits:</strong> This guide does not publish model sizes, RAM/device guarantees, performance, or accuracy. Those claims require the opt-in model/accuracy gate in the regression regimen.</div>
+  </div>
+</details>
+
+<!-- Whisper Local Server -->
+<details>
+  <summary>Whisper (Local Server) Setup</summary>
+  <div class="dd">
+    <ol class="bn-sl">
+      <li><strong>Install a Whisper-compatible server:</strong> Run your preferred local server on port 9000, then configure its REST API or Wyoming endpoint below.</li>
+      <li><strong>Configure:</strong> Setup &rarr; Transcription Settings &rarr; Whisper (Local Server). Set server URL and port (default: 9000). Choose protocol (REST API or Wyoming) and model size.</li>
+    </ol>
+    <div class="bn-info"><strong>Protocols:</strong> REST API = traditional HTTP file uploads. Wyoming = modern WebSocket streaming.</div>
+  </div>
+</details>
+
+<h3>Large File Processing</h3>
+<ul>
+  <li><strong>Automatic Chunking</strong> — Files over 5 minutes are automatically split</li>
+  <li><strong>Progress Tracking</strong> — Real-time updates</li>
+  <li><strong>Background Processing</strong> — Continues when app is minimized</li>
+  <li><strong>Configurable Timeouts</strong> — Adjustable processing time limits</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- TRANSCRIPT CLEANUP                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-cleanup">Transcript Cleanup</h2>
+<p>Speech-to-text writes down exactly what was said, which is not always easy to read. Transcript Cleanup rewrites a finished English transcript into written English: it adds punctuation and sentence breaks, removes fillers such as &ldquo;um&rdquo; and &ldquo;uh&rdquo;, and resolves spoken corrections. It runs entirely on your device using <strong>S1-mini by Superwhisper</strong>; nothing is uploaded.</p>
+
+<div class="bn-ok"><strong>Your original transcript is always kept.</strong> The cleaned text is stored next to the original, and turning the feature off does not delete cleaned text you already have.</div>
+
+<h3>Setting it up</h3>
+<ol class="bn-sl">
+  <li><strong>Open Transcription Settings</strong> and find the Transcript Cleanup section.</li>
+  <li><strong>Download S1-mini.</strong> BisonNotes never downloads it on its own. The section says <em>S1-mini is ready on this device</em> when it finishes.</li>
+  <li><strong>Turn on Clean up transcripts (English only)</strong> to clean every new file transcript once it finishes.</li>
+</ol>
+<p>To clean one transcript without turning the setting on, open it and choose <strong>Clean up English transcript</strong>. This works on imported transcripts too.</p>
+
+<h3>Original and Cleaned</h3>
+<ul>
+  <li>When a transcript has cleaned text, a <strong>Transcript version</strong> control lets you switch between <strong>Original</strong> and <strong>Cleaned</strong>. Transcripts always open on Original.</li>
+  <li>Copy, share, and text export follow the version you are viewing.</li>
+  <li>Summaries, tasks, reminders, and titles are always made from the original text.</li>
+</ul>
+
+<h3>Where it works</h3>
+<p>Transcript Cleanup needs a Mac with Apple silicon or a supported iPhone or iPad. It is not available on Apple Watch or in the iOS Simulator. On a device that cannot run it, the setting explains why.</p>
+
+<h3>What it will not do</h3>
+<ul>
+  <li>It does not translate. Transcripts in other languages are left alone, with a note explaining why.</li>
+  <li>It does not change speaker labels or timing.</li>
+  <li>It does not add facts or summarize.</li>
+  <li>It never runs on Live Transcription text.</li>
+</ul>
+<div class="bn-warn"><strong>If a cleanup pass cannot finish</strong> &mdash; the model is missing, the language is not confirmed as English, the device runs short of resources, or you cancel it &mdash; BisonNotes keeps the original transcript and tells you what happened.</div>
+
+<p>To reclaim the space, choose <strong>Remove Download</strong>. Transcripts you already cleaned keep their cleaned text.</p>
+
+<!-- ============================================================ -->
+<!-- WORKING WITH SUMMARIES                                        -->
+<!-- ============================================================ -->
+<h2 id="bn-summaries">Working with Summaries</h2>
+
+<h3>Viewing Summaries</h3>
+<ol class="bn-sl">
+  <li>Tap the "Summaries" tab.</li>
+  <li>Browse recordings with AI-generated summaries.</li>
+  <li>Tap any summary to view details.</li>
+</ol>
+
+<h3>Summary Features</h3>
+<ul>
+  <li><strong>Expandable Sections</strong> &mdash; Tap to expand/collapse</li>
+  <li><strong>Task Extraction</strong> &mdash; AI-identified actionable items</li>
+  <li><strong>Reminder Detection</strong> &mdash; Time-sensitive reminders</li>
+  <li><strong>Priority Indicators</strong> &mdash; Color-coded priorities</li>
+  <li><strong>Location Maps</strong> &mdash; Interactive maps showing recording location</li>
+  <li><strong>Attachments</strong> &mdash; Attach text, PDF, or other documents to a summary. Inline previews are available for text and PDF; other formats open with Quick Look. Note exports save your notes for sharing.</li>
+  <li><strong>Send to Reminders / Calendar</strong> &mdash; Push extracted tasks and reminders into Apple Reminders, Apple Calendar, or <strong>Google Calendar</strong> (uses the Google Calendar app if installed, falls back to the web).</li>
+</ul>
+
+<h3>Search &amp; Filtering</h3>
+<p>Search is available in three views:</p>
+<ul>
+  <li><strong>Summaries View</strong> — Search content, tasks, reminders, titles</li>
+  <li><strong>Transcripts View</strong> — Search transcript text</li>
+  <li><strong>Recordings View</strong> — Search by recording name</li>
+</ul>
+<p>Tap the search bar, type your terms — results filter in real-time (case-insensitive, partial match).</p>
+
+<h4>Date Filters</h4>
+<p>Tap the filter icon &rarr; select start/end dates &rarr; tap "Apply". Clear with the X on the filter banner. Filters combine with search and persist until cleared.</p>
+
+<h3>Editing Metadata</h3>
+<details>
+  <summary>Change Title, Date, or Location</summary>
+  <div class="dd">
+    <h4>Recording Title</h4>
+    <p>You can rename a recording from three places:</p>
+    <ul>
+      <li>The audio player view (tap the title to edit)</li>
+      <li>The transcript editor (tap the title at the top)</li>
+      <li>The summary view &mdash; &ldquo;Titles&rdquo; section &rarr; &ldquo;Edit&rdquo; &rarr; enter a new title or pick one of the AI-generated alternatives &rarr; &ldquo;Use This Title&rdquo;.</li>
+    </ul>
+
+    <h4>Custom Date &amp; Time</h4>
+    <p>Open summary &rarr; &ldquo;Recording Date &amp; Time&rdquo; &rarr; &ldquo;Set Custom Date &amp; Time&rdquo; &rarr; use pickers &rarr; &ldquo;Save&rdquo;. BisonNotes AI also persists the explicit recording start timestamp so date sorting matches when the audio was captured, not when it was imported.</p>
+
+    <h4>Location</h4>
+    <p>Open summary &rarr; location section &rarr; &ldquo;Add Location&rdquo; or &ldquo;Edit Location&rdquo;. Choose: Current Location (GPS), Map Selection, or Manual Entry &rarr; &ldquo;Save&rdquo;.</p>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- AUDIO PLAYBACK                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-playback">Audio Playback</h2>
+
+<h3>Basic Playback</h3>
+<ol class="bn-sl">
+  <li>Go to the "Recordings" tab.</li>
+  <li>Tap any recording to play.</li>
+  <li>Controls: Play/Pause (center), Skip 15s (sides), Scrub (drag progress bar).</li>
+</ol>
+
+<h3>Advanced Playback</h3>
+<ul>
+  <li><strong>Seek Control</strong> — Drag scrubber for precise positioning</li>
+  <li><strong>Background Playback</strong> — Audio continues when app is minimized</li>
+  <li><strong>Audio Session Management</strong> — Handles interruptions gracefully</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- SETTINGS & CONFIGURATION                                      -->
+<!-- ============================================================ -->
+<h2 id="bn-settings">Setup &amp; Configuration</h2>
+
+<h3>Simple Setup vs Additional Settings</h3>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Simple Setup</h4>
+    <p>Appears on first launch. Quick setup for common configurations.</p>
+    <ul>
+      <li>Auto-detects your current config</li>
+      <li>Three quick options: Mistral AI, On Device AI, or Advanced</li>
+      <li>Preserves settings when switching</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Additional Settings</h4>
+    <p>Full control over all options.</p>
+    <ul>
+      <li>All current AI engines, including On Device AI (MLX Swift), cloud providers, Ollama on native macOS, and Apple Native</li>
+      <li>All transcription engines</li>
+      <li>Microphone selection</li>
+      <li>Preferences, iCloud, background processing, diagnostics, and experimental model toggles</li>
+    </ul>
+  </div>
+</div>
+
+<div class="bn-info"><strong>Switching:</strong> Simple &rarr; Additional Settings: tap "Additional Settings" button. Additional Settings &rarr; Simple: the simple page auto-detects your config when you return.</div>
+
+<h3>Audio Settings</h3>
+<ul>
+  <li><strong>Quality:</strong> Whisper Optimized (22 kHz, 64 kbps AAC) &mdash; optimized for voice</li>
+  <li><strong>Microphone Selection:</strong> Choose from available mics (built-in, Bluetooth, USB, audio interface). Saved across recordings. Auto-fallback if unavailable. Available on iPhone, iPad, and Mac.</li>
+  <li><strong>Mixed Audio:</strong> Record without interrupting system audio (iOS / iPadOS)</li>
+  <li><strong>Background Recording:</strong> Continue when the app is minimized (iOS / iPadOS) or behind other windows (Mac)</li>
+  <li><strong>Pause &amp; Resume</strong>: Pause without ending the file; resume to keep adding to the same recording</li>
+</ul>
+
+<h3>AI Settings</h3>
+<ul>
+  <li><strong>Engine Selection</strong> &mdash; Choose from local, cloud, compatible API, Ollama on native macOS, and Apple Native engines</li>
+  <li><strong>Summary Detail</strong> &mdash; Choose Brief, Balanced, or Detailed narrative output; tasks, reminders, titles, and content type remain factual metadata.</li>
+  <li><strong>Summary Thinking</strong> &mdash; Choose Off or Light. Light is applied only when the selected model has a known safe thinking control; reasoning text is not shown in the final summary.</li>
+  <li><strong>Model Configuration</strong> &mdash; Temperature, max tokens, and supported model-specific controls.</li>
+  <li><strong>Connection Testing</strong> &mdash; Verify API connectivity</li>
+  <li><strong>Batch Regeneration</strong> &mdash; Update all summaries with new engine</li>
+</ul>
+
+<h3>Comedy Mode</h3>
+<p>Comedy Mode adds an optional tone to AI-generated summaries. Turn it on in Settings, pick <em>Snarky</em> or <em>Funny</em>, and supported engines will rewrite only the narrative summary in that voice. Tasks, reminders, titles, and facts remain grounded in the transcript. Disable it to return to the standard, neutral summary style.</p>
+
+<!-- ============================================================ -->
+<!-- ACCESSIBILITY                                                 -->
+<!-- ============================================================ -->
+<h2 id="bn-accessibility">Accessibility</h2>
+
+<div class="bn-info"><strong>Accessibility goal:</strong> BisonNotes AI is designed so common recording, transcription, summary, setup, settings, and watch recording tasks can be completed with Apple accessibility features where the platform supports them.</div>
+
+<h3>Supported accessibility features</h3>
+<ul>
+  <li><strong>VoiceOver:</strong> Main controls, rows, playback actions, setup options, settings, transcripts, summaries, and Apple Watch recording controls include labels, values, and hints.</li>
+  <li><strong>Voice Control:</strong> Common buttons and repeated row actions use clear names, often with the recording, transcript, or summary title included.</li>
+  <li><strong>Larger Text:</strong> BisonNotes uses SwiftUI system text styles and wrapping layouts across the main app surfaces.</li>
+  <li><strong>Reduced Motion:</strong> Recording indicators on iPhone, iPad, and Apple Watch avoid relying on pulsing animation when Reduce Motion is enabled.</li>
+  <li><strong>Contrast and non-color state:</strong> Important states such as recording availability, local-only status, transcript/summary availability, and sync state are exposed as text, not color alone.</li>
+  <li><strong>Keyboard access:</strong> Native Mac and iPad keyboard users should be able to move through standard buttons, lists, settings, dialogs, and forms with keyboard navigation and Full Keyboard Access.</li>
+</ul>
+
+<h3>Common accessible workflows</h3>
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Recording and playback</h4>
+    <p>Start recording, pause/resume, stop, browse recordings, play/pause audio, skip, scrub in 15-second accessibility increments, rename, export, and manage Keep on This Device state.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Transcripts and summaries</h4>
+    <p>Open transcript rows, generate summaries, edit transcript text, review summary sections, export reports, update titles, manage tasks/reminders, and edit date or location metadata.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Setup and settings</h4>
+    <p>Select processing method, open Additional Settings, adjust transcription/AI/iCloud options, review background processing, and export diagnostic logs.</p>
+  </div>
+  <div class="bn-gc">
+    <h4>Apple Watch</h4>
+    <p>The main watch button announces ready, recording, paused, saving, transferring, and unavailable states. Mute, transfer progress, low battery, and error recovery are also labeled.</p>
+  </div>
+</div>
+
+<h3>Platform notes</h3>
+<ul>
+  <li><strong>iPhone and iPad:</strong> Accessibility coverage includes setup, recording, imports, recordings, playback, transcripts, summaries, and settings. Control Center and Action Button recording still require a supported real device.</li>
+  <li><strong>Native macOS:</strong> The shared SwiftUI surfaces use the same accessibility labels and values as iPad, with Mac-native windows, menus, and Settings. For releases, also test macOS VoiceOver, Full Keyboard Access, keyboard navigation, file import, microphone recording, and window resizing on a real Mac.</li>
+  <li><strong>Apple Watch:</strong> The watch app supports VoiceOver-friendly recording state and reduced motion behavior, but watch flows must be verified on a physical watch.</li>
+</ul>
+
+<h3>Known limitations</h3>
+<ul>
+  <li>Transcripts are not the same as synchronized captions. Do not treat BisonNotes transcripts as caption tracks for all media playback.</li>
+  <li>Audio descriptions are not supported.</li>
+  <li>External provider account pages, system permission prompts, Files pickers, and share sheets are controlled by Apple or the provider and may have separate accessibility behavior.</li>
+  <li>Hardware-dependent flows such as microphone capture, Apple Watch transfer, iCloud sync, Control Center, and Action Button recording require real-device testing.</li>
+</ul>
+
+<div class="bn-ok"><strong>Feedback:</strong> If an accessibility task does not work as expected, include your device model, OS version, BisonNotes AI version, the accessibility feature you were using, and the task that failed when reporting the issue.</div>
+
+<!-- ============================================================ -->
+<!-- PRIVACY & SECURITY                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-privacy">Privacy &amp; Security</h2>
+
+<div class="bn-ok"><strong>v1.11 security hardening:</strong> BisonNotes AI now stores all sensitive credentials in the iOS Keychain, applies file protection to recordings and notes, and validates user-configurable AI endpoints to block insecure cleartext destinations.</div>
+
+<h3>How credentials are stored</h3>
+<ul>
+  <li><strong>Keychain-backed storage</strong> &mdash; Compatible API keys, Mistral keys, Google AI keys, and Whisper auth tokens all live in the iOS Keychain.</li>
+  <li><strong>Automatic migration</strong> &mdash; Existing values stored in legacy locations are migrated into the Keychain on first launch of v1.11 and then removed from their old locations.</li>
+  <li><strong>iCloud settings backup</strong> &mdash; Sensitive settings (API keys) are excluded from iCloud settings backups by default. If a previous backup contained sensitive values, they are restored into the Keychain rather than re-saved to settings storage.</li>
+</ul>
+
+<h3>File protection</h3>
+<p>BisonNotes AI applies explicit iOS file protection to:</p>
+<ul>
+  <li>Audio recordings, imported audio, restored archives, and watch backups</li>
+  <li>Live transcription placeholder audio</li>
+  <li>Summary attachments and their metadata</li>
+  <li>Persistent error logs</li>
+  <li>The Core Data SQLite store and related files</li>
+</ul>
+
+<h3>Endpoint safety</h3>
+<p>User-configurable AI services (compatible API, Ollama on native macOS, and Whisper) are checked against an endpoint policy:</p>
+<ul>
+  <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
+  <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>
+  <li>HTTPS / WSS public endpoints (Groq, Nebius, and similar providers) work as expected.</li>
+</ul>
+<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public address while you set it up &mdash; it does not weaken transport security for any other engine.</div>
+
+<h3>Share Extension hardening</h3>
+<p>Imports from the Share Extension are now authorized with one-time tokens before the main app scans the shared container, and the imported files themselves are file-protected. Full file paths are no longer written to logs.</p>
+
+<!-- ============================================================ -->
+<!-- TROUBLESHOOTING                                               -->
+<!-- ============================================================ -->
+<h2 id="bn-trouble">Troubleshooting</h2>
+
+<details>
+  <summary>Recording Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>No Audio:</strong> Check microphone permissions in Settings &rarr; Privacy</li>
+      <li><strong>Poor Quality:</strong> Adjust audio quality settings, ensure proper mic distance</li>
+      <li><strong>Background Recording:</strong> Enable in app settings</li>
+      <li><strong>Mac meeting audio missing:</strong> Enable Record Meeting Audio in BisonNotes Settings &rarr; Recording, grant BisonNotes access in macOS System Settings &rarr; Privacy &amp; Security &rarr; Screen &amp; System Audio Recording, then quit and reopen BisonNotes. If permission or mixing fails, the app still saves microphone audio.</li>
+      <li><strong>A call interrupted a recording:</strong> The completed portion is preserved and appears in Recordings. If iOS would not return the microphone while BisonNotes was in the background, recovery is deferred &mdash; open the app to let it finish, then start a new recording if you still need one.</li>
+      <li><strong>Mac meeting recording has system audio but no microphone:</strong> The microphone could not start or was lost during capture, and BisonNotes deliberately saved the usable track. Check macOS microphone permission and the selected input, reconnect the device, and make a short test recording.</li>
+      <li><strong>Preferred Mac microphone disappeared:</strong> Reconnect the USB, Bluetooth, or interface input. BisonNotes temporarily uses the system default while it is absent and reselects the saved microphone when it returns.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>AI Engine Issues</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Connection Failed:</strong> Check internet and API keys</li>
+      <li><strong>Timeout Errors:</strong> Increase timeout settings</li>
+      <li><strong>Authentication Errors:</strong> Verify API credentials</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Transcription Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>No Transcription:</strong> Check engine configuration</li>
+      <li><strong>Poor Quality:</strong> Try a different engine or model</li>
+      <li><strong>Large File Issues:</strong> Enable chunking for files over 5 minutes</li>
+      <li><strong>A model stays "not ready" after an interrupted download:</strong> A multi-part model interrupted mid-copy is now correctly reported as incomplete. Start the model setup again; the retained download cache lets it resume rather than start over.</li>
+      <li><strong>Parakeet says a model is missing:</strong> Open Transcription Settings and re-download the selected Parakeet model. BisonNotes will reuse valid cached files when they exist, but clears stale settings if the files were removed.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Transcript Cleanup Problems</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>The cleanup setting is greyed out:</strong> This device cannot run the on-device model &mdash; for example an Intel Mac, a device without enough memory, or the Simulator. The setting shows the reason.</li>
+      <li><strong>A transcript finished but was not cleaned:</strong> S1-mini may not be downloaded on this device, the text may not be confirmed as English, or cleanup was cancelled. The transcript itself is always saved.</li>
+      <li><strong>The language could not be confirmed as English:</strong> Very short transcripts do not give the language check enough to work with. Use <strong>Clean up English transcript</strong> to run it anyway; text that is clearly another language is still refused.</li>
+      <li><strong>Cleanup says the transcript changed while it was running:</strong> The transcript was edited or synced while cleanup ran, so the cleaned text was discarded. Run cleanup again from the transcript.</li>
+      <li><strong>Cleanup is slow on a long recording:</strong> It works one speaker turn at a time and does not run at the same time as an on-device summary. A pass that runs too long stops on its own and keeps the original.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Data Issues</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Missing Recordings:</strong> Use Data Migration tools</li>
+      <li><strong>Corrupted Data:</strong> Clear and re-import data</li>
+      <li><strong>Sync Problems:</strong> Check iCloud settings</li>
+      <li><strong>A backup says it is waiting:</strong> An automatic sync was already running. Your request starts as soon as that run finishes; leave the app open.</li>
+      <li><strong>Sync reported as deferred:</strong> iCloud asked BisonNotes to wait before sending more requests. The work is kept and retried &mdash; most common right after a large first sync.</li>
+      <li><strong>A deleted item came back:</strong> Since 2.5, a deletion and the note telling your other devices about it are saved together, so deleted items stay deleted. If one reappears from a device still on an older version, update that device and delete the item once more.</li>
+      <li><strong>Not enough space to upload audio:</strong> BisonNotes tells you once and keeps syncing text, summaries, and settings. Audio uploads resume when there is free space.</li>
+    </ul>
+  </div>
+</details>
+
+<h3>Performance Tips</h3>
+<ul>
+  <li><strong>Battery:</strong> Use local engines when battery is low</li>
+  <li><strong>Memory:</strong> Close other apps during large file processing</li>
+  <li><strong>Storage:</strong> Regularly clean up old recordings. Since v2.4, BisonNotes also sweeps its own caches in the background &mdash; unused local-model downloads and iCloud&rsquo;s copies of transferred audio &mdash; so free space can keep increasing across the first launches after updating. Your recordings, transcripts, summaries, attachments, and archived audio are never touched by that sweep.</li>
+  <li><strong>Network:</strong> Use local engines to reduce data usage</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- ADVANCED FEATURES                                             -->
+<!-- ============================================================ -->
+<h2 id="bn-advanced">Advanced Features</h2>
+
+<details>
+  <summary>Background Processing</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Job Queue</strong> &mdash; Multiple operations queued and processed in order</li>
+      <li><strong>Progress Tracking</strong> &mdash; Real-time updates with accurate status display</li>
+      <li><strong>Error Recovery</strong> &mdash; Automatic retry for failures</li>
+      <li><strong>Stale Job Detection</strong> (v1.7) &mdash; Intelligent detection and recovery of stuck jobs, with timeouts based on actual processing start time</li>
+      <li><strong>Job Cancellation</strong> (v1.7) &mdash; Properly cancel and interrupt running jobs when the app is backgrounded or closed</li>
+      <li><strong>On Device AI Handling</strong> &mdash; Local AI jobs are gracefully interrupted when the app is backgrounded, since GPU processing requires the app to stay open</li>
+      <li><strong>Live Transcription</strong> (v1.8) &mdash; On-device speech-to-text streamed in real time during recording via SFSpeechRecognizer; transcript auto-saved when recording stops</li>
+      <li><strong>Duplicate Summary Cleanup</strong> (v1.8) &mdash; Automatically reconciles superseded summaries during iCloud sync; local troubleshooting reports identify relationship issues without deleting content</li>
+      <li><strong>Temporary audio cleanup</strong> (v2.1) &mdash; Conservative startup cleanup removes stale scratch, merge, and chunk files left by failed or interrupted audio workflows without touching active recordings.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>File Management</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Import/Export</strong> &mdash; M4A, MP3, WAV, CAF, AIFF, AIF, plus transcript documents such as TXT, MD, VTT, SRT, PDF, DOC, and DOCX</li>
+      <li><strong>Import From Link</strong> (v2.3) &mdash; Import direct HTTPS links for audio/video files and transcript documents; YouTube links can import public captions or fall back to pasted transcript text when captions are blocked</li>
+      <li><strong>Audio Export</strong> (v1.8) &mdash; Share any recording as an audio file via the iOS share sheet</li>
+      <li><strong>Clean Audio Export</strong> (v1.10) &mdash; Exports use a clean, user-friendly filename derived from the recording title</li>
+      <li><strong>Audio Archive</strong> &mdash; Offload selected or older audio files to iCloud Drive, keep an in-app restore pointer, and remove the archived cloud copy after restore</li>
+      <li><strong>Video Import</strong> (v1.8) &mdash; Import video files; audio is automatically extracted to M4A</li>
+      <li><strong>Audio Cleanup</strong> (v1.8) &mdash; Optional pre-transcription DSP: high-pass filter, noise gate, dynamic normalization, peak limiting</li>
+      <li><strong>Share Extensions</strong> &mdash; Import supported audio and transcript files from iPhone, iPad, and Mac Share menus with one-time token authorization. If another import is already active, staged files remain available for a later retry instead of being discarded.</li>
+      <li><strong>Combining Recordings</strong> &mdash; Merge two into one</li>
+      <li><strong>PDF Export</strong> &mdash; Professional reports with metadata, maps, page numbers</li>
+      <li><strong>File Relationships</strong> &mdash; Audio/transcript/summary links maintained</li>
+      <li><strong>Orphaned File Detection</strong> &mdash; Find and clean disconnected files</li>
+      <li><strong>Selective Deletion</strong> &mdash; Choose what to keep</li>
+      <li><strong>File Protection</strong> (v1.11) &mdash; Recordings, attachments, notes, and the Core Data store are stored with explicit iOS file protection</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Recording Widgets, Watch Complications &amp; Control Center</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Mac Recording Widget</strong> (v2.3) &mdash; Add the small or medium BisonNotes widget to the Mac desktop or Notification Center and select Record to open the app and start a new audio note.</li>
+      <li><strong>Apple Watch Complications</strong> (v1.9) &mdash; Surface live recording state on watch faces. Tap the complication to open the watch app.</li>
+      <li><strong>Control Center Recording Widget</strong> (iOS 18+) &mdash; Add the BisonNotes recording control to Control Center to start/stop recordings without opening the app.</li>
+      <li><strong>Watch App</strong> (v2.0) &mdash; Full standalone recording on Apple Watch with one large tap target: tap to record, tap to stop, and use mute to pause/resume the same file.</li>
+      <li><strong>Watch Sync</strong> (v2.0) &mdash; The watch sends the finished audio file to iPhone with WatchConnectivity. The phone imports it, avoids duplicate imports, and sends queued success/failure confirmations back to the watch.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Location Intelligence</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>GPS Integration</strong> — Automatic capture</li>
+      <li><strong>Reverse Geocoding</strong> — Coordinates to addresses</li>
+      <li><strong>Smart Search</strong> — 3-tier fallback system</li>
+      <li><strong>University Database</strong> — Built-in campus mapping</li>
+      <li><strong>Interactive Maps</strong> — View recording locations</li>
+      <li><strong>Manual Location</strong> — Add locations after recording</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>iCloud Backup &amp; Sync</summary>
+  <div class="dd">
+    <div class="bn-warn">
+      <strong>iCloud Sync Notice:</strong> BisonNotes AI and uploads to iCloud are not HIPAA-compliant. When iCloud Sync is enabled, eligible recordings, transcripts, summaries, and selected settings may be uploaded to your private iCloud account.
+    </div>
+    <ul>
+      <li><strong>iCloud Backup</strong> &mdash; Full backup of all data to iCloud Drive</li>
+      <li><strong>Audio Archive to iCloud Drive</strong> &mdash; Space-saving audio offload with tracked restore locations. Third-party Files providers are paused for archive targets for now.</li>
+      <li><strong>Auto-Backup</strong> (v1.7) &mdash; Automatically backs up when new recordings are created</li>
+      <li><strong>Automatic cross-device sync</strong> &mdash; When iCloud Sync is enabled, BisonNotes reconciles eligible recordings, transcripts, and summaries when the app launches or becomes active. The Include audio files checkbox controls whether audio files are uploaded and restored.</li>
+      <li><strong>CloudKit Sync</strong> &mdash; Optional summary synchronization across devices with paginated queries and schema-safe fallback for reliability</li>
+      <li><strong>Batched sync</strong> (v2.4) &mdash; A routine pass reads the dataset in a small number of batched requests and issues one batched save and one batched delete, instead of a request per record. Deletion markers from other devices are worked out together and applied once.</li>
+      <li><strong>Throttle-aware retries</strong> (v2.4) &mdash; BisonNotes honors the wait iCloud asks for. A long wait becomes a deferred run that is retried later; queued work is never dropped.</li>
+      <li><strong>One operation at a time</strong> (v2.4) &mdash; Sync requests that arrive during a run join it or collapse into a single follow-up, and a backup or restore you start yourself reports that it is waiting rather than returning zeroed counts.</li>
+      <li><strong>Metadata before audio</strong> (v2.4) &mdash; Recording details sync without waiting on audio uploads, and audio transfer is measured separately.</li>
+      <li><strong>Mac, iPhone, and iPad sync</strong> &mdash; iOS, iPadOS, and native macOS use the shared iCloud container <code>iCloud.Bison-Networking.BisonNotes-AI</code>. Devices must use the same Apple ID and CloudKit environment. Local Debug builds use the CloudKit development environment, while TestFlight and App Store builds use production, so a Debug Mac build will not see production iPhone or iPad records until the build channel/environment matches.</li>
+      <li><strong>Production schema required</strong> &mdash; TestFlight and App Store builds require the CloudKit production schema to include the app-managed backup record types before sync can save new backup records. Production clients cannot create new CloudKit record types at runtime.</li>
+      <li><strong>Review iCloud Items</strong> &mdash; Current app versions mark synced content as active before it is automatically restored on other devices. Older cloud-only items that are not marked active are held in Settings, where they can be restored or deleted from BisonNotes iCloud sync records.</li>
+      <li><strong>Keep on This Device</strong> &mdash; Mark an individual recording from its recording row or audio player to exclude that recording, transcript, and summary from BisonNotes iCloud sync and backup. When enabled, BisonNotes skips future app-managed iCloud sync/backup for that item and removes known app-created iCloud records when iCloud is available.</li>
+      <li><strong>Deleted item cleanup</strong> &mdash; Deleting a recording writes an iCloud deletion marker and removes known app-created iCloud records. Other devices apply that marker before uploading so deleted items are not silently re-created. Active cloud-only records without a deletion marker are restored, while older untrusted cloud-only records are held for review.</li>
+      <li><strong>Summary-only cleanup</strong> &mdash; Deleting a summary while keeping its recording/transcript queues removal of the summary&rsquo;s live record, backup record, and content-index reference. If iCloud is unavailable, BisonNotes retries the queued removal later.</li>
+      <li><strong>Sensitive data excluded</strong> (v1.11) &mdash; API keys are never written into iCloud settings backups; if a previous backup contained them, they are restored into the Keychain instead.</li>
+      <li>Prompted after generating your first summary</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary>Data Migration</summary>
+  <div class="dd">
+    <ul>
+      <li><strong>Legacy Import</strong> — Migrate from old file-based storage</li>
+      <li><strong>Data Integrity</strong> — Validate and repair data relationships</li>
+      <li><strong>Batch Operations</strong> — Process multiple files at once</li>
+      <li><strong>Progress Tracking</strong> — Monitor migration progress</li>
+    </ul>
+  </div>
+</details>
+
+<!-- ============================================================ -->
+<!-- BEST PRACTICES                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-best">Best Practices</h2>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Recording</h4>
+    <ul>
+      <li>Quiet environment</li>
+      <li>Mic 6-12 inches away</li>
+      <li>Break long sessions into segments</li>
+      <li>Minimize background noise</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>AI Configuration</h4>
+    <ul>
+      <li>Local engines for sensitive content</li>
+      <li>Start free, upgrade as needed</li>
+      <li>Experiment with models</li>
+      <li>Have a backup engine ready</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Data Management</h4>
+    <ul>
+      <li>Export important recordings as PDF</li>
+      <li>Use iCloud Backup for eligible items; use Keep on This Device for items you want excluded from BisonNotes iCloud sync and backup</li>
+      <li>Archive older audio to iCloud Drive before deleting local copies</li>
+      <li>Clean up old recordings</li>
+      <li>Use descriptive titles</li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Performance</h4>
+    <ul>
+      <li>Local engines when battery is low</li>
+      <li>Monitor available storage</li>
+      <li>Local engines on slow networks</li>
+      <li>Close other apps when processing</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- EXTERNAL RESOURCES                                            -->
+<!-- ============================================================ -->
+<h2 id="bn-resources">External Resources</h2>
+
+<div class="bn-g">
+  <div class="bn-gc">
+    <h4>Cloud Services</h4>
+    <ul>
+      <li><a href="https://ai.google.dev" target="_blank" rel="noopener">Google AI</a></li>
+      <li><a href="https://docs.mistral.ai" target="_blank" rel="noopener">Mistral AI</a></li>
+    </ul>
+  </div>
+  <div class="bn-gc">
+    <h4>Local / Self-Hosted</h4>
+    <ul>
+      <li><a href="https://ollama.com" target="_blank" rel="noopener">Ollama</a></li>
+      <li><a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">External llama.cpp-compatible server</a></li>
+      <li><a href="https://llama-cpp-python.readthedocs.io/en/latest/server/" target="_blank" rel="noopener">llama-cpp-python</a></li>
+      <li><a href="https://github.com/BerriAI/litellm" target="_blank" rel="noopener">LiteLLM</a></li>
+      <li><a href="https://groq.com" target="_blank" rel="noopener">Groq</a></li>
+      <li><a href="https://github.com/ahmetoner/whisper-asr-webservice" target="_blank" rel="noopener">Whisper ASR</a></li>
+    </ul>
+  </div>
+</div>
+
+<div class="bn-ok">
+  <strong>Ready to get started?</strong> BisonNotes AI transforms your spoken words into actionable intelligence with advanced AI processing. Download the app and start recording today!
+</div>
+
+<div class="bn-info">
+  <strong>Need help?</strong> Report issues on <a href="https://github.com/bisonbet/BisonNotes-AI/issues" target="_blank" rel="noopener">GitHub</a> or use the in-app help documentation.
+</div>
+
+<!-- ============================================================ -->
+<!-- OTHER VERSIONS                                                -->
+<!-- ============================================================ -->
+<h2 id="bn-versions">Guides for Other Versions</h2>
+<p>This guide is for BisonNotes AI 2.5. To check your version on Mac, open Settings &rarr; Advanced. On iPhone and iPad, open BisonNotes AI in the App Store and check Version History. The Help buttons in the app always open the guide for the version you have installed.</p>
+<ul>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai/">Current App Store version</a></li>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai-v3-0/">Version 3.0</a></li>
+  <li><a href="https://www.bisonnetworking.com/bisonnotes-ai-v2-5/">Version 2.5</a></li>
+</ul>
+<p>Older versions open the guide for the current App Store version.</p>
+
+<hr>
+<p style="text-align:center;font-size:0.85rem;opacity:0.6;"><em>Written for BisonNotes AI 2.5. Features can vary by device, permissions, selected engine, and operating system version.</em></p>
+
+</div>
+<!-- End BisonNotes AI Guide -->

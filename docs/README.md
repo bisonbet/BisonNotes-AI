@@ -8,12 +8,9 @@ the testing and evidence documents below are still authoritative for those.
 ## Product documentation
 
 - [Features and usage](features.md): how each feature works in 3.0.
-- [Full user guide](bisonnotes-ai-guide.html): the illustrated guide, published
-  at `/bisonnotes-ai/`.
-- Release guides `bisonnotes-ai-v2-2.html` through `bisonnotes-ai-v2-5.html`:
-  frozen pages that each installed release opens from in-app Help. See
-  [In-app help and release guides](development.md#in-app-help-and-release-guides)
-  before you change one.
+- [User guides](user-guide/README.md): one complete guide per app release,
+  which in-app Help opens for the installed version, plus the publishing
+  process and the website's redirect setup.
 - [Release history](release-history.md): highlights by release.
 - [Mistral AI free setup](mistral-free-setup.md).
 

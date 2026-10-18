@@ -54,7 +54,7 @@ choose them.
 | | |
 | --- | --- |
 | [Features and usage](docs/features.md) | Recording, transcription engines, speaker labels, AI engines, beta features, importing, iCloud sync, and archiving |
-| [User guide](docs/bisonnotes-ai-guide.html) | Illustrated guide to the app |
+| [User guide](https://www.bisonnetworking.com/bisonnotes-ai/) | The complete guide for the current release ([sources and older versions](docs/user-guide/README.md)) |
 | [Release history](docs/release-history.md) | What changed in each release |
 | [Mistral AI free setup](docs/mistral-free-setup.md) | Free cloud transcription and summaries with no credit card |
 | [Development](docs/development.md) | Requirements, build and test, architecture, and configuration |

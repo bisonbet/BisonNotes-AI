@@ -152,22 +152,23 @@ Dashboard before a TestFlight or App Store release. The app-managed record types
 are `CD_BackupRecording`, `CD_BackupTranscript`, `CD_BackupSummary`,
 `CD_BackupSettings`, `CD_BackupContentIndex`, and `CD_BackupDeletion`.
 
-## In-app help and release guides
+## In-app help and user guides
 
-In-app Help builds both the page slug and the anchor from the installed version
-(`BisonNotesDocumentation`). For example, 3.0 opens `/bisonnotes-ai-v3-0/`, and
-the Processing Options help button opens `#bn30-ai`. If the version can't be
-read, Help opens the unversioned `/bisonnotes-ai/` page with no anchor.
+Each app release has its own complete user guide in
+[`docs/user-guide/`](user-guide/README.md), published at
+`/bisonnotes-ai-v<major>-<minor>/`. In-app Help opens the guide for the
+installed version (`BisonNotesDocumentation`), and `/bisonnotes-ai/` redirects
+to the guide for the current App Store release.
 
-The release guides in `docs/` are named after the slug they publish to
-(`docs/bisonnotes-ai-v2-5.html` publishes to `/bisonnotes-ai-v2-5/`).
+- Section anchors (`bn-ai`) are the same in every guide. Never rename or
+  remove one.
+- Publish a release's guide before its build goes to TestFlight, and move the
+  `/bisonnotes-ai/` redirect when it goes live on the App Store.
+- `BisonNotesDocumentationTests` fails if the current version has no guide, or
+  if a guide is missing an anchor the app links to.
 
-- **A published release page is permanent.** An installed build keeps opening
-  its own slug, so never delete or re-slug a release page, or rename its
-  `bn<major><minor>-*` ids. Fixing a page's content is fine.
-- Each new release adds a page instead of replacing one.
-- Keep `/bisonnotes-ai/` on the full user guide, with none of the versioned
-  anchors.
+The [user guide README](user-guide/README.md) has the full process and the
+website's redirect setup.
 
 ## Accessibility
 

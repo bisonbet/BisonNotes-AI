@@ -1,7 +1,7 @@
 # BisonNotes AI features and usage
 
 This page covers how to use BisonNotes AI 3.0. For the illustrated guide, see the
-[full user guide](bisonnotes-ai-guide.html). For release-by-release changes, see
+[full user guide](https://www.bisonnetworking.com/bisonnotes-ai/). For release-by-release changes, see
 [release history](release-history.md).
 
 - [Recording](#recording)
