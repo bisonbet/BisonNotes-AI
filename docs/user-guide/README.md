@@ -33,12 +33,20 @@ builds also land on the right section.
 | `/bisonnotes-ai/` | **302** redirect to the current App Store version's page (`/bisonnotes-ai-v2-5/` until 3.0 ships) |
 | `/bisonnotes-ai-v2-4/`, `/bisonnotes-ai-v2-3/`, `/bisonnotes-ai-v2-2/` | **302** redirect to `/bisonnotes-ai/` |
 
-Use 302 (temporary) redirects. Browsers cache a 301 for a long time, so after
-the target changes, people would keep landing on the old page.
+The redirects live in the Redirection plugin's **Redirections** group. Set
+each one up like this:
 
-The page that's at `/bisonnotes-ai/` today holds the 2.4 guide. Delete it, or
-move it to another address, before you add the redirect, so that the redirect
-takes effect.
+- **302 (temporary).** Browsers cache a 301 for a long time, so after the
+  target changes, people would keep landing on the old page.
+- **Query parameters: Ignore.** With the default *Exact match*, a link with a
+  query string (`?utm_source=…`) skips the redirect, and WordPress guesses the
+  nearest slug instead, which sends `/bisonnotes-ai/` to the Privacy Policy
+  page at `/bisonnotes-ai-2/`.
+- **Nothing published at the source address.** A page at `/bisonnotes-ai/`
+  would be served instead of the redirect.
+
+Redirection watches for slug changes, and when a page's slug changes it adds a
+**301** from the old address. Change that redirect to a 302 or delete it.
 
 ## Publishing a new release
 
@@ -54,8 +62,9 @@ Help link. Do step 4 when the release goes live on the App Store.
    for the app's current version is missing, or if it lacks an anchor the app
    links to.
 3. **Publish the page.** In WordPress, create a page with the slug
-   `bisonnotes-ai-v<major>-<minor>`. Paste the whole file into a Custom HTML
-   block and publish it.
+   `bisonnotes-ai-v<major>-<minor>`. Paste the whole file into a single
+   **Custom HTML** block and publish it. Outside a block, WordPress adds
+   `<p>` and `<br>` tags all through the page.
 4. **Point the default at it.** When the release is live on the App Store,
    change the target of the `/bisonnotes-ai/` redirect to the new page. Add the
    new version to "Guides for Other Versions" in the previous guide too.
