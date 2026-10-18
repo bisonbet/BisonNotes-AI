@@ -532,9 +532,13 @@ struct SummaryPromptComposer: Sendable {
     /// Resolves the composer once for `template` (nil keeps an enclosing
     /// request's snapshot or template, else the default for new summaries)
     /// and runs `operation` with it installed as `requestSnapshot`.
-    static func withRequestSnapshot<R>(
+    ///
+    /// `nonisolated(nonsending)`: the operation runs on the caller's actor
+    /// (SummaryManager is `@MainActor`), so the closure is never sent across
+    /// isolation, and the task-local scopes use the matching `withValue`.
+    nonisolated(nonsending) static func withRequestSnapshot<R>(
         template: SummaryPromptTemplate?,
-        operation: () async throws -> R
+        operation: nonisolated(nonsending) () async throws -> R
     ) async rethrows -> R {
         let snapshot: SummaryPromptComposer
         if let template {
@@ -543,7 +547,9 @@ struct SummaryPromptComposer: Sendable {
             snapshot = current
         }
         return try await $requestTemplate.withValue(template ?? requestTemplate) {
-            try await $requestSnapshot.withValue(snapshot, operation: operation)
+            try await $requestSnapshot.withValue(snapshot) {
+                try await operation()
+            }
         }
     }
 
