@@ -199,7 +199,7 @@ struct MistralAISettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Mistral AI")
+            .settingsPaneNavigationTitle("Mistral AI")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
 #if !os(macOS)

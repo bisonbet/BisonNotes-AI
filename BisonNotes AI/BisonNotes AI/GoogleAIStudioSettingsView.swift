@@ -125,7 +125,7 @@ struct GoogleAIStudioSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Google AI Studio")
+            .settingsPaneNavigationTitle("Google AI Studio")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
 #if !os(macOS)

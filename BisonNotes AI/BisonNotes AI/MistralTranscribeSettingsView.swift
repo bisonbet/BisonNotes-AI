@@ -46,7 +46,7 @@ struct MistralTranscribeSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Mistral Transcription")
+            .settingsPaneNavigationTitle("Mistral Transcription")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

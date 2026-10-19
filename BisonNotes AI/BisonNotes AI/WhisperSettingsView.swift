@@ -325,7 +325,7 @@ struct WhisperSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Whisper Settings")
+            .settingsPaneNavigationTitle("Whisper Settings")
             .navigationBarTitleDisplayMode(.inline)
 #if !os(macOS)
             .toolbar {
