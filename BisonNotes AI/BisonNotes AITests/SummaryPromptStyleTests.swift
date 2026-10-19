@@ -137,10 +137,69 @@ final class SummaryPromptStyleTests: XCTestCase {
 
         let summary = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .general)
         let complete = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: .general)
-        for prompt in [summary, complete] {
+        let summaryUser = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "A transcript.")
+        let completeUser = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "A transcript.")
+        for prompt in [summaryUser, completeUser] {
             XCTAssertTrue(prompt.contains("Summary Detail: Balanced"))
+        }
+        for prompt in [summary, complete, summaryUser, completeUser] {
             XCTAssertFalse(prompt.contains("Recording Type:"))
             XCTAssertFalse(prompt.contains("User's Summary Instructions"))
+        }
+    }
+
+    // MARK: - Each instruction once
+
+    /// OpenAI/Compatible and Mistral both send exactly this system/user pair.
+    func testDetailBlockIsSentOnceInTheUserPrompt() {
+        let cases: [(SummaryPromptPreset, String)] = [
+            (.standard, SummaryPromptPreset.defaultCustomText),
+            (.businessMeeting, SummaryPromptPreset.defaultCustomText),
+            (.custom, "Only the decisions.")
+        ]
+        for (preset, text) in cases {
+            let composer = SummaryPromptComposer(
+                preset: preset,
+                customText: text,
+                detailLevel: .balanced,
+                comedyMode: .off
+            )
+            SummaryPromptComposer.$requestSnapshot.withValue(composer) {
+                for type in [PromptTypeCase.summary, .complete] {
+                    let system = ChatCompletionPromptGenerator.createSystemPrompt(for: type.value, contentType: .general)
+                    let user = ChatCompletionPromptGenerator.createUserPrompt(for: type.value, text: "A transcript.")
+                    XCTAssertFalse(system.contains("Summary Detail:"), "\(preset) \(type): detail belongs in the user prompt")
+                    XCTAssertFalse(system.contains("<<<"), "\(preset) \(type): custom text belongs in the user prompt")
+                    // The custom block names "<<<" in its preamble; count the fence line itself.
+                    let detailMarker = preset == .custom ? "<<<\n" : "Summary Detail:"
+                    XCTAssertEqual(
+                        (system + user).components(separatedBy: detailMarker).count - 1, 1,
+                        "\(preset) \(type): the detail block must be sent exactly once"
+                    )
+                }
+            }
+        }
+    }
+
+    func testCompleteSystemPromptHasNoDanglingTitleReference() {
+        for preset in [SummaryPromptPreset.standard, .custom] {
+            let composer = SummaryPromptComposer(preset: preset, detailLevel: .balanced, comedyMode: .off)
+            SummaryPromptComposer.$requestSnapshot.withValue(composer) {
+                let system = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: .general)
+                XCTAssertFalse(system.contains("standardized title"))
+                XCTAssertFalse(system.contains("Summary Detail:"))
+            }
+        }
+    }
+
+    func testDefaultCompleteUserPromptStatesTheMarkdownRuleOnce() {
+        let composer = SummaryPromptComposer(preset: .standard, detailLevel: .balanced, comedyMode: .off)
+        SummaryPromptComposer.$requestSnapshot.withValue(composer) {
+            let system = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: .general)
+            let user = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "A transcript.")
+            XCTAssertEqual(user.components(separatedBy: "Markdown formatting").count - 1, 1)
+            XCTAssertFalse(system.contains("Markdown formatting"))
+            XCTAssertTrue(user.contains("\"summary\": \"\(composer.schemaSummaryDescription)\","), "The schema field carries no format suffix")
         }
     }
 
@@ -164,9 +223,12 @@ final class SummaryPromptStyleTests: XCTestCase {
             let summaryUser = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "Notes about a plan.")
             let completeUser = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "Notes about a plan.")
 
-            for prompt in [summary, complete, summaryUser, completeUser] {
+            for prompt in [summaryUser, completeUser] {
                 XCTAssertTrue(prompt.contains(marker), "\(preset) missing from a summary prompt")
                 XCTAssertTrue(prompt.contains("Summary Detail:"), "Presets keep the detail level")
+            }
+            for prompt in [summary, complete] {
+                XCTAssertFalse(prompt.contains("Summary Detail:"), "The detail block is sent once, in the user prompt")
             }
 
             XCTAssertEqual(
@@ -206,8 +268,9 @@ final class SummaryPromptStyleTests: XCTestCase {
                 for contentType in [ContentType.meeting, .personalJournal, .technical, .general] {
                     let prompt = ChatCompletionPromptGenerator.createSystemPrompt(for: type.value, contentType: contentType)
                     XCTAssertFalse(prompt.contains("Analysis Focus"), "\(preset) must not carry the automatic focus")
-                    XCTAssertTrue(prompt.contains("Recording Type:"))
-                    XCTAssertTrue(prompt.contains("Treat the recording as this type"))
+                    let user = ChatCompletionPromptGenerator.createUserPrompt(for: type.value, text: "A transcript.")
+                    XCTAssertTrue(user.contains("Recording Type:"))
+                    XCTAssertTrue(user.contains("Treat the recording as this type"))
                 }
             }
         }
@@ -245,14 +308,22 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertEqual(composer.userModifier, "")
 
         let summaryUser = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "A transcript.")
+        let completeUser = ChatCompletionPromptGenerator.createUserPrompt(for: .complete, text: "A transcript.")
         let complete = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: .general)
-        for prompt in [summaryUser, complete] {
+        for prompt in [summaryUser, completeUser] {
             XCTAssertTrue(prompt.contains("<<<\nList every decision as a bullet.\n>>>"))
             XCTAssertTrue(prompt.contains("narrative `summary` field"))
+        }
+        for prompt in [summaryUser, completeUser, complete] {
             XCTAssertFalse(prompt.contains("Summary Detail:"))
             XCTAssertFalse(prompt.contains("COMEDY REQUIRED"))
             XCTAssertFalse(prompt.contains("ROAST-LEVEL SNARK"))
         }
+        let system = ChatCompletionPromptGenerator.createSystemPrompt(for: .complete, contentType: .general)
+        XCTAssertEqual(
+            (system + completeUser).components(separatedBy: "<<<\n").count - 1, 1,
+            "The custom text is fenced once across the whole complete request"
+        )
     }
 
     func testEmptyCustomTextFallsBackToDefaultSentence() {
@@ -355,7 +426,7 @@ final class SummaryPromptStyleTests: XCTestCase {
         await SummaryPromptComposer.$requestTemplate.withValue(business) {
             // Reaches prompts built from a child task, as engines do.
             let prompt = await Task {
-                ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .general)
+                ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "A transcript.")
             }.value
             XCTAssertTrue(prompt.contains("Recording Type: Business Meeting"))
             XCTAssertFalse(prompt.contains("Recording Type: Personal Notes"))
@@ -663,9 +734,10 @@ final class SummaryPromptStyleTests: XCTestCase {
         XCTAssertEqual(composer.effectiveComedyMode, .off)
 
         let prompt = ChatCompletionPromptGenerator.createSystemPrompt(for: .summary, contentType: .personalJournal)
-        XCTAssertTrue(prompt.contains("Recording Type: Meeting (selected by the user)"))
-        XCTAssertTrue(prompt.contains("<<<\nShort bullets.\n>>>"))
         XCTAssertFalse(prompt.contains("Analysis Focus"))
+        let user = ChatCompletionPromptGenerator.createUserPrompt(for: .summary, text: "A transcript.")
+        XCTAssertTrue(user.contains("Recording Type: Meeting (selected by the user)"))
+        XCTAssertTrue(user.contains("<<<\nShort bullets.\n>>>"))
 
         let auto = customTemplate("Short bullets.", recordingType: .auto)
         XCTAssertNil(auto.declaredContentType)
