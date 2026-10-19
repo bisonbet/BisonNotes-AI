@@ -84,10 +84,16 @@ final class SummaryDetailLevelTests: XCTestCase {
                 for: .summary,
                 text: sourceText
             )
+            let completeUserPrompt = ChatCompletionPromptGenerator.createUserPrompt(
+                for: .complete,
+                text: sourceText
+            )
 
-            XCTAssertTrue(summarySystemPrompt.contains("Summary Detail: \(level.displayName)"))
-            XCTAssertTrue(completeSystemPrompt.contains("Summary Detail: \(level.displayName)"))
+            // The detail block is sent once, sized to the transcript, in the user prompt.
+            XCTAssertFalse(summarySystemPrompt.contains("Summary Detail:"))
+            XCTAssertFalse(completeSystemPrompt.contains("Summary Detail:"))
             XCTAssertTrue(summaryUserPrompt.contains("Summary Detail: \(level.displayName)"))
+            XCTAssertTrue(completeUserPrompt.contains("Summary Detail: \(level.displayName)"))
         }
     }
 }

@@ -164,6 +164,7 @@ final class BisonNotesAITests: XCTestCase {
             XCTAssertTrue(summaryPrompt.contains("summary voice only"))
             XCTAssertTrue(summaryPrompt.contains("Comedy is required in the summary"))
             XCTAssertTrue(summaryPrompt.contains("Do not return a neutral, clinical, or purely professional summary"))
+            XCTAssertFalse(summaryPrompt.contains("Summary Detail:"), "The detail block is sent in the user prompt")
 
             if mode == .snarky {
                 XCTAssertTrue(summaryPrompt.contains("Roast-Level Snark Mode"))
@@ -194,6 +195,7 @@ final class BisonNotesAITests: XCTestCase {
             XCTAssertTrue(completePrompt.contains("at least one clearly witty aside"))
             XCTAssertTrue(completePrompt.contains("Treat `tasks`, `reminders`, `titles`"))
             XCTAssertTrue(completePrompt.contains("exact requested output format"))
+            XCTAssertFalse(completePrompt.contains("Summary Detail:"), "The detail block is sent in the user prompt")
 
             if mode == .snarky {
                 XCTAssertTrue(completePrompt.contains("roast-level, high-energy snark"))

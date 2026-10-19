@@ -207,7 +207,7 @@ enum ChatCompletionPromptGenerator {
             return basePrompt + "\n\n" + createTitlesPrompt()
         case .complete:
             return basePrompt + "\n\n" + contentTypePrompt
-                + createCompletePrompt(summaryPrompt) + summaryPrompt.structuredModifier
+                + createCompletePrompt() + summaryPrompt.structuredModifier
         }
     }
 
@@ -271,10 +271,10 @@ enum ChatCompletionPromptGenerator {
             """,
             customReplacement: "- \(SummaryPromptComposer.customFormatInstruction)"
         )
+        // The detail block travels in the user prompt, sized to the transcript,
+        // so it is not repeated here.
         return """
         **Summary Generation Guidelines:**
-        - Create a summary\(summaryPrompt.summaryFormatting(" using Markdown formatting")) at the selected detail level.
-        \(summaryPrompt.detailInstructions())
         \(formatting)
         """
     }
@@ -337,13 +337,13 @@ enum ChatCompletionPromptGenerator {
         """
     }
 
-    private static func createCompletePrompt(_ summaryPrompt: SummaryPromptComposer) -> String {
+    // The detail block and the summary's format rule travel in the user
+    // prompt, so they are not repeated here.
+    private static func createCompletePrompt() -> String {
         return """
         **Complete Analysis Guidelines:**
         - Provide a complete analysis in a single response.
-        \(summaryPrompt.detailInstructions())
         - Include summary, tasks, reminders, and titles
-        - Use the standardized title generation logic
         - Ensure all components are properly formatted
         - Focus on actionable insights and meaningful information
         - Maintain consistency across all extracted elements
@@ -473,7 +473,7 @@ enum ChatCompletionPromptGenerator {
         Please analyze the following content and provide a comprehensive response in VALID JSON format only. Do not include any text before or after the JSON. The response must be a single, well-formed JSON object with this exact structure:
 
         {
-            "summary": "\(summaryPrompt.schemaSummaryDescription)\(summaryPrompt.summaryFormatting(" Use Markdown formatting with **bold**, *italic*, ## headers, • bullet points, and > blockquotes."))",
+            "summary": "\(summaryPrompt.schemaSummaryDescription)",
             "tasks": [
                 {
                     "text": "task description",
