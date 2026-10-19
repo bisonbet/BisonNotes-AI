@@ -1831,7 +1831,27 @@ class CoreDataManager: ObservableObject {
                     matching: NSPredicate(format: "summaryId == %@ OR summary.id == %@", id as CVarArg, id as CVarArg),
                     in: isolatedContext
                 )
+                let deletedGeneratedAt = summaries.compactMap(\.generatedAt).max()
                 for recording in recordings {
+                    // An inbound tombstone for a superseded summary often lands while
+                    // the recording still points at it and the regenerated row is
+                    // already here. Blanking the link showed "Generate Summary" (and
+                    // uploaded the blanked recording) until the restore leg relinked
+                    // it. Hand the link to the newer sibling instead; an older
+                    // duplicate never inherits a summary the user deleted.
+                    let siblings = try recording.id.map {
+                        try fetchSummaries(forRecordingId: $0, in: isolatedContext)
+                    } ?? []
+                    if let successor = Self.supersedingSummary(
+                        excluding: id,
+                        deletedGeneratedAt: deletedGeneratedAt,
+                        candidates: siblings
+                    ) {
+                        recording.summary = successor
+                        recording.summaryId = successor.id
+                        recording.summaryStatus = ProcessingStatus.completed.rawValue
+                        continue
+                    }
                     recording.summary = nil
                     recording.summaryId = nil
                     recording.summaryStatus = ProcessingStatus.notStarted.rawValue
@@ -1858,6 +1878,23 @@ class CoreDataManager: ObservableObject {
         } catch {
             AppLog.shared.coreData("Error deleting summary: \(error)", level: .error)
             throw error
+        }
+    }
+
+    /// The surviving summary a recording should point at once `deletedId` goes:
+    /// the newest sibling generated at or after the deleted row. `candidates`
+    /// arrive newest first from `fetchSummaries`. Nil when the deleted row has no
+    /// known age, so a missing timestamp can never resurrect an old duplicate.
+    static func supersedingSummary(
+        excluding deletedId: UUID,
+        deletedGeneratedAt: Date?,
+        candidates: [SummaryEntry]
+    ) -> SummaryEntry? {
+        guard let deletedGeneratedAt else { return nil }
+        return candidates.first { candidate in
+            guard candidate.id != deletedId, !candidate.isDeleted,
+                  let generatedAt = candidate.generatedAt else { return false }
+            return generatedAt >= deletedGeneratedAt
         }
     }
 

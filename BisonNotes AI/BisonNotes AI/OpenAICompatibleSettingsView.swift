@@ -139,8 +139,8 @@ struct OpenAICompatibleSettingsView: View {
         PlatformSettingsNavigationStack {
             Form {
                 compatibilityGuideSection
-                authenticationSection
                 apiConfigurationSection
+                authenticationSection
                 modelSelectionSection
                 generationParametersSection
                 messageFormatSection
@@ -150,7 +150,7 @@ struct OpenAICompatibleSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Compatible API")
+            .settingsPaneNavigationTitle("Compatible API")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
 #if !os(macOS)
@@ -259,100 +259,14 @@ struct OpenAICompatibleSettingsView: View {
 
     private var compatibilityGuideSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: 12) {
-                // Main message
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: "info.circle.fill")
-                        .foregroundColor(.orange)
-                        .font(.title3)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Model Compatibility Varies")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Text("Different models have different capabilities. Some trial and error may be needed.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Divider()
-
-                // What works well
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.caption)
-                        Text("Usually Work Well")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("• Larger models (70B+ parameters)")
-                            .font(.caption2)
-                        Text("• Models from major providers")
-                            .font(.caption2)
-                    }
+            Label {
+                Text("Works with any OpenAI-compatible endpoint, such as OpenRouter, LiteLLM or vLLM. Larger models give the most reliable summaries.")
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                    .padding(.leading, 20)
-                }
-
-                Divider()
-
-                // May need tuning
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                            .font(.caption)
-                        Text("May Need Adjustment")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("• Smaller models (<10B parameters)")
-                            .font(.caption2)
-                        Text("• Local models via Ollama/vLLM")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 20)
-                }
-
-                Divider()
-
-                // Troubleshooting tips
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Image(systemName: "lightbulb.fill")
-                            .foregroundColor(.blue)
-                            .font(.caption)
-                        Text("Troubleshooting Tips")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("1. Test connection first")
-                            .font(.caption2)
-                        Text("2. Try different temperature settings")
-                            .font(.caption2)
-                        Text("3. Increase max tokens if output is cut off")
-                            .font(.caption2)
-                        Text("4. Try a different model from your provider")
-                            .font(.caption2)
-                    }
-                    .foregroundColor(.secondary)
-                    .padding(.leading, 20)
-                }
+            } icon: {
+                Image(systemName: "info.circle")
+                    .foregroundColor(.blue)
             }
-            .padding(.vertical, 4)
-        } header: {
-            Text("Compatibility Guide")
-        } footer: {
-            Text("This engine supports many providers through LiteLLM, OpenRouter, and similar services. JSON output quality varies by model. Larger, more recent models generally perform better.")
         }
     }
 
@@ -402,7 +316,7 @@ struct OpenAICompatibleSettingsView: View {
     private var apiConfigurationSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Base URL")
+                Text("API Base URL")
 
                 TextField("https://api.example.com/v1", text: $baseURL)
                     .textFieldStyle(RoundedBorderTextFieldStyle())

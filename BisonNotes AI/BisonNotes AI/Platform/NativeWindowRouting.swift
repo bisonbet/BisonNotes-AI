@@ -40,6 +40,42 @@ extension EnvironmentValues {
     }
 }
 
+private struct IsInMacSettingsTabKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// True inside a tab of the macOS Settings window, where the window title
+    /// belongs to the tab rather than to whatever provider panel is showing.
+    var isInMacSettingsTab: Bool {
+        get { self[IsInMacSettingsTabKey.self] }
+        set { self[IsInMacSettingsTabKey.self] = newValue }
+    }
+}
+
+private struct SettingsPaneNavigationTitle: ViewModifier {
+    @Environment(\.isInMacSettingsTab) private var isInMacSettingsTab
+    let title: String
+
+    func body(content: Content) -> some View {
+        if isInMacSettingsTab {
+            content
+        } else {
+            content.navigationTitle(title)
+        }
+    }
+}
+
+extension View {
+    /// Navigation title for a settings panel that is also embedded in a macOS
+    /// Settings tab. The innermost `navigationTitle` names the window, so a
+    /// panel's own title would replace the tab's ("Compatible API" instead of
+    /// "AI"); inside a Settings tab it is left to the tab.
+    func settingsPaneNavigationTitle(_ title: String) -> some View {
+        modifier(SettingsPaneNavigationTitle(title: title))
+    }
+}
+
 /// Settings destinations own their navigation stack on iOS. On native macOS,
 /// the Settings scene owns one stack for the entire hierarchy so child panels
 /// push in place instead of creating nested navigation containers.
@@ -111,6 +147,21 @@ extension View {
             .background(Color(.systemGroupedBackground))
         #else
         self
+        #endif
+    }
+
+    /// Sidebar lists inside a Settings tab. `.sidebar` alone draws the
+    /// translucent sidebar material, which outside a real split view blends
+    /// with the window behind it and bleeds up into the toolbar as a gradient.
+    /// Keep the sidebar row styling but give it an opaque background.
+    @ViewBuilder
+    func nativeMacSettingsSidebarStyle() -> some View {
+        #if os(macOS)
+        listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(Color(.windowBackgroundColor))
+        #else
+        listStyle(.sidebar)
         #endif
     }
 

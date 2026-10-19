@@ -170,7 +170,7 @@ struct FluidAudioSettingsView: View {
         .scrollContentBackground(.hidden)
         .modifier(OpaqueTopScrollEdge())
         .background(Color(.systemGroupedBackground))
-        .navigationTitle("On Device Transcription")
+        .settingsPaneNavigationTitle("On Device Transcription")
 #if !os(macOS)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {

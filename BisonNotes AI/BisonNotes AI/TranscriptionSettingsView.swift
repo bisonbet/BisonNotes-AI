@@ -268,9 +268,11 @@ struct TranscriptionSettingsView: View {
 #if os(macOS)
 private extension TranscriptionSettingsView {
     private var macSettingsContent: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             macEngineList
-                .frame(minWidth: 210, idealWidth: 235, maxWidth: 260)
+                .frame(width: 235)
+
+            Divider()
 
             VStack(alignment: .leading, spacing: 0) {
                 macTranscriptionOptions
@@ -313,7 +315,7 @@ private extension TranscriptionSettingsView {
                 .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptionResetButton)
             }
         }
-        .listStyle(.sidebar)
+        .nativeMacSettingsSidebarStyle()
         .accessibilityLabel("Transcription engines")
     }
 

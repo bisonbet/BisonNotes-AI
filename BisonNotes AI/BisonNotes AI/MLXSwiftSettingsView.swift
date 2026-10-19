@@ -157,7 +157,7 @@ struct MLXSwiftSettingsView: View {
             .background(Color(.systemGroupedBackground))
             #endif
         }
-        .navigationTitle(AIEngineType.mlxSwift.displayName)
+        .settingsPaneNavigationTitle(AIEngineType.mlxSwift.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             #if !os(macOS)

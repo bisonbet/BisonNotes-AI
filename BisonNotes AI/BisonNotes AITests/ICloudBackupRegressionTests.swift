@@ -239,6 +239,64 @@ final class ICloudBackupRegressionTests: XCTestCase {
         XCTAssertEqual(iCloudManager.pendingSummaryRemovalCountForTesting, 1)
     }
 
+    func testInboundTombstoneForSupersededSummaryHandsLinkToNewerSibling() throws {
+        // Another device regenerated: the new summary has already been restored
+        // here, but the recording still points at the old one when its tombstone
+        // is applied. The row must never read as "no summary" in between.
+        let recordingId = try createCompleteRecording(named: "Regenerated Elsewhere")
+        let coreData = appCoordinator.coreDataManager
+        let recording = try XCTUnwrap(coreData.getRecording(id: recordingId))
+        let oldSummary = try XCTUnwrap(recording.summary)
+        let oldSummaryId = try XCTUnwrap(oldSummary.id)
+        let oldGeneratedAt = try XCTUnwrap(oldSummary.generatedAt)
+
+        let context = coreData.managedObjectContext
+        let newer = SummaryEntry(context: context)
+        let newerId = UUID()
+        newer.id = newerId
+        newer.recordingId = recordingId
+        newer.recording = recording
+        newer.summary = "Regenerated summary"
+        newer.generatedAt = oldGeneratedAt.addingTimeInterval(60)
+        recording.summary = oldSummary
+        recording.summaryId = oldSummaryId
+        try context.save()
+
+        try coreData.deleteSummary(id: oldSummaryId, enqueueCloudDeletion: false)
+
+        let refreshed = try XCTUnwrap(coreData.getRecording(id: recordingId))
+        XCTAssertEqual(refreshed.summaryId, newerId)
+        XCTAssertEqual(refreshed.summary?.id, newerId)
+        XCTAssertEqual(refreshed.summaryStatus, ProcessingStatus.completed.rawValue)
+        XCTAssertTrue(refreshed.hasStoredSummary)
+    }
+
+    func testDeletingNewestSummaryDoesNotRelinkAnOlderDuplicate() throws {
+        let recordingId = try createCompleteRecording(named: "Older Duplicate")
+        let coreData = appCoordinator.coreDataManager
+        let recording = try XCTUnwrap(coreData.getRecording(id: recordingId))
+        let current = try XCTUnwrap(recording.summary)
+        let currentId = try XCTUnwrap(current.id)
+        let currentGeneratedAt = try XCTUnwrap(current.generatedAt)
+
+        let context = coreData.managedObjectContext
+        let older = SummaryEntry(context: context)
+        older.id = UUID()
+        older.recordingId = recordingId
+        older.recording = recording
+        older.summary = "Stale duplicate"
+        older.generatedAt = currentGeneratedAt.addingTimeInterval(-60)
+        recording.summary = current
+        recording.summaryId = currentId
+        try context.save()
+
+        try coreData.deleteSummary(id: currentId, enqueueCloudDeletion: false)
+
+        let refreshed = try XCTUnwrap(coreData.getRecording(id: recordingId))
+        XCTAssertNil(refreshed.summaryId)
+        XCTAssertEqual(refreshed.summaryStatus, ProcessingStatus.notStarted.rawValue)
+    }
+
     func testDeletingTranscriptIndependentlyKeepsRecordingAndSummary() async throws {
         let recordingId = try createCompleteRecording(named: "Delete Transcript Only")
         let transcriptId = try XCTUnwrap(appCoordinator.getTranscript(for: recordingId)?.id)

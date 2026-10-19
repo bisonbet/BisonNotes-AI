@@ -78,67 +78,19 @@ struct MacSettingsRootView: View {
     var body: some View {
         TabView(selection: $selectedPaneRawValue) {
             PreferencesView()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.general.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.general.title, systemImage: MacSettingsPane.general.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.general.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.general.rawValue)
-
+                .macSettingsPane(.general)
             MacRecordingSettingsPane()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.recording.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.recording.title, systemImage: MacSettingsPane.recording.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.recording.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.recording.rawValue)
-
+                .macSettingsPane(.recording)
             TranscriptionSettingsView()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.transcription.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.transcription.title, systemImage: MacSettingsPane.transcription.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.transcription.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.transcription.rawValue)
-
+                .macSettingsPane(.transcription)
             AISettingsView()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.aiSettings.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.aiSettings.title, systemImage: MacSettingsPane.aiSettings.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.aiSettings.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.aiSettings.rawValue)
-
+                .macSettingsPane(.aiSettings)
             MacStorageSettingsPane()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.storage.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.storage.title, systemImage: MacSettingsPane.storage.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.storage.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.storage.rawValue)
-
+                .macSettingsPane(.storage)
             MacAdvancedSettingsPane()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.advanced.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.advanced.title, systemImage: MacSettingsPane.advanced.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.advanced.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.advanced.rawValue)
-
+                .macSettingsPane(.advanced)
             BetaFeaturesView()
-                .nativeMacPresentationContext(.embedded)
-                .accessibilityIdentifier(MacSettingsPane.beta.accessibilityIdentifier)
-                .tabItem {
-                    Label(MacSettingsPane.beta.title, systemImage: MacSettingsPane.beta.systemImage)
-                        .accessibilityIdentifier(MacSettingsPane.beta.accessibilityIdentifier)
-                }
-                .tag(MacSettingsPane.beta.rawValue)
+                .macSettingsPane(.beta)
         }
         .frame(minWidth: 760, idealWidth: 920, minHeight: 600)
         .onAppear {
@@ -146,6 +98,23 @@ struct MacSettingsRootView: View {
                 selectedPaneRawValue = MacSettingsPane.general.rawValue
             }
         }
+    }
+}
+
+private extension View {
+    /// Embeds a pane in the Settings tab view and names the window after the
+    /// tab. Provider panels title themselves with `settingsPaneNavigationTitle`,
+    /// which defers to this inside a Settings tab.
+    func macSettingsPane(_ pane: MacSettingsPane) -> some View {
+        nativeMacPresentationContext(.embedded)
+            .environment(\.isInMacSettingsTab, true)
+            .navigationTitle(pane.title)
+            .accessibilityIdentifier(pane.accessibilityIdentifier)
+            .tabItem {
+                Label(pane.title, systemImage: pane.systemImage)
+                    .accessibilityIdentifier(pane.accessibilityIdentifier)
+            }
+            .tag(pane.rawValue)
     }
 }
 

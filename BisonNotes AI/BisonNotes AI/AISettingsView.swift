@@ -360,7 +360,7 @@ struct AISettingsView: View {
 
 #if os(macOS)
     private var macSettingsContent: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             List(selection: $selectedMacEngineRawValue) {
                 Section("Summary") {
                     Label("Summary & Management", systemImage: "slider.horizontal.3")
@@ -374,8 +374,10 @@ struct AISettingsView: View {
                     }
                 }
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 210, idealWidth: 240, maxWidth: 280)
+            .nativeMacSettingsSidebarStyle()
+            .frame(width: 240)
+
+            Divider()
 
             macEngineDetail
                 .frame(minWidth: 480)

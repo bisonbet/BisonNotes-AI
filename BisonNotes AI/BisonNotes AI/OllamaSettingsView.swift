@@ -49,7 +49,7 @@ struct OllamaSettingsView: View {
             .nativeMacSettingsFormStyle()
             .scrollContentBackground(.hidden)
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Ollama Settings")
+            .settingsPaneNavigationTitle("Ollama Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
 #if !os(macOS)
