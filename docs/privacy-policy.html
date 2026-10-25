@@ -1,0 +1,106 @@
+<!-- BisonNotes AI - Privacy Policy -->
+<!-- Publish at /bisonnotes-ai-2/ (the App Store privacy policy URL). Paste everything below into one WordPress Custom HTML block. -->
+<!-- Update the effective date whenever the policy changes, and keep it in step with the App Store privacy label and the PrivacyInfo.xcprivacy manifests. -->
+
+<style>.bnp{max-width:820px;margin:0 auto;padding:1rem;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen,Ubuntu,sans-serif;font-size:clamp(17px,1rem + .3vw,19px);line-height:1.7;color:#1a1a1a;overflow-wrap:anywhere}.bnp h1{font-size:1.6rem;margin:0 0 .2rem;line-height:1.3}.bnp h2{font-size:1.2rem;margin:2rem 0 .6rem;padding-bottom:.3rem;border-bottom:2px solid #c0392b}.bnp h3{font-size:1.02rem;margin:1.2rem 0 .4rem}.bnp p{margin:.5rem 0}.bnp ul{margin:.4rem 0 .7rem;padding-left:1.4rem}.bnp li{margin:.3rem 0}.bnp a{color:#c0392b}.bnp .bnp-date{color:#555;font-size:.92rem;margin-bottom:1.2rem}.bnp .bnp-box{background:#eaf7ec;border-left:4px solid #27ae60;border-radius:6px;padding:.8rem 1rem;margin:1rem 0}.bnp .bnp-warn{background:#fef7e0;border-left:4px solid #e6a817;border-radius:6px;padding:.8rem 1rem;margin:1rem 0}.bnp table{width:100%;border-collapse:collapse;font-size:.92rem;margin:.6rem 0}.bnp th,.bnp td{text-align:left;vertical-align:top;padding:.45rem .6rem;border-bottom:1px solid #e5e5e5}.bnp th{background:#f1f3f5;font-weight:600}.bnp .bnp-tw{overflow-x:auto}</style>
+
+<div class="bnp">
+
+<h1>BisonNotes AI Privacy Policy</h1>
+<p class="bnp-date">Effective date: October 18, 2026</p>
+
+<div class="bnp-box"><strong>In short:</strong> BisonNotes AI does not send your recordings, transcripts, or summaries to us. By default, everything is processed on your device. Your data leaves your device only when you turn on a feature that needs it, such as iCloud Sync or a cloud AI service, and it then goes to that service, not to us. We don't use analytics, advertising, or tracking.</div>
+
+<p>This policy explains what the BisonNotes AI app for iPhone, iPad, Apple Watch, and Mac does with your information. &ldquo;We&rdquo; and &ldquo;us&rdquo; mean Timothy Champ, the developer of BisonNotes AI.</p>
+
+<h2>1. What we receive</h2>
+<p>We don't operate servers that receive your app data, and you don't create an account with us. The only information we receive is what you choose to send us:</p>
+<ul>
+  <li><strong>Diagnostic reports.</strong> If you choose to send a diagnostic report, the app opens an email addressed to our support team with a log file attached. The log covers recent app activity and errors, and includes the app version, device model, operating system version, and free storage. It does not include your audio. You can review the email and attachment before sending, and nothing is sent unless you tap Send.</li>
+  <li><strong>Emails you send us.</strong> If you contact support, we receive your email address and whatever you include in the message.</li>
+</ul>
+<p>We use this information only to answer you and fix problems, and we delete it when it's no longer needed for that.</p>
+
+<h2>2. What stays on your device</h2>
+<p>Your recordings, transcripts, summaries, tasks, reminders, notes, attachments, and settings are stored in the app on your device, protected by iOS and macOS file protection. API keys you enter for AI services are stored in the system Keychain.</p>
+<p>These features run entirely on your device, and nothing they process is sent anywhere:</p>
+<ul>
+  <li>On Device transcription (Parakeet)</li>
+  <li>Live Transcription during recording (Apple speech recognition, set to run on-device only)</li>
+  <li>Local Speaker Labels</li>
+  <li>On Device AI summaries (MLX models) and Apple Native summaries (Apple Intelligence)</li>
+  <li>Transcript Cleanup (S1-mini)</li>
+  <li>Audio cleanup, trimming, and combining recordings</li>
+</ul>
+
+<h2>3. When your data leaves your device</h2>
+<p>Each of these happens only when you turn the feature on or use it.</p>
+
+<h3>iCloud Sync and iCloud Drive archive</h3>
+<ul>
+  <li>When iCloud Sync is on, your recordings&rsquo; details, transcripts, summaries, location (if recorded), and selected settings are stored in your private iCloud account so they appear on your other devices. Audio is included only if you choose <strong>Include audio files in backup</strong>. API keys are never included.</li>
+  <li>Mark a recording <strong>Keep on This Device</strong> to keep it, its transcript, and its summary out of iCloud.</li>
+  <li>Archiving audio copies the audio file to the iCloud Drive folder you choose.</li>
+  <li>This data is stored by Apple under <a href="https://www.apple.com/legal/privacy/" target="_blank" rel="noopener">Apple&rsquo;s privacy policy</a>. We can&rsquo;t access it.</li>
+</ul>
+
+<h3>Cloud AI and transcription services</h3>
+<p>If you choose a cloud service, the app sends it what that service needs to do the job, using the account and API key you set up with the provider:</p>
+<div class="bnp-tw"><table>
+  <thead><tr><th>Service</th><th>What is sent</th></tr></thead>
+  <tbody>
+    <tr><td>Mistral AI</td><td>Audio, for transcription. Transcript text, for summaries, tasks, reminders, and titles.</td></tr>
+    <tr><td>Google AI Studio (Gemini)</td><td>Transcript text, for summaries, tasks, reminders, and titles.</td></tr>
+    <tr><td>A compatible API you configure (for example Groq, Nebius, or LiteLLM)</td><td>Transcript text, sent to the address you enter.</td></tr>
+    <tr><td>A Whisper or Ollama server you configure</td><td>Audio (Whisper) or transcript text (Ollama), sent to your own server.</td></tr>
+  </tbody>
+</table></div>
+<p>We don&rsquo;t operate these services and don&rsquo;t receive what you send them. Each provider&rsquo;s own privacy policy and terms apply, including how long they keep data and whether they use it to train models. Review them before you choose a provider.</p>
+
+<h3>Location</h3>
+<p>If you allow location access, the app records where each recording was made. It uses Apple&rsquo;s services to turn coordinates into an address and to show maps, which sends the coordinates to Apple. Location is stored with the recording, included in PDF exports, and included in iCloud Sync if it&rsquo;s on. You can turn location off at any time in Settings.</p>
+
+<h3>Downloads and imports</h3>
+<ul>
+  <li><strong>Model downloads.</strong> When you download an on-device model, it comes from Hugging Face or the model&rsquo;s publisher. Like any download, the server sees your IP address. No recordings or text are sent.</li>
+  <li><strong>Import From Link.</strong> When you import from a web address or YouTube link, the app requests that address. YouTube links are used only to fetch public captions.</li>
+</ul>
+
+<h3>Calendars and reminders</h3>
+<p>Sending a task or reminder to Apple Reminders or Apple Calendar saves it in that app on your device. Sending one to Google Calendar opens Google Calendar with the item&rsquo;s details filled in, and Google&rsquo;s privacy policy then applies.</p>
+
+<h2>4. No tracking</h2>
+<p>BisonNotes AI does not include analytics, advertising, or crash-reporting services. It doesn&rsquo;t track you across apps or websites, and it doesn&rsquo;t use the advertising identifier.</p>
+
+<h2>5. Permissions</h2>
+<ul>
+  <li><strong>Microphone:</strong> to record audio.</li>
+  <li><strong>Speech recognition:</strong> for on-device Live Transcription.</li>
+  <li><strong>Location (optional):</strong> to record where a recording was made.</li>
+  <li><strong>Reminders and Calendars (optional):</strong> to save tasks and reminders you choose to send there.</li>
+  <li><strong>Screen &amp; System Audio Recording (Mac, optional):</strong> to capture meeting audio from other apps. Only audio is recorded, never screen video.</li>
+</ul>
+
+<h2>6. Your choices and deleting data</h2>
+<ul>
+  <li>Delete recordings, transcripts, and summaries at any time in the app. If iCloud Sync is on, the deletion is also applied on your other devices.</li>
+  <li>Audio archived to iCloud Drive is a separate file in the folder you chose, and you can delete it in the Files app.</li>
+  <li><strong>Erase All iCloud Data</strong>, in Advanced Troubleshooting, deletes everything the app stored in your iCloud account without touching data on your devices.</li>
+  <li>Deleting the app removes its data from that device. Data in iCloud or with a cloud provider stays there until you delete it.</li>
+  <li>To ask about or delete anything you&rsquo;ve emailed us, contact us using the link below.</li>
+</ul>
+
+<h2>7. Health and other sensitive information</h2>
+<div class="bnp-warn">BisonNotes AI is a personal productivity app. It is not HIPAA-compliant, and we don&rsquo;t provide Business Associate Agreements. Don&rsquo;t use it to record or process protected health information.</div>
+
+<h2>8. Children</h2>
+<p>BisonNotes AI is not directed to children under 13, and we don&rsquo;t knowingly collect information from them.</p>
+
+<h2>9. Changes to this policy</h2>
+<p>If we change this policy, we&rsquo;ll update it on this page and change the effective date above.</p>
+
+<h2>10. Contact us</h2>
+<p>Questions about this policy or your data: <a href="https://www.bisonnetworking.com/contact-us/">Contact us</a></p>
+<p>User guide: <a href="https://www.bisonnetworking.com/bisonnotes-ai/">www.bisonnetworking.com/bisonnotes-ai</a></p>
+
+</div>
