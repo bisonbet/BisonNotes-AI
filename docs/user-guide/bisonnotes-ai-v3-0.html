@@ -912,13 +912,13 @@
 </ul>
 
 <h3>Endpoint safety</h3>
-<p>User-configurable AI services (compatible API, Ollama on native macOS, and Whisper) are checked against an endpoint policy:</p>
+<p>User-configurable AI services (compatible API, Ollama on native macOS, Whisper, and a custom Mistral Base URL) are checked against an endpoint policy, and so is every redirect they follow:</p>
 <ul>
   <li><strong>HTTPS / WSS endpoints</strong> work with any address (Groq, Nebius, and similar providers).</li>
   <li><strong>Local/private endpoints</strong> (<code>localhost</code>, loopback, link-local, and the private ranges <code>10.x</code>, <code>172.16&ndash;31.x</code> and <code>192.168.x</code>) are allowed over plain HTTP by default.</li>
   <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS to any other address, including hostnames such as <code>http://myserver.lan</code>) are blocked unless you turn on <strong>Development Mode: Allow Public HTTP</strong>. Tailscale and other <code>100.64&ndash;127.x</code> addresses count as public, so they need Development Mode too.</li>
 </ul>
-<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server that is not on a private IP address, such as one reached over Tailscale. It is one setting shared by the compatible API, Ollama and Whisper, so turning it on in any of them allows public HTTP for all three.</div>
+<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server that is not on a private IP address, such as one reached over Tailscale. It is one setting shared by all of these services, so turning it on in any of their settings allows public HTTP for all of them.</div>
 
 <h3>Share Extension hardening</h3>
 <p>Imports from the Share Extension are now authorized with one-time tokens before the main app scans the shared container, and the imported files themselves are file-protected. Full file paths are no longer written to logs.</p>

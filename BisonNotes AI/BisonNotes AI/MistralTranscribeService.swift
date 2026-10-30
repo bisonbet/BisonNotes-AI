@@ -118,7 +118,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = 1800.0 // 30 minutes
         sessionConfig.timeoutIntervalForResource = 1800.0
-        self.session = URLSession(configuration: sessionConfig)
+        self.session = URLSession(configuration: sessionConfig, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
         self.chunkingService = chunkingService
 
         super.init()
@@ -131,6 +131,9 @@ class MistralTranscribeService: NSObject, ObservableObject {
             throw MistralTranscribeError.configurationMissing
         }
 
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            throw MistralTranscribeError.configurationInsecure(message)
+        }
         guard let testURL = URL(string: "\(config.baseURL)/models") else {
             throw MistralTranscribeError.invalidResponse("Invalid base URL: \(config.baseURL)")
         }
@@ -253,6 +256,9 @@ class MistralTranscribeService: NSObject, ObservableObject {
         let startTime = Date()
 
         let boundary = UUID().uuidString
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            throw MistralTranscribeError.configurationInsecure(message)
+        }
         guard let url = URL(string: "\(config.baseURL)/audio/transcriptions") else {
             throw MistralTranscribeError.invalidResponse("Invalid base URL: \(config.baseURL)")
         }
@@ -427,6 +433,7 @@ struct MistralErrorDetail: Codable {
 
 enum MistralTranscribeError: LocalizedError {
     case configurationMissing
+    case configurationInsecure(String)
     case fileNotFound
     case fileTooLarge(String)
     case authenticationFailed(String)
@@ -439,6 +446,8 @@ enum MistralTranscribeError: LocalizedError {
         switch self {
         case .configurationMissing:
             return "Mistral API key is missing. Please configure your API key in Mistral AI settings."
+        case .configurationInsecure(let message):
+            return message
         case .fileNotFound:
             return "Audio file not found or inaccessible."
         case .fileTooLarge(let message):
