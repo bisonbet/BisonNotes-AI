@@ -423,6 +423,7 @@
       <li>Select model (use your provider's exact model name, e.g., <code>llama-3.1-70b-versatile</code> for Groq).</li>
       <li>Test the connection.</li>
     </ol>
+    <div class="bn-info"><strong>Self-hosted server over HTTP:</strong> Use the server's IP address in the base URL (e.g., <code>http://192.168.1.50:4000/v1</code>), not its hostname &mdash; iOS and macOS block plain HTTP to hostnames. A public IP address also needs Development Mode: Allow Public HTTP. See <a href="#bn-privacy">Endpoint safety</a>.</div>
 
     <div class="bn-info"><strong>llama.cpp setup:</strong> Clone from <a href="https://github.com/ggerganov/llama.cpp" target="_blank" rel="noopener">github.com/ggerganov/llama.cpp</a>, build, run <code>./server --model &lt;model.gguf&gt;</code>. Or use Python: <code>pip install 'llama-cpp-python[server]'</code></div>
 
@@ -913,11 +914,12 @@
 <h3>Endpoint safety</h3>
 <p>User-configurable AI services (compatible API, Ollama on native macOS, and Whisper) are checked against an endpoint policy:</p>
 <ul>
-  <li><strong>Local/private endpoints</strong> (loopback, link-local, RFC1918 networks) are allowed by default.</li>
-  <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at the open internet) are blocked unless you explicitly enable <strong>Development Mode</strong> for that service.</li>
-  <li>HTTPS / WSS public endpoints (Groq, Nebius, and similar providers) work as expected.</li>
+  <li><strong>HTTPS / WSS endpoints</strong> work with any address, including hostnames (Groq, Nebius, and similar providers).</li>
+  <li><strong>Local/private endpoints</strong> (<code>localhost</code>, loopback, link-local, and the private ranges <code>10.x</code>, <code>172.16&ndash;31.x</code> and <code>192.168.x</code>) are allowed over plain HTTP by default.</li>
+  <li><strong>Public cleartext endpoints</strong> (plain HTTP or WS pointing at a public IP address) are blocked unless you turn on <strong>Development Mode: Allow Public HTTP</strong>. Tailscale and other <code>100.64&ndash;127.x</code> addresses count as public.</li>
 </ul>
-<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public address while you set it up &mdash; it does not weaken transport security for any other engine.</div>
+<div class="bn-warn"><strong>Plain HTTP needs an IP address, not a hostname.</strong> iOS and macOS block cleartext HTTP to hostnames such as <code>http://ai.example.com</code>, <code>http://myserver.lan</code> or <code>http://box.tailnet.ts.net</code> before the request leaves the device, and Development Mode cannot override that. Enter the server's IP address instead (for example <code>http://192.168.1.50:4000/v1</code>), or put the server behind HTTPS if you want to use its name.</div>
+<div class="bn-warn"><strong>Development Mode:</strong> Enable it only on networks you control. It exists so you can connect to a self-hosted server on a public IP address while you set it up. It is one setting shared by the compatible API, Ollama and Whisper, so turning it on in any of them allows public HTTP IP addresses for all three.</div>
 
 <h3>Share Extension hardening</h3>
 <p>Imports from the Share Extension are now authorized with one-time tokens before the main app scans the shared container, and the imported files themselves are file-protected. Full file paths are no longer written to logs.</p>
@@ -949,6 +951,7 @@
       <li><strong>Connection Failed:</strong> Check internet and API keys</li>
       <li><strong>Timeout Errors:</strong> Increase timeout settings</li>
       <li><strong>Authentication Errors:</strong> Verify API credentials</li>
+      <li><strong>&ldquo;Requires a secure connection&rdquo; or blocked HTTP endpoint:</strong> Plain <code>http://</code> works only with an IP address or <code>localhost</code>. Replace a hostname with the server's IP address, or serve the endpoint over HTTPS. For a public IP address, also turn on Development Mode: Allow Public HTTP.</li>
     </ul>
   </div>
 </details>
