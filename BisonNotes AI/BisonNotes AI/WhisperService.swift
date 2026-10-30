@@ -127,7 +127,7 @@ class WhisperService: ObservableObject {
         sessionConfig.waitsForConnectivity = true
         sessionConfig.allowsConstrainedNetworkAccess = true
         sessionConfig.allowsExpensiveNetworkAccess = true
-        self.session = URLSession(configuration: sessionConfig)
+        self.session = URLSession(configuration: sessionConfig, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
         self.chunkingService = chunkingService
 
         // Initialize Wyoming client if using Wyoming protocol

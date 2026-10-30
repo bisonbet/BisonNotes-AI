@@ -48,6 +48,16 @@ enum EndpointSecurityPolicy {
         validationMessage(for: endpoint, allowInsecurePublicEndpoints: allowInsecurePublicEndpoints) == nil
     }
 
+    /// Whether a redirect issued by an allowed endpoint may be followed.
+    /// The same rule as the configured endpoint, applied to the destination.
+    static func allowsRedirect(
+        to url: URL?,
+        allowInsecurePublicEndpoints: Bool = UserDefaults.standard.bool(forKey: allowInsecurePublicEndpointsKey)
+    ) -> Bool {
+        guard let url else { return false }
+        return isAllowed(endpoint: url.absoluteString, allowInsecurePublicEndpoints: allowInsecurePublicEndpoints)
+    }
+
     static func warningMessage(for endpoint: String) -> String? {
         guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)),
               let scheme = url.scheme?.lowercased(),
@@ -143,5 +153,24 @@ enum EndpointSecurityPolicy {
 
             return false
         }
+    }
+}
+
+/// Applies `EndpointSecurityPolicy` to every redirect on AI-service sessions.
+/// ATS allows arbitrary loads so the policy is the single gate; without this,
+/// an allowed HTTPS or private endpoint could 307/308 the request body to a
+/// public HTTP address that Development Mode would otherwise block. A refused
+/// redirect is not followed, so the caller sees the 3xx response as a failure.
+final class EndpointRedirectGuard: NSObject, URLSessionTaskDelegate {
+    static let shared = EndpointRedirectGuard()
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        completionHandler(EndpointSecurityPolicy.allowsRedirect(to: request.url) ? request : nil)
     }
 }
