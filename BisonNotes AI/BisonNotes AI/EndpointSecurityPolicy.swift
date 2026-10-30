@@ -63,7 +63,7 @@ enum EndpointSecurityPolicy {
             return "This endpoint uses HTTP. Only use it with services you control on localhost or a private network."
         }
 
-        return "This endpoint uses public HTTP. Audio, transcripts, and summaries can be read or modified on the network unless Development Mode is enabled."
+        return "This endpoint uses public HTTP. Audio, transcripts, and summaries can be read or modified on the network. It is blocked unless Development Mode is enabled."
     }
 
     private static func isLocalOrPrivateHost(_ host: String) -> Bool {

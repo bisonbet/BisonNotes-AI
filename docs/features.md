@@ -296,11 +296,8 @@ restore.
 - Public `http://` and `ws://` endpoints are blocked for Compatible API, Ollama,
   and Whisper. `localhost` and private-network IP addresses are allowed.
   **Development Mode: Allow Public HTTP** (one setting shared by all three)
-  unblocks public IP addresses.
-- Plain `http://` must use an IP address, not a hostname. iOS and macOS block
-  cleartext HTTP to names like `http://ai.example.com` or
-  `http://myserver.lan`, and Development Mode can't override that. Use the
-  server's IP address (`http://192.168.1.50:4000/v1`) or serve it over HTTPS.
+  unblocks any other HTTP address, including hostnames and Tailscale
+  `100.x` addresses.
 
 > **Not HIPAA compliant.** BisonNotes AI is a personal productivity app and does
 > not provide Business Associate Agreements. Don't use it to record or process

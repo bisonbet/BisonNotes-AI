@@ -105,12 +105,15 @@
 	<string>This app uses your location to add location data to your audio recordings.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>This app requires access to the microphone to record audio notes.</string>
-	<!-- Keep cleartext networking limited to localhost/private endpoints. The
-	     runtime EndpointSecurityPolicy remains the gate for user-configurable
-	     public endpoints. -->
+	<!-- AI endpoints are user-configured, so ATS cannot know them ahead of time.
+	     ATS permits cleartext so that EndpointSecurityPolicy is the single gate:
+	     localhost/private hosts always, public HTTP only with Development Mode.
+	     Do not add NSAllowsLocalNetworking (or any other NSAllows* key) here:
+	     its presence makes iOS/macOS ignore NSAllowsArbitraryLoads, which
+	     silently re-blocks public HTTP even with Development Mode on. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 	<key>NSScreenCaptureUsageDescription</key>
