@@ -47,6 +47,42 @@ final class CloudKitBatchExecutorTests: XCTestCase {
         return names
     }
 
+    private enum InvalidatedUpload: Error { case removed }
+
+    func testSaveValidationStopsLaterBatchesAfterAnInflightDeletion() async throws {
+        executor.limits.metadataBatchSize = 1
+        let records = CloudKitTestRecords.names(count: 3).map {
+            CloudKitTestRecords.record(type: "CD_BackupTranscript", name: $0)
+        }
+        var removed = false
+        transport.beforeModify = { _ in removed = true }
+        do {
+            _ = try await executor.save(records, validate: {
+                if removed { throw InvalidatedUpload.removed }
+            })
+            XCTFail("The stale upload must stop")
+        } catch InvalidatedUpload.removed {
+            XCTAssertEqual(transport.modifyOperationCount, 1)
+        }
+    }
+
+    func testSaveValidationStopsRetriesAfterADeletionDuringBackoff() async throws {
+        let record = CloudKitTestRecords.record(type: "CD_BackupTranscript", name: "retry")
+        transport.perRecordSaveFailures[record.recordID] = [CloudKitTestError.ckError(.networkFailure)]
+        var validations = 0
+        do {
+            _ = try await executor.save([record], validate: {
+                validations += 1
+                // Before request, after its response, then before the retry.
+                if validations == 3 { throw InvalidatedUpload.removed }
+            })
+            XCTFail("The stale retry must stop")
+        } catch InvalidatedUpload.removed {
+            XCTAssertEqual(transport.modifyOperationCount, 1)
+            XCTAssertEqual(sleeper.requestedSleeps.count, 1)
+        }
+    }
+
     // MARK: The production dataset
 
     func testFetchOf161KnownIdsCostsTwoRequests() async throws {

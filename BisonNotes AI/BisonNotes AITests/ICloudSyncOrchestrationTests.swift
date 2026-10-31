@@ -212,6 +212,217 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         ])
     }
 
+    func testTranscriptDeletedDuringRestoreIsNotRecreated() async throws {
+        try await assertDeletionDuringRestore(imported: false, preserveSummary: true)
+    }
+
+    func testImportedTranscriptDeletedDuringRestoreKeepsOnlyItsSummary() async throws {
+        try await assertDeletionDuringRestore(imported: true, preserveSummary: true)
+    }
+
+    func testImportedRecordingDeletedDuringRestoreIsNotRecreated() async throws {
+        try await assertDeletionDuringRestore(imported: true, preserveSummary: false)
+    }
+
+    func testRecordingDeletedDuringRestoreIsNotRecreated() async throws {
+        try await assertDeletionDuringRestore(imported: false, preserveSummary: false)
+    }
+
+    private func deleteDuringSync(
+        recordingId: UUID,
+        transcriptId: UUID,
+        imported: Bool,
+        preserveSummary: Bool
+    ) throws {
+        if !preserveSummary {
+            try appCoordinator.coreDataManager.deleteRecording(id: recordingId)
+        } else if imported {
+            try appCoordinator.coreDataManager.deleteImportedTranscriptPreservingSummary(
+                recordingId: recordingId, transcriptId: transcriptId
+            )
+        } else {
+            try appCoordinator.coreDataManager.deleteTranscript(id: transcriptId)
+        }
+    }
+
+    private func assertDeletedTranscriptContent(
+        recordingId: UUID,
+        transcriptId: UUID,
+        imported: Bool,
+        preserveSummary: Bool
+    ) throws {
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        if preserveSummary {
+            XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+            let remaining = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+            XCTAssertNil(remaining.transcriptId)
+            if imported { XCTAssertNil(remaining.recordingURL) }
+        } else {
+            XCTAssertNil(appCoordinator.getRecording(id: recordingId))
+        }
+    }
+
+    private func assertDeletionDuringRestore(imported: Bool, preserveSummary: Bool) async throws {
+        let recordingId = try createCompleteRecording(named: "Delete during restore")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let transcriptId = try XCTUnwrap(recording.transcriptId)
+        if imported {
+            recording.audioQuality = "imported"
+            try appCoordinator.coreDataManager.saveContext()
+        }
+        if imported, !preserveSummary, let summaryId = recording.summaryId {
+            try appCoordinator.coreDataManager.deleteSummary(id: summaryId, enqueueCloudDeletion: false)
+        }
+        seedTrustedManifest()
+        _ = try await runReconcile()
+
+        // The confirming manifest read used to suspend after restore had already
+        // filtered its snapshot against the old deletion targets.
+        var didDelete = false
+        var manifestReads = 0
+        transport.beforeFetch = { [self] transport in
+            guard !didDelete,
+                  case .fetch(let names, _) = transport.ledger.last,
+                  names.contains("content_index") else { return }
+            manifestReads += 1
+            guard manifestReads == 2 else { return }
+            didDelete = true
+            do {
+                try deleteDuringSync(
+                    recordingId: recordingId, transcriptId: transcriptId,
+                    imported: imported, preserveSummary: preserveSummary
+                )
+            } catch {
+                XCTFail("Local deletion failed: \(error)")
+            }
+        }
+        _ = try await manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: false,
+            restoreSettings: true
+        )
+        transport.beforeFetch = nil
+        XCTAssertTrue(didDelete, "The test must delete during the confirming manifest read")
+        try assertDeletedTranscriptContent(
+            recordingId: recordingId, transcriptId: transcriptId,
+            imported: imported, preserveSummary: preserveSummary
+        )
+
+        // A later pass flushes the durable intent; it must stay deleted after the
+        // cloud cleanup and a fresh restore, not just disappear for one frame.
+        _ = try await runReconcile()
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        XCTAssertNil(transport.record(named: "backup_transcript_\(transcriptId.uuidString)"))
+        try assertDeletedTranscriptContent(
+            recordingId: recordingId, transcriptId: transcriptId,
+            imported: imported, preserveSummary: preserveSummary
+        )
+    }
+
+    func testSummaryDeletedDuringRestoreIsNotRecreated() async throws {
+        let recordingId = try createCompleteRecording(named: "Delete summary during restore")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let summaryId = try XCTUnwrap(recording.summaryId)
+        let transcriptId = try XCTUnwrap(recording.transcriptId)
+        seedTrustedManifest()
+        _ = try await runReconcile()
+        var manifestReads = 0
+        transport.beforeFetch = { [self] transport in
+            guard case .fetch(let names, _) = transport.ledger.last,
+                  names.contains("content_index") else { return }
+            manifestReads += 1
+            guard manifestReads == 2 else { return }
+            do {
+                try appCoordinator.coreDataManager.deleteSummary(id: summaryId)
+            } catch {
+                XCTFail("Local deletion failed: \(error)")
+            }
+        }
+        _ = try await manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator, includeAudioFiles: false, restoreSettings: true
+        )
+        transport.beforeFetch = nil
+        XCTAssertGreaterThanOrEqual(manifestReads, 2)
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: summaryId))
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.summaryId)
+        XCTAssertNotNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        _ = try await runReconcile()
+        XCTAssertNil(appCoordinator.coreDataManager.getSummary(id: summaryId))
+        XCTAssertNotNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+    }
+
+    func testDeletionDuringUploadStopsTheStaleRunAndRetriesWithItsOutbox() async throws {
+        let recordingId = try createCompleteRecording(named: "Delete during upload")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let transcriptId = try XCTUnwrap(recording.transcriptId)
+        recording.audioQuality = "imported"
+        try appCoordinator.coreDataManager.saveContext()
+        seedTrustedManifest()
+        var didDelete = false
+        transport.beforeModify = { [self] transport in
+            guard !didDelete,
+                  case .modify(let saving, _) = transport.ledger.last,
+                  saving.contains("backup_transcript_\(transcriptId.uuidString)") else { return }
+            didDelete = true
+            do {
+                try appCoordinator.coreDataManager.deleteImportedTranscriptPreservingSummary(
+                    recordingId: recordingId, transcriptId: transcriptId
+                )
+            } catch {
+                XCTFail("Local deletion failed: \(error)")
+            }
+        }
+        let interrupted = try await runReconcile()
+        transport.beforeModify = nil
+        XCTAssertTrue(didDelete)
+        XCTAssertNotNil(interrupted.wasDeferredUntil)
+        XCTAssertNotNil(manager.deferredSyncRetryTarget)
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+        XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+
+        _ = try await runReconcile()
+        XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+        XCTAssertNil(transport.record(named: "backup_transcript_\(transcriptId.uuidString)"))
+        XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+        XCTAssertNil(manager.deferredSyncRetryTarget)
+    }
+
+    func testImportedAudioRemovedWhileStagingIsNeverUploaded() async throws {
+        let recordingId = try createCompleteRecording(named: "Delete during audio staging")
+        let recording = try XCTUnwrap(appCoordinator.getRecording(id: recordingId))
+        let transcriptId = try XCTUnwrap(recording.transcriptId)
+        recording.audioQuality = "imported"
+        let audioURL = tempDirectory.appendingPathComponent(try XCTUnwrap(recording.recordingURL))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        recording.recordingURL = audioURL.path
+        try appCoordinator.coreDataManager.saveContext()
+        seedTrustedManifest()
+        let staging = DeletionDuringAssetStaging { [self] in
+            do {
+                try appCoordinator.coreDataManager.deleteImportedTranscriptPreservingSummary(
+                    recordingId: recordingId, transcriptId: transcriptId
+                )
+            } catch {
+                XCTFail("Local deletion failed: \(error)")
+            }
+        }
+        manager.setAssetStagingFactoryForTesting { _ in staging }
+        try await withAudioBackupEnabled {
+            let interrupted = try await runReconcile()
+            XCTAssertTrue(staging.didStage)
+            XCTAssertNotNil(interrupted.wasDeferredUntil)
+            XCTAssertNil(transport.record(named: "backup_recording_\(recordingId.uuidString)"))
+            XCTAssertNil(appCoordinator.coreDataManager.getTranscript(id: transcriptId))
+            XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+            XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+            _ = try await runReconcile()
+            XCTAssertNil(transport.record(named: "backup_recording_\(recordingId.uuidString)")?["audioAsset"])
+            XCTAssertNil(appCoordinator.getRecording(id: recordingId)?.recordingURL)
+            XCTAssertNotNil(appCoordinator.getSummary(for: recordingId))
+        }
+    }
+
     func testReconcileRunsThePhaseBarrierInOrder() async throws {
         try createCompleteRecording(named: "Phase order")
         seedTrustedManifest()
@@ -2952,4 +3163,24 @@ private final class FailingReconcileRestoreCopyFileManager: FileManager, @unchec
         try Data("partial restore".utf8).write(to: destination)
         throw POSIXError(.ENOSPC)
     }
+}
+
+/// Returns the already-owned fixture file after letting a user deletion commit
+/// at the same suspension boundary as the real asynchronous staging copy.
+@MainActor
+private final class DeletionDuringAssetStaging: CloudAssetStaging {
+    private let deletion: @MainActor () -> Void
+    private(set) var didStage = false
+
+    init(deletion: @escaping @MainActor () -> Void) {
+        self.deletion = deletion
+    }
+
+    func stage(_ sourceURL: URL) async -> URL? {
+        didStage = true
+        deletion()
+        return sourceURL
+    }
+
+    func cleanUp() {}
 }

@@ -186,9 +186,10 @@ final class CloudKitBatchExecutor {
 
     func save(
         _ records: [CKRecord],
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .ifServerRecordUnchanged
+        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .ifServerRecordUnchanged,
+        validate: (@MainActor () throws -> Void)? = nil
     ) async throws -> CloudKitModifyOutcome {
-        try await modify(saving: records, deleting: [], savePolicy: savePolicy)
+        try await modify(saving: records, deleting: [], savePolicy: savePolicy, validate: validate)
     }
 
     func delete(_ recordIDs: [CKRecord.ID]) async throws -> CloudKitModifyOutcome {
@@ -198,7 +199,8 @@ final class CloudKitBatchExecutor {
     func modify(
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .ifServerRecordUnchanged
+        savePolicy: CKModifyRecordsOperation.RecordSavePolicy = .ifServerRecordUnchanged,
+        validate: (@MainActor () throws -> Void)? = nil
     ) async throws -> CloudKitModifyOutcome {
         var outcome = CloudKitModifyOutcome()
         let uniqueRecords = Self.deduplicatedRecords(records)
@@ -216,29 +218,36 @@ final class CloudKitBatchExecutor {
 
         // Asset-bearing saves ride in much smaller batches; a rejected batch of
         // 100 would throw away every upload in it.
+        let options = ModifyOptions(savePolicy: savePolicy, validate: validate)
         let assetRecords = uniqueRecords.filter(Self.carriesAsset)
         let metadataRecords = uniqueRecords.filter { !Self.carriesAsset($0) }
 
         for chunk in metadataRecords.chunked(into: limits.metadataBatchSize) {
-            try await modifyChunk(saving: chunk, deleting: [], savePolicy: savePolicy, attempt: 0, into: &outcome)
+            try await modifyChunk(saving: chunk, deleting: [], options: options, attempt: 0, into: &outcome)
         }
         for chunk in assetRecords.chunked(into: limits.assetBatchSize) {
-            try await modifyChunk(saving: chunk, deleting: [], savePolicy: savePolicy, attempt: 0, into: &outcome)
+            try await modifyChunk(saving: chunk, deleting: [], options: options, attempt: 0, into: &outcome)
         }
         for chunk in uniqueDeletes.chunked(into: limits.metadataBatchSize) {
-            try await modifyChunk(saving: [], deleting: chunk, savePolicy: savePolicy, attempt: 0, into: &outcome)
+            try await modifyChunk(saving: [], deleting: chunk, options: options, attempt: 0, into: &outcome)
         }
         return outcome
+    }
+
+    private struct ModifyOptions {
+        let savePolicy: CKModifyRecordsOperation.RecordSavePolicy
+        let validate: (@MainActor () throws -> Void)?
     }
 
     private func modifyChunk(
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy,
+        options: ModifyOptions,
         attempt: Int,
         into outcome: inout CloudKitModifyOutcome
     ) async throws {
         guard !records.isEmpty || !recordIDs.isEmpty else { return }
+        try options.validate?()
 
         // An earlier chunk, split, or retry may have closed the gate. Writing on
         // through a backoff CloudKit asked for is what deepens the throttling.
@@ -255,15 +264,18 @@ final class CloudKitBatchExecutor {
             results = try await transport.modifyRecords(
                 saving: records,
                 deleting: recordIDs,
-                savePolicy: savePolicy,
+                savePolicy: options.savePolicy,
                 atomically: false
             )
+            // A deletion can commit while this request is in flight. Stop before
+            // another batch or conflict retry can publish its stale snapshot.
+            try options.validate?()
         } catch let error as CKError {
             if error.code == .limitExceeded, records.count + recordIDs.count > 1 {
                 try await splitRejectedChunk(
                     saving: records,
                     deleting: recordIDs,
-                    savePolicy: savePolicy,
+                    options: options,
                     attempt: attempt,
                     into: &outcome
                 )
@@ -275,7 +287,7 @@ final class CloudKitBatchExecutor {
                 failures: (records.map(\.recordID) + recordIDs).map {
                     RetryableFailure(recordID: $0, error: error)
                 },
-                savePolicy: savePolicy,
+                options: options,
                 attempt: attempt,
                 into: &outcome
             )
@@ -288,7 +300,7 @@ final class CloudKitBatchExecutor {
             saving: retry.records,
             deleting: retry.recordIDs,
             failures: retry.failures,
-            savePolicy: savePolicy,
+            options: options,
             attempt: attempt,
             into: &outcome
         )
@@ -297,7 +309,7 @@ final class CloudKitBatchExecutor {
     private func splitRejectedChunk(
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy,
+        options: ModifyOptions,
         attempt: Int,
         into outcome: inout CloudKitModifyOutcome
     ) async throws {
@@ -310,14 +322,14 @@ final class CloudKitBatchExecutor {
             try await modifyChunk(
                 saving: records,
                 deleting: [],
-                savePolicy: savePolicy,
+                options: options,
                 attempt: attempt,
                 into: &outcome
             )
             try await modifyChunk(
                 saving: [],
                 deleting: recordIDs,
-                savePolicy: savePolicy,
+                options: options,
                 attempt: attempt,
                 into: &outcome
             )
@@ -331,14 +343,14 @@ final class CloudKitBatchExecutor {
         try await modifyChunk(
             saving: saveHalves.0,
             deleting: deleteHalves.0,
-            savePolicy: savePolicy,
+            options: options,
             attempt: attempt,
             into: &outcome
         )
         try await modifyChunk(
             saving: saveHalves.1,
             deleting: deleteHalves.1,
-            savePolicy: savePolicy,
+            options: options,
             attempt: attempt,
             into: &outcome
         )
@@ -403,7 +415,7 @@ final class CloudKitBatchExecutor {
         saving records: [CKRecord],
         deleting recordIDs: [CKRecord.ID],
         failures: [RetryableFailure],
-        savePolicy: CKModifyRecordsOperation.RecordSavePolicy,
+        options: ModifyOptions,
         attempt: Int,
         into outcome: inout CloudKitModifyOutcome
     ) async throws {
@@ -425,7 +437,7 @@ final class CloudKitBatchExecutor {
         try await modifyChunk(
             saving: records.filter { resendable.contains($0.recordID) },
             deleting: recordIDs.filter { resendable.contains($0) },
-            savePolicy: savePolicy,
+            options: options,
             attempt: attempt + 1,
             into: &outcome
         )
