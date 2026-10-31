@@ -45,7 +45,7 @@ class MistralAISummarizationService {
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = config.timeout
         sessionConfig.timeoutIntervalForResource = config.timeout * 2
-        self.session = URLSession(configuration: sessionConfig)
+        self.session = URLSession(configuration: sessionConfig, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
     }
 
     // MARK: - Public Methods
@@ -251,6 +251,11 @@ class MistralAISummarizationService {
 
         logger.debug("Mistral AI API Configuration - Model: \(self.config.model.rawValue, privacy: .public), BaseURL: \(self.config.baseURL, privacy: .public)")
         logger.debug("API Key configured: \(self.config.apiKey.isEmpty ? "No" : "Yes", privacy: .public)")
+
+        if let message = EndpointSecurityPolicy.validationMessage(for: config.baseURL) {
+            logger.error("Blocked insecure Mistral AI endpoint")
+            throw SummarizationError.aiServiceUnavailable(service: message)
+        }
 
         guard let url = URL(string: "\(config.baseURL)/chat/completions") else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid Mistral AI base URL: \(config.baseURL)")

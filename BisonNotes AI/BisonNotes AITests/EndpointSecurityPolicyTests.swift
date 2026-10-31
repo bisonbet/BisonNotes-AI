@@ -54,4 +54,12 @@ final class EndpointSecurityPolicyTests: XCTestCase {
         XCTAssertNotNil(message)
         XCTAssertTrue(message?.contains("Public HTTP endpoints are blocked") == true)
     }
+
+    func testRedirectsFollowTheSamePolicyAsEndpoints() {
+        XCTAssertTrue(EndpointSecurityPolicy.allowsRedirect(to: URL(string: "https://api.example.com/v1"), allowInsecurePublicEndpoints: false))
+        XCTAssertTrue(EndpointSecurityPolicy.allowsRedirect(to: URL(string: "http://192.168.1.20:4000/v1"), allowInsecurePublicEndpoints: false))
+        XCTAssertFalse(EndpointSecurityPolicy.allowsRedirect(to: URL(string: "http://example.com/v1"), allowInsecurePublicEndpoints: false))
+        XCTAssertTrue(EndpointSecurityPolicy.allowsRedirect(to: URL(string: "http://example.com/v1"), allowInsecurePublicEndpoints: true))
+        XCTAssertFalse(EndpointSecurityPolicy.allowsRedirect(to: nil, allowInsecurePublicEndpoints: true))
+    }
 }

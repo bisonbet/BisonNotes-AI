@@ -365,7 +365,7 @@ class OllamaService: ObservableObject {
         sessionConfig.timeoutIntervalForRequest = config.timeoutInterval
         // Provide additional time for streamed or larger local responses to finish after the request is accepted.
         sessionConfig.timeoutIntervalForResource = config.timeoutInterval * 2
-        self.session = URLSession(configuration: sessionConfig)
+        self.session = URLSession(configuration: sessionConfig, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
     }
 
     private func validateEndpoint() throws {

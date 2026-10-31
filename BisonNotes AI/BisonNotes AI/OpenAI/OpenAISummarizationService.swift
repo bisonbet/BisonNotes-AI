@@ -27,7 +27,7 @@ actor OpenAICompatibleService {
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = config.timeout
         sessionConfig.timeoutIntervalForResource = config.timeout * 2
-        self.session = URLSession(configuration: sessionConfig)
+        self.session = URLSession(configuration: sessionConfig, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
 
         // Cache format detection results at initialization to avoid:
         // 1. Thread safety issues with UserDefaults access during concurrent API calls
@@ -236,7 +236,7 @@ actor OpenAICompatibleService {
         request.timeoutInterval = OpenAICompatibleConfig.connectionTestTimeout
 
         let session = URLSession.shared
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: EndpointRedirectGuard.shared)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SummarizationError.aiServiceUnavailable(service: "Invalid response from server")

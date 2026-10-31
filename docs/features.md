@@ -294,8 +294,10 @@ restore.
 - Recordings, transcripts, notes, attachments, and the database use iOS file
   protection.
 - Public `http://` and `ws://` endpoints are blocked for Compatible API, Ollama,
-  and Whisper. Local and private-network addresses are allowed, and each
-  service has a Development Mode override.
+  Whisper, and a custom Mistral Base URL. Redirects are checked the same way. `localhost` and private-network IP addresses are allowed.
+  **Development Mode: Allow Public HTTP** (one shared setting)
+  unblocks any other HTTP address, including hostnames and Tailscale
+  `100.x` addresses.
 
 > **Not HIPAA compliant.** BisonNotes AI is a personal productivity app and does
 > not provide Business Associate Agreements. Don't use it to record or process

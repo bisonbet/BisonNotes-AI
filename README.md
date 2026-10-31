@@ -34,6 +34,9 @@ choose them.
   labels, and Ternary Bonsai summaries, all without sending audio anywhere.
 - 🤖 **Your choice of AI**: On Device AI, Apple Intelligence, Mistral AI, Google
   AI Studio, any OpenAI-compatible API, Whisper servers, and Ollama on Mac.
+  Self-hosted servers over plain `http://` on a non-private address (such as
+  Tailscale) need Development Mode; see
+  [Privacy and security](docs/features.md#privacy-and-security).
 - 📝 **Summaries, tasks, and reminders**, sent to Reminders, Apple Calendar, or
   Google Calendar.
 - 🧪 **Beta features**: custom Summary Prompts and on-device English Transcript
