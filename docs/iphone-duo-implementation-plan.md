@@ -81,12 +81,23 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - Capture with `xcrun simctl io <udid> screenshot --display=1|3 --mask=black`. Display 1 is the outer panel (1398×2034 px, 466×678 pt). Display 3 is the inner panel (2007×2853 px).
 - Opening, closing, folding and rotating can only be driven from Xcode's Device Hub. `simctl io screenConfig power` does not simulate opening; the inner panel stays dark.
 - **F7 confirmed.** The built product ships `UISupportedInterfaceOrientations = [Portrait]` for iPhone, so the outer display cannot be used in landscape or the tent pose.
-- **Outer display, portrait** (`docs/duo-baseline/outer-portrait-01-record.png`):
-  - The system `TabView` already moves the tab bar into the vertical side strip. It shows icons only.
-  - The in-content Help button is not in that strip (F4).
-  - The "Record" title block and the logo hero push the import actions down, so "Import Transcripts" is off-screen (F6).
-  - The app is forced dark (F2).
-- **Still to capture:** the other tabs and key sheets on the outer display; outer landscape (needs M1's orientation fix first, which is itself a finding); and every inner-display pose.
+- **Outer display, portrait** (`docs/duo-baseline/outer-portrait-01…07`). The system pieces already adapt; everything we built ourselves doesn't.
+  - **Works today:**
+    - The `TabView` tab bar sits in the vertical side strip, icons only.
+    - The Transcripts and Summaries filter buttons are real `.toolbar` items, and they move into the strip.
+    - `.searchable` in the Recordings library becomes the system search button at the bottom of the strip.
+  - **F4, in-content controls stay in the content:**
+    - Record's Help button.
+    - Setup's advanced-settings gear.
+    - The Recordings library header (filter, ellipsis menu, close). The squeezed header hyphenates the large title as "Record-ings".
+  - **F5, sheet bars stay horizontal.** Text-only and custom items stay in a horizontal bar across the top of the sheet:
+    - Transcript editor: Cancel / Save.
+    - Summary detail: an "Export" icon+text custom label, and Done.
+
+    This happens even though Apple's default for sheets on the outer display is a vertical bar.
+  - **F6, the Record screen needs scrolling.** The "Record" title block and the logo hero push the import actions down, so "Import Transcripts" is off-screen.
+  - **F2:** the app is forced dark on this display.
+- **Still to capture:** every inner-display pose (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
 
 ### M1: Continuity foundation (fixes F1, F2, F7, F8)
 
