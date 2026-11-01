@@ -74,6 +74,20 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 4. Confirm which orientation list ships (F7) by inspecting the built product's `Info.plist`.
 5. Run Xcode's **App Resizability** skill and file its findings into the milestones below.
 
+**M0 progress (2026-11-01, partial):**
+
+- The iOS scheme builds cleanly with Xcode 27.2 and runs on the iPhone Duo simulator (iOS 27.1 runtime). Baselines use a dedicated simulator, "BisonNotes Duo Baseline", because the stock "iPhone Duo" simulator is shared with other projects. It was shut down, and had BisonHealth AI launched onto it, mid-capture.
+- Launch with `--ui-testing --reset-test-data --seed-sample-recording --disable-cloud-services` to get deterministic content.
+- Capture with `xcrun simctl io <udid> screenshot --display=1|3 --mask=black`. Display 1 is the outer panel (1398×2034 px, 466×678 pt). Display 3 is the inner panel (2007×2853 px).
+- Opening, closing, folding and rotating can only be driven from Xcode's Device Hub. `simctl io screenConfig power` does not simulate opening; the inner panel stays dark.
+- **F7 confirmed.** The built product ships `UISupportedInterfaceOrientations = [Portrait]` for iPhone, so the outer display cannot be used in landscape or the tent pose.
+- **Outer display, portrait** (`docs/duo-baseline/outer-portrait-01-record.png`):
+  - The system `TabView` already moves the tab bar into the vertical side strip. It shows icons only.
+  - The in-content Help button is not in that strip (F4).
+  - The "Record" title block and the logo hero push the import actions down, so "Import Transcripts" is off-screen (F6).
+  - The app is forced dark (F2).
+- **Still to capture:** the other tabs and key sheets on the outer display; outer landscape (needs M1's orientation fix first, which is itself a finding); and every inner-display pose.
+
 ### M1: Continuity foundation (fixes F1, F2, F7, F8)
 
 - **One navigation root on iOS.** Replace the `if horizontalSizeClass == .compact` branch with a single `TabView(selection:)` that uses the `Tab` API and `.tabViewStyle(.sidebarAdaptable)` (iOS 18+). On iOS 27.1, add `.defaultTabBarPlacement(.sidebar)` so the inner display opens with the sidebar.
