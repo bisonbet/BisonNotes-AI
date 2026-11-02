@@ -428,12 +428,23 @@ extension XCUIApplication {
 
         let sidebarIdentifier = "bisonnotes.sidebar.\(name.lowercased())"
         let sidebarItem = staticTexts.matching(identifier: sidebarIdentifier).firstMatch
+        if sidebarItem.waitForExistence(timeout: 1) {
+            sidebarItem.tap()
+            return
+        }
+
+        // A sidebar-adaptable TabView's sidebar, and iPhone Duo's vertical tab
+        // strip, expose each section as a button named after it rather than as
+        // a tab-bar button.
+        let sectionButton = buttons.matching(
+            NSPredicate(format: "label == %@ OR identifier == %@", name, sidebarIdentifier)
+        ).firstMatch
         XCTAssertTrue(
-            sidebarItem.waitForExistence(timeout: 8),
-            "Could not find \(name) in either the tab bar or adaptive sidebar.",
+            sectionButton.waitForExistence(timeout: 8),
+            "Could not find \(name) in the tab bar, sidebar or vertical tab strip.",
             file: file,
             line: line
         )
-        sidebarItem.tap()
+        sectionButton.tap()
     }
 }
