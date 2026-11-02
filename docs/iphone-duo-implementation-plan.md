@@ -130,6 +130,17 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - **Orientation (F7).** Allow landscape on iPhone and remove the conflicting `Info.plist` entry so only one source of truth remains. Check compact-height layouts (they're covered in M4).
 - **F8.** Use `@Environment(\.displayScale)` in SwiftUI and `traitCollection.displayScale` or the window scene's screen elsewhere. PDF export takes the scale as a parameter.
 
+**M1 status (2026-11-01): implemented.**
+- **Done:**
+  - `ContentView` now uses one `TabView` (`.sidebarAdaptable`, selection in `@SceneStorage`) on iOS/iPadOS. macOS keeps `AdaptiveNavigationView`.
+  - Appearance follows the system, with an "Always Dark" toggle (`AppAppearance`, Preferences, iCloud settings backup).
+  - `Info.plist` ships portrait and both landscapes on iPhone.
+  - `UIScreen.main.scale` is replaced by `PlatformApp.activeDisplayScale` and the view's `displayScale`.
+  - New tests: `AdaptiveLayoutContinuityTests`.
+- **Verified on the Duo simulator** (`docs/duo-baseline/m1-continuity-01…02`): a summary sheet opened on the closed outer display is still open after opening the device. Summaries is still selected and the appearance doesn't flip. F1, F2 and F11 are fixed. The iOS and macOS builds succeed, and 149 focused unit tests pass.
+- **Not yet verified:** iPad layout, and the UI test suite.
+- **Carried into M3:** the inner display shows the vertical tab strip rather than a sidebar. `defaultAdaptableTabBarPlacement(.sidebar)` (iOS 18) doesn't drive the Duo's placement. Try `defaultTabBarPlacement(.sidebar)` behind `#available(iOS 27.0, *)`.
+
 **Exit:** Opening and closing the device in every tab keeps the selected tab, the scroll position and any presented sheet. The appearance doesn't flip. Unit tests pass, and the new UI test passes on iPhone 17, iPad and iPhone Duo simulators.
 
 ### M2: System bars (fixes F4, F5)

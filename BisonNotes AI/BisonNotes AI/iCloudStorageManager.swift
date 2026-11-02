@@ -3131,6 +3131,7 @@ extension iCloudStorageManager {
         SummaryDetailLevel.storageKey,
         SummaryThinkingLevel.storageKey,
         "user_preference_time_format",
+        AppAppearance.alwaysDarkKey,
         "WatchIntegrationEnabled",
         "WatchAutoSync",
         "WatchBatteryAware",

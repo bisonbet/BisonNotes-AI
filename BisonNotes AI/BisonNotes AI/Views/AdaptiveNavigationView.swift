@@ -2,8 +2,9 @@
 //  AdaptiveNavigationView.swift
 //  BisonNotes AI
 //
-//  Sidebar-based navigation for iPad and native macOS.
-//  On iPhone, ContentView continues to use the existing TabView.
+//  Sidebar-based navigation for native macOS.
+//  On iPhone and iPad, ContentView uses a sidebar-adaptable TabView over the same
+//  SidebarItem sections, so one view tree serves every size class.
 //
 
 import SwiftUI
@@ -51,6 +52,17 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case settings = "Setup"
 
     var id: String { rawValue }
+
+    /// Parses the section names posted with the "NavigateToSection" notification.
+    init?(navigationName: String) {
+        switch navigationName {
+        case "record": self = .record
+        case "summaries": self = .summaries
+        case "transcripts": self = .transcripts
+        case "settings": self = .settings
+        default: return nil
+        }
+    }
 
     var icon: String {
         switch self {
@@ -109,14 +121,9 @@ struct AdaptiveNavigationView: View {
             .environmentObject(appCoordinator)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NavigateToSection"))) { notification in
-            if let section = notification.object as? String {
-                switch section {
-                case "record": selectedItem = .record
-                case "summaries": selectedItem = .summaries
-                case "transcripts": selectedItem = .transcripts
-                case "settings": selectedItem = .settings
-                default: break
-                }
+            if let section = notification.object as? String,
+               let item = SidebarItem(navigationName: section) {
+                selectedItem = item
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchToRecordTabForImport"))) { _ in

@@ -3653,6 +3653,7 @@ private struct StaticLocationMapView: View {
 
     @State private var snapshotImage: UIImage?
     @State private var isLoadingSnapshot = false
+    @Environment(\.displayScale) private var displayScale
 
     private var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(
@@ -3727,7 +3728,7 @@ private struct StaticLocationMapView: View {
             return
         }
 
-        let scale = await MainActor.run { UIScreen.main.scale }
+        let scale = await MainActor.run { displayScale }
         let signature = locationSignature
 
         if let storedImage = await loadStoredSnapshot(scale: scale, signature: signature) {
