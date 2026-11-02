@@ -106,7 +106,12 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - **F1 confirmed** (`docs/duo-baseline/continuity-01-after-close-reset-to-record.png`):
   - Start on Summaries with a summary sheet open on the inner display, then close the device.
   - The outer display comes back on **Record**: the selected section is lost, the sheet is gone, and the appearance has flipped back to dark.
-- **Still to capture:** the inner display in landscape, book, laptop and Split View (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
+- **Inner display, landscape, flat** (`docs/duo-baseline/inner-landscape-01…03`):
+  - **Sidebar:** pinned permanently.
+  - **Detail-column bars (Summaries filter and search):** they move into the vertical strip on the right, as Apple describes.
+  - **Record (F6):** the card and the Start Recording button are centred across the middle of the display, which is where the fold runs in the book pose.
+  - **F3:** the summary opens as a centred sheet over the list, again straddling the middle, instead of the Mail-style list | detail.
+- **Still to capture:** book, laptop and Split View (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
 
 ### M1: Continuity foundation (fixes F1, F2, F7, F8)
 
