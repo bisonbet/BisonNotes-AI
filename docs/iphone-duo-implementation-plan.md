@@ -97,7 +97,16 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
     This happens even though Apple's default for sheets on the outer display is a vertical bar.
   - **F6, the Record screen needs scrolling.** The "Record" title block and the logo hero push the import actions down, so "Import Transcripts" is off-screen.
   - **F2:** the app is forced dark on this display.
-- **Still to capture:** every inner-display pose (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
+- **Inner display, portrait** (`docs/duo-baseline/inner-portrait-01…04`):
+  - **F2:** the app switches from dark to light as soon as the device opens.
+  - **Collapsed sidebar:** the `NavigationSplitView` sidebar starts collapsed behind a toggle, and Record fills the screen as one centred column.
+  - **New finding (F11):** the sidebar opens as an overlay, and it stays open after a section is picked, so the user has to dismiss it by hand. M1's `sidebarAdaptable` `TabView` replaces it.
+  - **Bars are horizontal,** as Apple specifies for inner portrait.
+  - **F3:** "View Summary" opens a sheet that covers almost the whole display and hides the list.
+- **F1 confirmed** (`docs/duo-baseline/continuity-01-after-close-reset-to-record.png`):
+  - Start on Summaries with a summary sheet open on the inner display, then close the device.
+  - The outer display comes back on **Record**: the selected section is lost, the sheet is gone, and the appearance has flipped back to dark.
+- **Still to capture:** the inner display in landscape, book, laptop and Split View (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
 
 ### M1: Continuity foundation (fixes F1, F2, F7, F8)
 
