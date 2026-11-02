@@ -111,7 +111,13 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
   - **Detail-column bars (Summaries filter and search):** they move into the vertical strip on the right, as Apple describes.
   - **Record (F6):** the card and the Start Recording button are centred across the middle of the display, which is where the fold runs in the book pose.
   - **F3:** the summary opens as a centred sheet over the list, again straddling the middle, instead of the Mail-style list | detail.
-- **Still to capture:** book, laptop and Split View (needs Device Hub), and outer landscape. Outer landscape needs M1's orientation fix first, which is itself a finding.
+- **Book pose, landscape** (`docs/duo-baseline/book-01…03`):
+  - **System sheets avoid the fold.** The open summary sheet slid to the left half, clear of the crease, with no code from us.
+  - **F6 confirmed.** The Record screen doesn't change at all from flat. The fold runs through the middle of the Start Recording button, with the microphone icon almost on the crease, and through the View Recordings and import rows.
+  - **New finding (F12):** the `NavigationSplitView` columns did **not** rebalance around the fold, which Apple says standard split views do. The sidebar keeps its narrow width, so the Summaries card and its View Summary button sit across the crease.
+    - Suspected cause: `.navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)` (`Views/AdaptiveNavigationView.swift:87`) caps the column.
+    - M1 removes that view. In M3, don't put a fixed column-width cap on the new split views, and check the 50/50 rebalance in this pose.
+- **Still to capture:** laptop and Split View (needs Device Hub), and outer landscape. These are useful but not blocking. Capture them as M1/M4 before-and-after shots. Outer landscape needs M1's orientation fix first, which is itself a finding.
 
 ### M1: Continuity foundation (fixes F1, F2, F7, F8)
 
