@@ -281,7 +281,7 @@ struct AISettingsView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
+                        SheetDoneButton {
                             dismiss()
                         }
                     }

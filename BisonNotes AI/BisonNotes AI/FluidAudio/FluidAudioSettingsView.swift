@@ -174,7 +174,7 @@ struct FluidAudioSettingsView: View {
 #if !os(macOS)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
+                SheetDoneButton {
                     dismiss()
                 }
             }

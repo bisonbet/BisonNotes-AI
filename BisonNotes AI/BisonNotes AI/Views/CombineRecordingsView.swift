@@ -70,7 +70,7 @@ struct CombineRecordingsView: View {
                 }
 #else
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }

@@ -32,7 +32,7 @@ struct TranscriptionSettingsView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") {
+                        SheetDoneButton {
                             dismiss()
                         }
                     }

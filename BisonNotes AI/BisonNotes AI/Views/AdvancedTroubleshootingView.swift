@@ -88,7 +88,7 @@ struct AdvancedTroubleshootingView: View {
                 }
 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
 #endif
             }

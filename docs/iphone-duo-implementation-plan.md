@@ -160,6 +160,32 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - **Compression.** Tabs stay navigation-focused (the default). Editor sheets, such as the transcript editor, speaker editor and trim view, use `.toolbarVerticalCompressionBehavior(.prefersToolbarItems)`.
 - **Opt out where Apple says to.** A sheet whose only bar item is Close uses `.toolbarVerticalBehavior(.disabled)`.
 
+**M2 status (2026-11-01): implemented.**
+- **Done:**
+  - `Views/AdaptiveToolbarItems.swift` adds `SheetDoneButton`, `SheetCancelButton` and `SheetConfirmButton`. On iOS 26+ they use the system close, cancel and confirm roles with a symbol. They keep "Done" and the other words as accessibility labels, and fall back to the old text buttons on earlier iOS and macOS. 48 toolbar buttons in 28 files use them; macOS-only branches are untouched.
+  - Moved into system toolbars on iOS:
+    - The Recordings library header: Close, Filter, and the recording actions (`ToolbarOverflowMenu` on iOS 27, an `ellipsis.circle` menu before that). In selection mode, Cancel and the chosen action take over.
+    - Record's Help.
+    - Setup's Additional Settings (`slider.horizontal.3`, so it isn't a second gear beside the Setup tab).
+  - Summary Export is a plain `Label` when idle.
+- **Verified on the Duo simulator** (`docs/duo-baseline/m2-*`):
+  - Help and Additional Settings sit in the vertical strip on the inner display.
+  - The library sheet shows Close, Filter and the system overflow menu with its actions.
+  - iOS and macOS build.
+- **Deliberately not done:**
+  - `.navigationBarLeading/Trailing` stay. The macOS shims map them to Mac placements, so a blanket swap would move buttons in Mac sheets.
+  - No `visibilityPriority` or compression tuning. No screen has enough items to overflow yet; revisit in M3, when detail columns gain items.
+  - The `ellipsis.circle` hits in Summaries and Transcripts are "Show N more" rows, not menus.
+- **Still to check:** the outer display with the device closed, where sheet bars should now go vertical.
+- **UI tests (`BisonNotesAIUITests`)**, run on dedicated "BisonNotes iPhone Test", "BisonNotes iPad Test" and "BisonNotes Duo Baseline" simulators. The section-navigation helper now also finds sections as plain buttons (sidebar-adaptable sidebar and the Duo vertical strip).
+  - **iPhone 17:** 9/9 pass.
+  - **iPad Pro 11":** 8/9. `testSpeakerModelCancellationSwitchAndToggleOffClearProgress` reports "Switch did not change to 0". It never touches navigation or toolbars, but whether it also fails before M1 is unconfirmed.
+  - **iPhone Duo** (left in the book pose): 2/9. All 7 failures are in speaker-label settings, where the method rows are "not reachable".
+    - Navigation now succeeds; the failures start after it.
+    - A column-aware swipe in `reachableElement` did not help, so it was reverted. The cause is still unknown.
+    - Next: run one failing test with the device flat or closed, and against the pre-M1 commit, to separate a pose or harness problem from a regression.
+- **M1 fix shipped with M2:** `defaultAdaptableTabBarPlacement(.sidebar)` is removed. In iPad portrait it opened the sidebar as an overlay over the content on every launch, and it made no difference on the Duo.
+
 **Exit:** In the outer-display screenshots, every action sits in the side strip or the overflow menu, and no content scrolls under it. The same is true in the inner-display landscape screenshots.
 
 ### M3: List + detail on the inner display (fixes F3)

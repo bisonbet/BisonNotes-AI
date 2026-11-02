@@ -378,12 +378,12 @@ struct SummariesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                         refreshTrigger.toggle()

@@ -50,7 +50,7 @@ struct MistralTranscribeSettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
             }
             #endif

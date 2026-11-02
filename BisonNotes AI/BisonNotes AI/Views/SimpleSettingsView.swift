@@ -108,7 +108,20 @@ struct SimpleSettingsView: View {
             .background(Color(.systemGroupedBackground))
             .accessibilityLabel("Setup")
             .accessibilityIdentifier(BisonNotesAccessibilityID.setupScroll)
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: presentAdvancedSettings) {
+                        // Not a gear: the Setup tab beside it in the bar is one.
+                        Label("Additional Settings", systemImage: "slider.horizontal.3")
+                    }
+                    .accessibilityIdentifier(BisonNotesAccessibilityID.setupAdditionalSettingsButton)
+                }
+            }
+            #else
             .navigationBarHidden(true)
+            #endif
         }
         .onAppear {
             loadCurrentSettings()
@@ -245,6 +258,9 @@ struct SimpleSettingsView: View {
 
             Spacer(minLength: 8)
 
+            // On iOS this is a toolbar item, so iPhone Duo can move it into its
+            // vertical bar.
+            #if os(macOS)
             Button(action: presentAdvancedSettings) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 17, weight: .semibold))
@@ -256,6 +272,7 @@ struct SimpleSettingsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Additional Settings")
             .accessibilityIdentifier(BisonNotesAccessibilityID.setupAdditionalSettingsButton)
+            #endif
         }
     }
 

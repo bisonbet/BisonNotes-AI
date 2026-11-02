@@ -107,7 +107,7 @@ struct LocationDetailView: View {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         dismiss()
                     }
                 }

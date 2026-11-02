@@ -177,7 +177,7 @@ struct IntegrationSelectionView: View {
                 }
 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
