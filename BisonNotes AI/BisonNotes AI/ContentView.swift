@@ -338,8 +338,9 @@ struct ContentView: View {
                 }
             }
         }
+        // No defaultAdaptableTabBarPlacement(.sidebar): in iPad portrait it
+        // opens the sidebar as an overlay over the content on every launch.
         .tabViewStyle(.sidebarAdaptable)
-        .defaultAdaptableTabBarPlacement(.sidebar)
         .tint(Color.bisonPrimaryAction)
     }
 
