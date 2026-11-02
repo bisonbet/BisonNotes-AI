@@ -109,6 +109,11 @@ struct RecordingsListView: View {
             }
             .background(Color(.systemGroupedBackground))
             .searchable(text: $searchText, prompt: "Search recordings...")
+            #if os(iOS)
+            // Inside the NavigationStack, so its bar (vertical on iPhone Duo)
+            // shows these items. The macOS window toolbar below sits outside.
+            .toolbar { iOSLibraryToolbar }
+            #endif
             .sheet(isPresented: $showDateFilter) {
                 dateFilterSheet
                     .nativeMacModalSizing(width: 520, height: 440)
@@ -389,6 +394,9 @@ struct RecordingsListView: View {
 
             Spacer()
 
+            // On iOS these actions live in the system toolbar so iPhone Duo can
+            // move them into its vertical bar; see iOSLibraryToolbar.
+            #if os(macOS)
             if !isNativeMacModelessWindow {
                 if isSelectionMode {
                     selectionHeaderActions
@@ -396,6 +404,7 @@ struct RecordingsListView: View {
                     standardHeaderActions
                 }
             }
+            #endif
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -448,6 +457,108 @@ struct RecordingsListView: View {
         }
     }
 
+    @ViewBuilder
+    private var recordingActionMenuItems: some View {
+        if recordings.count >= 2 {
+            Button(action: { beginSelection(.combine) }) {
+                Label("Combine Recordings", systemImage: "link")
+            }
+        }
+
+        Button(action: { beginSelection(.archive) }) {
+            Label("Archive Selected", systemImage: "archivebox")
+        }
+
+        Button(action: { beginSelection(.export) }) {
+            Label("Export Selected", systemImage: "square.and.arrow.up")
+        }
+
+        Button(action: {
+            showingArchiveOlderThan = true
+        }) {
+            Label("Archive Older Than...", systemImage: "calendar.badge.clock")
+        }
+    }
+
+    private func beginSelection(_ action: SelectionAction) {
+        selectionAction = action
+        isSelectionMode = true
+        selectedRecordings.removeAll()
+        showSelectionWarning = false
+    }
+
+    private func endSelection() {
+        isSelectionMode = false
+        selectedRecordings.removeAll()
+        showSelectionWarning = false
+    }
+
+    #if os(iOS)
+    /// Close sits at the top of the bar, Filter is the main action, and the
+    /// recording actions go to the system overflow menu on iOS 27 so the outer
+    /// display of iPhone Duo has one place to find everything. In selection
+    /// mode, Cancel and the chosen action take over the bar.
+    @ToolbarContentBuilder
+    private var iOSLibraryToolbar: some ToolbarContent {
+        if isSelectionMode {
+            ToolbarItem(placement: .cancellationAction) {
+                SheetCancelButton(action: endSelection)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                selectionConfirmButton
+            }
+        } else {
+            ToolbarItem(placement: .cancellationAction) {
+                SheetDoneButton { dismiss() }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: { showDateFilter = true }) {
+                    Label(
+                        "Filter Recordings",
+                        systemImage: isDateFilterActive
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
+                }
+            }
+            if #available(iOS 27.0, *) {
+                ToolbarOverflowMenu {
+                    recordingActionMenuItems
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        recordingActionMenuItems
+                    } label: {
+                        Label("Recording Actions", systemImage: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionConfirmButton: some View {
+        switch selectionAction {
+        case .combine:
+            Button(action: handleCombineSelected) {
+                Label("Combine", systemImage: "link")
+            }
+            .disabled(selectedRecordings.count < 2)
+        case .archive:
+            Button(action: prepareArchiveFromSelection) {
+                Label("Archive", systemImage: "archivebox")
+            }
+            .disabled(selectedRecordings.isEmpty)
+        case .export:
+            Button(action: prepareExportFromSelection) {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .disabled(selectedRecordings.isEmpty)
+        }
+    }
+    #endif
+
     private var standardHeaderActions: some View {
         HStack(spacing: 10) {
             Button(action: { showDateFilter = true }) {
@@ -460,40 +571,7 @@ struct RecordingsListView: View {
             .help("Filter Recordings")
 
             Menu {
-                if recordings.count >= 2 {
-                    Button(action: {
-                        selectionAction = .combine
-                        isSelectionMode = true
-                        selectedRecordings.removeAll()
-                        showSelectionWarning = false
-                    }) {
-                        Label("Combine Recordings", systemImage: "link")
-                    }
-                }
-
-                Button(action: {
-                    selectionAction = .archive
-                    isSelectionMode = true
-                    selectedRecordings.removeAll()
-                    showSelectionWarning = false
-                }) {
-                    Label("Archive Selected", systemImage: "archivebox")
-                }
-
-                Button(action: {
-                    selectionAction = .export
-                    isSelectionMode = true
-                    selectedRecordings.removeAll()
-                    showSelectionWarning = false
-                }) {
-                    Label("Export Selected", systemImage: "square.and.arrow.up")
-                }
-
-                Button(action: {
-                    showingArchiveOlderThan = true
-                }) {
-                    Label("Archive Older Than...", systemImage: "calendar.badge.clock")
-                }
+                recordingActionMenuItems
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.headline)
@@ -655,12 +733,12 @@ struct RecordingsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                     }

@@ -330,7 +330,7 @@ struct WhisperSettingsView: View {
 #if !os(macOS)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         dismiss()
                     }
                 }

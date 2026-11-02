@@ -175,17 +175,17 @@ struct SummaryDetailView: View {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
             #else
-            HStack(spacing: 4) {
-                if isExporting {
+            if isExporting {
+                HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.8)
                     Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
                         .font(.caption)
-                } else {
-                    Image(systemName: "square.and.arrow.up")
-                    Text("Export")
-                        .font(.caption)
                 }
+            } else {
+                // A plain Label lets iPhone Duo show this as a symbol in its
+                // vertical bar.
+                Label("Export", systemImage: "square.and.arrow.up")
             }
             #endif
         }
@@ -248,7 +248,7 @@ struct SummaryDetailView: View {
                     exportToolbarButton
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
                 #endif
             }
@@ -413,7 +413,7 @@ struct SummaryDetailView: View {
                     }
                     #else
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") { showingTextAttachment = false }
+                        SheetDoneButton { showingTextAttachment = false }
                     }
                     #endif
                 }
@@ -436,7 +436,7 @@ struct SummaryDetailView: View {
                             }
                             #else
                             ToolbarItem(placement: .navigationBarTrailing) {
-                                Button("Done") { showingPDFAttachment = false }
+                                SheetDoneButton { showingPDFAttachment = false }
                             }
                             #endif
                         }
@@ -2580,7 +2580,7 @@ struct TitleSelectorView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         dismiss()
                     }
                 }
@@ -2841,7 +2841,7 @@ struct DateTimeEditorView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
@@ -3131,7 +3131,7 @@ struct LocationPickerView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
@@ -4121,7 +4121,7 @@ private struct NoteEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                     #if os(macOS)
@@ -4129,7 +4129,7 @@ private struct NoteEditorSheet: View {
                     #endif
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    SheetConfirmButton(title: "Save") {
                         if onSave(draft) {
                             text = draft
                             dismiss()

@@ -54,7 +54,7 @@ struct OllamaSettingsView: View {
             .toolbar {
 #if !os(macOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         // Force refresh engine availability when settings are dismissed
                         UserDefaults.standard.synchronize()
                         onConfigurationChanged?()

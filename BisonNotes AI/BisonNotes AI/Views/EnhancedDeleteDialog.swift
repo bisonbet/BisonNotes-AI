@@ -156,7 +156,7 @@ struct EnhancedDeleteDialog: View {
                 }
 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         onCancel()
                     }
                 }

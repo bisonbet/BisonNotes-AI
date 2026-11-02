@@ -54,7 +54,7 @@ struct TrimRecordingView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", role: .cancel) { close() }
+                    SheetCancelButton { close() }
                         .disabled(isTrimming)
                         .accessibilityIdentifier("bisonnotes.trim.cancel")
                 }

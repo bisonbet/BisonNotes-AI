@@ -387,12 +387,12 @@ struct TranscriptsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                         refreshTrigger.toggle()
@@ -1900,7 +1900,7 @@ struct EditableTranscriptView: View {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    SheetCancelButton { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     transcriptSaveButton
@@ -3358,10 +3358,10 @@ struct SpeakerEditingView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") { dismiss() }
+                        SheetCancelButton { dismiss() }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Apply") { applyNames() }
+                        SheetConfirmButton(title: "Apply") { applyNames() }
                             .fontWeight(.semibold)
                     }
                 }
@@ -3624,7 +3624,7 @@ struct TranscriptDetailView: View {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
                 #endif
             }

@@ -107,7 +107,7 @@ struct SummaryPromptsListView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
             }
             .navigationDestination(for: String.self) { id in
@@ -171,10 +171,10 @@ struct SummaryPromptEditorView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
+                SheetCancelButton { dismiss() }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button("Save") {
+                SheetConfirmButton(title: "Save") {
                     guard let draft else { return }
                     if SummaryPromptLibrary.save(draft) {
                         dismiss()

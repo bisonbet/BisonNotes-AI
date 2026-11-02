@@ -67,7 +67,7 @@ struct SettingsView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") { dismiss() }
+                        SheetDoneButton { dismiss() }
                     }
                 }
         }
@@ -1561,7 +1561,7 @@ struct CloudReviewItemsView: View {
             .toolbar {
                 #if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
                 #endif
                 ToolbarItem(placement: .navigationBarTrailing) {
