@@ -11,9 +11,11 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var recorderVM: AudioRecorderViewModel
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @EnvironmentObject var appCoordinator: AppDataCoordinator
-    @State private var selectedTab = 0
+    // Scene storage, not @State: the selection must survive iPhone Duo opening
+    // and closing, iPad Split View resizes, and relaunch.
+    @SceneStorage("selectedSection") private var selectedSection: SidebarItem = .record
+    @AppStorage(AppAppearance.alwaysDarkKey) private var alwaysDark = false
     @State private var isInitialized = false
     @State private var initializationError: String?
     @State private var isFirstLaunch = false
@@ -55,7 +57,7 @@ struct ContentView: View {
                     .zIndex(1)
             }
         }
-        .preferredColorScheme(horizontalSizeClass == .compact ? .dark : nil)
+        .preferredColorScheme(AppAppearance.preferredColorScheme(alwaysDark: alwaysDark))
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .onAppear {
             guard appCoordinator.storageState.isOperational else {
@@ -88,7 +90,13 @@ struct ContentView: View {
             UserDefaults.standard.set(true, forKey: "hasAskedLocationPermission")
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SwitchToRecordTabForImport"))) { _ in
-            selectedTab = 0
+            selectedSection = .record
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NavigateToSection"))) { notification in
+            if let section = notification.object as? String,
+               let item = SidebarItem(navigationName: section) {
+                selectedSection = item
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UnsupportedFileTypeFromShare"))) { _ in
             showingUnsupportedFileAlert = true
@@ -160,13 +168,17 @@ struct ContentView: View {
     @ViewBuilder
     private var mainContentView: some View {
         Group {
-            if horizontalSizeClass == .compact {
-                tabContentView
-            } else {
-                AdaptiveNavigationView()
-                    .environmentObject(recorderVM)
-                    .environmentObject(appCoordinator)
-            }
+            #if os(macOS)
+            AdaptiveNavigationView()
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+            #else
+            // One view tree for every size class. Switching between a TabView and
+            // a NavigationSplitView by size class rebuilt the whole interface each
+            // time iPhone Duo opened or closed, losing the section, navigation and
+            // any open sheet.
+            tabContentView
+            #endif
         }
         .alert("Enable Location Services", isPresented: $showingLocationPermission) {
             Button("Continue") {
@@ -306,49 +318,49 @@ struct ContentView: View {
         }
     }
 
+    #if !os(macOS)
+    /// A tab bar at compact width and a sidebar at regular width, from the same
+    /// view tree, so the selected section and each tab's state carry across.
     private var tabContentView: some View {
-        TabView(selection: $selectedTab) {
+        TabView(selection: $selectedSection) {
+            ForEach(SidebarItem.allCases) { item in
+                Tab(value: item) {
+                    sectionContent(for: item)
+                        .environmentObject(recorderVM)
+                        .environmentObject(appCoordinator)
+                } label: {
+                    Label {
+                        Text(item.rawValue)
+                            .accessibilityIdentifier("bisonnotes.sidebar.\(item.rawValue.lowercased())")
+                    } icon: {
+                        Image(systemName: item.icon)
+                    }
+                }
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .defaultAdaptableTabBarPlacement(.sidebar)
+        .tint(Color.bisonPrimaryAction)
+    }
+
+    @ViewBuilder
+    private func sectionContent(for item: SidebarItem) -> some View {
+        switch item {
+        case .record:
             RecordingsView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
                 .accessibilityIdentifier(BisonNotesAccessibilityID.tabRecord)
-                .tabItem {
-                    Image(systemName: "mic.fill")
-                    Text("Record")
-                }
-                .tag(0)
-
+        case .transcripts:
             TranscriptsView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
                 .accessibilityIdentifier(BisonNotesAccessibilityID.tabTranscripts)
-                .tabItem {
-                    Image(systemName: "text.bubble.fill")
-                    Text("Transcripts")
-                }
-                .tag(1)
-
+        case .summaries:
             SummariesView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
                 .accessibilityIdentifier(BisonNotesAccessibilityID.tabSummaries)
-                .tabItem {
-                    Image(systemName: "doc.text.magnifyingglass")
-                    Text("Summaries")
-                }
-                .tag(2)
-
+        case .settings:
             SimpleSettingsView()
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
                 .accessibilityIdentifier(BisonNotesAccessibilityID.tabSetup)
-                .tabItem {
-                    Image(systemName: "gearshape.fill")
-                    Text("Setup")
-                }
-                .tag(3)
         }
     }
+    #endif
 
     private var loadingView: some View {
         VStack {
@@ -530,7 +542,7 @@ struct ContentView: View {
 
     private func triggerActionButtonRecording() {
         AppLog.shared.log("Triggering action button recording", level: .debug, category: .general)
-        selectedTab = 0
+        selectedSection = .record
 
         DispatchQueue.main.async {
             AppLog.shared.log("Action button: isRecording=\(recorderVM.isRecording), isStartingRecording=\(recorderVM.isStartingRecording)", level: .debug, category: .general)

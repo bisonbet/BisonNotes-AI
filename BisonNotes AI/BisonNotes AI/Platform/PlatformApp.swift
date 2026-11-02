@@ -20,6 +20,17 @@ import AppKit
 
 @MainActor
 enum PlatformApp {
+    #if canImport(UIKit)
+    /// The display scale of the scene the app is showing on. A device with two
+    /// displays, such as iPhone Duo, makes `UIScreen.main` ambiguous, so read the
+    /// scale from the active window scene instead.
+    static var activeDisplayScale: CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        return scene?.traitCollection.displayScale ?? 2
+    }
+    #endif
+
     /// Open a URL in the default browser/handler. For use from managers;
     /// views should use @Environment(\.openURL).
     static func open(_ url: URL) {

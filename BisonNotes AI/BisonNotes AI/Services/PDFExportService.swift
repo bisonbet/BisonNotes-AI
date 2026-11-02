@@ -43,7 +43,7 @@ class PDFExportService {
 
     private func loadStoredMapImage(for summaryId: UUID, locationData: LocationData, size: CGSize) -> UIImage? {
         let locationSignature = createLocationSignature(for: locationData)
-        let scale = UIScreen.main.scale
+        let scale = PlatformApp.activeDisplayScale
 
         // Try to load the stored map image (any size, we'll scale it)
         if let storedImage = MapSnapshotStorage.loadImage(
@@ -679,7 +679,7 @@ class PDFExportService {
             span: MKCoordinateSpan(latitudeDelta: latitudeDelta, longitudeDelta: longitudeDelta)
         )
         options.size = size
-        options.scale = UIScreen.main.scale
+        options.scale = PlatformApp.activeDisplayScale
         options.showsBuildings = false
         options.pointOfInterestFilter = .excludingAll
 

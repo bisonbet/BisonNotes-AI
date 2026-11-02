@@ -11,6 +11,7 @@ struct PreferencesView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var userPreferences = UserPreferences.shared
     @State private var showingTimeFormatExample = false
+    @AppStorage(AppAppearance.alwaysDarkKey) private var alwaysDark = false
     #if os(macOS)
     @AppStorage(ComedyMode.SettingsKeys.enabled) private var comedyModeEnabled = false
     @AppStorage(ComedyMode.SettingsKeys.style) private var comedyModeStyle = "snarky"
@@ -40,6 +41,7 @@ struct PreferencesView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 headerSection
+                appearanceSection
                 timeFormatSection
                 #if os(macOS)
                 behaviorSection
@@ -124,6 +126,37 @@ struct PreferencesView: View {
         .accessibilityIdentifier(BisonNotesAccessibilityID.settingsBehaviorSection)
     }
     #endif
+
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.indigo)
+                    .frame(width: 30, height: 30)
+                    .background(Color.indigo.opacity(0.14))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                Text("Appearance")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                    .accessibilityAddTraits(.isHeader)
+            }
+
+            Toggle("Always Dark", isOn: $alwaysDark)
+                .accessibilityValue(AccessibilitySupport.statusValue(isOn: alwaysDark))
+                .accessibilityIdentifier(BisonNotesAccessibilityID.alwaysDarkToggle)
+
+            Text("When off, BisonNotes AI follows your device's Light or Dark appearance.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
 
     private var timeFormatSection: some View {
         VStack(alignment: .leading, spacing: 16) {
