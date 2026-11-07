@@ -708,7 +708,11 @@ extension AudioRecorderViewModel {
 		do {
 			existingRecordingName = try await MainActor.run { [appCoordinator, recordingURL] in
 				guard let appCoordinator else { return nil }
-				return try appCoordinator.coreDataManager.fetchRecording(url: recordingURL)?.recordingName ?? "unknown"
+				// The fallback name applies only to a row that exists: a nil row
+				// must stay nil, or every unsaved recording reads as processed and
+				// its recovery trail is cleared without saving it.
+				return try appCoordinator.coreDataManager.fetchRecording(url: recordingURL)
+					.map { $0.recordingName ?? "unknown" }
 			}
 		} catch {
 			AppLog.shared.audioSession(

@@ -152,6 +152,24 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             backgroundRecording: true
         )
 
+        /// The recording configuration a recovery activates from the background.
+        ///
+        /// iOS refuses to activate a non-mixable session while the app is in the
+        /// background (`AVAudioSession.ErrorCode.cannotInterruptOthers`, `'!int'`),
+        /// so after a declined or missed call the exclusive `backgroundRecording`
+        /// configuration can never come back until the user reopens the app — and
+        /// the background task expires long before that. A mixable session may be
+        /// activated from the background, so recovery uses this one there. It is
+        /// still a recording configuration (`backgroundRecording: true`), so every
+        /// ownership guard that protects a live recording keeps protecting it.
+        static let backgroundRecordingRecovery = AudioSessionConfig(
+            category: .playAndRecord,
+            mode: .default,
+            options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker],
+            allowMixedAudio: true,
+            backgroundRecording: true
+        )
+
         static let standardRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .voiceChat,
@@ -283,15 +301,29 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// - Parameter isStillWanted: the recovery's own liveness test. It is registered
     ///   here rather than at the activation because the transition spans both, so
     ///   every suspension point from this call to the commit is covered by it.
+    /// - Parameter mixWithOthers: prepare `backgroundRecordingRecovery` instead of
+    ///   the exclusive configuration; see `AudioActivationFailure.recoveryShouldMixWithOthers`.
     func prepareBackgroundRecordingForRecovery(
+        mixWithOthers: Bool = false,
         isStillWanted: @escaping () -> Bool = { true }
     ) async throws -> UInt64 {
-        let config = AudioSessionConfig.backgroundRecording
+        let config = mixWithOthers
+            ? AudioSessionConfig.backgroundRecordingRecovery
+            : AudioSessionConfig.backgroundRecording
         let generation = beginAudioSessionTransition(
             pendingConfiguration: config,
             isStillWanted: isStillWanted
         )
-        defer { finishAudioSessionTransition(generation) }
+        // A successful preparation leaves the transition open, and with it the
+        // caller's intent: `activatePreparedSession(for:)` or
+        // `discardPreparedSession(for:)` closes it. Closing it here reset the
+        // intent to `{ true }` before activation, so a stop that landed during the
+        // activation await was never seen and the session stayed active with
+        // nothing recording behind it.
+        var leaveTransitionOpen = false
+        defer {
+            if !leaveTransitionOpen { finishAudioSessionTransition(generation) }
+        }
 
         guard await checkBackgroundAudioPermission() else {
             try ensureAudioSessionTransitionIsCurrent(generation)
@@ -302,6 +334,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         try ensureAudioSessionTransitionIsCurrent(generation)
         try prepareConfiguration(config, generation: generation)
+        leaveTransitionOpen = true
         return generation
     }
 
@@ -319,12 +352,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// stale recovery continuation.
     /// Liveness comes from the intent registered when the transition was opened; see
     /// `ensureTransitionIsCurrentAndWanted`.
+    ///
+    /// This closes the transition `prepareBackgroundRecordingForRecovery` left
+    /// open, so the recovery's intent is checked on the far side of the
+    /// activation await and an abandoned activation is released.
     func activatePreparedSession(for generation: UInt64) async throws {
+        defer { finishAudioSessionTransition(generation) }
         try await activatePreparedSession(expectedGeneration: generation)
     }
 
     /// Discard a recovery preparation that was invalidated before activation.
     func discardPreparedSession(for generation: UInt64) {
+        defer { finishAudioSessionTransition(generation) }
         guard audioSessionTransitionGeneration == generation,
               preparedConfigurationGeneration == generation else {
             return
@@ -379,6 +418,51 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isMixedAudioEnabled = prepared.allowMixedAudio
         isBackgroundRecordingEnabled = prepared.backgroundRecording
         isConfigured = true
+    }
+
+    /// Whether the active session is the mixable configuration a background
+    /// recovery fell back to, rather than the exclusive recording session.
+    var isUsingMixableRecoveryRecording: Bool {
+        guard let currentConfiguration else { return false }
+        return currentConfiguration.backgroundRecording && currentConfiguration.allowMixedAudio
+    }
+
+    /// Return a recording that recovery resumed in the background to the
+    /// exclusive `backgroundRecording` configuration.
+    ///
+    /// Only the category options change: the session stays active, so the live
+    /// AVAudioRecorder keeps its input. Dropping `.mixWithOthers` interrupts any
+    /// other app's audio again, so device playback stops bleeding into the note.
+    /// Declines while a transition is pending or prepared, because that
+    /// transition owns the category; a failure keeps the mixable session, which
+    /// still records.
+    /// - Returns: true when the exclusive configuration is now in effect.
+    @discardableResult
+    func restoreExclusiveRecordingAfterBackgroundRecovery() -> Bool {
+        guard isUsingMixableRecoveryRecording else { return false }
+        guard pendingConfiguration == nil, preparedConfiguration == nil else {
+            AppLog.shared.audioSession(
+                "A session transition is in flight; keeping the mixable recovery session for now",
+                level: .debug
+            )
+            return false
+        }
+
+        let config = AudioSessionConfig.backgroundRecording
+        do {
+            try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
+        } catch {
+            AppLog.shared.audioSession(
+                "Could not restore the exclusive recording session; continuing with the mixable one: \(error.localizedDescription)",
+                level: .error
+            )
+            return false
+        }
+        currentConfiguration = config
+        isMixedAudioEnabled = config.allowMixedAudio
+        isBackgroundRecordingEnabled = config.backgroundRecording
+        AppLog.shared.audioSession("Restored the exclusive recording session after background recovery")
+        return true
     }
 
     /// Discard manager-side state after iOS reports that media services were
@@ -582,7 +666,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
         try prepareConfiguration(config, generation: generation)
-        try await activatePreparedSession(for: generation)
+        // The private form: the configure method that called this owns the
+        // transition and still has to check its intent after the capability
+        // request below.
+        try await activatePreparedSession(expectedGeneration: generation)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()

@@ -56,6 +56,10 @@ extension AudioRecorderViewModel {
 			AppLog.shared.audioSession(
 				"Recovery \(request.id.uuidString) started one continuation segment"
 			)
+			// The app may have come to the foreground while this recovery was
+			// activating the mixable session; its foreground handler saw no live
+			// recorder then, so this is the only place left to restore exclusivity.
+			restoreExclusiveRecordingSessionIfForegrounded()
 			return .recovered
 		} catch is CancellationError {
 			stopAndReleaseRecoveryRecorder(continuationRecorder, at: newSegmentURL)
@@ -67,6 +71,37 @@ extension AudioRecorderViewModel {
 				reason: "Continuation recorder failed to start: \(error.localizedDescription)",
 				notify: true
 			)
+		}
+	}
+
+	/// Put a recording that recovery resumed in the background back on the
+	/// exclusive session once the app is in the foreground.
+	///
+	/// Background recovery has to mix with others (iOS refuses a non-mixable
+	/// activation there), but in the foreground the recording should interrupt
+	/// other audio again, as a normal recording does. If the recorder does not
+	/// survive the category change, the coordinated recovery takes over — in the
+	/// foreground it activates the exclusive session directly.
+	@MainActor
+	func restoreExclusiveRecordingSessionIfForegrounded() {
+		guard !appIsBackgrounding,
+			  enhancedAudioSessionManager.isUsingMixableRecoveryRecording,
+			  isRecording,
+			  let recorder = audioRecorder,
+			  recorder.isRecording else {
+			return
+		}
+		guard enhancedAudioSessionManager.restoreExclusiveRecordingAfterBackgroundRecovery() else {
+			return
+		}
+		if !recorder.isRecording {
+			AppLog.shared.audioSession(
+				"Recorder stopped while restoring the exclusive session; requesting recovery",
+				level: .error
+			)
+			Task { @MainActor [weak self] in
+				await self?.attemptResumeAfterUnexpectedStop()
+			}
 		}
 	}
 

@@ -227,25 +227,37 @@ extension AudioRecorderViewModel {
 		_ request: AudioRecoveryRequest
 	) async -> AudioRecoveryActivationOutcome {
 		let hadConfiguration = enhancedAudioSessionManager.currentConfiguration != nil
-		let requestedConfiguration = EnhancedAudioSessionManager.AudioSessionConfig.backgroundRecording
-		let requestedConfigurationEvidence = [
-			"category=\(requestedConfiguration.category.rawValue)",
-			"mode=\(requestedConfiguration.mode.rawValue)",
-			"options=\(requestedConfiguration.options.rawValue)"
-		].joined(separator: ",")
 		var attempt = 1
+		var previousFailureCode: Int?
 
 		while true {
 			guard isCurrentAudioRecovery(request) else {
 				return .cancelled
 			}
 
+			let mixWithOthers = AudioActivationFailure.recoveryShouldMixWithOthers(
+				appIsBackgrounding: appIsBackgrounding,
+				previousFailureCode: previousFailureCode
+			)
+			let requestedConfiguration = mixWithOthers
+				? EnhancedAudioSessionManager.AudioSessionConfig.backgroundRecordingRecovery
+				: EnhancedAudioSessionManager.AudioSessionConfig.backgroundRecording
+			let requestedConfigurationEvidence = [
+				"category=\(requestedConfiguration.category.rawValue)",
+				"mode=\(requestedConfiguration.mode.rawValue)",
+				"options=\(requestedConfiguration.options.rawValue)"
+			].joined(separator: ",")
+
 			recoveryCoordinator.updatePhase(.activating, for: request.id)
 			do {
-				let activated = try await attemptAudioSessionActivation(for: request)
+				let activated = try await attemptAudioSessionActivation(
+					for: request,
+					mixWithOthers: mixWithOthers
+				)
 				guard activated else { return .cancelled }
 				AppLog.shared.audioSession(
 					"Recovery \(request.id.uuidString) activated recording session on attempt \(attempt)"
+						+ (mixWithOthers ? " (mixable background session)" : "")
 				)
 				return .activated
 			} catch is AudioSessionTransitionError {
@@ -259,6 +271,7 @@ extension AudioRecorderViewModel {
 					attempt: attempt,
 					appIsBackgrounding: appIsBackgrounding
 				)
+				previousFailureCode = failure.code
 				logAudioActivationFailure(
 					failure,
 					request: request,
@@ -313,13 +326,15 @@ extension AudioRecorderViewModel {
 
 	@MainActor
 	private func attemptAudioSessionActivation(
-		for request: AudioRecoveryRequest
+		for request: AudioRecoveryRequest,
+		mixWithOthers: Bool
 	) async throws -> Bool {
 		// The full fence, registered on the transition so it covers every suspension
 		// point from here to the commit. A second interruption beginning mid-flight
 		// leaves `accepts` true by design, while `isCurrentAudioRecovery` also
 		// rejects on `isInInterruption` and on a changed session id or URL.
 		let preparationGeneration = try await enhancedAudioSessionManager.prepareBackgroundRecordingForRecovery(
+			mixWithOthers: mixWithOthers,
 			isStillWanted: { [self] in isCurrentAudioRecovery(request) }
 		)
 		guard recoveryCoordinator.accepts(request), recordingIntentActive else {
