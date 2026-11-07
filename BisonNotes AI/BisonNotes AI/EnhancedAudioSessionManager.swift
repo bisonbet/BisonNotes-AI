@@ -404,6 +404,51 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         isConfigured = true
     }
 
+    /// Whether the active session is the mixable configuration a background
+    /// recovery fell back to, rather than the exclusive recording session.
+    var isUsingMixableRecoveryRecording: Bool {
+        guard let currentConfiguration else { return false }
+        return currentConfiguration.backgroundRecording && currentConfiguration.allowMixedAudio
+    }
+
+    /// Return a recording that recovery resumed in the background to the
+    /// exclusive `backgroundRecording` configuration.
+    ///
+    /// Only the category options change: the session stays active, so the live
+    /// AVAudioRecorder keeps its input. Dropping `.mixWithOthers` interrupts any
+    /// other app's audio again, so device playback stops bleeding into the note.
+    /// Declines while a transition is pending or prepared, because that
+    /// transition owns the category; a failure keeps the mixable session, which
+    /// still records.
+    /// - Returns: true when the exclusive configuration is now in effect.
+    @discardableResult
+    func restoreExclusiveRecordingAfterBackgroundRecovery() -> Bool {
+        guard isUsingMixableRecoveryRecording else { return false }
+        guard pendingConfiguration == nil, preparedConfiguration == nil else {
+            AppLog.shared.audioSession(
+                "A session transition is in flight; keeping the mixable recovery session for now",
+                level: .debug
+            )
+            return false
+        }
+
+        let config = AudioSessionConfig.backgroundRecording
+        do {
+            try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
+        } catch {
+            AppLog.shared.audioSession(
+                "Could not restore the exclusive recording session; continuing with the mixable one: \(error.localizedDescription)",
+                level: .error
+            )
+            return false
+        }
+        currentConfiguration = config
+        isMixedAudioEnabled = config.allowMixedAudio
+        isBackgroundRecordingEnabled = config.backgroundRecording
+        AppLog.shared.audioSession("Restored the exclusive recording session after background recovery")
+        return true
+    }
+
     /// Discard manager-side state after iOS reports that media services were
     /// reset. The next recovery attempt reapplies category and preferred I/O
     /// settings before activating; it never deactivates the shared session as
