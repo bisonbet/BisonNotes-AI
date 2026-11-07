@@ -152,6 +152,24 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             backgroundRecording: true
         )
 
+        /// The recording configuration a recovery activates from the background.
+        ///
+        /// iOS refuses to activate a non-mixable session while the app is in the
+        /// background (`AVAudioSession.ErrorCode.cannotInterruptOthers`, `'!int'`),
+        /// so after a declined or missed call the exclusive `backgroundRecording`
+        /// configuration can never come back until the user reopens the app — and
+        /// the background task expires long before that. A mixable session may be
+        /// activated from the background, so recovery uses this one there. It is
+        /// still a recording configuration (`backgroundRecording: true`), so every
+        /// ownership guard that protects a live recording keeps protecting it.
+        static let backgroundRecordingRecovery = AudioSessionConfig(
+            category: .playAndRecord,
+            mode: .default,
+            options: [.mixWithOthers, .allowBluetoothHFP, .defaultToSpeaker],
+            allowMixedAudio: true,
+            backgroundRecording: true
+        )
+
         static let standardRecording = AudioSessionConfig(
             category: .playAndRecord,
             mode: .voiceChat,
@@ -283,10 +301,15 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// - Parameter isStillWanted: the recovery's own liveness test. It is registered
     ///   here rather than at the activation because the transition spans both, so
     ///   every suspension point from this call to the commit is covered by it.
+    /// - Parameter mixWithOthers: prepare `backgroundRecordingRecovery` instead of
+    ///   the exclusive configuration; see `AudioActivationFailure.recoveryShouldMixWithOthers`.
     func prepareBackgroundRecordingForRecovery(
+        mixWithOthers: Bool = false,
         isStillWanted: @escaping () -> Bool = { true }
     ) async throws -> UInt64 {
-        let config = AudioSessionConfig.backgroundRecording
+        let config = mixWithOthers
+            ? AudioSessionConfig.backgroundRecordingRecovery
+            : AudioSessionConfig.backgroundRecording
         let generation = beginAudioSessionTransition(
             pendingConfiguration: config,
             isStillWanted: isStillWanted

@@ -301,6 +301,51 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         )
     }
 
+    /// A declined or unanswered call ends while the app is backgrounded. iOS
+    /// refuses to activate a non-mixable session there (`'!int'`), so the
+    /// recovery must ask for the mixable recording session or it can never
+    /// resume; this is the 560557684 loop that terminated a 14-minute recording.
+    func testBackgroundRecoveryActivatesAMixableSession() {
+        let cannotInterruptOthers = AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue
+        XCTAssertEqual(cannotInterruptOthers, 560_557_684)
+
+        XCTAssertTrue(AudioActivationFailure.recoveryShouldMixWithOthers(
+            appIsBackgrounding: true,
+            previousFailureCode: nil
+        ))
+        XCTAssertTrue(AudioActivationFailure.recoveryShouldMixWithOthers(
+            appIsBackgrounding: false,
+            previousFailureCode: cannotInterruptOthers
+        ))
+        XCTAssertFalse(AudioActivationFailure.recoveryShouldMixWithOthers(
+            appIsBackgrounding: false,
+            previousFailureCode: nil
+        ))
+        XCTAssertFalse(AudioActivationFailure.recoveryShouldMixWithOthers(
+            appIsBackgrounding: false,
+            previousFailureCode: AVAudioSession.ErrorCode.isBusy.rawValue
+        ))
+    }
+
+    func testMixablePreparedRecoveryIsStillARecordingSession() async throws {
+        let controller = ScriptedAudioSessionController()
+        let manager = EnhancedAudioSessionManager(audioSessionController: controller)
+
+        let generation = try await manager.prepareBackgroundRecordingForRecovery(mixWithOthers: true)
+        XCTAssertTrue(controller.categoryOptions.contains(.mixWithOthers))
+        // Keep-alive and stale deactivation must still treat it as a recording.
+        XCTAssertTrue(manager.isOwnedByRecording)
+
+        try await manager.activatePreparedSession(for: generation)
+        XCTAssertEqual(controller.activeCalls, [true])
+        XCTAssertEqual(manager.currentConfiguration?.backgroundRecording, true)
+        XCTAssertEqual(manager.currentConfiguration?.options.contains(.mixWithOthers), true)
+        XCTAssertTrue(manager.isBackgroundRecordingEnabled)
+
+        _ = try await manager.prepareBackgroundRecordingForRecovery(mixWithOthers: false)
+        XCTAssertFalse(controller.categoryOptions.contains(.mixWithOthers))
+    }
+
     func testManagerMissingConfigurationFailsAndRecoveryNeverDeactivatesAsRetryPrelude() async {
         let missingController = ScriptedAudioSessionController()
         let missingManager = EnhancedAudioSessionManager(audioSessionController: missingController)

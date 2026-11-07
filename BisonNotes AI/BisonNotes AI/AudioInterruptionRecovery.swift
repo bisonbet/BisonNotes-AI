@@ -359,6 +359,23 @@ struct AudioActivationFailure: Error, Equatable, LocalizedError, Sendable {
     /// together, or neither.
     static let maximumUnknownActivationAttempts = 2
 
+    /// Whether a recovery activation must use the mixable recording session.
+    ///
+    /// A non-mixable session cannot be activated from the background: iOS
+    /// answers `cannotInterruptOthers` (`'!int'`, 560557684) on every attempt,
+    /// so retrying the exclusive configuration only spends the background task
+    /// until the recording is terminated. That is exactly how a declined or
+    /// unanswered call used to end a backgrounded recording. Mix whenever the
+    /// app is backgrounded, and also after `cannotInterruptOthers` itself, in
+    /// case the app's foreground state was stale when the attempt was made.
+    static func recoveryShouldMixWithOthers(
+        appIsBackgrounding: Bool,
+        previousFailureCode: Int?
+    ) -> Bool {
+        appIsBackgrounding
+            || previousFailureCode == AVAudioSession.ErrorCode.cannotInterruptOthers.rawValue
+    }
+
     static func disposition(
         for category: AudioActivationFailureCategory,
         attempt: Int,
