@@ -314,7 +314,16 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             pendingConfiguration: config,
             isStillWanted: isStillWanted
         )
-        defer { finishAudioSessionTransition(generation) }
+        // A successful preparation leaves the transition open, and with it the
+        // caller's intent: `activatePreparedSession(for:)` or
+        // `discardPreparedSession(for:)` closes it. Closing it here reset the
+        // intent to `{ true }` before activation, so a stop that landed during the
+        // activation await was never seen and the session stayed active with
+        // nothing recording behind it.
+        var leaveTransitionOpen = false
+        defer {
+            if !leaveTransitionOpen { finishAudioSessionTransition(generation) }
+        }
 
         guard await checkBackgroundAudioPermission() else {
             try ensureAudioSessionTransitionIsCurrent(generation)
@@ -325,6 +334,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         try ensureAudioSessionTransitionIsCurrent(generation)
         try prepareConfiguration(config, generation: generation)
+        leaveTransitionOpen = true
         return generation
     }
 
@@ -342,12 +352,18 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// stale recovery continuation.
     /// Liveness comes from the intent registered when the transition was opened; see
     /// `ensureTransitionIsCurrentAndWanted`.
+    ///
+    /// This closes the transition `prepareBackgroundRecordingForRecovery` left
+    /// open, so the recovery's intent is checked on the far side of the
+    /// activation await and an abandoned activation is released.
     func activatePreparedSession(for generation: UInt64) async throws {
+        defer { finishAudioSessionTransition(generation) }
         try await activatePreparedSession(expectedGeneration: generation)
     }
 
     /// Discard a recovery preparation that was invalidated before activation.
     func discardPreparedSession(for generation: UInt64) {
+        defer { finishAudioSessionTransition(generation) }
         guard audioSessionTransitionGeneration == generation,
               preparedConfigurationGeneration == generation else {
             return
@@ -650,7 +666,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
         try prepareConfiguration(config, generation: generation)
-        try await activatePreparedSession(for: generation)
+        // The private form: the configure method that called this owns the
+        // transition and still has to check its intent after the capability
+        // request below.
+        try await activatePreparedSession(expectedGeneration: generation)
 
         if config.backgroundRecording {
             try await requestBackgroundAudioCapability()

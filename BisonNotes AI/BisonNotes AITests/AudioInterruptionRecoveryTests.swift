@@ -346,6 +346,30 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertFalse(controller.categoryOptions.contains(.mixWithOthers))
     }
 
+    /// A stop that lands between preparation and the end of activation must be
+    /// seen after the activation await, and the live session handed back.
+    func testRecoveryIntentSurvivesFromPreparationThroughActivation() async throws {
+        let controller = ScriptedAudioSessionController()
+        let manager = EnhancedAudioSessionManager(audioSessionController: controller)
+        var stillWanted = true
+
+        let generation = try await manager.prepareBackgroundRecordingForRecovery(
+            mixWithOthers: true,
+            isStillWanted: { stillWanted }
+        )
+        stillWanted = false
+
+        do {
+            try await manager.activatePreparedSession(for: generation)
+            XCTFail("An abandoned recovery must not claim the session")
+        } catch {
+            XCTAssertEqual(error as? AudioSessionTransitionError, .superseded)
+        }
+        XCTAssertEqual(controller.activeCalls, [true, false])
+        XCTAssertNil(manager.currentConfiguration)
+        XCTAssertFalse(manager.isOwnedByRecording)
+    }
+
     /// Foregrounding a recording that recovered in the background puts it back
     /// on the exclusive session without deactivating the live session.
     func testForegroundRestoresTheExclusiveSessionAfterMixableRecovery() async throws {
