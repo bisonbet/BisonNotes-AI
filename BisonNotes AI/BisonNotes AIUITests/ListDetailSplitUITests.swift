@@ -105,6 +105,38 @@ final class ListDetailSplitUITests: XCTestCase {
     }
 
     @MainActor
+    func testRecordingPlayerOpensBesideLibraryOrPushes() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        let viewRecordings = app.buttons["bisonnotes.record.view-recordings"]
+        XCTAssertTrue(viewRecordings.waitForExistence(timeout: 20))
+        viewRecordings.tap()
+
+        let play = app.buttons["Play Audio for UI Test Recording"]
+        XCTAssertTrue(play.waitForExistence(timeout: 8))
+        let isRegularWidth = app.windows.firstMatch.frame.width >= 700
+        attachScreenshot(of: app, named: isRegularWidth ? "regular-library" : "compact-library")
+
+        play.tap()
+
+        let closePlayer = app.buttons["Close Audio Player"]
+        XCTAssertTrue(closePlayer.waitForExistence(timeout: 8))
+        attachScreenshot(of: app, named: isRegularWidth ? "regular-library-and-player" : "compact-player-pushed")
+
+        // Close returns to the library either way.
+        closePlayer.tap()
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        XCTAssertTrue(play.isHittable)
+        XCTAssertFalse(closePlayer.exists)
+    }
+
+    @MainActor
     private func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

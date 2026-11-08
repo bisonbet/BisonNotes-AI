@@ -1,6 +1,6 @@
 # iPhone Duo: first-class layout plan
 
-Status: **M1 and M2 implemented; M3 in progress (Summaries and Transcripts done).** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
+Status: **M1, M2 and M3 implemented; M4 and M5 not started.** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
 
 Source paths below are relative to `BisonNotes AI/BisonNotes AI/` unless they start with `docs/`.
 
@@ -210,7 +210,8 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
   - The Save/Discard prompt, previously macOS-only, now runs on iOS too, so Cancel in the sheet form no longer discards edits silently. `interactiveDismissDisabled` also moved out of the macOS-only block, so iOS sheets now block swipe-to-dismiss with pending edits, as the comment always said.
   - Saving keeps an embedded transcript on screen; a sheet still closes.
   - Covered by `ListDetailSplitUITests.testTranscriptOpensBesideListOrPushes` and `UnsavedEditsGuardTests`.
-- **Next:** the Recordings library. Highlighting the open row in the list is still to do. Not yet checked on the Duo simulator: closing with a summary open and the 50/50 fold rebalance.
+- **Recordings library done (2026-11-08).** It stays a sheet from Record, which keeps one presentation at every size (a size-class-keyed sheet/cover switch would tear down on every open and close). Inside it, `ListDetailSplitView` puts the selected recording's `AudioPlayerView` beside the list at regular width and pushes it at compact width. On iPad the sheet is wide enough for both columns. The player keeps its own "Audio Player" header and Close button for now; making it a fold-aware detail is M4. Covered by `ListDetailSplitUITests.testRecordingPlayerOpensBesideLibraryOrPushes`.
+- **Still open from M3:** highlighting the open row in each list, and checking on the Duo simulator that closing keeps the open item and that the columns rebalance 50/50 around the fold. Highlighting the open row in the list is still to do. Not yet checked on the Duo simulator: closing with a summary open and the 50/50 fold rebalance.
 
 **Exit:** On the inner display a user can scan summaries on the left and read one on the right. Closing the device shows that same summary, and opening it again shows the list beside it.
 
