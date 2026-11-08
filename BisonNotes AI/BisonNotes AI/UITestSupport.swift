@@ -12,6 +12,10 @@ enum BisonNotesUITestSupport {
     static let uiTestingArgument = "--ui-testing"
     static let resetDataArgument = "--reset-test-data"
     static let seedSampleRecordingArgument = "--seed-sample-recording"
+    /// Several recordings with transcripts and summaries across recent days, so
+    /// lists show date sections and a "Show N more" page as a real library does.
+    static let seedSampleLibraryArgument = "--seed-sample-library"
+    static let sampleLibraryRecordingCount = 6
     static let disableCloudServicesArgument = "--disable-cloud-services"
     static let showFirstSetupArgument = "--show-first-setup"
     static let corruptLocalSpeakerMethodArgument = "--ui-test-corrupt-local-speaker-method"
@@ -101,6 +105,10 @@ enum BisonNotesUITestSupport {
 
         if ProcessInfo.processInfo.arguments.contains(seedSampleRecordingArgument) {
             seedSampleRecordingIfNeeded(appCoordinator: appCoordinator)
+        }
+
+        if ProcessInfo.processInfo.arguments.contains(seedSampleLibraryArgument) {
+            seedSampleLibraryIfNeeded(appCoordinator: appCoordinator)
         }
 
         defaults.set(true, forKey: preparedFlagKey)
@@ -198,6 +206,64 @@ enum BisonNotesUITestSupport {
             }
         } catch {
             AppLog.shared.coreData("UI-test sample seeding failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    /// "Library Recording 1" is the newest; each one after is a day older.
+    @MainActor
+    private static func seedSampleLibraryIfNeeded(appCoordinator: AppDataCoordinator) {
+        guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let existingNames = try? Set(appCoordinator.coreDataManager.getAllRecordings().compactMap(\.recordingName)) else {
+            return
+        }
+
+        for index in 1...sampleLibraryRecordingCount {
+            let name = "Library Recording \(index)"
+            guard !existingNames.contains(name) else { continue }
+            let audioURL = documentsURL.appendingPathComponent("ui-test-library-\(index).caf")
+            try? createSilentAudioFixture(at: audioURL)
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int64) ?? 0
+            do {
+                let recordingId = try appCoordinator.addRecording(
+                    url: audioURL,
+                    name: name,
+                    date: Date().addingTimeInterval(-Double(index - 1) * 86_400 - 600),
+                    fileSize: fileSize,
+                    duration: 2.0,
+                    quality: .whisperOptimized
+                )
+                let segments = [
+                    TranscriptSegment(
+                        speaker: "Speaker 1",
+                        text: "Seeded library transcript number \(index) for UI regression tests.",
+                        startTime: 0,
+                        endTime: 2
+                    )
+                ]
+                guard let transcriptId = try appCoordinator.addTranscript(
+                    for: recordingId,
+                    segments: segments,
+                    engine: .fluidAudio,
+                    processingTime: 0.1,
+                    confidence: 0.99
+                ) else { continue }
+                _ = try appCoordinator.addSummary(
+                    for: recordingId,
+                    transcriptId: transcriptId,
+                    summary: "Seeded library summary number \(index), long enough to pass summary validation for UI tests.",
+                    tasks: [],
+                    reminders: [],
+                    titles: [TitleItem(text: name)],
+                    contentType: .meeting,
+                    aiEngine: "UITest",
+                    aiModel: "fixture",
+                    promptTemplate: nil,
+                    originalLength: segments[0].text.count,
+                    processingTime: 0.1
+                )
+            } catch {
+                AppLog.shared.coreData("UI-test library seeding failed: \(error.localizedDescription)", level: .error)
+            }
         }
     }
 

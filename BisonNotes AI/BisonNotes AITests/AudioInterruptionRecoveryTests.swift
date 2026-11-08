@@ -18,6 +18,8 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
     var activationErrors: [Error] = []
     var deactivationGate: RecoveryGate?
     private(set) var deactivationStarted = false
+    var categoryGate: RecoveryGate?
+    private(set) var categoryChangeStarted = false
 
     func setCategoryOffMainThread(
         _ category: AVAudioSession.Category,
@@ -25,6 +27,10 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
         options: AVAudioSession.CategoryOptions
     ) async throws {
         categoryCalls.append(category)
+        if let categoryGate {
+            categoryChangeStarted = true
+            await categoryGate.wait()
+        }
         self.category = category
         categoryOptions = options
     }
@@ -449,6 +455,53 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertEqual(manager.currentConfiguration?.mode.rawValue, AVAudioSession.Mode.voiceChat.rawValue)
         XCTAssertFalse(manager.isBackgroundRecordingEnabled)
         XCTAssertEqual(controller.activeCalls, [true, false])
+    }
+
+    /// Closing the player while its category change is still in flight queues
+    /// the deactivation first. The playback transition must notice it was
+    /// superseded before activating, or the exclusive session stays live with
+    /// no player behind it and other apps' audio stays interrupted.
+    func testStoppingDuringThePlaybackCategoryChangeNeverActivatesAfterTheDeactivation() async {
+        await assertNoActivationAfterStopDuringCategoryChange { manager in
+            try await manager.configurePlaybackSession()
+        }
+    }
+
+    func testStoppingDuringTheBackgroundProcessingCategoryChangeNeverActivatesAfterTheDeactivation() async {
+        await assertNoActivationAfterStopDuringCategoryChange { manager in
+            try await manager.configureBackgroundProcessingSession()
+        }
+    }
+
+    private func assertNoActivationAfterStopDuringCategoryChange(
+        _ configure: @escaping @MainActor (EnhancedAudioSessionManager) async throws -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let controller = ScriptedAudioSessionController()
+        let categoryGate = RecoveryGate()
+        controller.categoryGate = categoryGate
+        let manager = EnhancedAudioSessionManager(audioSessionController: controller)
+
+        let configuration = Task { @MainActor () -> Error? in
+            do {
+                try await configure(manager)
+                return nil
+            } catch {
+                return error
+            }
+        }
+        while !controller.categoryChangeStarted {
+            await Task.yield()
+        }
+
+        try? await manager.deactivateSession()
+        categoryGate.release()
+        let error = await configuration.value
+
+        XCTAssertTrue(error is AudioSessionTransitionError, "Expected the configuration to be superseded, got \(String(describing: error))", file: file, line: line)
+        XCTAssertEqual(controller.activeCalls, [false], file: file, line: line)
+        XCTAssertFalse(manager.isConfigured, file: file, line: line)
     }
 
     func testActivationOrderingIsStopFinalizeThenActivateThenContinuation() async {

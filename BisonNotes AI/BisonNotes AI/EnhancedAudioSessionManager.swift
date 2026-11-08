@@ -556,6 +556,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
         do {
             try await audioSessionController.setCategoryOffMainThread(.playback, mode: .default, options: [])
+            // A stop during the category await has already queued its
+            // deactivation; activating now would land after it and leave the
+            // session live with nothing behind it.
+            try ensureTransitionIsCurrentAndWanted(generation)
             try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
         } catch is AudioSessionTransitionError {
@@ -592,6 +596,10 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             }
             try ensureAudioSessionTransitionIsCurrent(generation)
             try await audioSessionController.setCategoryOffMainThread(.playback, mode: .default, options: [.mixWithOthers])
+            // A stop during the category await has already queued its
+            // deactivation; activating now would land after it and leave the
+            // session live with nothing behind it.
+            try ensureTransitionIsCurrentAndWanted(generation)
             try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
         } catch is AudioSessionTransitionError {

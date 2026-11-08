@@ -136,6 +136,123 @@ final class ListDetailSplitUITests: XCTestCase {
         XCTAssertFalse(closePlayer.exists)
     }
 
+    /// A real library: several transcripts, date sections and a "Show N more" page.
+    /// Every way of opening a transcript must open the editor — the first row,
+    /// a second transcript after closing one, switching while one is open, and
+    /// a row on the full-list page.
+    @MainActor
+    func testEveryTranscriptInALibraryOpensItsEditor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--seed-sample-library",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.navigateToSection("Transcripts")
+
+        let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
+        let isRegularWidth = app.windows.firstMatch.frame.width >= 700
+
+        func open(_ name: String, step: String) {
+            // The same row can be on the main page and on a pushed page; tap the
+            // copy the user can actually see.
+            let matches = app.buttons.matching(NSPredicate(format: "label == %@", "Edit Transcript for \(name)"))
+            let anyMatch = app.buttons["Edit Transcript for \(name)"]
+            XCTAssertTrue(anyMatch.waitForExistence(timeout: 8), "\(step): no Edit Transcript button for \(name)")
+            let button = matches.allElementsBoundByIndex.last(where: \.isHittable) ?? anyMatch
+            button.tap()
+            XCTAssertTrue(
+                editor.waitForExistence(timeout: 5),
+                "\(step): tapping Edit Transcript for \(name) did not open the editor"
+            )
+            XCTAssertTrue(
+                app.textFields.matching(NSPredicate(format: "value == %@", name)).firstMatch.waitForExistence(timeout: 5)
+                    || app.staticTexts[name].exists,
+                "\(step): the editor is not showing \(name)"
+            )
+        }
+
+        func closeEditor() {
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(editor.waitForNonExistence(timeout: 5), "Cancel did not close the editor")
+        }
+
+        open("Library Recording 1", step: "first row")
+        attachScreenshot(of: app, named: "library-first-transcript")
+        closeEditor()
+
+        open("Library Recording 2", step: "second transcript after closing the first")
+        if isRegularWidth {
+            // The list stays beside the editor, so the next row is right there.
+            open("Library Recording 3", step: "switching while one is open")
+        }
+        closeEditor()
+
+        let showMore = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Show ' AND label ENDSWITH ' more transcripts'")).firstMatch
+        XCTAssertTrue(showMore.waitForExistence(timeout: 5), "No Show N more row for a seven-transcript library")
+        showMore.tap()
+        // Only Today's section starts expanded on the full-list page.
+        open("Library Recording 1", step: "a row on the full-list page")
+        attachScreenshot(of: app, named: "library-full-list-transcript")
+        closeEditor()
+    }
+
+    /// The selection is kept in scene storage, so a relaunch can come back with
+    /// a transcript still selected. Every tap after that must open the editor —
+    /// the selected transcript and any other. A leftover selection with the list
+    /// on screen used to swallow every tap.
+    @MainActor
+    func testEditTranscriptStillOpensAfterARelaunchRestoresASelection() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--seed-sample-library",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.navigateToSection("Transcripts")
+
+        let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
+        let first = app.buttons["Edit Transcript for Library Recording 2"]
+        XCTAssertTrue(first.waitForExistence(timeout: 8))
+        first.tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+
+        // Backgrounding saves scene storage; then relaunch on the same data.
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 2)
+        app.terminate()
+        app.launchArguments = ["--ui-testing", "--disable-cloud-services"]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.navigateToSection("Transcripts")
+        attachScreenshot(of: app, named: "relaunch-transcripts")
+
+        if editor.waitForExistence(timeout: 3) {
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
+        }
+
+        for name in ["Library Recording 2", "Library Recording 3"] {
+            let button = app.buttons["Edit Transcript for \(name)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 8), "No Edit Transcript button for \(name)")
+            button.tap()
+            XCTAssertTrue(
+                editor.waitForExistence(timeout: 5),
+                "After a relaunch, Edit Transcript for \(name) did not open the editor"
+            )
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
+        }
+    }
+
     @MainActor
     private func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
