@@ -56,8 +56,11 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 		AppLog.shared.audioSession("Call started, tracking duration for auto-resume decision")
 	}
 
+	/// Internal rather than private so tests can replay a CallKit end without a
+	/// `CXCall`, which has no public initializer. The caller has already removed
+	/// the call from `callInterruptionTracker`.
 	@MainActor
-	private func handleCallEnded(callStartedAt: Date?, endedAt: Date) async {
+	func handleCallEnded(callStartedAt: Date?, endedAt: Date) async {
 		// Only process if we're currently in an interrupted state due to phone call
 		guard !interruptionEndHandled,
 			  case .interrupted(.phoneCall, let interruptionStartedAt) = recordingState else {
@@ -89,14 +92,31 @@ extension AudioRecorderViewModel: CXCallObserverDelegate {
 		// owned by the Phone app and any resume attempt will produce a bad segment.
 		// The interruption .ended handler or foreground handler will do the actual resume.
 		if appIsBackgrounding {
+			deferredCallDuration = callDuration
+			// The interruption may already have ended while this call was still
+			// active (Live Voicemail ends the ring before the call). That `.ended`
+			// was held for this event; replay it now, or nothing restarts the
+			// recording until the user opens the app. The `.ended` handler applies
+			// the long-call prompt from `deferredCallDuration` set above.
+			if let shouldResume = pendingInterruptionEndShouldResume {
+				pendingInterruptionEndShouldResume = nil
+				AppLog.shared.audioSession(
+					"Call ended after the interruption had already ended; replaying it "
+					+ "(duration: \(Int(callDuration))s, shouldResume: \(shouldResume))"
+				)
+				handleAudioInterruption(type: .ended, shouldResume: shouldResume)
+				return
+			}
 			AppLog.shared.audioSession(
 				"App is backgrounded - deferring resume to interruption/foreground handler "
 				+ "(duration: \(Int(callDuration))s)"
 			)
-			deferredCallDuration = callDuration
 			return
 		}
 		deferredCallDuration = nil
+		// The foreground path below resumes on its own authority; a held
+		// `.ended` has nothing left to do.
+		pendingInterruptionEndShouldResume = nil
 
 		if callDuration < SHORT_CALL_THRESHOLD {
 			// Short call (< 3 minutes) - auto resume
