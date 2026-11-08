@@ -2573,6 +2573,11 @@ struct EditableTranscriptView: View {
                 summaryData: enhancedSummary
             )
             .environmentObject(appCoordinator)
+            // This is a modal sheet, not a split-view column. Without the
+            // reset it inherits the embedded editor's close action, drops its
+            // own navigation stack and Done button, and a delete would clear
+            // the transcript selection behind unsaved edits.
+            .environment(\.embeddedDetailClose, nil)
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "doc.text.magnifyingglass")
