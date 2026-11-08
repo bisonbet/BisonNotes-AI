@@ -85,3 +85,50 @@ extension EnvironmentValues {
     /// Non-nil when the current detail view is embedded in a list/detail split.
     @Entry var embeddedDetailClose: EmbeddedDetailClose? = nil
 }
+
+// MARK: - Unsaved edits in an embedded editor
+
+/// Lets a list ask the editor in its detail column whether it holds unsaved
+/// work before replacing it. A sheet guards its editor by blocking dismissal;
+/// a column has no dismissal to block, so selecting another row would
+/// otherwise drop the edits silently.
+///
+/// The editor registers itself on appear and reports its dirty state; the
+/// list checks `hasUnsavedChanges` before changing the selection and can ask
+/// the editor to `save()` first. `owner` keeps an outgoing editor's late
+/// `onDisappear` from clearing the incoming editor's registration.
+@MainActor
+final class UnsavedEditsGuard {
+    private(set) var owner: UUID?
+    private(set) var hasUnsavedChanges = false
+    private var saveAction: (() -> Bool)?
+
+    func register(owner: UUID, save: @escaping () -> Bool) {
+        self.owner = owner
+        saveAction = save
+        hasUnsavedChanges = false
+    }
+
+    func update(owner: UUID, hasUnsavedChanges: Bool) {
+        guard self.owner == owner else { return }
+        self.hasUnsavedChanges = hasUnsavedChanges
+    }
+
+    func unregister(owner: UUID) {
+        guard self.owner == owner else { return }
+        self.owner = nil
+        saveAction = nil
+        hasUnsavedChanges = false
+    }
+
+    /// Saves the registered editor. False when the save failed (the editor
+    /// shows its own error) or no editor is registered.
+    func save() -> Bool {
+        saveAction?() ?? false
+    }
+}
+
+extension EnvironmentValues {
+    /// Set by a list that hosts an editor in its detail column.
+    @Entry var unsavedEditsGuard: UnsavedEditsGuard? = nil
+}

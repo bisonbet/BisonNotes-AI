@@ -1,6 +1,6 @@
 # iPhone Duo: first-class layout plan
 
-Status: **M1 and M2 implemented; M3 in progress (Summaries done).** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
+Status: **M1 and M2 implemented; M3 in progress (Summaries and Transcripts done).** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
 
 Source paths below are relative to `BisonNotes AI/BisonNotes AI/` unless they start with `docs/`.
 
@@ -204,7 +204,13 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - `SummaryDetailView` is embeddable. With `\.embeddedDetailClose` set it skips its own `NavigationStack` and Done, puts Export in `.primaryAction`, closes by clearing the selection after a delete, and stays on screen after a regeneration.
 - `SummariesView` on iOS/iPadOS hosts the split. The open summary's recording ID is in `@SceneStorage("summaries.selectedRecordingID")`, and the empty detail shows `ContentUnavailableView` ("Select a Summary"). macOS is unchanged and still opens summary windows.
 - New UI test `ListDetailSplitUITests` passes on iPad Pro 11" (list and summary side by side) and iPhone 17 (push, then Back to the list). The iOS and macOS builds succeed.
-- **Next:** Transcripts, then the Recordings library. Highlighting the open row in the list is still to do. Not yet checked on the Duo simulator: closing with a summary open and the 50/50 fold rebalance.
+- **Transcripts done (2026-11-08).** `TranscriptsView` hosts the same split, with the open recording in `@SceneStorage("transcripts.selectedRecordingID")`. The detail is the editor itself (`EditableTranscriptView`), so unsaved edits are guarded on every route out of the column:
+  - Opening another transcript asks "Save Changes to Transcript?" (Save / Discard / Cancel) through `UnsavedEditsGuard`, which the editor registers with and keeps up to date.
+  - In a pushed column the system Back (and its swipe) is hidden; Cancel is the way back and asks the same question when there are edits.
+  - The Save/Discard prompt, previously macOS-only, now runs on iOS too, so Cancel in the sheet form no longer discards edits silently. `interactiveDismissDisabled` also moved out of the macOS-only block, so iOS sheets now block swipe-to-dismiss with pending edits, as the comment always said.
+  - Saving keeps an embedded transcript on screen; a sheet still closes.
+  - Covered by `ListDetailSplitUITests.testTranscriptOpensBesideListOrPushes` and `UnsavedEditsGuardTests`.
+- **Next:** the Recordings library. Highlighting the open row in the list is still to do. Not yet checked on the Duo simulator: closing with a summary open and the 50/50 fold rebalance.
 
 **Exit:** On the inner display a user can scan summaries on the left and read one on the right. Closing the device shows that same summary, and opening it again shows the list beside it.
 

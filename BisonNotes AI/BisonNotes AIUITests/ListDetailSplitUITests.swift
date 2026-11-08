@@ -60,6 +60,51 @@ final class ListDetailSplitUITests: XCTestCase {
     }
 
     @MainActor
+    func testTranscriptOpensBesideListOrPushes() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+
+        app.navigateToSection("Transcripts")
+
+        let editTranscript = app.buttons["Edit Transcript for UI Test Recording"]
+        XCTAssertTrue(editTranscript.waitForExistence(timeout: 8))
+
+        let isRegularWidth = app.windows.firstMatch.frame.width >= 700
+        if isRegularWidth {
+            XCTAssertTrue(app.staticTexts["Select a Transcript"].waitForExistence(timeout: 5))
+        }
+
+        editTranscript.tap()
+
+        let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 8))
+        attachScreenshot(of: app, named: isRegularWidth ? "regular-list-and-transcript" : "compact-transcript-pushed")
+
+        if isRegularWidth {
+            XCTAssertTrue(editTranscript.isHittable, "The list should stay visible beside the transcript.")
+        } else {
+            XCTAssertFalse(editTranscript.isHittable, "At compact width the transcript is pushed over the list.")
+            XCTAssertFalse(
+                app.navigationBars.buttons["Transcripts"].exists,
+                "The system Back would skip the unsaved-edits prompt, so Cancel replaces it."
+            )
+        }
+
+        // With no edits, Cancel closes straight away.
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(editTranscript.waitForExistence(timeout: 5))
+        XCTAssertTrue(editTranscript.isHittable)
+        XCTAssertFalse(editor.exists)
+    }
+
+    @MainActor
     private func attachScreenshot(of app: XCUIApplication, named name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name

@@ -38,3 +38,50 @@ final class AdaptiveLayoutContinuityTests: XCTestCase {
         XCTAssertEqual(SidebarItem.allCases.map(\.rawValue), ["Record", "Transcripts", "Summaries", "Setup"])
     }
 }
+
+/// The list/detail split asks this before replacing an editor in its detail
+/// column; a wrong answer silently drops the user's transcript edits.
+@MainActor
+final class UnsavedEditsGuardTests: XCTestCase {
+    func testReportsTheRegisteredEditorsDirtyState() {
+        let guardian = UnsavedEditsGuard()
+        let editor = UUID()
+        guardian.register(owner: editor, save: { true })
+        XCTAssertFalse(guardian.hasUnsavedChanges)
+
+        guardian.update(owner: editor, hasUnsavedChanges: true)
+        XCTAssertTrue(guardian.hasUnsavedChanges)
+    }
+
+    func testOutgoingEditorCannotClearTheIncomingOne() {
+        let guardian = UnsavedEditsGuard()
+        let outgoing = UUID()
+        let incoming = UUID()
+        guardian.register(owner: outgoing, save: { true })
+
+        // SwiftUI can show the new editor before the old one disappears.
+        guardian.register(owner: incoming, save: { true })
+        guardian.update(owner: incoming, hasUnsavedChanges: true)
+        guardian.update(owner: outgoing, hasUnsavedChanges: false)
+        guardian.unregister(owner: outgoing)
+
+        XCTAssertEqual(guardian.owner, incoming)
+        XCTAssertTrue(guardian.hasUnsavedChanges)
+    }
+
+    func testSaveReportsTheEditorsResult() {
+        let guardian = UnsavedEditsGuard()
+        XCTAssertFalse(guardian.save(), "No editor registered means nothing was saved.")
+
+        let editor = UUID()
+        var saves = 0
+        guardian.register(owner: editor, save: { saves += 1; return false })
+        XCTAssertFalse(guardian.save())
+        XCTAssertEqual(saves, 1)
+
+        guardian.unregister(owner: editor)
+        XCTAssertNil(guardian.owner)
+        XCTAssertFalse(guardian.hasUnsavedChanges)
+        XCTAssertFalse(guardian.save())
+    }
+}
