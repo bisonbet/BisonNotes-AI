@@ -26,6 +26,14 @@ struct SummariesView: View {
     /// The recording whose summary is open, kept per scene so it survives
     /// opening and closing iPhone Duo and relaunches.
     @SceneStorage("summaries.selectedRecordingID") private var selectedSummaryRecordingID: String?
+    /// Bumped on every open so the split view brings the detail forward even
+    /// when the selection did not change.
+    @State private var summaryRevealToken = 0
+    /// "Show N more" switches the list column to the full list in place rather
+    /// than pushing a page. A page pushed inside the list column sits under the
+    /// detail when a split view is collapsed, so opening a row from it showed
+    /// nothing (iPhone and iPhone Duo).
+    @State private var showingFullSummaryList = false
     @State private var isGeneratingSummary = false
     @State private var generatingSummaryRecordingId: UUID?
     @State private var selectedLocationData: LocationData?
@@ -164,7 +172,8 @@ struct SummariesView: View {
         }
         #else
         ListDetailSplitView(
-            hasSelection: selectedSummaryRecordingID != nil,
+            selectionID: selectedSummaryRecordingID,
+            revealToken: summaryRevealToken,
             clearSelection: { selectedSummaryRecordingID = nil }
         ) {
             listColumn
@@ -261,6 +270,13 @@ struct SummariesView: View {
                 systemImage: "doc.text.magnifyingglass",
                 description: Text("A summary for this recording could not be found.")
             )
+            .onAppear {
+                // A selection restored from scene storage can name a recording
+                // or summary deleted since. Drop it rather than leave a dead
+                // detail open.
+                AppLog.shared.summarization("Cleared a summary selection that no longer exists", level: .debug)
+                selectedSummaryRecordingID = nil
+            }
         } else {
             ContentUnavailableView(
                 "Select a Summary",
@@ -280,6 +296,21 @@ struct SummariesView: View {
                 emptyStateView
             } else if filtered.isEmpty {
                 noResultsView
+            } else if showingFullSummaryList {
+                // The full-list view carries its own date-filter banner and title.
+                summariesFullListView
+                    #if !os(macOS)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                showingFullSummaryList = false
+                            } label: {
+                                Label("Summaries", systemImage: "chevron.backward")
+                            }
+                            .accessibilityIdentifier("bisonnotes.summaries.full-list.back")
+                        }
+                    }
+                    #endif
             } else {
                 VStack(spacing: 0) {
                     if isDateFilterActive {
@@ -446,8 +477,8 @@ struct SummariesView: View {
                 }
 
                 if filtered.count > recentRecordings.count {
-                    NavigationLink {
-                        summariesFullListView
+                    Button {
+                        showingFullSummaryList = true
                     } label: {
                         moreRowView(remainingCount: filtered.count - recentRecordings.count)
                     }
@@ -850,6 +881,11 @@ struct SummariesView: View {
                 }
                 #else
                 selectedSummaryRecordingID = recording.id?.uuidString
+                summaryRevealToken &+= 1
+                AppLog.shared.summarization(
+                    "Open summary requested; detail column revealed (token \(summaryRevealToken))",
+                    level: .debug
+                )
                 #endif
             }) {
                 Label("View Summary", systemImage: "doc.text.fill")

@@ -11,20 +11,33 @@ import SwiftUI
 /// A list with its detail beside it at regular width, collapsing to a push at
 /// compact width (the Mail pattern Apple asks for on iPhone Duo's inner display).
 ///
-/// The caller owns the selection. `hasSelection` drives which column a collapsed
-/// split view shows, and `clearSelection` runs when the user backs out of the
-/// detail at compact width, so the selection a compact → regular transition
-/// sees is always the one on screen.
+/// The caller owns the selection and passes its identity as `selectionID`.
+/// `clearSelection` runs when the user backs out of the detail at compact
+/// width, so the selection a compact → regular transition sees is always the
+/// one on screen.
 ///
-/// The list column hosts its own `NavigationStack`, so a `NavigationLink` inside
-/// the list (such as a "Show N more" page) pushes within the list column instead
-/// of replacing the detail.
+/// **Every open must reveal the detail.** A collapsed split view shows whichever
+/// column `preferredCompactColumn` names, and the system can reset that on its
+/// own (opening or closing iPhone Duo, a scene restored with a selection). Driving
+/// it only from "has a selection" changes left a stale selection with the list on
+/// screen: tapping another row changed the id but not that flag, and nothing
+/// happened. So the column follows every change of `selectionID`, and
+/// `revealToken` — bumped by the caller on every tap, including a tap on the row
+/// that is already selected — brings the detail forward even when the id did
+/// not change.
+///
+/// **Never push a page inside the list column.** When the split view is
+/// collapsed, a page pushed there sits under the detail, and switching to the
+/// detail column shows nothing — every row on a "Show N more" page did nothing
+/// when tapped on iPhone and iPhone Duo. Show such pages in place with state
+/// (the lists' "Show N more" swaps the list content and adds a back button).
 ///
 /// Do not cap the column widths: on a partly folded iPhone Duo the system
 /// rebalances a split view's columns around the fold only when they are free
 /// to resize.
 struct ListDetailSplitView<ListContent: View, Detail: View>: View {
-    let hasSelection: Bool
+    let selectionID: String?
+    let revealToken: Int
     let clearSelection: () -> Void
     @ViewBuilder let list: ListContent
     @ViewBuilder let detail: Detail
@@ -32,41 +45,48 @@ struct ListDetailSplitView<ListContent: View, Detail: View>: View {
     @State private var preferredCompactColumn: NavigationSplitViewColumn
 
     init(
-        hasSelection: Bool,
+        selectionID: String?,
+        revealToken: Int,
         clearSelection: @escaping () -> Void,
         @ViewBuilder list: () -> ListContent,
         @ViewBuilder detail: () -> Detail
     ) {
-        self.hasSelection = hasSelection
+        self.selectionID = selectionID
+        self.revealToken = revealToken
         self.clearSelection = clearSelection
         self.list = list()
         self.detail = detail()
         // A selection restored from scene storage opens on the detail when
         // collapsed, so closing iPhone Duo keeps the item on screen.
-        _preferredCompactColumn = State(initialValue: hasSelection ? .detail : .sidebar)
+        _preferredCompactColumn = State(initialValue: selectionID != nil ? .detail : .sidebar)
     }
 
     var body: some View {
         NavigationSplitView(preferredCompactColumn: $preferredCompactColumn) {
-            NavigationStack {
-                list
-            }
+            list
         } detail: {
             NavigationStack {
                 detail
             }
         }
         .navigationSplitViewStyle(.balanced)
-        .onChange(of: hasSelection) { _, selected in
-            preferredCompactColumn = selected ? .detail : .sidebar
+        .onChange(of: selectionID) { _, newSelection in
+            preferredCompactColumn = Self.column(forSelection: newSelection)
+        }
+        .onChange(of: revealToken) { _, _ in
+            preferredCompactColumn = Self.column(forSelection: selectionID)
         }
         .onChange(of: preferredCompactColumn) { _, column in
             // Only a collapsed split view changes this on its own: the user
             // went back to the list.
-            if column == .sidebar && hasSelection {
+            if column == .sidebar && selectionID != nil {
                 clearSelection()
             }
         }
+    }
+
+    static func column(forSelection selectionID: String?) -> NavigationSplitViewColumn {
+        selectionID == nil ? .sidebar : .detail
     }
 }
 #endif

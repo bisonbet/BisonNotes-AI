@@ -24,7 +24,7 @@ final class ListDetailSplitUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
 
         app.navigateToSection("Summaries")
 
@@ -50,8 +50,13 @@ final class ListDetailSplitUITests: XCTestCase {
             XCTAssertTrue(viewSummary.isHittable, "The list should stay visible beside the summary.")
         } else {
             XCTAssertFalse(viewSummary.isHittable, "At compact width the summary is pushed over the list.")
-            let back = app.navigationBars.buttons["Summaries"]
-            XCTAssertTrue(back.waitForExistence(timeout: 5))
+            // On iPhone Duo the system Back sits in the vertical side strip with
+            // no "Summaries" label, so find it by its system identifier too.
+            let back = app.buttons.matching(
+                NSPredicate(format: "identifier == 'BackButton' OR (label == 'Summaries' AND NOT (identifier BEGINSWITH 'bisonnotes.sidebar'))")
+            ).allElementsBoundByIndex.first(where: { $0.isHittable && $0.identifier != "bisonnotes.sidebar.summaries" })
+                ?? app.navigationBars.buttons["Summaries"]
+            XCTAssertTrue(back.waitForExistence(timeout: 5), "No Back button from the pushed summary")
             back.tap()
             XCTAssertTrue(viewSummary.waitForExistence(timeout: 5))
             XCTAssertTrue(viewSummary.isHittable)
@@ -69,7 +74,7 @@ final class ListDetailSplitUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
 
         app.navigateToSection("Transcripts")
 
@@ -114,8 +119,8 @@ final class ListDetailSplitUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
+        app.showRecordScreen()
         let viewRecordings = app.buttons["bisonnotes.record.view-recordings"]
-        XCTAssertTrue(viewRecordings.waitForExistence(timeout: 20))
         viewRecordings.tap()
 
         let play = app.buttons["Play Audio for UI Test Recording"]
@@ -151,7 +156,7 @@ final class ListDetailSplitUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
         app.navigateToSection("Transcripts")
 
         let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
@@ -199,6 +204,29 @@ final class ListDetailSplitUITests: XCTestCase {
         open("Library Recording 1", step: "a row on the full-list page")
         attachScreenshot(of: app, named: "library-full-list-transcript")
         closeEditor()
+
+        // Back from the full list returns to the short list.
+        let back = app.buttons["bisonnotes.transcripts.full-list.back"]
+        XCTAssertTrue(back.waitForExistence(timeout: 5), "The full transcript list has no way back")
+        back.tap()
+        XCTAssertTrue(showMore.waitForExistence(timeout: 5))
+
+        // Summaries has the same "Show N more" page.
+        app.navigateToSection("Summaries")
+        let showMoreSummaries = app.buttons.matching(
+            NSPredicate(format: "label BEGINSWITH 'Show ' AND label ENDSWITH ' more summaries'")
+        ).firstMatch
+        XCTAssertTrue(showMoreSummaries.waitForExistence(timeout: 5), "No Show N more row for summaries")
+        showMoreSummaries.tap()
+        let viewSummary = app.buttons.matching(
+            NSPredicate(format: "label == %@", "View Summary for Library Recording 1")
+        ).allElementsBoundByIndex.last(where: \.isHittable)
+        XCTAssertNotNil(viewSummary, "No visible View Summary button on the full summary list")
+        viewSummary?.tap()
+        XCTAssertTrue(
+            app.descendants(matching: .any)["bisonnotes.summary.detail"].waitForExistence(timeout: 5),
+            "A summary on the full-list page did not open"
+        )
     }
 
     /// The selection is kept in scene storage, so a relaunch can come back with
@@ -216,7 +244,7 @@ final class ListDetailSplitUITests: XCTestCase {
             "--disable-cloud-services"
         ]
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
         app.navigateToSection("Transcripts")
 
         let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
@@ -231,7 +259,7 @@ final class ListDetailSplitUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--ui-testing", "--disable-cloud-services"]
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
         app.navigateToSection("Transcripts")
         attachScreenshot(of: app, named: "relaunch-transcripts")
 

@@ -31,6 +31,9 @@ struct RecordingsListView: View {
     @State private var showingEnhancedDeleteDialog = false
     @State private var recordingPendingDirectDeletion: AudioRecordingFile?
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
+    /// Bumped on every open so the split view brings the player forward even
+    /// when the selection did not change.
+    @State private var playerRevealToken = 0
     @State private var recordingToTrim: AudioRecordingFile?
     enum SelectionAction {
         case combine
@@ -110,7 +113,8 @@ struct RecordingsListView: View {
         }
         #else
         ListDetailSplitView(
-            hasSelection: selectedRecordingForPlayer != nil,
+            selectionID: selectedRecordingForPlayer?.url.absoluteString,
+            revealToken: playerRevealToken,
             clearSelection: { selectedRecordingForPlayer = nil }
         ) {
             libraryContent
@@ -979,6 +983,7 @@ struct RecordingsListView: View {
             openWindow(id: NativeWindowID.recording)
             #else
             selectedRecordingForPlayer = recording
+            playerRevealToken &+= 1
             #endif
         }
     }

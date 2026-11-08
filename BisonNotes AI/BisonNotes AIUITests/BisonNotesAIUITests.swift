@@ -299,7 +299,7 @@ extension BisonNotesAIUITests {
             "--disable-cloud-services"
         ] + extraArguments
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
         return app
     }
 
@@ -415,6 +415,20 @@ extension BisonNotesAIUITests {
 
 @MainActor
 extension XCUIApplication {
+    /// Scene storage restores the last tab and selection, so a launch can open
+    /// on any section. Go to Record explicitly instead of assuming it.
+    func showRecordScreen(file: StaticString = #filePath, line: UInt = #line) {
+        let viewRecordings = buttons["bisonnotes.record.view-recordings"]
+        if !viewRecordings.waitForExistence(timeout: 3) {
+            let recordSection = buttons.matching(
+                NSPredicate(format: "label == 'Record' OR identifier == 'bisonnotes.sidebar.record'")
+            ).firstMatch
+            XCTAssertTrue(recordSection.waitForExistence(timeout: 20), "The app never showed its sections", file: file, line: line)
+            navigateToSection("Record", file: file, line: line)
+        }
+        XCTAssertTrue(viewRecordings.waitForExistence(timeout: 20), "Record screen did not appear", file: file, line: line)
+    }
+
     func navigateToSection(
         _ name: String,
         file: StaticString = #filePath,
