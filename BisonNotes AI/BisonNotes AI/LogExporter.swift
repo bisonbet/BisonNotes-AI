@@ -83,6 +83,9 @@ struct LogExporter {
         }
 
         // ── Section 2: Persistent Breadcrumb Buffer (survives crashes) ──
+        // Age out old lines first: appends only trim once a file is over its
+        // byte ceiling, so a quiet log could otherwise carry months of history.
+        AppLog.shared.enforcePersistentLogBudgets(waitUntilDone: true)
         let breadcrumbLog = AppLog.shared.persistedBreadcrumbLog()
         if !breadcrumbLog.isEmpty {
             let breadcrumbLines = breadcrumbLog.components(separatedBy: "\n").filter { !$0.isEmpty }
@@ -97,16 +100,12 @@ struct LogExporter {
         }
 
         // ── Section 4: MetricKit Crash/Hang Diagnostics ──
-        let metricKitURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("metrickit_diagnostics.json")
-        if let data = try? Data(contentsOf: metricKitURL),
-           let json = try? JSONSerialization.jsonObject(with: data),
-           let prettyData = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted),
-           let prettyString = String(data: prettyData, encoding: .utf8) {
-            sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\n" + prettyString)
-        } else {
-            sections.append("\n" + sectionHeader("METRICKIT CRASH/HANG DIAGNOSTICS") + "\nNo MetricKit diagnostics available yet. iOS may deliver crash and hang payloads on a later launch.")
-        }
+        // Compact, one entry per line, last 14 days; loading also prunes the file.
+        let metricKitEntries = MetricKitDiagnosticStore.loadRetained(at: MetricKitDiagnosticStore.defaultURL)
+        sections.append(
+            "\n" + sectionHeader("METRICKIT DIAGNOSTICS (\(metricKitEntries.count) entries)") + "\n"
+                + MetricKitDiagnosticStore.exportText(metricKitEntries)
+        )
 
         // ── Section 5: Recording Recovery Inventory ──
         sections.append(

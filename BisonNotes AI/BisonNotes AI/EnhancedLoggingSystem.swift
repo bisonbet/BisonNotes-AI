@@ -36,49 +36,7 @@ enum LogCategory: String, CaseIterable, Sendable {
 
 // MARK: - Persisted Log Budgets
 
-/// Budget rules for the rolling files that survive a crash.
-///
-/// A line-count cap alone does not bound a log file. A single message can be a
-/// model response, a decoded payload, or a CloudKit error description, and one
-/// 350 KB line was enough to push a 500-line error log past 4 MB — which then
-/// cost a 4 MB read and a 4 MB rewrite on *every* subsequent log call. So each
-/// line is clamped first and the file carries a byte ceiling as well.
-///
-/// Pure so the budgets can be tested without touching the filesystem.
-enum LogTrimPolicy {
-    /// Clamps one line so a single huge message cannot consume the whole budget.
-    /// Keeps the head, which is where the message and the first frames live.
-    static func clamp(_ line: String, maxBytes: Int) -> String {
-        let flattened = line.replacingOccurrences(of: "\n", with: "⏎")
-        guard flattened.utf8.count > maxBytes else { return flattened }
-
-        let marker = "…[truncated]"
-        let budget = max(0, maxBytes - marker.utf8.count)
-        var kept = String()
-        var used = 0
-        for character in flattened {
-            let width = String(character).utf8.count
-            if used + width > budget { break }
-            kept.append(character)
-            used += width
-        }
-        return kept + marker
-    }
-
-    /// Drops the oldest lines until the joined text fits both budgets.
-    /// Always keeps at least the newest line, so a log call is never a no-op.
-    static func trim(lines: [String], maxLines: Int, maxBytes: Int) -> [String] {
-        var kept = lines.count > maxLines ? Array(lines.suffix(maxLines)) : lines
-        var total = kept.reduce(0) { $0 + $1.utf8.count + 1 }
-        var firstKept = 0
-        while total > maxBytes, firstKept < kept.count - 1 {
-            total -= kept[firstKept].utf8.count + 1
-            firstKept += 1
-        }
-        if firstKept > 0 { kept = Array(kept.dropFirst(firstKept)) }
-        return kept
-    }
-}
+// `LogTrimPolicy` lives in DiagnosticRetention.swift with the other retention rules.
 
 // MARK: - Rolling Log File
 
@@ -92,6 +50,9 @@ struct PersistentLogFile: Sendable {
     let url: URL
     let maxLines: Int
     let maxBytes: Int
+    /// Lines older than this are dropped whenever the file is compacted. nil keeps
+    /// every line the line and byte budgets allow.
+    var maxAge: TimeInterval?
     /// Compaction rewrites the file, so it must not run on every line. Appending is
     /// cheap; the rewrite happens only once the file crosses its ceiling, and then
     /// takes it well under, leaving room for many more appends before the next one.
@@ -168,10 +129,27 @@ struct PersistentLogFile: Sendable {
         }
     }
 
-    private func compact(toByteBudget budget: Int) {
-        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+    /// Applies every budget — age, line count and bytes — and rewrites the file
+    /// only when that drops something.
+    ///
+    /// `append` compacts only once the byte ceiling is crossed, so on its own a
+    /// quiet log never applied its line cap (856 lines against a cap of 500) or
+    /// aged anything out (an error log three months deep). `AppLog` calls this at
+    /// launch and before an export so both budgets hold for what users send.
+    func enforceBudgets(now: Date = Date()) {
+        compact(toByteBudget: maxBytes, now: now, onlyIfChanged: true)
+    }
+
+    private func compact(toByteBudget budget: Int, now: Date = Date(), onlyIfChanged: Bool = false) {
+        guard let existing = try? String(contentsOf: url, encoding: .utf8) else { return }
         let lines = existing.components(separatedBy: "\n").filter { !$0.isEmpty }
-        let kept = LogTrimPolicy.trim(lines: lines, maxLines: maxLines, maxBytes: budget)
+        let current = maxAge.map { LogTrimPolicy.dropExpired(lines: lines, now: now, maxAge: $0) } ?? lines
+        let kept = LogTrimPolicy.trim(lines: current, maxLines: maxLines, maxBytes: budget)
+        if onlyIfChanged, kept.count == lines.count { return }
+        if kept.isEmpty {
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
         try? (kept.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
         AppFileProtection.apply(to: url)
     }
@@ -280,6 +258,7 @@ final class AppLog: Sendable {
         }
         guard shouldMarkLaunch else { return }
 
+        enforcePersistentLogBudgets()
         lifecycleBreadcrumb("launch session=\(sessionId) previousSessionCrashed=\(previousSessionCrashed)")
     }
 
@@ -311,20 +290,43 @@ final class AppLog: Sendable {
         bufferQueue.async { file.append(clamped) }
     }
 
-    private func persistErrorLine(_ line: String) {
-        persistLine(line, to: PersistentLogFile(
+    private var errorLogFile: PersistentLogFile {
+        PersistentLogFile(
             url: persistentLogURL,
             maxLines: Self.maxBufferLines,
-            maxBytes: Self.maxErrorLogBytes
-        ))
+            maxBytes: Self.maxErrorLogBytes,
+            maxAge: LogTrimPolicy.maximumLineAge
+        )
+    }
+
+    private var breadcrumbLogFile: PersistentLogFile {
+        PersistentLogFile(
+            url: persistentBreadcrumbURL,
+            maxLines: Self.maxBreadcrumbLines,
+            maxBytes: Self.maxBreadcrumbLogBytes,
+            maxAge: LogTrimPolicy.maximumLineAge
+        )
+    }
+
+    private func persistErrorLine(_ line: String) {
+        persistLine(line, to: errorLogFile)
     }
 
     private func persistBreadcrumbLine(_ line: String) {
-        persistLine(line, to: PersistentLogFile(
-            url: persistentBreadcrumbURL,
-            maxLines: Self.maxBreadcrumbLines,
-            maxBytes: Self.maxBreadcrumbLogBytes
-        ))
+        persistLine(line, to: breadcrumbLogFile)
+    }
+
+    /// Applies the age, line and byte budgets to both rolling logs. Runs on the
+    /// log queue so it is ordered with pending appends; `waitUntilDone` is for an
+    /// export, which must read the pruned files.
+    func enforcePersistentLogBudgets(waitUntilDone: Bool = false) {
+        let files = [errorLogFile, breadcrumbLogFile]
+        let work = { for file in files { file.enforceBudgets() } }
+        if waitUntilDone {
+            bufferQueue.sync(execute: work)
+        } else {
+            bufferQueue.async(execute: work)
+        }
     }
 
     private func lifecycleBreadcrumb(_ message: String) {
