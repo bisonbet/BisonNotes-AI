@@ -19,11 +19,11 @@ private final class ScriptedAudioSessionController: AudioSessionControlling {
     var deactivationGate: RecoveryGate?
     private(set) var deactivationStarted = false
 
-    func setCategory(
+    func setCategoryOffMainThread(
         _ category: AVAudioSession.Category,
         mode: AVAudioSession.Mode,
         options: AVAudioSession.CategoryOptions
-    ) throws {
+    ) async throws {
         categoryCalls.append(category)
         self.category = category
         categoryOptions = options
@@ -378,11 +378,14 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
 
         let generation = try await manager.prepareBackgroundRecordingForRecovery(mixWithOthers: true)
         // Prepared but not active: nothing is recording on the mixable session yet.
-        XCTAssertFalse(manager.restoreExclusiveRecordingAfterBackgroundRecovery())
+        let restoredBeforeActivation = await manager.restoreExclusiveRecordingAfterBackgroundRecovery()
+        XCTAssertFalse(restoredBeforeActivation)
         try await manager.activatePreparedSession(for: generation)
         XCTAssertTrue(manager.isUsingMixableRecoveryRecording)
 
-        XCTAssertTrue(manager.restoreExclusiveRecordingAfterBackgroundRecovery())
+        let restored = await manager.restoreExclusiveRecordingAfterBackgroundRecovery()
+
+        XCTAssertTrue(restored)
         XCTAssertFalse(controller.categoryOptions.contains(.mixWithOthers))
         XCTAssertEqual(controller.activeCalls, [true], "Restoring must not deactivate the recording session")
         XCTAssertFalse(manager.isUsingMixableRecoveryRecording)
@@ -390,7 +393,8 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         XCTAssertTrue(manager.isOwnedByRecording)
 
         // Already exclusive: nothing to do.
-        XCTAssertFalse(manager.restoreExclusiveRecordingAfterBackgroundRecovery())
+        let restoredAgain = await manager.restoreExclusiveRecordingAfterBackgroundRecovery()
+        XCTAssertFalse(restoredAgain)
     }
 
     func testManagerMissingConfigurationFailsAndRecoveryNeverDeactivatesAsRetryPrelude() async {

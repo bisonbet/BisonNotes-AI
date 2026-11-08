@@ -474,7 +474,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 					AppLog.shared.recording("Recorder still active after backgrounding - no recovery needed")
 					self.recorderStoppedUnexpectedlyTime = nil
 					#if os(iOS)
-					self.restoreExclusiveRecordingSessionIfForegrounded()
+					await self.restoreExclusiveRecordingSessionIfForegrounded()
 					#endif
 					self.endBackgroundTask()
 					return

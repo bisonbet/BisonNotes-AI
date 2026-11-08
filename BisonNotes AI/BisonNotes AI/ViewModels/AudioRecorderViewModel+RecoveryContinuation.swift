@@ -59,7 +59,7 @@ extension AudioRecorderViewModel {
 			// The app may have come to the foreground while this recovery was
 			// activating the mixable session; its foreground handler saw no live
 			// recorder then, so this is the only place left to restore exclusivity.
-			restoreExclusiveRecordingSessionIfForegrounded()
+			await restoreExclusiveRecordingSessionIfForegrounded()
 			return .recovered
 		} catch is CancellationError {
 			stopAndReleaseRecoveryRecorder(continuationRecorder, at: newSegmentURL)
@@ -83,7 +83,7 @@ extension AudioRecorderViewModel {
 	/// survive the category change, the coordinated recovery takes over — in the
 	/// foreground it activates the exclusive session directly.
 	@MainActor
-	func restoreExclusiveRecordingSessionIfForegrounded() {
+	func restoreExclusiveRecordingSessionIfForegrounded() async {
 		guard !appIsBackgrounding,
 			  enhancedAudioSessionManager.isUsingMixableRecoveryRecording,
 			  isRecording,
@@ -91,7 +91,7 @@ extension AudioRecorderViewModel {
 			  recorder.isRecording else {
 			return
 		}
-		guard enhancedAudioSessionManager.restoreExclusiveRecordingAfterBackgroundRecovery() else {
+		guard await enhancedAudioSessionManager.restoreExclusiveRecordingAfterBackgroundRecovery() else {
 			return
 		}
 		if !recorder.isRecording {
