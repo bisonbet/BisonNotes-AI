@@ -122,3 +122,19 @@ final class ListDetailSplitColumnTests: XCTestCase {
         XCTAssertEqual(prompts, 1)
     }
 }
+
+/// The Record screen shows its library and import actions beside the controls
+/// only when ArrangementView really put a secondary there.
+@MainActor
+final class RecordArrangementTests: XCTestCase {
+    func testThePrimaryAloneIsNotASplit() {
+        // iPhone portrait, the Duo's outer display: the primary fills it.
+        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 402, arrangementWidth: 402))
+        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 382, arrangementWidth: 382))
+        // iPad landscape: two halves.
+        XCTAssertTrue(RecordingsView.isArrangementSplit(primaryWidth: 465, arrangementWidth: 930))
+        // Not measured yet: assume one column, so nothing is out of reach.
+        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 0, arrangementWidth: 930))
+        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 465, arrangementWidth: 0))
+    }
+}
