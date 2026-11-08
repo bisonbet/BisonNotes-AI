@@ -321,7 +321,7 @@ final class AppLog: Sendable {
     /// export, which must read the pruned files.
     func enforcePersistentLogBudgets(waitUntilDone: Bool = false) {
         let files = [errorLogFile, breadcrumbLogFile]
-        let work = { for file in files { file.enforceBudgets() } }
+        let work: @Sendable () -> Void = { for file in files { file.enforceBudgets() } }
         if waitUntilDone {
             bufferQueue.sync(execute: work)
         } else {
