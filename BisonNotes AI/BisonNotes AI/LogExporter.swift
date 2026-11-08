@@ -114,6 +114,12 @@ struct LogExporter {
             RecordingRecoveryStore.diagnosticInventory()
         )
 
+        // ── Section 6: Daily disk-write metrics (MetricKit) ──
+        sections.append(
+            "\n" + sectionHeader("DISK WRITE METRICS (MetricKit, one line per day)") + "\n" +
+            DiskWriteMetricsLog.exportText()
+        )
+
         // ── Write to file ──
         let text = sections.joined(separator: "\n")
 

@@ -1474,6 +1474,8 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func processTranscriptionJob(_ job: ProcessingJob, engine: TranscriptionEngine) async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.transcription)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         #if DEBUG
         if let transcriptionProcessorForTesting {
             try await transcriptionProcessorForTesting(job, engine)
@@ -2013,6 +2015,8 @@ class BackgroundProcessingManager: ObservableObject {
     }
 
     private func processSummarizationJob(_ job: ProcessingJob, engine: String) async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.summarization)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         AppLog.shared.backgroundProcessing("Starting summarization job")
 
         try Task.checkCancellation()

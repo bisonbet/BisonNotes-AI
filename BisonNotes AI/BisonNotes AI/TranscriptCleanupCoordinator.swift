@@ -160,6 +160,8 @@ struct TranscriptCleanupCoordinator: Sendable {
         checkpoint: (any TranscriptCleanupCheckpointing)? = nil,
         progress: (@Sendable (TranscriptCleanupProgress) -> Void)? = nil
     ) async -> TranscriptCleanupResult {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.transcriptCleanup)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         switch await preflight(segments: segments, configuration: configuration) {
         case .notNeeded:
             return TranscriptCleanupResult(segments: segments, warning: nil, cleanedSegmentCount: 0)

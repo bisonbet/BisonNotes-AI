@@ -31,6 +31,8 @@ extension AudioRecorderViewModel {
 		expectedRecordingSessionID: UUID? = nil,
 		expectedRecoveryRequestID: UUID? = nil
 	) async {
+		let diskWriteSignpost = DiskWriteSignposts.begin(.recordingMerge)
+		defer { DiskWriteSignposts.end(diskWriteSignpost) }
 		let recoveryIsCurrent: () -> Bool = {
 			guard !Task.isCancelled else { return false }
 			#if os(iOS)

@@ -251,6 +251,8 @@ final class CloudSyncOperationCoordinator {
         satisfying waiters: Set<Int> = []
     ) async throws {
         let task = Task { @MainActor in
+            let diskWriteSignpost = DiskWriteSignposts.begin(.cloudSync)
+            defer { DiskWriteSignposts.end(diskWriteSignpost) }
             try await work()
         }
         let runID = nextRunID

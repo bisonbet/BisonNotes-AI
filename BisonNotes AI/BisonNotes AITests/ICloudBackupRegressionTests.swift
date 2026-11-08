@@ -1956,6 +1956,92 @@ final class ICloudBackupRegressionTests: XCTestCase {
         )
     }
 
+    /// Equal timestamps are the steady state and the restore leg applies the
+    /// cloud copy on a tie, so it used to re-assign every field and relationship
+    /// of every row on every sync. A managed-object setter does not compare, so
+    /// each of those rows was saved again even though nothing had changed.
+    func testARepeatedIdenticalRestoreSavesNoContentRows() async throws {
+        let harness = makeSyncEngineHarness()
+        let recordingId = UUID()
+        let transcriptId = UUID()
+        let summaryId = UUID()
+        let now = Date()
+
+        harness.transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName("backup_recording_", recordingId),
+                fields: [
+                    "recordingName": "Steady",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "recordingURL": "steady.m4a",
+                    "duration": 42.0,
+                    "transcriptId": transcriptId.uuidString,
+                    "summaryId": summaryId.uuidString,
+                    "summaryStatus": ProcessingStatus.completed.rawValue,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupTranscript",
+                name: recordName("backup_transcript_", transcriptId),
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "createdAt": now,
+                    "lastModified": now,
+                    "engine": "fixture",
+                    "segments": "[]",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            ),
+            CloudKitTestRecords.record(
+                type: "CD_BackupSummary",
+                name: recordName("backup_summary_", summaryId),
+                fields: [
+                    "recordingId": recordingId.uuidString,
+                    "transcriptId": transcriptId.uuidString,
+                    "summary": "Steady summary body long enough to look like real content.",
+                    "generatedAt": now,
+                    "lastModified": now,
+                    "aiMethod": "fixture",
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+
+        _ = try await harness.manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: false,
+            restoreSettings: false
+        )
+        XCTAssertNotNil(try appCoordinator.coreDataManager.getRecording(id: recordingId))
+
+        let contentEntities: Set<String> = ["RecordingEntry", "TranscriptEntry", "SummaryEntry"]
+        let updatedNames = LockedNames()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextDidSave,
+            object: nil,
+            queue: nil
+        ) { notification in
+            let updated = notification.userInfo?[NSUpdatedObjectsKey] as? Set<NSManagedObject> ?? []
+            updatedNames.append(updated.compactMap(\.entity.name).filter(contentEntities.contains))
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        _ = try await harness.manager.restoreAllDataFromiCloud(
+            appCoordinator: appCoordinator,
+            includeAudioFiles: false,
+            restoreSettings: false
+        )
+
+        XCTAssertEqual(updatedNames.values, [], "An identical restore must not rewrite any content row")
+    }
+
     /// The compiled `.momd` that ships in the bundle, which holds every model
     /// version as its own `.mom`.
     ///
@@ -2235,5 +2321,21 @@ final class ICloudBackupRegressionTests: XCTestCase {
         for store in coordinator.persistentStores {
             try coordinator.remove(store)
         }
+    }
+}
+
+/// Collects entity names from save notifications, which can arrive on any queue.
+private final class LockedNames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [String] = []
+
+    func append(_ more: [String]) {
+        lock.lock(); defer { lock.unlock() }
+        names += more
+    }
+
+    var values: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return names
     }
 }
