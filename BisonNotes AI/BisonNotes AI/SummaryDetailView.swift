@@ -35,6 +35,7 @@ struct SummaryDetailView: View {
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
     @Environment(\.nativeMacPresentationContext) private var nativeMacPresentationContext
+    @Environment(\.embeddedDetailClose) private var embeddedDetailClose
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
@@ -197,8 +198,30 @@ struct SummaryDetailView: View {
         .accessibilityHint("Choose PDF or RTF export format.")
     }
 
-    var body: some View {
-        NavigationStack {
+    /// A detail embedded in a list/detail split already sits in its column's
+    /// navigation stack, and closing it clears the list's selection.
+    @ViewBuilder
+    private var navigationContainer: some View {
+        if embeddedDetailClose != nil {
+            detailContent
+        } else {
+            NavigationStack {
+                detailContent
+            }
+        }
+    }
+
+    /// Closes this summary: clears the split view's selection when embedded,
+    /// otherwise dismisses the sheet or window.
+    private func close() {
+        if let embeddedDetailClose {
+            embeddedDetailClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    private var detailContent: some View {
             Group {
                 #if os(macOS)
                 // Native Form can size itself to all rows when hosted in a
@@ -244,15 +267,26 @@ struct SummaryDetailView: View {
                     }
                 }
                 #else
-                ToolbarItem(placement: .navigationBarLeading) {
-                    exportToolbarButton
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    SheetDoneButton { dismiss() }
+                if embeddedDetailClose != nil {
+                    // The detail column's bar: Export is its main action, and
+                    // there is nothing to dismiss.
+                    ToolbarItem(placement: .primaryAction) {
+                        exportToolbarButton
+                    }
+                } else {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        exportToolbarButton
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        SheetDoneButton { dismiss() }
+                    }
                 }
                 #endif
             }
-        }
+    }
+
+    var body: some View {
+        navigationContainer
         .configurationWarnings(
             showingTranscriptionWarning: .constant(false),
             showingAIWarning: $showingAIWarning,
@@ -295,7 +329,11 @@ struct SummaryDetailView: View {
                             // necessary on layouts where dismiss() doesn't tear the view
                             // down (e.g. iPad split-view detail column).
                             refreshSummaryFromCoreData()
-                            dismiss()
+                            // In a split view the refreshed summary stays on
+                            // screen; a sheet closes as before.
+                            if embeddedDetailClose == nil {
+                                dismiss()
+                            }
                         } else if job.status.isError {
                             regenerationError = job.status.errorMessage ?? "Regeneration failed"
                             showingRegenerationAlert = true
@@ -1434,7 +1472,7 @@ struct SummaryDetailView: View {
                 appCoordinator.objectWillChange.send()
 
                 AppLog.shared.summarization("Summary deletion completed")
-                dismiss()
+                close()
 
             } catch {
                 AppLog.shared.summarization("Failed to delete summary: \(error)", level: .error)

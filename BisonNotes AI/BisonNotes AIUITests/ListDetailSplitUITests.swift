@@ -1,0 +1,69 @@
+//
+//  ListDetailSplitUITests.swift
+//  BisonNotes AIUITests
+//
+//  M3 of docs/iphone-duo-implementation-plan.md: at regular width (iPad,
+//  iPhone Duo's inner display) a summary opens beside the list; at compact
+//  width it pushes and Back returns to the list.
+//
+
+import XCTest
+
+final class ListDetailSplitUITests: XCTestCase {
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+    }
+
+    @MainActor
+    func testSummaryOpensBesideListOrPushes() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+
+        app.navigateToSection("Summaries")
+
+        let viewSummary = app.buttons["View Summary for UI Test Recording"]
+        XCTAssertTrue(viewSummary.waitForExistence(timeout: 8))
+
+        let isRegularWidth = app.windows.firstMatch.frame.width >= 700
+        if isRegularWidth {
+            XCTAssertTrue(
+                app.staticTexts["Select a Summary"].waitForExistence(timeout: 5),
+                "The detail column should invite a selection before one is made."
+            )
+        }
+
+        viewSummary.tap()
+
+        let detail = app.descendants(matching: .any)["bisonnotes.summary.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Done"].exists, "An embedded summary has nothing to dismiss.")
+        attachScreenshot(of: app, named: isRegularWidth ? "regular-list-and-summary" : "compact-summary-pushed")
+
+        if isRegularWidth {
+            XCTAssertTrue(viewSummary.isHittable, "The list should stay visible beside the summary.")
+        } else {
+            XCTAssertFalse(viewSummary.isHittable, "At compact width the summary is pushed over the list.")
+            let back = app.navigationBars.buttons["Summaries"]
+            XCTAssertTrue(back.waitForExistence(timeout: 5))
+            back.tap()
+            XCTAssertTrue(viewSummary.waitForExistence(timeout: 5))
+            XCTAssertTrue(viewSummary.isHittable)
+            XCTAssertFalse(detail.exists)
+        }
+    }
+
+    @MainActor
+    private func attachScreenshot(of app: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+}

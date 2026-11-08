@@ -1,6 +1,6 @@
 # iPhone Duo: first-class layout plan
 
-Status: **plan, nothing implemented**. Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
+Status: **M1 and M2 implemented; M3 in progress (Summaries done).** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
 
 Source paths below are relative to `BisonNotes AI/BisonNotes AI/` unless they start with `docs/`.
 
@@ -198,6 +198,13 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
 - **Keep the user's place.** Persist the selected recording, transcript or summary ID per tab (`@SceneStorage`). On a compact → regular transition the item is still selected, and on regular → compact it stays pushed.
 - **Show a useful empty detail.** Without a selection, show `ContentUnavailableView` ("Select a summary") rather than a blank column.
 - **Recordings library.** It's a sheet from the Record tab today. On regular width, open it as a column or a navigation destination rather than a sheet. Decide during M3 with the M0 screenshots.
+
+**M3 progress (2026-11-07): Summaries done.**
+- `Views/AdaptiveLayoutSupport.swift` adds `ListDetailSplitView`: a `NavigationSplitView` whose list column has its own `NavigationStack` (so "Show N more" pushes in the list column) and whose `preferredCompactColumn` follows the caller's selection. Backing out at compact width clears the selection. Column widths are deliberately uncapped (F12).
+- `SummaryDetailView` is embeddable. With `\.embeddedDetailClose` set it skips its own `NavigationStack` and Done, puts Export in `.primaryAction`, closes by clearing the selection after a delete, and stays on screen after a regeneration.
+- `SummariesView` on iOS/iPadOS hosts the split. The open summary's recording ID is in `@SceneStorage("summaries.selectedRecordingID")`, and the empty detail shows `ContentUnavailableView` ("Select a Summary"). macOS is unchanged and still opens summary windows.
+- New UI test `ListDetailSplitUITests` passes on iPad Pro 11" (list and summary side by side) and iPhone 17 (push, then Back to the list). The iOS and macOS builds succeed.
+- **Next:** Transcripts, then the Recordings library. Highlighting the open row in the list is still to do. Not yet checked on the Duo simulator: closing with a summary open and the 50/50 fold rebalance.
 
 **Exit:** On the inner display a user can scan summaries on the left and read one on the right. Closing the device shows that same summary, and opening it again shows the list beside it.
 
