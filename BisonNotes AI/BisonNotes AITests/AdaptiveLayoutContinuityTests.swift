@@ -85,3 +85,40 @@ final class UnsavedEditsGuardTests: XCTestCase {
         XCTAssertFalse(guardian.save())
     }
 }
+
+/// What a collapsed `ListDetailSplitView` does when its column changes. It must
+/// never end the selection itself, and it must never leave a detail that holds
+/// unsaved work.
+@MainActor
+final class ListDetailSplitColumnTests: XCTestCase {
+    private typealias Split = ListDetailSplitView<EmptyView, EmptyView>
+
+    func testASelectionOpensOnTheDetailUnlessTheUserWentBack() {
+        XCTAssertEqual(Split.initialColumn(selectionID: "a", detailDismissed: false), .detail)
+        XCTAssertEqual(Split.initialColumn(selectionID: "a", detailDismissed: true), .sidebar)
+        XCTAssertEqual(Split.initialColumn(selectionID: nil, detailDismissed: false), .sidebar)
+    }
+
+    func testLeavingADetailWithUnsavedWorkIsRefused() {
+        XCTAssertEqual(
+            Split.columnAfterChange(to: .sidebar, selectionID: "a", allowsLeavingDetail: false),
+            .detail,
+            "A swipe or a system reset must not pop an editor with unsaved edits"
+        )
+        XCTAssertEqual(Split.columnAfterChange(to: .sidebar, selectionID: "a", allowsLeavingDetail: true), .sidebar)
+        XCTAssertEqual(
+            Split.columnAfterChange(to: .sidebar, selectionID: nil, allowsLeavingDetail: false),
+            .sidebar,
+            "With nothing selected there is no detail to protect"
+        )
+        XCTAssertEqual(Split.columnAfterChange(to: .detail, selectionID: "a", allowsLeavingDetail: false), .detail)
+    }
+
+    func testTheEditorCanAskForItsOwnPrompt() {
+        let guardian = UnsavedEditsGuard()
+        var prompts = 0
+        guardian.register(owner: UUID(), save: { true }, requestClose: { prompts += 1 })
+        guardian.requestClose()
+        XCTAssertEqual(prompts, 1)
+    }
+}

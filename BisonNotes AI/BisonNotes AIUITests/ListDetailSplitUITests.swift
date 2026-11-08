@@ -259,14 +259,31 @@ final class ListDetailSplitUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--ui-testing", "--disable-cloud-services"]
         app.launch()
-        app.showRecordScreen()
-        app.navigateToSection("Transcripts")
+        // Scene storage comes back only if the system restored the scene. The
+        // tab is scene-stored too, so a launch back on Transcripts is the proof;
+        // without it this simulator did not restore, and nothing here can be
+        // checked.
+        let editorRestored = editor.waitForExistence(timeout: 10)
+        let transcriptsTab = app.buttons["bisonnotes.sidebar.transcripts"]
+        let sceneRestored = editorRestored || (transcriptsTab.waitForExistence(timeout: 5) && transcriptsTab.isSelected)
         attachScreenshot(of: app, named: "relaunch-transcripts")
-
-        if editor.waitForExistence(timeout: 3) {
-            app.buttons["Cancel"].firstMatch.tap()
-            XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
+        if !sceneRestored {
+            throw XCTSkip("The system did not restore the scene on relaunch, so scene storage was not exercised")
         }
+
+        // The open transcript comes back: scene storage keeps the selection, and
+        // nothing on the way through a relaunch may clear it.
+        XCTAssertTrue(
+            editor.waitForExistence(timeout: 8),
+            "The transcript open before the relaunch was not restored"
+        )
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "Library Recording 2")).firstMatch.exists
+                || app.staticTexts["Library Recording 2"].exists,
+            "The restored editor is not showing the transcript that was open"
+        )
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
 
         for name in ["Library Recording 2", "Library Recording 3"] {
             let button = app.buttons["Edit Transcript for \(name)"]
@@ -279,6 +296,123 @@ final class ListDetailSplitUITests: XCTestCase {
             app.buttons["Cancel"].firstMatch.tap()
             XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
         }
+    }
+
+    /// The editor hides the system Back because leaving must go through its
+    /// Save/Discard prompt. The collapsed split view's edge swipe, and the column
+    /// moving to the list for any other reason, must not get around that: a
+    /// completed pop destroys the edits.
+    @MainActor
+    func testADirtyTranscriptCannotBeSwipedAwayWithoutThePrompt() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        app.showRecordScreen()
+        guard app.windows.firstMatch.frame.width < 700 else {
+            throw XCTSkip("Only a collapsed split view pushes the editor")
+        }
+        app.navigateToSection("Transcripts")
+
+        let editor = app.descendants(matching: .any)["bisonnotes.transcript.detail"]
+        app.buttons["Edit Transcript for UI Test Recording"].tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+
+        // The segment's editor carries the segment's label ("Speaker 1, starts at
+        // 0:00"); the first text view in the hierarchy is not necessarily it.
+        let segment = app.textViews.matching(
+            NSPredicate(format: "label CONTAINS 'starts at' OR label BEGINSWITH 'Transcript segment'")
+        ).firstMatch
+        XCTAssertTrue(segment.waitForExistence(timeout: 5), "No editable transcript segment")
+        segment.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "The segment did not take focus")
+        app.typeText(" unsaved-edit-marker")
+
+        // Prove the editor is dirty the way a user would see it: Cancel asks.
+        let prompt = app.staticTexts["Save Changes to Transcript?"]
+        // The dialog's cancel is not a button the toolbar's "Cancel" can be told
+        // apart from, so "keep editing" dismisses the dialog itself.
+        func keepEditing() {
+            // On iPhone the dialog is a popover whose cancel is a tap outside it.
+            let dismissRegion = app.otherElements["PopoverDismissRegion"]
+            if dismissRegion.exists {
+                dismissRegion.tap()
+            } else {
+                app.sheets.buttons["Cancel"].tap()
+            }
+        }
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5), "Typing did not make the editor dirty")
+        keepEditing()
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
+        attachScreenshot(of: app, named: "dirty-editor-before-swipe")
+
+        // A left-edge swipe, as the system Back gesture.
+        let edge = app.coordinate(withNormalizedOffset: CGVector(dx: 0.0, dy: 0.5))
+        edge.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        attachScreenshot(of: app, named: "dirty-editor-after-swipe")
+
+        if prompt.waitForExistence(timeout: 2) {
+            // Refusing the swipe may surface the editor's own prompt; stay.
+            keepEditing()
+        }
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "An edge swipe removed the dirty editor")
+
+        // The edit survived: Cancel still asks, and Discard is what finally leaves.
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5), "The swipe discarded the unsaved edit")
+        app.buttons["Discard Changes"].firstMatch.tap()
+        XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
+    }
+
+    /// Going back to the list keeps the selection (only the detail's own close
+    /// ends it) but is remembered, so a relaunch shows the list rather than
+    /// reopening what the user closed.
+    @MainActor
+    func testBackFromASummarySurvivesARelaunchWithoutReopeningIt() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-testing",
+            "--reset-test-data",
+            "--seed-sample-recording",
+            "--disable-cloud-services"
+        ]
+        app.launch()
+        app.showRecordScreen()
+        guard app.windows.firstMatch.frame.width < 700 else {
+            throw XCTSkip("Only a collapsed split view has a Back to the list")
+        }
+        app.navigateToSection("Summaries")
+
+        let viewSummary = app.buttons["View Summary for UI Test Recording"]
+        let detail = app.descendants(matching: .any)["bisonnotes.summary.detail"]
+        XCTAssertTrue(viewSummary.waitForExistence(timeout: 8))
+        viewSummary.tap()
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
+
+        let back = app.buttons.matching(
+            NSPredicate(format: "identifier == 'BackButton' OR (label == 'Summaries' AND NOT (identifier BEGINSWITH 'bisonnotes.sidebar'))")
+        ).allElementsBoundByIndex.first(where: \.isHittable)
+        XCTAssertNotNil(back, "No Back from the pushed summary")
+        back?.tap()
+        XCTAssertTrue(detail.waitForNonExistence(timeout: 5))
+
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval: 2)
+        app.terminate()
+        app.launchArguments = ["--ui-testing", "--disable-cloud-services"]
+        app.launch()
+        XCTAssertTrue(app.buttons["bisonnotes.sidebar.summaries"].waitForExistence(timeout: 20))
+        app.navigateToSection("Summaries")
+
+        XCTAssertTrue(viewSummary.waitForExistence(timeout: 8))
+        XCTAssertFalse(detail.exists, "A summary the user went back from reopened after a relaunch")
+        viewSummary.tap()
+        XCTAssertTrue(detail.waitForExistence(timeout: 5), "The summary did not open again after the relaunch")
     }
 
     @MainActor

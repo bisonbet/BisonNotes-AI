@@ -174,7 +174,7 @@ struct SummariesView: View {
         ListDetailSplitView(
             selectionID: selectedSummaryRecordingID,
             revealToken: summaryRevealToken,
-            clearSelection: { selectedSummaryRecordingID = nil }
+            dismissalStorageKey: "summaries.detailDismissed"
         ) {
             listColumn
         } detail: {

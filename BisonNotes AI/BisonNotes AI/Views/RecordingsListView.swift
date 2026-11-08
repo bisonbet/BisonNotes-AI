@@ -115,7 +115,7 @@ struct RecordingsListView: View {
         ListDetailSplitView(
             selectionID: selectedRecordingForPlayer?.url.absoluteString,
             revealToken: playerRevealToken,
-            clearSelection: { selectedRecordingForPlayer = nil }
+            dismissalStorageKey: "library.detailDismissed"
         ) {
             libraryContent
         } detail: {

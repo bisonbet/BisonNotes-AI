@@ -12,19 +12,28 @@ import SwiftUI
 /// compact width (the Mail pattern Apple asks for on iPhone Duo's inner display).
 ///
 /// The caller owns the selection and passes its identity as `selectionID`.
-/// `clearSelection` runs when the user backs out of the detail at compact
-/// width, so the selection a compact → regular transition sees is always the
-/// one on screen.
+/// **This container never clears it.** Going back to the list in a collapsed
+/// split view — Back, the edge swipe, or the system choosing the list column on
+/// its own — is recorded as "detail dismissed" in this container's own scene
+/// storage (`dismissalStorageKey`). The selection, and the scene-stored copy the
+/// caller keeps, survive it. Clearing the selection on that signal treated every
+/// column change as the user's Back and wrote nil into scene storage, so a reset
+/// could close the item the user had open. Only the detail's own Close or Cancel
+/// ends a selection.
 ///
-/// **Every open must reveal the detail.** A collapsed split view shows whichever
-/// column `preferredCompactColumn` names, and the system can reset that on its
-/// own (opening or closing iPhone Duo, a scene restored with a selection). Driving
-/// it only from "has a selection" changes left a stale selection with the list on
-/// screen: tapping another row changed the id but not that flag, and nothing
-/// happened. So the column follows every change of `selectionID`, and
-/// `revealToken` — bumped by the caller on every tap, including a tap on the row
-/// that is already selected — brings the detail forward even when the id did
-/// not change.
+/// **Leaving a detail with unsaved work is refused.** `allowsLeavingDetail` is
+/// asked whenever the collapsed split view moves to the list. If it says no, the
+/// detail column is put back and `leaveRefused` runs, so the caller can show
+/// its own Save/Discard prompt. An editor must also disable the edge swipe
+/// (`InteractivePopDisabler`): a completed pop destroys the editor's state
+/// before any refusal can bring it back.
+///
+/// **Every open must reveal the detail.** The column follows every change of
+/// `selectionID`, and `revealToken` — bumped by the caller on every tap,
+/// including a tap on the row that is already selected — brings the detail
+/// forward even when the id did not change. Driving it only from "has a
+/// selection" left a stale selection with the list on screen, and taps did
+/// nothing.
 ///
 /// **Never push a page inside the list column.** When the split view is
 /// collapsed, a page pushed there sits under the detail, and switching to the
@@ -38,26 +47,32 @@ import SwiftUI
 struct ListDetailSplitView<ListContent: View, Detail: View>: View {
     let selectionID: String?
     let revealToken: Int
-    let clearSelection: () -> Void
+    let allowsLeavingDetail: () -> Bool
+    let leaveRefused: () -> Void
     @ViewBuilder let list: ListContent
     @ViewBuilder let detail: Detail
 
     @State private var preferredCompactColumn: NavigationSplitViewColumn
+    /// The user went back to the list with a selection still set. Scene-stored
+    /// so a relaunch shows the list rather than reopening what they closed.
+    @SceneStorage private var detailDismissed: Bool
 
     init(
         selectionID: String?,
         revealToken: Int,
-        clearSelection: @escaping () -> Void,
+        dismissalStorageKey: String,
+        allowsLeavingDetail: @escaping () -> Bool = { true },
+        leaveRefused: @escaping () -> Void = {},
         @ViewBuilder list: () -> ListContent,
         @ViewBuilder detail: () -> Detail
     ) {
         self.selectionID = selectionID
         self.revealToken = revealToken
-        self.clearSelection = clearSelection
+        self.allowsLeavingDetail = allowsLeavingDetail
+        self.leaveRefused = leaveRefused
         self.list = list()
         self.detail = detail()
-        // A selection restored from scene storage opens on the detail when
-        // collapsed, so closing iPhone Duo keeps the item on screen.
+        _detailDismissed = SceneStorage(wrappedValue: false, dismissalStorageKey)
         _preferredCompactColumn = State(initialValue: selectionID != nil ? .detail : .sidebar)
     }
 
@@ -70,23 +85,89 @@ struct ListDetailSplitView<ListContent: View, Detail: View>: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .onAppear {
+            // Scene storage is restored after `init`, so the restored dismissal
+            // is applied here.
+            preferredCompactColumn = Self.initialColumn(selectionID: selectionID, detailDismissed: detailDismissed)
+        }
         .onChange(of: selectionID) { _, newSelection in
-            preferredCompactColumn = Self.column(forSelection: newSelection)
+            detailDismissed = false
+            preferredCompactColumn = Self.initialColumn(selectionID: newSelection, detailDismissed: false)
         }
         .onChange(of: revealToken) { _, _ in
-            preferredCompactColumn = Self.column(forSelection: selectionID)
+            detailDismissed = false
+            preferredCompactColumn = Self.initialColumn(selectionID: selectionID, detailDismissed: false)
         }
         .onChange(of: preferredCompactColumn) { _, column in
-            // Only a collapsed split view changes this on its own: the user
-            // went back to the list.
-            if column == .sidebar && selectionID != nil {
-                clearSelection()
+            let resolved = Self.columnAfterChange(
+                to: column,
+                selectionID: selectionID,
+                allowsLeavingDetail: column == .sidebar ? allowsLeavingDetail() : true
+            )
+            if resolved != column {
+                preferredCompactColumn = resolved
+                leaveRefused()
+                return
             }
+            detailDismissed = column == .sidebar && selectionID != nil
         }
     }
 
-    static func column(forSelection selectionID: String?) -> NavigationSplitViewColumn {
-        selectionID == nil ? .sidebar : .detail
+    /// Which column a collapsed split view should show for a selection.
+    static func initialColumn(selectionID: String?, detailDismissed: Bool) -> NavigationSplitViewColumn {
+        selectionID != nil && !detailDismissed ? .detail : .sidebar
+    }
+
+    /// The column to keep after the collapsed split view asked for `requested`.
+    /// Moving to the list away from a detail that cannot be left keeps the
+    /// detail; everything else is accepted.
+    static func columnAfterChange(
+        to requested: NavigationSplitViewColumn,
+        selectionID: String?,
+        allowsLeavingDetail: Bool
+    ) -> NavigationSplitViewColumn {
+        if requested == .sidebar, selectionID != nil, !allowsLeavingDetail {
+            return .detail
+        }
+        return requested
+    }
+}
+
+/// Turns off the navigation controller's edge swipe while `isDisabled`, for a
+/// detail whose system Back is hidden because leaving must go through its own
+/// prompt. Hiding the Back button does not reliably stop the swipe in a
+/// collapsed split view, and a completed swipe destroys the view's state.
+struct InteractivePopDisabler: UIViewControllerRepresentable {
+    let isDisabled: Bool
+
+    func makeUIViewController(context: Context) -> Controller { Controller() }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.isDisabled = isDisabled
+    }
+
+    final class Controller: UIViewController {
+        var isDisabled = false {
+            didSet { apply() }
+        }
+        private weak var managedNavigationController: UINavigationController?
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            managedNavigationController = navigationController
+            apply()
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            managedNavigationController?.interactivePopGestureRecognizer?.isEnabled = true
+        }
+
+        private func apply() {
+            guard viewIfLoaded?.window != nil else { return }
+            (managedNavigationController ?? navigationController)?
+                .interactivePopGestureRecognizer?.isEnabled = !isDisabled
+        }
     }
 }
 #endif
@@ -122,11 +203,20 @@ final class UnsavedEditsGuard {
     private(set) var owner: UUID?
     private(set) var hasUnsavedChanges = false
     private var saveAction: (() -> Bool)?
+    private var closeRequestAction: (() -> Void)?
 
-    func register(owner: UUID, save: @escaping () -> Bool) {
+    func register(owner: UUID, save: @escaping () -> Bool, requestClose: @escaping () -> Void = {}) {
         self.owner = owner
         saveAction = save
+        closeRequestAction = requestClose
         hasUnsavedChanges = false
+    }
+
+    /// Asks the registered editor to show its own Save/Discard prompt — for a
+    /// way out of the detail the editor did not start, such as the split view
+    /// moving to the list.
+    func requestClose() {
+        closeRequestAction?()
     }
 
     func update(owner: UUID, hasUnsavedChanges: Bool) {
@@ -138,6 +228,7 @@ final class UnsavedEditsGuard {
         guard self.owner == owner else { return }
         self.owner = nil
         saveAction = nil
+        closeRequestAction = nil
         hasUnsavedChanges = false
     }
 

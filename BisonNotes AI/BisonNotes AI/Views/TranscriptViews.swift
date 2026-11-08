@@ -1279,7 +1279,11 @@ struct TranscriptsView: View {
         ListDetailSplitView(
             selectionID: selectedTranscriptRecordingID,
             revealToken: transcriptRevealToken,
-            clearSelection: { selectedTranscriptRecordingID = nil }
+            dismissalStorageKey: "transcripts.detailDismissed",
+            // Leaving the editor with unsaved edits goes through its own
+            // Save/Discard prompt, whichever way the column was asked to change.
+            allowsLeavingDetail: { !unsavedEditsGuard.hasUnsavedChanges },
+            leaveRefused: { unsavedEditsGuard.requestClose() }
         ) {
             mainContentView
         } detail: {
@@ -2078,6 +2082,9 @@ struct EditableTranscriptView: View {
             // In a pushed column the system Back would skip the unsaved-edits
             // prompt (and so would its swipe); Cancel is the way back instead.
             .navigationBarBackButtonHidden(embeddedDetailClose != nil)
+            // Hiding Back does not reliably stop the edge swipe in a collapsed
+            // split view, and a completed swipe destroys unsaved edits.
+            .background(InteractivePopDisabler(isDisabled: embeddedDetailClose != nil))
             #endif
     }
 
@@ -2284,7 +2291,11 @@ struct EditableTranscriptView: View {
     var body: some View {
         editorContent
         .onAppear {
-            unsavedEditsGuard?.register(owner: unsavedEditsOwner, save: saveForSelectionChange)
+            unsavedEditsGuard?.register(
+                owner: unsavedEditsOwner,
+                save: saveForSelectionChange,
+                requestClose: { requestClose() }
+            )
             unsavedEditsGuard?.update(owner: unsavedEditsOwner, hasUnsavedChanges: isTranscriptDirty)
         }
         .onDisappear {
