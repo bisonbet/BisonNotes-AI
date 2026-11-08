@@ -407,21 +407,51 @@ struct SummaryDetailView: View {
             }
         }
         .confirmationDialog("Choose Export Format", isPresented: $showingExportFormatPicker, titleVisibility: .visible) {
-            Button {
-                export(format: .pdf)
-            } label: {
-                Text("PDF – Full summary with map (best for printing & sharing)")
-            }
+            // A recording's location is often the user's home, and a PDF embeds a
+            // map of it. Whenever there is one, every format is offered with and
+            // without it, so sharing a summary never shares where it was made
+            // unless the user chose that.
+            if recording.locationData != nil {
+                Button {
+                    export(format: .pdf, includeLocation: true)
+                } label: {
+                    Text("PDF – Full summary with location and map")
+                }
 
-            Button {
-                export(format: .rtf)
-            } label: {
-                Text("RTF (Word/Pages) – Editable, no map")
+                Button {
+                    export(format: .pdf, includeLocation: false)
+                } label: {
+                    Text("PDF – Without location")
+                }
+
+                Button {
+                    export(format: .rtf, includeLocation: true)
+                } label: {
+                    Text("RTF (Word/Pages) – Editable, with location")
+                }
+
+                Button {
+                    export(format: .rtf, includeLocation: false)
+                } label: {
+                    Text("RTF (Word/Pages) – Editable, without location")
+                }
+            } else {
+                Button {
+                    export(format: .pdf, includeLocation: false)
+                } label: {
+                    Text("PDF – Full summary (best for printing & sharing)")
+                }
+
+                Button {
+                    export(format: .rtf, includeLocation: false)
+                } label: {
+                    Text("RTF (Word/Pages) – Editable")
+                }
             }
 
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Export includes summary, tasks, reminders, and processing details.")
+            Text(exportDialogMessage)
         }
         .fileImporter(
             isPresented: $showingAttachmentPicker,
@@ -1935,7 +1965,16 @@ struct SummaryDetailView: View {
 
     // MARK: - Export Functions
 
-    private func export(format: ExportFormat) {
+    /// Names the place a with-location export would include, so the choice is
+    /// made knowing what gets shared.
+    private var exportDialogMessage: String {
+        let base = "Export includes summary, tasks, reminders, and processing details."
+        guard let locationData = recording.locationData else { return base }
+        let place = locationAddress ?? locationData.address ?? locationData.coordinateString
+        return base + " \"With location\" also includes \(place)" + " and, in a PDF, a map of it."
+    }
+
+    private func export(format: ExportFormat, includeLocation: Bool) {
         guard !isExporting else { return }
 
         isExporting = true
@@ -1954,14 +1993,14 @@ struct SummaryDetailView: View {
                 case .pdf:
                     exportData = try await PDFExportService.shared.generatePDF(
                         summaryData: summaryData,
-                        locationData: recording.locationData,
-                        locationAddress: locationAddress
+                        locationData: includeLocation ? recording.locationData : nil,
+                        locationAddress: includeLocation ? locationAddress : nil
                     )
                 case .rtf:
                     exportData = try RTFExportService.shared.generateDocument(
                         summaryData: summaryData,
-                        locationData: recording.locationData,
-                        locationAddress: locationAddress
+                        locationData: includeLocation ? recording.locationData : nil,
+                        locationAddress: includeLocation ? locationAddress : nil
                     )
                 }
 

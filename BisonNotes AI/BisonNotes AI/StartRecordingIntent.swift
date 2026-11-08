@@ -18,7 +18,13 @@ struct StartRecordingIntent: AppIntent {
     // Make this intent available for shortcuts and action button
     static let isDiscoverable = true
 
-    // Optimize for Control Center usage
+    // Deliberate: recording can start without unlocking the device, from the
+    // Action Button, Control Center or Siri on the lock screen. Quick capture
+    // is the point of those entry points, as with the system's own voice
+    // recorder, and the intent itself only starts capture. The trade-off is
+    // that someone holding the locked device can start the microphone, so this
+    // was reviewed and kept on purpose (security review 2026-11-08, finding
+    // #2); see "Deliberate security decisions" in CLAUDE.md before changing it.
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
     func perform() async throws -> some IntentResult {

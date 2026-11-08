@@ -1143,7 +1143,7 @@ struct BisonNotesAIApp: App {
             }
             return
         }
-        NSLog("📎 handleOpenURL called (scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil"), file: \(url.isFileURL ? url.lastPathComponent : "none"))")
+        NSLog("📎 handleOpenURL called (scheme: \(url.scheme ?? "nil"), host: \(url.host ?? "nil"), file: \(url.isFileURL ? LogPrivacy.describe(url.lastPathComponent) : "none"))")
 
         // Handle authenticated custom URL scheme from Share Extension.
         if ShareImportAuthorization.isShareImportURL(url) {

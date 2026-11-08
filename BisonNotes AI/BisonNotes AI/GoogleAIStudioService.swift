@@ -203,7 +203,9 @@ actor GoogleAIStudioService {
         config.timeoutIntervalForRequest = timeout
         // Allow extra time for larger responses to fully download when the request succeeds near the timeout threshold.
         config.timeoutIntervalForResource = timeout * 2
-        let session = URLSession(configuration: config)
+        // The API key rides in the `x-goog-api-key` header, so a redirect must
+        // be held to the same endpoint policy as every other AI service's.
+        let session = URLSession(configuration: config, delegate: EndpointRedirectGuard.shared, delegateQueue: nil)
 
         var attemptedBudget = configuration.outputTokenBudget
         request.httpBody = try createRequestBody(
