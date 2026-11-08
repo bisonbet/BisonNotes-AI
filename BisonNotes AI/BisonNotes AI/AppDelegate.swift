@@ -67,6 +67,14 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
         AppLog.shared.info("Received \(payloads.count) MetricKit diagnostic payload(s)", category: .general)
     }
 
+    /// Daily metric reports. Only the disk-write breakdown is kept; see
+    /// `DiskWriteSignposts`.
+    func didReceive(_ payloads: [MXMetricPayload]) {
+        for payload in payloads {
+            DiskWriteMetricsLog.record(payload)
+        }
+    }
+
     /// Clears the app icon badge. Call this when the app becomes active so the badge
     /// is removed only when the user actually opens the app (not on background launches).
     /// Uses UNUserNotificationCenter.setBadgeCount — the correct API for iOS 17+.

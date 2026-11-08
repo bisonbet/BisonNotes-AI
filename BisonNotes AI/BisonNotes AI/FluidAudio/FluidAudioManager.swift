@@ -602,6 +602,8 @@ final class FluidAudioManager: ObservableObject {
     /// normal `load` path may consult the Hub, so offline mode is scoped around
     /// this reload to make a transcription-time cache miss fail locally.
     private func loadCachedModelWithoutNetwork() async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.asrModelLoad)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         let selectedVersion = FluidAudioModelInfo.selectedModelVersion
         let asrVersion = Self.asrModelVersion(for: selectedVersion)
         let cacheDirectory = AsrModels.defaultCacheDirectory(for: asrVersion)

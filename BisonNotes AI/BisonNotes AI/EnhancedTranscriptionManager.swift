@@ -158,6 +158,8 @@ struct LocalSpeakerLabelingCoordinator {
         guard configuration.isEnabled, baseResult.success else {
             return baseResult
         }
+        let diskWriteSignpost = DiskWriteSignposts.begin(.speakerLabels)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         try Task.checkCancellation()
 
         let baseTextIsEmpty = baseResult.fullText

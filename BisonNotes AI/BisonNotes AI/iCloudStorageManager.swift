@@ -5124,22 +5124,22 @@ extension iCloudStorageManager {
                 } ?? true
 
                 if applyCloudRecording {
-                    entry.recordingName = record[Self.fieldRecordingName] as? String
-                    entry.recordingDate = record[Self.fieldRecordingDate] as? Date
-                    entry.createdAt = record[Self.fieldCreatedAt] as? Date
-                    entry.lastModified = record[Self.fieldLastModified] as? Date
-                    entry.fileSize = int64Value(from: record[Self.fieldFileSize])
-                    entry.duration = doubleValue(from: record[Self.fieldDuration])
-                    entry.audioQuality = record[Self.fieldAudioQuality] as? String
-                    entry.transcriptionStatus = record[Self.fieldTranscriptionStatus] as? String
-                    entry.summaryStatus = record[Self.fieldSummaryStatus] as? String
-                    entry.transcriptId = (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) }
-                    entry.summaryId = (record[Self.fieldSummaryId] as? String).flatMap { UUID(uuidString: $0) }
-                    entry.locationLatitude = doubleValue(from: record[Self.fieldLocationLatitude])
-                    entry.locationLongitude = doubleValue(from: record[Self.fieldLocationLongitude])
-                    entry.locationAccuracy = doubleValue(from: record[Self.fieldLocationAccuracy])
-                    entry.locationTimestamp = record[Self.fieldLocationTimestamp] as? Date
-                    entry.locationAddress = record[Self.fieldLocationAddress] as? String
+                    entry.assignIfChanged(\.recordingName, record[Self.fieldRecordingName] as? String)
+                    entry.assignIfChanged(\.recordingDate, record[Self.fieldRecordingDate] as? Date)
+                    entry.assignIfChanged(\.createdAt, record[Self.fieldCreatedAt] as? Date)
+                    entry.assignIfChanged(\.lastModified, record[Self.fieldLastModified] as? Date)
+                    entry.assignIfChanged(\.fileSize, int64Value(from: record[Self.fieldFileSize]))
+                    entry.assignIfChanged(\.duration, doubleValue(from: record[Self.fieldDuration]))
+                    entry.assignIfChanged(\.audioQuality, record[Self.fieldAudioQuality] as? String)
+                    entry.assignIfChanged(\.transcriptionStatus, record[Self.fieldTranscriptionStatus] as? String)
+                    entry.assignIfChanged(\.summaryStatus, record[Self.fieldSummaryStatus] as? String)
+                    entry.assignIfChanged(\.transcriptId, (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) })
+                    entry.assignIfChanged(\.summaryId, (record[Self.fieldSummaryId] as? String).flatMap { UUID(uuidString: $0) })
+                    entry.assignIfChanged(\.locationLatitude, doubleValue(from: record[Self.fieldLocationLatitude]))
+                    entry.assignIfChanged(\.locationLongitude, doubleValue(from: record[Self.fieldLocationLongitude]))
+                    entry.assignIfChanged(\.locationAccuracy, doubleValue(from: record[Self.fieldLocationAccuracy]))
+                    entry.assignIfChanged(\.locationTimestamp, record[Self.fieldLocationTimestamp] as? Date)
+                    entry.assignIfChanged(\.locationAddress, record[Self.fieldLocationAddress] as? String)
                 } else {
                     // This device has the newer edit; the backup leg already declined to
                     // overwrite the cloud copy, so leave the local row untouched.
@@ -5261,25 +5261,25 @@ extension iCloudStorageManager {
                 } ?? true
 
                 if applyCloudTranscript {
-                    entry.recordingId = recordingId
-                    entry.engine = record[Self.fieldEngine] as? String
-                    entry.createdAt = record[Self.fieldCreatedAt] as? Date
-                    entry.lastModified = record[Self.fieldLastModified] as? Date
-                    entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
-                    entry.confidence = doubleValue(from: record[Self.fieldConfidence])
-                    entry.segments = record[Self.fieldSegments] as? String
-                    entry.speakerMappings = record[Self.fieldSpeakerMappings] as? String
+                    entry.assignIfChanged(\.recordingId, recordingId)
+                    entry.assignIfChanged(\.engine, record[Self.fieldEngine] as? String)
+                    entry.assignIfChanged(\.createdAt, record[Self.fieldCreatedAt] as? Date)
+                    entry.assignIfChanged(\.lastModified, record[Self.fieldLastModified] as? Date)
+                    entry.assignIfChanged(\.processingTime, doubleValue(from: record[Self.fieldProcessingTime]))
+                    entry.assignIfChanged(\.confidence, doubleValue(from: record[Self.fieldConfidence]))
+                    entry.assignIfChanged(\.segments, record[Self.fieldSegments] as? String)
+                    entry.assignIfChanged(\.speakerMappings, record[Self.fieldSpeakerMappings] as? String)
                     // A record written before this field existed says nothing
                     // about the user's choice; keep the local one.
                     if let selectedRepresentation = record[Self.fieldSelectedRepresentation] as? String {
-                        entry.selectedRepresentation = selectedRepresentation
+                        entry.assignIfChanged(\.selectedRepresentation, selectedRepresentation)
                     }
                 } else {
                     result.localItemsKeptAsNewer += 1
                 }
 
                 if let recordingId, let recording = recordingsById[recordingId] {
-                    entry.recording = recording
+                    entry.assignIfChanged(\.recording, recording)
 
                     // `existing` is matched on transcript id, so a cloud row with a
                     // *different* id — the other device deleted and retranscribed —
@@ -5292,10 +5292,10 @@ extension iCloudStorageManager {
                         linkedId: recording.transcriptId ?? recording.transcript?.id,
                         linkedTimestamp: recording.transcript.map(localTranscriptContentTimestamp) ?? nil
                     ) {
-                        recording.transcript = entry
-                        recording.transcriptId = transcriptId
+                        recording.assignIfChanged(\.transcript, entry)
+                        recording.assignIfChanged(\.transcriptId, transcriptId)
                         if recording.transcriptionStatus == nil || recording.transcriptionStatus?.isEmpty == true {
-                            recording.transcriptionStatus = ProcessingStatus.completed.rawValue
+                            recording.assignIfChanged(\.transcriptionStatus, ProcessingStatus.completed.rawValue)
                         }
                     } else {
                         result.localItemsKeptAsNewer += 1
@@ -5348,27 +5348,27 @@ extension iCloudStorageManager {
                 } ?? true
 
                 if applyCloudSummary {
-                    entry.recordingId = recordingId
-                    entry.transcriptId = transcriptId
-                    entry.summary = record[Self.fieldSummaryText] as? String
-                    entry.tasks = record[Self.fieldTasks] as? String
-                    entry.reminders = record[Self.fieldReminders] as? String
-                    entry.titles = record[Self.fieldTitles] as? String
-                    entry.contentType = record[Self.fieldContentType] as? String
-                    entry.aiMethod = record[Self.fieldAIMethod] as? String
-                    entry.generatedAt = record[Self.fieldGeneratedAt] as? Date
-                    entry.version = Int32(intValue(from: record[Self.fieldVersion], defaultValue: 1))
-                    entry.wordCount = Int32(intValue(from: record[Self.fieldWordCount]))
-                    entry.originalLength = Int32(intValue(from: record[Self.fieldOriginalLength]))
-                    entry.compressionRatio = doubleValue(from: record[Self.fieldCompressionRatio])
-                    entry.confidence = doubleValue(from: record[Self.fieldConfidence])
-                    entry.processingTime = doubleValue(from: record[Self.fieldProcessingTime])
+                    entry.assignIfChanged(\.recordingId, recordingId)
+                    entry.assignIfChanged(\.transcriptId, transcriptId)
+                    entry.assignIfChanged(\.summary, record[Self.fieldSummaryText] as? String)
+                    entry.assignIfChanged(\.tasks, record[Self.fieldTasks] as? String)
+                    entry.assignIfChanged(\.reminders, record[Self.fieldReminders] as? String)
+                    entry.assignIfChanged(\.titles, record[Self.fieldTitles] as? String)
+                    entry.assignIfChanged(\.contentType, record[Self.fieldContentType] as? String)
+                    entry.assignIfChanged(\.aiMethod, record[Self.fieldAIMethod] as? String)
+                    entry.assignIfChanged(\.generatedAt, record[Self.fieldGeneratedAt] as? Date)
+                    entry.assignIfChanged(\.version, Int32(intValue(from: record[Self.fieldVersion], defaultValue: 1)))
+                    entry.assignIfChanged(\.wordCount, Int32(intValue(from: record[Self.fieldWordCount])))
+                    entry.assignIfChanged(\.originalLength, Int32(intValue(from: record[Self.fieldOriginalLength])))
+                    entry.assignIfChanged(\.compressionRatio, doubleValue(from: record[Self.fieldCompressionRatio]))
+                    entry.assignIfChanged(\.confidence, doubleValue(from: record[Self.fieldConfidence]))
+                    entry.assignIfChanged(\.processingTime, doubleValue(from: record[Self.fieldProcessingTime]))
                 } else {
                     result.localItemsKeptAsNewer += 1
                 }
 
                 if let recordingId, let recording = recordingsById[recordingId] {
-                    entry.recording = recording
+                    entry.assignIfChanged(\.recording, recording)
 
                     // Same rule as transcripts: `existing` is matched on summary
                     // id, so a cloud row from delete-and-regenerate arrives with
@@ -5381,18 +5381,18 @@ extension iCloudStorageManager {
                         linkedId: recording.summaryId ?? recording.summary?.id,
                         linkedTimestamp: recording.summary.map(localSummaryContentTimestamp) ?? nil
                     ) {
-                        recording.summary = entry
-                        recording.summaryId = summaryId
+                        recording.assignIfChanged(\.summary, entry)
+                        recording.assignIfChanged(\.summaryId, summaryId)
                         // A linked summary is authoritative even when a stale "Not Started"
                         // cache arrives. Repair it so it cannot hide the accepted summary.
-                        recording.summaryStatus = ProcessingStatus.completed.rawValue
+                        recording.assignIfChanged(\.summaryStatus, ProcessingStatus.completed.rawValue)
                     } else {
                         result.localItemsKeptAsNewer += 1
                     }
                 }
 
                 if let transcriptId, let transcript = transcriptsById[transcriptId] {
-                    entry.transcript = transcript
+                    entry.assignIfChanged(\.transcript, transcript)
                 }
 
                 summariesById[summaryId] = entry
