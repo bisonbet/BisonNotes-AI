@@ -56,32 +56,13 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
 
     func didReceive(_ payloads: [MXDiagnosticPayload]) {
         // Apple delivers these on the next launch after a crash/hang (within 24h).
-        // Persist the JSON so LogExporter can include it.
+        // Persist them so LogExporter can include them.
         guard !payloads.isEmpty else { return }
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let fileURL = dir.appendingPathComponent("metrickit_diagnostics.json")
-
-        var allDiagnostics: [[String: Any]] = []
-        // Load existing diagnostics if present
-        if let existingData = try? Data(contentsOf: fileURL),
-           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [[String: Any]] {
-            allDiagnostics = existing
+        // Retention (age, count, size, crash-first) is MetricKitDiagnosticStore's.
+        let json = payloads.compactMap {
+            try? JSONSerialization.jsonObject(with: $0.jsonRepresentation()) as? [String: Any]
         }
-
-        for payload in payloads {
-            if let json = try? JSONSerialization.jsonObject(with: payload.jsonRepresentation()) as? [String: Any] {
-                allDiagnostics.append(json)
-            }
-        }
-
-        // Keep only the last 5 diagnostic payloads
-        if allDiagnostics.count > 5 {
-            allDiagnostics = Array(allDiagnostics.suffix(5))
-        }
-
-        if let data = try? JSONSerialization.data(withJSONObject: allDiagnostics, options: .prettyPrinted) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        MetricKitDiagnosticStore.record(json, at: MetricKitDiagnosticStore.defaultURL)
 
         AppLog.shared.info("Received \(payloads.count) MetricKit diagnostic payload(s)", category: .general)
     }

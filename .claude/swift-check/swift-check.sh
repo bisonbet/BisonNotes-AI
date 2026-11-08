@@ -35,12 +35,14 @@ FOUNDATION_SOURCES=(
     "Models/SummarizationErrors.swift"
     "Models/SummaryMetadataCodec.swift"
     "OpenAI/OpenAIPromptGenerator.swift"
+    "DiagnosticRetention.swift"
 )
 # XCTest files, relative to TEST_DIR, that run against FOUNDATION_SOURCES.
 # Missing ones are skipped, like the sources.
 TEST_FILES=(
     "SummaryDetailLevelTests.swift"
     "SummaryPromptStyleTests.swift"
+    "DiagnosticRetentionTests.swift"
 )
 # Tests whose bodies mention these need CoreData/CloudKit and are skipped.
 SKIP_TEST_PATTERN='ProcessingJob|iCloudStorageManager'

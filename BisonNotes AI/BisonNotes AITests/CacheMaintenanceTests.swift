@@ -675,6 +675,24 @@ final class CacheMaintenanceTests: XCTestCase {
         XCTAssertFalse(contents.contains("line 0\n"))
     }
 
+    /// Appends only compact past the byte ceiling, so a quiet log under it never
+    /// applied its line cap or aged anything out. `enforceBudgets` applies all three.
+    func testEnforceBudgetsAppliesAgeAndLineCapsUnderTheByteCeiling() throws {
+        let url = makeTempLogURL()
+        let now = Date()
+        let stamp = { (age: TimeInterval) in ISO8601DateFormatter().string(from: now.addingTimeInterval(-age)) }
+        let lines = ["[\(stamp(90 * 86_400))] [ERROR] [General] august"]
+            + (0..<6).map { "[\(stamp(TimeInterval(60 - $0)))] [INFO] [General] recent \($0)" }
+        try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+
+        PersistentLogFile(url: url, maxLines: 4, maxBytes: 1_000_000, maxAge: LogTrimPolicy.maximumLineAge)
+            .enforceBudgets(now: now)
+
+        let kept = try String(contentsOf: url, encoding: .utf8)
+            .components(separatedBy: "\n").filter { !$0.isEmpty }
+        XCTAssertEqual(kept, Array(lines.suffix(4)))
+    }
+
     // MARK: - Diagnostic export naming
 
     /// `TemporaryFileCleanupService` deletes by name, so the predicate has to be
