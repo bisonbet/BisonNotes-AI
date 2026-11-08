@@ -299,7 +299,7 @@ extension BisonNotesAIUITests {
             "--disable-cloud-services"
         ] + extraArguments
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        app.showRecordScreen()
         return app
     }
 
@@ -415,6 +415,20 @@ extension BisonNotesAIUITests {
 
 @MainActor
 extension XCUIApplication {
+    /// Scene storage restores the last tab and selection, so a launch can open
+    /// on any section. Go to Record explicitly instead of assuming it.
+    func showRecordScreen(file: StaticString = #filePath, line: UInt = #line) {
+        let viewRecordings = buttons["bisonnotes.record.view-recordings"]
+        if !viewRecordings.waitForExistence(timeout: 3) {
+            let recordSection = buttons.matching(
+                NSPredicate(format: "label == 'Record' OR identifier == 'bisonnotes.sidebar.record'")
+            ).firstMatch
+            XCTAssertTrue(recordSection.waitForExistence(timeout: 20), "The app never showed its sections", file: file, line: line)
+            navigateToSection("Record", file: file, line: line)
+        }
+        XCTAssertTrue(viewRecordings.waitForExistence(timeout: 20), "Record screen did not appear", file: file, line: line)
+    }
+
     func navigateToSection(
         _ name: String,
         file: StaticString = #filePath,
@@ -428,12 +442,23 @@ extension XCUIApplication {
 
         let sidebarIdentifier = "bisonnotes.sidebar.\(name.lowercased())"
         let sidebarItem = staticTexts.matching(identifier: sidebarIdentifier).firstMatch
+        if sidebarItem.waitForExistence(timeout: 1) {
+            sidebarItem.tap()
+            return
+        }
+
+        // A sidebar-adaptable TabView's sidebar, and iPhone Duo's vertical tab
+        // strip, expose each section as a button named after it rather than as
+        // a tab-bar button.
+        let sectionButton = buttons.matching(
+            NSPredicate(format: "label == %@ OR identifier == %@", name, sidebarIdentifier)
+        ).firstMatch
         XCTAssertTrue(
-            sidebarItem.waitForExistence(timeout: 8),
-            "Could not find \(name) in either the tab bar or adaptive sidebar.",
+            sectionButton.waitForExistence(timeout: 8),
+            "Could not find \(name) in the tab bar, sidebar or vertical tab strip.",
             file: file,
             line: line
         )
-        sidebarItem.tap()
+        sectionButton.tap()
     }
 }

@@ -16,6 +16,9 @@ import Foundation
 enum CloudSyncPhase: String, CaseIterable, Sendable {
     case flushOutboundTombstones
     case applyInboundTombstones
+    /// Reading this device's rows and hashing the backup signature. Untimed, it
+    /// was the bulk of `unaccounted=` — and it runs on the main actor.
+    case readLocalState
     case fetchCloudSnapshot
     case resolveWinners
     case writeContent

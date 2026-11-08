@@ -35,6 +35,7 @@ struct SummaryDetailView: View {
     @State private var summaryData: EnhancedSummaryData
     @Environment(\.dismiss) private var dismiss
     @Environment(\.nativeMacPresentationContext) private var nativeMacPresentationContext
+    @Environment(\.embeddedDetailClose) private var embeddedDetailClose
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
@@ -175,17 +176,17 @@ struct SummaryDetailView: View {
                 Label("Export", systemImage: "square.and.arrow.up")
             }
             #else
-            HStack(spacing: 4) {
-                if isExporting {
+            if isExporting {
+                HStack(spacing: 4) {
                     ProgressView()
                         .scaleEffect(0.8)
                     Text(activeExportFormat.map { "Exporting \($0.displayName)..." } ?? "Exporting...")
                         .font(.caption)
-                } else {
-                    Image(systemName: "square.and.arrow.up")
-                    Text("Export")
-                        .font(.caption)
                 }
+            } else {
+                // A plain Label lets iPhone Duo show this as a symbol in its
+                // vertical bar.
+                Label("Export", systemImage: "square.and.arrow.up")
             }
             #endif
         }
@@ -197,8 +198,30 @@ struct SummaryDetailView: View {
         .accessibilityHint("Choose PDF or RTF export format.")
     }
 
-    var body: some View {
-        NavigationStack {
+    /// A detail embedded in a list/detail split already sits in its column's
+    /// navigation stack, and closing it clears the list's selection.
+    @ViewBuilder
+    private var navigationContainer: some View {
+        if embeddedDetailClose != nil {
+            detailContent
+        } else {
+            NavigationStack {
+                detailContent
+            }
+        }
+    }
+
+    /// Closes this summary: clears the split view's selection when embedded,
+    /// otherwise dismisses the sheet or window.
+    private func close() {
+        if let embeddedDetailClose {
+            embeddedDetailClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    private var detailContent: some View {
             Group {
                 #if os(macOS)
                 // Native Form can size itself to all rows when hosted in a
@@ -244,15 +267,26 @@ struct SummaryDetailView: View {
                     }
                 }
                 #else
-                ToolbarItem(placement: .navigationBarLeading) {
-                    exportToolbarButton
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                if embeddedDetailClose != nil {
+                    // The detail column's bar: Export is its main action, and
+                    // there is nothing to dismiss.
+                    ToolbarItem(placement: .primaryAction) {
+                        exportToolbarButton
+                    }
+                } else {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        exportToolbarButton
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        SheetDoneButton { dismiss() }
+                    }
                 }
                 #endif
             }
-        }
+    }
+
+    var body: some View {
+        navigationContainer
         .configurationWarnings(
             showingTranscriptionWarning: .constant(false),
             showingAIWarning: $showingAIWarning,
@@ -295,7 +329,11 @@ struct SummaryDetailView: View {
                             // necessary on layouts where dismiss() doesn't tear the view
                             // down (e.g. iPad split-view detail column).
                             refreshSummaryFromCoreData()
-                            dismiss()
+                            // In a split view the refreshed summary stays on
+                            // screen; a sheet closes as before.
+                            if embeddedDetailClose == nil {
+                                dismiss()
+                            }
                         } else if job.status.isError {
                             regenerationError = job.status.errorMessage ?? "Regeneration failed"
                             showingRegenerationAlert = true
@@ -413,7 +451,7 @@ struct SummaryDetailView: View {
                     }
                     #else
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Done") { showingTextAttachment = false }
+                        SheetDoneButton { showingTextAttachment = false }
                     }
                     #endif
                 }
@@ -436,7 +474,7 @@ struct SummaryDetailView: View {
                             }
                             #else
                             ToolbarItem(placement: .navigationBarTrailing) {
-                                Button("Done") { showingPDFAttachment = false }
+                                SheetDoneButton { showingPDFAttachment = false }
                             }
                             #endif
                         }
@@ -1434,7 +1472,7 @@ struct SummaryDetailView: View {
                 appCoordinator.objectWillChange.send()
 
                 AppLog.shared.summarization("Summary deletion completed")
-                dismiss()
+                close()
 
             } catch {
                 AppLog.shared.summarization("Failed to delete summary: \(error)", level: .error)
@@ -2580,7 +2618,7 @@ struct TitleSelectorView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         dismiss()
                     }
                 }
@@ -2841,7 +2879,7 @@ struct DateTimeEditorView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
@@ -3131,7 +3169,7 @@ struct LocationPickerView: View {
                 }
                 #else
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
@@ -3653,6 +3691,7 @@ private struct StaticLocationMapView: View {
 
     @State private var snapshotImage: UIImage?
     @State private var isLoadingSnapshot = false
+    @Environment(\.displayScale) private var displayScale
 
     private var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(
@@ -3727,7 +3766,7 @@ private struct StaticLocationMapView: View {
             return
         }
 
-        let scale = await MainActor.run { UIScreen.main.scale }
+        let scale = await MainActor.run { displayScale }
         let signature = locationSignature
 
         if let storedImage = await loadStoredSnapshot(scale: scale, signature: signature) {
@@ -4120,7 +4159,7 @@ private struct NoteEditorSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                     #if os(macOS)
@@ -4128,7 +4167,7 @@ private struct NoteEditorSheet: View {
                     #endif
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    SheetConfirmButton(title: "Save") {
                         if onSave(draft) {
                             text = draft
                             dismiss()

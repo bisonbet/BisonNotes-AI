@@ -25,7 +25,7 @@ struct BetaFeaturesView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Done") {
+                        SheetDoneButton {
                             dismiss()
                         }
                         .fontWeight(.medium)

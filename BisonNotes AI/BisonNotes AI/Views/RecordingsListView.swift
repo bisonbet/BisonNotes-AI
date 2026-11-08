@@ -31,6 +31,9 @@ struct RecordingsListView: View {
     @State private var showingEnhancedDeleteDialog = false
     @State private var recordingPendingDirectDeletion: AudioRecordingFile?
     @State private var selectedRecordingForPlayer: AudioRecordingFile?
+    /// Bumped on every open so the split view brings the player forward even
+    /// when the selection did not change.
+    @State private var playerRevealToken = 0
     @State private var recordingToTrim: AudioRecordingFile?
     enum SelectionAction {
         case combine
@@ -96,223 +99,276 @@ struct RecordingsListView: View {
         return false
     }
 
-    var body: some View {
+
+    // MARK: - Navigation
+
+    /// iOS and iPadOS show the library with the selected recording's player
+    /// beside it at regular width (iPhone Duo's inner display, iPad) and push
+    /// the player at compact width. macOS opens the player in its own window.
+    @ViewBuilder
+    private var navigationRoot: some View {
+        #if os(macOS)
         NavigationStack {
-            VStack(spacing: 0) {
-                headerView
+            libraryContent
+        }
+        #else
+        ListDetailSplitView(
+            selectionID: selectedRecordingForPlayer?.url.absoluteString,
+            revealToken: playerRevealToken,
+            dismissalStorageKey: "library.detailDismissed"
+        ) {
+            libraryContent
+        } detail: {
+            playerDetailColumn
+        }
+        #endif
+    }
 
-                if isSelectionMode {
-                    selectionBanner
-                }
+    #if !os(macOS)
+    @ViewBuilder
+    private var playerDetailColumn: some View {
+        if let recording = selectedRecordingForPlayer {
+            AudioPlayerView(recording: recording, onClose: { selectedRecordingForPlayer = nil })
+                .environmentObject(recorderVM)
+                .environmentObject(appCoordinator)
+                // A fresh player per recording; the outgoing one stops its
+                // playback when it disappears.
+                .id(recording.id)
+        } else {
+            ContentUnavailableView(
+                "Select a Recording",
+                systemImage: "waveform",
+                description: Text("Choose a recording from the list to play it here.")
+            )
+        }
+    }
+    #endif
 
-                recordingsContent
-            }
-            .background(Color(.systemGroupedBackground))
-            .searchable(text: $searchText, prompt: "Search recordings...")
-            .sheet(isPresented: $showDateFilter) {
-                dateFilterSheet
-                    .nativeMacModalSizing(width: 520, height: 440)
-                    .nativeMacPresentationContext(.modalSheet)
-            }
-            .sheet(isPresented: $showingEnhancedDeleteDialog) {
-                if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
-                    EnhancedDeleteDialog(
-                        recording: recording,
-                        relationships: relationships,
-                        preserveSummary: $preserveSummaryOnDelete,
-                        onConfirm: {
-                            Task {
-                                await deleteRecordingWithRelationships(recording, preserveSummary: preserveSummaryOnDelete)
-                            }
-                            showingEnhancedDeleteDialog = false
-                        },
-                        onCancel: {
-                            showingEnhancedDeleteDialog = false
-                        }
-                    )
-                    .nativeMacModalSizing(width: 680, height: 620)
-                } else {
-                    // Loading or error state
-                    VStack(spacing: 20) {
-                        if deletionData.recordingToDelete != nil {
-                            // Loading state
-                            VStack(spacing: 16) {
-                                ProgressView()
-                                    .scaleEffect(1.2)
-                                Text("Preparing deletion options...")
-                                    .font(.body)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else {
-                            // Error state
-                            VStack(spacing: 16) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.orange)
-                                Text("Unable to prepare deletion")
-                                    .font(.title2)
-                                    .fontWeight(.medium)
-                                Text("Please try again")
-                                    .font(.body)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+    private var libraryContent: some View {
 
-                        Button("Cancel") {
-                            showingEnhancedDeleteDialog = false
-                            deletionData.recordingToDelete = nil
-                            deletionData.fileRelationships = nil
-                        }
-                        .padding()
-                    }
-                    .padding()
-                    .nativeMacModalSizing(width: 680, height: 620)
-                }
-            }
-            .confirmationDialog(
-                "Delete Recording?",
-                isPresented: Binding(
-                    get: { recordingPendingDirectDeletion != nil },
-                    set: { if !$0 { recordingPendingDirectDeletion = nil } }
-                ),
-                titleVisibility: .visible
-            ) {
-                Button("Delete Recording", role: .destructive) {
-                    guard let recording = recordingPendingDirectDeletion else { return }
-                    recordingPendingDirectDeletion = nil
-                    performDirectDeletion(recording)
-                }
-                Button("Cancel", role: .cancel) { recordingPendingDirectDeletion = nil }
-            } message: {
-                if let recording = recordingPendingDirectDeletion {
-                    Text(
-                        "Delete \(recording.name)? This removes the recording and its stored "
-                            + "transcript and summary where applicable."
-                    )
-                }
-            }
-            .sheet(item: $selectedLocationData) { locationData in
-                LocationDetailView(locationData: locationData)
-                    .nativeMacModalSizing(width: 680, height: 620)
-                    .nativeMacPresentationContext(.modalSheet)
-            }
-            .sheet(isPresented: $showingCombineView) {
-                if let recordings = recordingsToCombine {
-                    let combiner = RecordingCombiner.shared
-                    let recommended = combiner.determineFirstRecording(
-                        firstURL: recordings.first.url,
-                        secondURL: recordings.second.url
-                    ).first
-                    let recommendedRecording = recommended == recordings.first.url ? recordings.first : recordings.second
+        VStack(spacing: 0) {
+            headerView
 
-                    CombineRecordingsView(
-                        firstRecording: recordings.first,
-                        secondRecording: recordings.second,
-                        recommendedFirst: recommendedRecording
-                    )
-                    .environmentObject(appCoordinator)
-                    .nativeMacModalSizing(width: 760, height: 680)
-                    .nativeMacPresentationContext(.modalSheet)
-                }
+            if isSelectionMode {
+                selectionBanner
             }
-            .sheet(isPresented: $showingArchiveConfirmation) {
-                ArchiveConfirmationView(
-                    recordingCount: recordingsToArchive.count,
-                    totalSize: RecordingArchiveService.shared.totalFileSize(for: recordingsToArchive),
-                    recordingNames: recordingsToArchive.compactMap { $0.recordingName },
-                    removeLocal: $removeLocalAfterArchive,
+
+            recordingsContent
+        }
+        .background(Color(.systemGroupedBackground))
+        .searchable(text: $searchText, prompt: "Search recordings...")
+        #if os(iOS)
+        // Inside the NavigationStack, so its bar (vertical on iPhone Duo)
+        // shows these items. The macOS window toolbar below sits outside.
+        .toolbar { iOSLibraryToolbar }
+        #endif
+        .sheet(isPresented: $showDateFilter) {
+            dateFilterSheet
+                .nativeMacModalSizing(width: 520, height: 440)
+                .nativeMacPresentationContext(.modalSheet)
+        }
+        .sheet(isPresented: $showingEnhancedDeleteDialog) {
+            if let recording = deletionData.recordingToDelete, let relationships = deletionData.fileRelationships {
+                EnhancedDeleteDialog(
+                    recording: recording,
+                    relationships: relationships,
+                    preserveSummary: $preserveSummaryOnDelete,
                     onConfirm: {
-                        showingArchiveConfirmation = false
-                        archiveExportURLs = RecordingArchiveService.shared.prepareArchiveExportURLs(for: recordingsToArchive)
-                        if !archiveExportURLs.isEmpty {
-                            showingArchiveExportPicker = true
-                        } else {
-                            RecordingArchiveService.shared.cleanupArchiveStaging()
+                        Task {
+                            await deleteRecordingWithRelationships(recording, preserveSummary: preserveSummaryOnDelete)
                         }
+                        showingEnhancedDeleteDialog = false
                     },
                     onCancel: {
-                        showingArchiveConfirmation = false
-                        recordingsToArchive = []
+                        showingEnhancedDeleteDialog = false
                     }
                 )
-                .presentationDetents([.medium, .large])
+                .nativeMacModalSizing(width: 680, height: 620)
+            } else {
+                // Loading or error state
+                VStack(spacing: 20) {
+                    if deletionData.recordingToDelete != nil {
+                        // Loading state
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.2)
+                            Text("Preparing deletion options...")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                        }
+                    } else {
+                        // Error state
+                        VStack(spacing: 16) {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 40))
+                                .foregroundColor(.orange)
+                            Text("Unable to prepare deletion")
+                                .font(.title2)
+                                .fontWeight(.medium)
+                            Text("Please try again")
+                                .font(.body)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Button("Cancel") {
+                        showingEnhancedDeleteDialog = false
+                        deletionData.recordingToDelete = nil
+                        deletionData.fileRelationships = nil
+                    }
+                    .padding()
+                }
+                .padding()
                 .nativeMacModalSizing(width: 680, height: 620)
             }
-            .background {
-                exportMoverPresenters
+        }
+        .confirmationDialog(
+            "Delete Recording?",
+            isPresented: Binding(
+                get: { recordingPendingDirectDeletion != nil },
+                set: { if !$0 { recordingPendingDirectDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Recording", role: .destructive) {
+                guard let recording = recordingPendingDirectDeletion else { return }
+                recordingPendingDirectDeletion = nil
+                performDirectDeletion(recording)
             }
-            .sheet(isPresented: $showingArchiveOlderThan) {
-                archiveOlderThanSheet
-                    .nativeMacModalSizing(width: 520, height: 440)
-            }
-            .alert("Audio Archived", isPresented: Binding(
-                get: { archiveInfoRecording != nil },
-                set: { if !$0 { archiveInfoRecording = nil } }
-            )) {
-                Button("OK", role: .cancel) { archiveInfoRecording = nil }
-            } message: {
-                if let rec = archiveInfoRecording {
-                    let note = rec.archiveNote ?? "Exported to iCloud Drive"
-                    let dateStr = rec.archivedAtString ?? ""
-                    let location = rec.recordingId.flatMap { archiveLocationsByRecordingID[$0] }
-                    let locationText = location.map { "\nSaved location: \($0.providerDisplayName) / \($0.displayName)" } ?? ""
-                    Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\(locationText)\n\nThe audio file is no longer stored locally. Use the download button to restore it, or use \"Import Audio Files\" if the file was moved.")
-                }
-            }
-            .alert("Audio File Error", isPresented: Binding(
-                get: { archiveRestoreError != nil },
-                set: { if !$0 { archiveRestoreError = nil } }
-            )) {
-                Button("OK", role: .cancel) { archiveRestoreError = nil }
-            } message: {
-                Text(archiveRestoreError ?? "Unknown error")
-            }
-            .alert("Unable to Load Recordings", isPresented: Binding(
-                get: { loadError != nil },
-                set: { if !$0 { loadError = nil } }
-            )) {
-                Button("OK", role: .cancel) { loadError = nil }
-            } message: {
-                Text(loadError ?? "The recordings could not be loaded.")
-            }
-            .sheet(item: $selectedRecordingForTranscript) { entry in
-                if let recordingId = entry.id,
-                   let transcript = appCoordinator.getTranscriptData(for: recordingId) {
-                    EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
-                        .environmentObject(appCoordinator)
-                        .nativeMacModalSizing(width: 820, height: 720)
-                        .nativeMacPresentationContext(.modalSheet)
-                } else {
-                    TranscriptDetailView(recording: entry, transcriptText: "")
-                        .environmentObject(appCoordinator)
-                        .nativeMacModalSizing(width: 820, height: 720)
-                        .nativeMacPresentationContext(.modalSheet)
-                }
-            }
-            .confirmationDialog(
-                "Clean Audio Before Transcribing?",
-                isPresented: $showingAudioCleanupPrompt,
-                titleVisibility: .visible
-            ) {
-                Button("Clean & Transcribe") {
-                    if let recording = recordingPendingTranscription {
-                        recordingPendingTranscription = nil
-                        transcriptionStarter.startTranscription(for: recording, cleanFirst: true, appCoordinator: appCoordinator)
-                    }
-                }
-                Button("Transcribe As-Is") {
-                    if let recording = recordingPendingTranscription {
-                        recordingPendingTranscription = nil
-                        transcriptionStarter.startTranscription(for: recording, cleanFirst: false, appCoordinator: appCoordinator)
-                    }
-                }
-                Button("Cancel", role: .cancel) {
-                    recordingPendingTranscription = nil
-                }
-            } message: {
-                Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+            Button("Cancel", role: .cancel) { recordingPendingDirectDeletion = nil }
+        } message: {
+            if let recording = recordingPendingDirectDeletion {
+                Text(
+                    "Delete \(recording.name)? This removes the recording and its stored "
+                        + "transcript and summary where applicable."
+                )
             }
         }
+        .sheet(item: $selectedLocationData) { locationData in
+            LocationDetailView(locationData: locationData)
+                .nativeMacModalSizing(width: 680, height: 620)
+                .nativeMacPresentationContext(.modalSheet)
+        }
+        .sheet(isPresented: $showingCombineView) {
+            if let recordings = recordingsToCombine {
+                let combiner = RecordingCombiner.shared
+                let recommended = combiner.determineFirstRecording(
+                    firstURL: recordings.first.url,
+                    secondURL: recordings.second.url
+                ).first
+                let recommendedRecording = recommended == recordings.first.url ? recordings.first : recordings.second
+
+                CombineRecordingsView(
+                    firstRecording: recordings.first,
+                    secondRecording: recordings.second,
+                    recommendedFirst: recommendedRecording
+                )
+                .environmentObject(appCoordinator)
+                .nativeMacModalSizing(width: 760, height: 680)
+                .nativeMacPresentationContext(.modalSheet)
+            }
+        }
+        .sheet(isPresented: $showingArchiveConfirmation) {
+            ArchiveConfirmationView(
+                recordingCount: recordingsToArchive.count,
+                totalSize: RecordingArchiveService.shared.totalFileSize(for: recordingsToArchive),
+                recordingNames: recordingsToArchive.compactMap { $0.recordingName },
+                removeLocal: $removeLocalAfterArchive,
+                onConfirm: {
+                    showingArchiveConfirmation = false
+                    archiveExportURLs = RecordingArchiveService.shared.prepareArchiveExportURLs(for: recordingsToArchive)
+                    if !archiveExportURLs.isEmpty {
+                        showingArchiveExportPicker = true
+                    } else {
+                        RecordingArchiveService.shared.cleanupArchiveStaging()
+                    }
+                },
+                onCancel: {
+                    showingArchiveConfirmation = false
+                    recordingsToArchive = []
+                }
+            )
+            .presentationDetents([.medium, .large])
+            .nativeMacModalSizing(width: 680, height: 620)
+        }
+        .background {
+            exportMoverPresenters
+        }
+        .sheet(isPresented: $showingArchiveOlderThan) {
+            archiveOlderThanSheet
+                .nativeMacModalSizing(width: 520, height: 440)
+        }
+        .alert("Audio Archived", isPresented: Binding(
+            get: { archiveInfoRecording != nil },
+            set: { if !$0 { archiveInfoRecording = nil } }
+        )) {
+            Button("OK", role: .cancel) { archiveInfoRecording = nil }
+        } message: {
+            if let rec = archiveInfoRecording {
+                let note = rec.archiveNote ?? "Exported to iCloud Drive"
+                let dateStr = rec.archivedAtString ?? ""
+                let location = rec.recordingId.flatMap { archiveLocationsByRecordingID[$0] }
+                let locationText = location.map { "\nSaved location: \($0.providerDisplayName) / \($0.displayName)" } ?? ""
+                Text("\(note)\(dateStr.isEmpty ? "" : " on \(dateStr)")\(locationText)\n\nThe audio file is no longer stored locally. Use the download button to restore it, or use \"Import Audio Files\" if the file was moved.")
+            }
+        }
+        .alert("Audio File Error", isPresented: Binding(
+            get: { archiveRestoreError != nil },
+            set: { if !$0 { archiveRestoreError = nil } }
+        )) {
+            Button("OK", role: .cancel) { archiveRestoreError = nil }
+        } message: {
+            Text(archiveRestoreError ?? "Unknown error")
+        }
+        .alert("Unable to Load Recordings", isPresented: Binding(
+            get: { loadError != nil },
+            set: { if !$0 { loadError = nil } }
+        )) {
+            Button("OK", role: .cancel) { loadError = nil }
+        } message: {
+            Text(loadError ?? "The recordings could not be loaded.")
+        }
+        .sheet(item: $selectedRecordingForTranscript) { entry in
+            if let recordingId = entry.id,
+               let transcript = appCoordinator.getTranscriptData(for: recordingId) {
+                EditableTranscriptView(recording: entry, transcript: transcript, transcriptManager: TranscriptManager.shared)
+                    .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacPresentationContext(.modalSheet)
+            } else {
+                TranscriptDetailView(recording: entry, transcriptText: "")
+                    .environmentObject(appCoordinator)
+                    .nativeMacModalSizing(width: 820, height: 720)
+                    .nativeMacPresentationContext(.modalSheet)
+            }
+        }
+        .confirmationDialog(
+            "Clean Audio Before Transcribing?",
+            isPresented: $showingAudioCleanupPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Clean & Transcribe") {
+                if let recording = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    transcriptionStarter.startTranscription(for: recording, cleanFirst: true, appCoordinator: appCoordinator)
+                }
+            }
+            Button("Transcribe As-Is") {
+                if let recording = recordingPendingTranscription {
+                    recordingPendingTranscription = nil
+                    transcriptionStarter.startTranscription(for: recording, cleanFirst: false, appCoordinator: appCoordinator)
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                recordingPendingTranscription = nil
+            }
+        } message: {
+            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        }
+    }
+
+    var body: some View {
+        navigationRoot
         .toolbar {
             #if os(macOS)
             if isNativeMacModelessWindow {
@@ -331,13 +387,6 @@ struct RecordingsListView: View {
                 .environmentObject(recorderVM)
                 .environmentObject(appCoordinator)
                 .nativeMacModalSizing(width: 720, height: 760)
-        }
-        .sheet(item: $selectedRecordingForPlayer) { recording in
-            AudioPlayerView(recording: recording)
-                .environmentObject(recorderVM)
-                .environmentObject(appCoordinator)
-                .nativeMacModalSizing(width: 720, height: 680)
-                .nativeMacPresentationContext(.modalSheet)
         }
         .onAppear {
             refreshFileRelationships()
@@ -389,6 +438,9 @@ struct RecordingsListView: View {
 
             Spacer()
 
+            // On iOS these actions live in the system toolbar so iPhone Duo can
+            // move them into its vertical bar; see iOSLibraryToolbar.
+            #if os(macOS)
             if !isNativeMacModelessWindow {
                 if isSelectionMode {
                     selectionHeaderActions
@@ -396,6 +448,7 @@ struct RecordingsListView: View {
                     standardHeaderActions
                 }
             }
+            #endif
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -448,6 +501,108 @@ struct RecordingsListView: View {
         }
     }
 
+    @ViewBuilder
+    private var recordingActionMenuItems: some View {
+        if recordings.count >= 2 {
+            Button(action: { beginSelection(.combine) }) {
+                Label("Combine Recordings", systemImage: "link")
+            }
+        }
+
+        Button(action: { beginSelection(.archive) }) {
+            Label("Archive Selected", systemImage: "archivebox")
+        }
+
+        Button(action: { beginSelection(.export) }) {
+            Label("Export Selected", systemImage: "square.and.arrow.up")
+        }
+
+        Button(action: {
+            showingArchiveOlderThan = true
+        }) {
+            Label("Archive Older Than...", systemImage: "calendar.badge.clock")
+        }
+    }
+
+    private func beginSelection(_ action: SelectionAction) {
+        selectionAction = action
+        isSelectionMode = true
+        selectedRecordings.removeAll()
+        showSelectionWarning = false
+    }
+
+    private func endSelection() {
+        isSelectionMode = false
+        selectedRecordings.removeAll()
+        showSelectionWarning = false
+    }
+
+    #if os(iOS)
+    /// Close sits at the top of the bar, Filter is the main action, and the
+    /// recording actions go to the system overflow menu on iOS 27 so the outer
+    /// display of iPhone Duo has one place to find everything. In selection
+    /// mode, Cancel and the chosen action take over the bar.
+    @ToolbarContentBuilder
+    private var iOSLibraryToolbar: some ToolbarContent {
+        if isSelectionMode {
+            ToolbarItem(placement: .cancellationAction) {
+                SheetCancelButton(action: endSelection)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                selectionConfirmButton
+            }
+        } else {
+            ToolbarItem(placement: .cancellationAction) {
+                SheetDoneButton { dismiss() }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: { showDateFilter = true }) {
+                    Label(
+                        "Filter Recordings",
+                        systemImage: isDateFilterActive
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
+                }
+            }
+            if #available(iOS 27.0, *) {
+                ToolbarOverflowMenu {
+                    recordingActionMenuItems
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        recordingActionMenuItems
+                    } label: {
+                        Label("Recording Actions", systemImage: "ellipsis.circle")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var selectionConfirmButton: some View {
+        switch selectionAction {
+        case .combine:
+            Button(action: handleCombineSelected) {
+                Label("Combine", systemImage: "link")
+            }
+            .disabled(selectedRecordings.count < 2)
+        case .archive:
+            Button(action: prepareArchiveFromSelection) {
+                Label("Archive", systemImage: "archivebox")
+            }
+            .disabled(selectedRecordings.isEmpty)
+        case .export:
+            Button(action: prepareExportFromSelection) {
+                Label("Export", systemImage: "square.and.arrow.up")
+            }
+            .disabled(selectedRecordings.isEmpty)
+        }
+    }
+    #endif
+
     private var standardHeaderActions: some View {
         HStack(spacing: 10) {
             Button(action: { showDateFilter = true }) {
@@ -460,40 +615,7 @@ struct RecordingsListView: View {
             .help("Filter Recordings")
 
             Menu {
-                if recordings.count >= 2 {
-                    Button(action: {
-                        selectionAction = .combine
-                        isSelectionMode = true
-                        selectedRecordings.removeAll()
-                        showSelectionWarning = false
-                    }) {
-                        Label("Combine Recordings", systemImage: "link")
-                    }
-                }
-
-                Button(action: {
-                    selectionAction = .archive
-                    isSelectionMode = true
-                    selectedRecordings.removeAll()
-                    showSelectionWarning = false
-                }) {
-                    Label("Archive Selected", systemImage: "archivebox")
-                }
-
-                Button(action: {
-                    selectionAction = .export
-                    isSelectionMode = true
-                    selectedRecordings.removeAll()
-                    showSelectionWarning = false
-                }) {
-                    Label("Export Selected", systemImage: "square.and.arrow.up")
-                }
-
-                Button(action: {
-                    showingArchiveOlderThan = true
-                }) {
-                    Label("Archive Older Than...", systemImage: "calendar.badge.clock")
-                }
+                recordingActionMenuItems
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.headline)
@@ -655,12 +777,12 @@ struct RecordingsListView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                     }
@@ -861,6 +983,7 @@ struct RecordingsListView: View {
             openWindow(id: NativeWindowID.recording)
             #else
             selectedRecordingForPlayer = recording
+            playerRevealToken &+= 1
             #endif
         }
     }

@@ -23,12 +23,21 @@ struct SummariesView: View {
     @ObservedObject private var iCloudManager = iCloudStorageManager.shared
     @ObservedObject private var processingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)] = []
-    @State private var selectedRecording: RecordingEntry?
+    /// The recording whose summary is open, kept per scene so it survives
+    /// opening and closing iPhone Duo and relaunches.
+    @SceneStorage("summaries.selectedRecordingID") private var selectedSummaryRecordingID: String?
+    /// Bumped on every open so the split view brings the detail forward even
+    /// when the selection did not change.
+    @State private var summaryRevealToken = 0
+    /// "Show N more" switches the list column to the full list in place rather
+    /// than pushing a page. A page pushed inside the list column sits under the
+    /// detail when a split view is collapsed, so opening a row from it showed
+    /// nothing (iPhone and iPhone Duo).
+    @State private var showingFullSummaryList = false
     @State private var isGeneratingSummary = false
     @State private var generatingSummaryRecordingId: UUID?
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
-    @State private var showSummary = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var errorRecoverySuggestion = ""
@@ -53,104 +62,13 @@ struct SummariesView: View {
     // MARK: - Body
 
     var body: some View {
-        AdaptiveNavigationWrapper {
-            mainContentView
-                .navigationTitle("Summaries")
-                .searchable(text: $searchText, prompt: "Search summaries, tasks, reminders...")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: { showDateFilter = true }) {
-                            Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                        }
-                        .accessibilityLabel("Filter Summaries")
-                    }
-                }
-                .onAppear {
-                    // Load first. The relationship refresh does not feed this list —
-                    // it maintains a separate cache — and waiting on it behind a
-                    // fixed delay is what made the tab show its empty state before
-                    // showing any summaries.
-                    loadRecordings()
-                    enhancedFileManager.refreshAllRelationships()
-
-                    // Configure the transcription manager with the selected engine
-                    let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
-                    enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
-
-                    // Show first-time iCloud prompt if not seen before and there are summaries
-                    checkForFirstTimeiCloudPrompt()
-                }
-                .onReceive(appCoordinator.objectWillChange) { _ in
-                    // Refresh the view when coordinator changes
-                    if PerformanceOptimizer.shouldLogEngineInitialization() {
-                        AppLogger.shared.verbose("Received coordinator change notification", category: "SummariesView")
-                    }
-                    DispatchQueue.main.async {
-                        self.refreshTrigger.toggle()
-                        if PerformanceOptimizer.shouldLogEngineInitialization() {
-                            AppLogger.shared.verbose("Toggled refresh trigger to \(self.refreshTrigger)", category: "SummariesView")
-                        }
-                    }
-                }
-                .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willEnterForegroundNotification)) { _ in
-                    // Refresh when app comes to foreground
-                    loadRecordings()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
-                    loadRecordings()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
-                    // Refresh when a summary is deleted
-                    AppLog.shared.summarization("Received summary deletion notification, refreshing...", level: .debug)
-                    loadRecordings()
-                }
-                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
-                    // Refresh recordings list when a recording is renamed
-                    if PerformanceOptimizer.shouldLogEngineInitialization() {
-                        AppLogger.shared.verbose("Received recording renamed notification, refreshing list", category: "SummariesView")
-                    }
-                    loadRecordings()
-                }
-        }
-        .sheet(isPresented: $showSummary) {
-            if let recording = selectedRecording {
-                // Try to get enhanced summary first, fallback to legacy
-                if let recordingId = recording.id,
-                   let enhancedSummary = appCoordinator.getCompleteRecordingData(id: recordingId)?.summary {
-                    SummaryDetailView(
-                        recording: RecordingFile(
-                            url: URL(string: recording.recordingURL ?? "") ?? URL(fileURLWithPath: ""),
-                            name: recording.recordingName ?? "Unknown",
-                            date: recording.recordingDate ?? Date(),
-                            duration: recording.duration,
-                            locationData: appCoordinator.coreDataManager.getLocationData(for: recording)
-                        ),
-                        summaryData: enhancedSummary
-                    )
-                } else {
-                    // FIX: Provide a View for the 'else' case to satisfy the ViewBuilder.
-                    VStack(spacing: 16) {
-                        Image(systemName: "doc.text.magnifyingglass")
-                            .font(.system(size: 50))
-                            .foregroundColor(.secondary)
-                        Text("Summary Not Available")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        Text("A summary for this recording could not be found.")
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                }
-            }
-        }
-        .onChange(of: showSummary) { _, newValue in
-            if !newValue {
-                // Sheet was dismissed, refresh the view
+        navigationRoot
+        .onChange(of: selectedSummaryRecordingID) { _, newValue in
+            if newValue == nil {
+                // The summary closed; refresh so the list's button states update.
                 if PerformanceOptimizer.shouldLogEngineInitialization() {
-                    AppLogger.shared.verbose("Summary sheet dismissed, refreshing UI", category: "SummariesView")
+                    AppLogger.shared.verbose("Summary detail closed, refreshing UI", category: "SummariesView")
                 }
-                // Force a UI refresh to update button states
                 DispatchQueue.main.async {
                     self.refreshTrigger.toggle()
                 }
@@ -241,6 +159,134 @@ struct SummariesView: View {
         }
     } // End of body variable
 
+    // MARK: - Navigation
+
+    /// iOS and iPadOS show the list with the open summary beside it at regular
+    /// width (iPhone Duo's inner display, iPad) and push it at compact width.
+    /// macOS opens summaries in their own windows and keeps its sidebar host.
+    @ViewBuilder
+    private var navigationRoot: some View {
+        #if os(macOS)
+        AdaptiveNavigationWrapper {
+            listColumn
+        }
+        #else
+        ListDetailSplitView(
+            selectionID: selectedSummaryRecordingID,
+            revealToken: summaryRevealToken,
+            dismissalStorageKey: "summaries.detailDismissed"
+        ) {
+            listColumn
+        } detail: {
+            summaryDetailColumn
+        }
+        #endif
+    }
+
+    private var listColumn: some View {
+        mainContentView
+            .navigationTitle("Summaries")
+            .searchable(text: $searchText, prompt: "Search summaries, tasks, reminders...")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showDateFilter = true }) {
+                        Image(systemName: isDateFilterActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("Filter Summaries")
+                }
+            }
+            .onAppear {
+                // Load first. The relationship refresh does not feed this list —
+                // it maintains a separate cache — and waiting on it behind a
+                // fixed delay is what made the tab show its empty state before
+                // showing any summaries.
+                loadRecordings()
+                enhancedFileManager.refreshAllRelationships()
+
+                // Configure the transcription manager with the selected engine
+                let selectedEngine = TranscriptionEngine(rawValue: UserDefaults.standard.string(forKey: "selectedTranscriptionEngine") ?? TranscriptionEngine.fluidAudio.rawValue) ?? .fluidAudio
+                enhancedTranscriptionManager.updateTranscriptionEngine(selectedEngine)
+
+                // Show first-time iCloud prompt if not seen before and there are summaries
+                checkForFirstTimeiCloudPrompt()
+            }
+            .onReceive(appCoordinator.objectWillChange) { _ in
+                // Refresh the view when coordinator changes
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("Received coordinator change notification", category: "SummariesView")
+                }
+                DispatchQueue.main.async {
+                    self.refreshTrigger.toggle()
+                    if PerformanceOptimizer.shouldLogEngineInitialization() {
+                        AppLogger.shared.verbose("Toggled refresh trigger to \(self.refreshTrigger)", category: "SummariesView")
+                    }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: PlatformLifecycle.willEnterForegroundNotification)) { _ in
+                // Refresh when app comes to foreground
+                loadRecordings()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("iCloudReconcileCompleted"))) { _ in
+                loadRecordings()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("SummaryDeleted"))) { _ in
+                // Refresh when a summary is deleted
+                AppLog.shared.summarization("Received summary deletion notification, refreshing...", level: .debug)
+                loadRecordings()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("RecordingRenamed"))) { _ in
+                // Refresh recordings list when a recording is renamed
+                if PerformanceOptimizer.shouldLogEngineInitialization() {
+                    AppLogger.shared.verbose("Received recording renamed notification, refreshing list", category: "SummariesView")
+                }
+                loadRecordings()
+            }
+    }
+
+    #if !os(macOS)
+    @ViewBuilder
+    private var summaryDetailColumn: some View {
+        if let idString = selectedSummaryRecordingID,
+           let recordingId = UUID(uuidString: idString),
+           let data = appCoordinator.getCompleteRecordingData(id: recordingId),
+           let summary = data.summary {
+            SummaryDetailView(
+                recording: RecordingFile(
+                    url: URL(string: data.recording.recordingURL ?? "") ?? URL(fileURLWithPath: ""),
+                    name: data.recording.recordingName ?? "Unknown",
+                    date: data.recording.recordingDate ?? Date(),
+                    duration: data.recording.duration,
+                    locationData: appCoordinator.coreDataManager.getLocationData(for: data.recording)
+                ),
+                summaryData: summary
+            )
+            // Fresh view state for each summary; the detail keeps its own
+            // edits, export and regeneration state.
+            .id(recordingId)
+            .environment(\.embeddedDetailClose, EmbeddedDetailClose { selectedSummaryRecordingID = nil })
+        } else if selectedSummaryRecordingID != nil {
+            ContentUnavailableView(
+                "Summary Not Available",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("A summary for this recording could not be found.")
+            )
+            .onAppear {
+                // A selection restored from scene storage can name a recording
+                // or summary deleted since. Drop it rather than leave a dead
+                // detail open.
+                AppLog.shared.summarization("Cleared a summary selection that no longer exists", level: .debug)
+                selectedSummaryRecordingID = nil
+            }
+        } else {
+            ContentUnavailableView(
+                "Select a Summary",
+                systemImage: "doc.text",
+                description: Text("Choose a summary from the list to read it here.")
+            )
+        }
+    }
+    #endif
+
     // MARK: - Main Content View
 
     private var mainContentView: some View {
@@ -250,6 +296,21 @@ struct SummariesView: View {
                 emptyStateView
             } else if filtered.isEmpty {
                 noResultsView
+            } else if showingFullSummaryList {
+                // The full-list view carries its own date-filter banner and title.
+                summariesFullListView
+                    #if !os(macOS)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                showingFullSummaryList = false
+                            } label: {
+                                Label("Summaries", systemImage: "chevron.backward")
+                            }
+                            .accessibilityIdentifier("bisonnotes.summaries.full-list.back")
+                        }
+                    }
+                    #endif
             } else {
                 VStack(spacing: 0) {
                     if isDateFilterActive {
@@ -378,12 +439,12 @@ struct SummariesView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                         refreshTrigger.toggle()
@@ -416,8 +477,8 @@ struct SummariesView: View {
                 }
 
                 if filtered.count > recentRecordings.count {
-                    NavigationLink {
-                        summariesFullListView
+                    Button {
+                        showingFullSummaryList = true
                     } label: {
                         moreRowView(remainingCount: filtered.count - recentRecordings.count)
                     }
@@ -819,8 +880,12 @@ struct SummariesView: View {
                     openWindow(id: NativeWindowID.summary, value: recordingID)
                 }
                 #else
-                selectedRecording = recording
-                showSummary = true
+                selectedSummaryRecordingID = recording.id?.uuidString
+                summaryRevealToken &+= 1
+                AppLog.shared.summarization(
+                    "Open summary requested; detail column revealed (token \(summaryRevealToken))",
+                    level: .debug
+                )
                 #endif
             }) {
                 Label("View Summary", systemImage: "doc.text.fill")

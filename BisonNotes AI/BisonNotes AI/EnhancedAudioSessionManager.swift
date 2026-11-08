@@ -29,11 +29,15 @@ protocol AudioSessionControlling: AnyObject {
     var currentInput: AVAudioSessionPortDescription? { get }
     var currentOutputTypes: [String] { get }
 
-    func setCategory(
+    /// Like `setActiveOffMainThread`, there is deliberately no blocking form:
+    /// changing the category of an *active* session reconfigures its I/O and can
+    /// stall the main thread (Xcode flags every main-thread call). It runs on
+    /// `audioSessionActivationQueue`, so it stays ordered with activations.
+    func setCategoryOffMainThread(
         _ category: AVAudioSession.Category,
         mode: AVAudioSession.Mode,
         options: AVAudioSession.CategoryOptions
-    ) throws
+    ) async throws
     func setPreferredSampleRate(_ sampleRate: Double) throws
     func setPreferredIOBufferDuration(_ duration: TimeInterval) throws
     func setPreferredInput(_ input: AVAudioSessionPortDescription?) throws
@@ -63,12 +67,23 @@ final class SystemAudioSessionController: AudioSessionControlling {
         session.currentRoute.outputs.map(\.portType.rawValue)
     }
 
-    func setCategory(
+    func setCategoryOffMainThread(
         _ category: AVAudioSession.Category,
         mode: AVAudioSession.Mode,
         options: AVAudioSession.CategoryOptions
-    ) throws {
-        try session.setCategory(category, mode: mode, options: options)
+    ) async throws {
+        // Enqueue before the first suspension, as setActiveOffMainThread does,
+        // so the category always lands before a later activation.
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            audioSessionActivationQueue.async {
+                do {
+                    try AVAudioSession.sharedInstance().setCategory(category, mode: mode, options: options)
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
     }
 
     func setPreferredSampleRate(_ sampleRate: Double) throws {
@@ -105,6 +120,9 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
 
     // MARK: - Published Properties
     @Published var isConfigured = false
+    /// True while `restoreExclusiveRecordingAfterBackgroundRecovery` waits on
+    /// its category change.
+    private var isRestoringExclusiveRecording = false
     @Published var isMixedAudioEnabled = false
     @Published var isBackgroundRecordingEnabled = false
     @Published var currentConfiguration: AudioSessionConfig?
@@ -333,7 +351,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
 
         try ensureAudioSessionTransitionIsCurrent(generation)
-        try prepareConfiguration(config, generation: generation)
+        try await prepareConfiguration(config, generation: generation)
         leaveTransitionOpen = true
         return generation
     }
@@ -438,8 +456,8 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     /// still records.
     /// - Returns: true when the exclusive configuration is now in effect.
     @discardableResult
-    func restoreExclusiveRecordingAfterBackgroundRecovery() -> Bool {
-        guard isUsingMixableRecoveryRecording else { return false }
+    func restoreExclusiveRecordingAfterBackgroundRecovery() async -> Bool {
+        guard isUsingMixableRecoveryRecording, !isRestoringExclusiveRecording else { return false }
         guard pendingConfiguration == nil, preparedConfiguration == nil else {
             AppLog.shared.audioSession(
                 "A session transition is in flight; keeping the mixable recovery session for now",
@@ -448,13 +466,28 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
             return false
         }
 
+        // The foreground handler and a finishing recovery can both ask; only
+        // one category change runs at a time.
+        isRestoringExclusiveRecording = true
+        defer { isRestoringExclusiveRecording = false }
+        let generation = audioSessionTransitionGeneration
+
         let config = AudioSessionConfig.backgroundRecording
         do {
-            try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
+            try await audioSessionController.setCategoryOffMainThread(config.category, mode: config.mode, options: config.options)
         } catch {
             AppLog.shared.audioSession(
                 "Could not restore the exclusive recording session; continuing with the mixable one: \(error.localizedDescription)",
                 level: .error
+            )
+            return false
+        }
+        // A transition that started during the await owns the session now; its
+        // category is queued after this one, so publishing ours would be stale.
+        guard generation == audioSessionTransitionGeneration, isUsingMixableRecoveryRecording else {
+            AppLog.shared.audioSession(
+                "A session transition started while restoring the exclusive session; leaving it to that transition",
+                level: .debug
             )
             return false
         }
@@ -522,7 +555,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         defer { finishAudioSessionTransition(generation) }
 
         do {
-            try audioSessionController.setCategory(.playback, mode: .default, options: [])
+            try await audioSessionController.setCategoryOffMainThread(.playback, mode: .default, options: [])
+            // A stop during the category await has already queued its
+            // deactivation; activating now would land after it and leave the
+            // session live with nothing behind it.
+            try ensureTransitionIsCurrentAndWanted(generation)
             try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
         } catch is AudioSessionTransitionError {
@@ -558,7 +595,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
                 throw AudioProcessingError.backgroundRecordingNotPermitted
             }
             try ensureAudioSessionTransitionIsCurrent(generation)
-            try audioSessionController.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try await audioSessionController.setCategoryOffMainThread(.playback, mode: .default, options: [.mixWithOthers])
+            // A stop during the category await has already queued its
+            // deactivation; activating now would land after it and leave the
+            // session live with nothing behind it.
+            try ensureTransitionIsCurrentAndWanted(generation)
             try await audioSessionController.setActiveOffMainThread(true, options: [])
             try ensureAudioSessionTransitionIsCurrent(generation)
         } catch is AudioSessionTransitionError {
@@ -665,7 +706,7 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
     // MARK: - Private Methods
 
     private func applyConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
-        try prepareConfiguration(config, generation: generation)
+        try await prepareConfiguration(config, generation: generation)
         // The private form: the configure method that called this owns the
         // transition and still has to check its intent after the capability
         // request below.
@@ -683,9 +724,11 @@ class EnhancedAudioSessionManager: NSObject, ObservableObject {
         }
     }
 
-    private func prepareConfiguration(_ config: AudioSessionConfig, generation: UInt64) throws {
+    private func prepareConfiguration(_ config: AudioSessionConfig, generation: UInt64) async throws {
         try ensureAudioSessionTransitionIsCurrent(generation)
-        try audioSessionController.setCategory(config.category, mode: config.mode, options: config.options)
+        try await audioSessionController.setCategoryOffMainThread(config.category, mode: config.mode, options: config.options)
+        // A newer transition may have started during the await.
+        try ensureAudioSessionTransitionIsCurrent(generation)
 
         if config.category == .playAndRecord {
             try? audioSessionController.setPreferredSampleRate(16000)

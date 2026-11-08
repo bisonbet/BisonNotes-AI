@@ -51,8 +51,8 @@ enum DiskWriteSignposts {
         fileprivate let id: OSSignpostID
     }
 
-    // `OSLog` is thread-safe; it is created once and only read afterwards.
-    nonisolated(unsafe) private static let log = MXMetricManager.makeLogHandle(category: category)
+    // `OSLog` is Sendable; it is created once and only read afterwards.
+    private static let log = MXMetricManager.makeLogHandle(category: category)
 
     static func begin(_ phase: DiskWritePhase) -> Interval {
         let id = OSSignpostID(log: log)

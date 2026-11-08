@@ -162,7 +162,7 @@ struct MLXSwiftSettingsView: View {
         .toolbar {
             #if !os(macOS)
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
+                SheetDoneButton {
                     dismiss()
                 }
             }

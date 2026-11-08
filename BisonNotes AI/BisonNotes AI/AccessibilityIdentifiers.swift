@@ -10,6 +10,7 @@ enum BisonNotesAccessibilityID {
     static let tabTranscripts = "bisonnotes.tab.transcripts"
     static let tabSummaries = "bisonnotes.tab.summaries"
     static let tabSetup = "bisonnotes.tab.setup"
+    static let alwaysDarkToggle = "bisonnotes.preferences.always-dark"
 
     static let startRecordingButton = "bisonnotes.record.start"
     static let recordingTimer = "bisonnotes.record.timer"

@@ -1921,7 +1921,7 @@ class iCloudStorageManager: ObservableObject {
     /// A cold launch forces one; the activation notification that follows it a
     /// moment later finds that run in flight and joins it, so the pair produces one
     /// sync rather than two.
-    func shouldStartRoutineSnapshot(force: Bool, appCoordinator: AppDataCoordinator? = nil) throws -> Bool {
+    func shouldStartRoutineSnapshot(force: Bool, appCoordinator: AppDataCoordinator? = nil) async throws -> Bool {
         guard isEnabled else { return false }
         if force { return true }
         // Never start work CloudKit has asked us to hold off on.
@@ -1932,7 +1932,7 @@ class iCloudStorageManager: ObservableObject {
         // edit then waited out the maintenance window. The backup signature covers
         // every local edit however it was made, so it — not the flag — is the
         // authority on whether there is anything to send.
-        if let appCoordinator, try localDataDiffersFromLastBackup(appCoordinator: appCoordinator) {
+        if let appCoordinator, try await localDataDiffersFromLastBackup(appCoordinator: appCoordinator) {
             return true
         }
         guard let lastSuccess = lastSuccessfulRoutineSyncDate else { return true }
@@ -1941,19 +1941,39 @@ class iCloudStorageManager: ObservableObject {
 
     /// Whether the local dataset still matches what the last completed backup sent.
     /// A local Core Data read; far cheaper than the CloudKit round trip it decides.
-    private func localDataDiffersFromLastBackup(appCoordinator: AppDataCoordinator) throws -> Bool {
+    ///
+    /// It runs on every activation, sync or not, and reads and hashes the whole
+    /// library — so it runs on a background context, not the main actor. Only
+    /// saved rows are seen; every library mutation saves through
+    /// `CoreDataManager`, and queued cloud work is caught by `hasPendingCloudWork`.
+    private func localDataDiffersFromLastBackup(appCoordinator: AppDataCoordinator) async throws -> Bool {
         guard let storedSignature = UserDefaults.standard.string(forKey: Self.backupStateSignatureKey) else {
             return true
         }
 
-        let selection = try Self.backupSourceSelection(from: appCoordinator.coreDataManager)
-        let currentSignature = computeBackupStateSignature(
-            recordings: selection.recordings,
-            transcripts: selection.transcripts,
-            summaries: selection.summaries,
-            appCoordinator: appCoordinator,
-            options: currentCloudBackupOptions()
-        )
+        let options = currentCloudBackupOptions()
+        let settings = options.includeSettings
+            ? collectSettingsForBackup(includeSensitiveSettings: options.includeSensitiveSettings)
+            : nil
+        let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        let currentSignature = try await appCoordinator.coreDataManager.performBackgroundRead(
+            operation: "backupSignature"
+        ) { context in
+            let selection = Self.backupSourceSelection(
+                allRecordings: try context.fetch(RecordingEntry.fetchRequest()),
+                allTranscripts: try context.fetch(TranscriptEntry.fetchRequest()),
+                allSummaries: try context.fetch(SummaryEntry.fetchRequest())
+            )
+            let input = Self.backupSignatureInput(
+                recordings: selection.recordings,
+                transcripts: selection.transcripts,
+                summaries: selection.summaries,
+                options: options,
+                settings: settings,
+                documentsURL: documentsURL
+            )
+            return Self.backupStateSignature(for: input)
+        }
         return currentSignature != storedSignature
     }
 
@@ -2707,6 +2727,8 @@ class iCloudStorageManager: ObservableObject {
         defaults.removeObject(forKey: Self.pendingSummaryRemovalsKey)
         defaults.removeObject(forKey: Self.pendingTranscriptRemovalsKey)
         defaults.removeObject(forKey: Self.pendingImportedAudioRemovalsKey)
+        // Every marker is gone with the erase; a new one must issue explicitly.
+        defaults.removeObject(forKey: Self.issuedDeletionMarkerIdentitiesKey)
         // The erase emptied the account, so "no legacy records" is now trivially
         // true — but it is cleared rather than set, because the next sync should
         // establish that from a scan rather than inherit it from a wipe.
@@ -2718,7 +2740,7 @@ class iCloudStorageManager: ObservableObject {
 
 // MARK: - Robust Backup Models
 
-struct CloudBackupOptions {
+struct CloudBackupOptions: Sendable {
     var includeAudioFiles: Bool
     var includeSettings: Bool
     var includeSensitiveSettings: Bool
@@ -3131,6 +3153,7 @@ extension iCloudStorageManager {
         SummaryDetailLevel.storageKey,
         SummaryThinkingLevel.storageKey,
         "user_preference_time_format",
+        AppAppearance.alwaysDarkKey,
         "WatchIntegrationEnabled",
         "WatchAutoSync",
         "WatchBatteryAware",
@@ -3424,6 +3447,7 @@ extension iCloudStorageManager {
         let deletionTargets = preflight.deletionTargets
         let importedAudioDeletionTargetIds = deletionTargets.importedAudioRecordings
 
+        recorder?.begin(.readLocalState)
         let backupSourceSelection = try Self.backupSourceSelection(from: appCoordinator.coreDataManager)
         let excludedRecordingIds = backupSourceSelection.excludedRecordingIds
         let recordings = backupSourceSelection.recordings.filter { recording in
@@ -3464,11 +3488,10 @@ extension iCloudStorageManager {
             )
         }
 
-        let currentBackupStateSignature = computeBackupStateSignature(
+        let currentBackupStateSignature = await computeBackupStateSignature(
             recordings: recordings,
             transcripts: transcripts,
             summaries: summaries,
-            appCoordinator: appCoordinator,
             options: options
         )
         // Capture removal operations before any network work. A failed outbox
@@ -6863,7 +6886,15 @@ extension iCloudStorageManager {
 
         let deletionRecords = try await fetchBackupRecords(
             recordType: Self.backupDeletionRecordType)
-        guard !deletionRecords.isEmpty else { return (DeletionMarkerApplication(), CloudDeletionTargets()) }
+        guard !deletionRecords.isEmpty else {
+            // No marker is in the cloud, so none this device issued is still
+            // live. Forgetting them here matters: a marker retired or withdrawn
+            // elsewhere while this device was away would otherwise stay "issued",
+            // and the next delete of the same item — same record name — would be
+            // filtered as a replay instead of issued explicitly.
+            Self.saveIssuedDeletionMarkerIdentities([])
+            return (DeletionMarkerApplication(), CloudDeletionTargets())
+        }
 
         /// A marker that survived the withdrawal check, kept alongside the record it
         /// came from so the marker itself can be retired once it has done its job.
@@ -6926,12 +6957,27 @@ extension iCloudStorageManager {
         // the legacy summary records are read once for the whole set. Reading them
         // inside the loop is what made this phase fetch ten thousand records for a
         // hundred and fifty live ones, and spend six minutes doing it.
+        // Markers this device has already issued once. A replay is filtered against
+        // the manifest instead of re-sending its deletes as explicit ids. A marker
+        // is identified by its name *and* its deletion time: names are derived from
+        // the target id, so a later delete of the same item reuses the name, and it
+        // must be a first application again.
+        let issuedMarkerIdentities = Self.loadIssuedDeletionMarkerIdentities()
+        func identity(_ marker: ApplicableMarker) -> String {
+            Self.deletionMarkerIdentity(recordName: marker.recordID.recordName, deletedAt: marker.deletedAt)
+        }
+        func isFirstApplication(_ marker: ApplicableMarker) -> Bool {
+            !issuedMarkerIdentities.contains(identity(marker))
+        }
+
         var workspace: CloudDeletionWorkspace?
         if !applicableMarkers.isEmpty {
             // Only a recording or a transcript can still be referenced by a legacy
             // summary record; a summary's own legacy record is named after the
             // summary and needs no scan to find. An imported-audio marker only
             // removes a field and must not trigger the expensive legacy scan.
+            // Replays scan too: an older client can still create a legacy record
+            // after this device's first pass, and the absence memo keeps it cheap.
             let needsLegacyRecords = applicableMarkers.contains { marker in
                 switch marker.target.kind {
                 case .recording, .transcript:
@@ -6952,6 +6998,7 @@ extension iCloudStorageManager {
             for marker in applicableMarkers {
                 try applyDeletionMarker(
                     marker.target,
+                    isFirstApplication: isFirstApplication(marker),
                     appCoordinator: appCoordinator,
                     workspace: workspace,
                     localPresence: localPresence,
@@ -6992,6 +7039,17 @@ extension iCloudStorageManager {
         let commit = try await commitDeletionPlan(plan, workspace: workspace)
         application.deletedCloudRecords = commit.removedRecords
         application.clearedCloudReferences = commit.clearedReferences
+        // Only after the whole plan committed: a failed run must issue its markers
+        // explicitly again. Pruning to the markers still in the cloud forgets the
+        // retired and withdrawn ones, so the set never outgrows the marker list.
+        Self.saveIssuedDeletionMarkerIdentities(
+            Self.issuedDeletionMarkerIdentitiesAfterCommit(
+                applicableMarkerIdentities: applicableMarkers.map(identity),
+                retiredMarkerIdentities: applicableMarkers
+                    .filter { plan.expiredMarkerIDsToRetire.contains($0.recordID) }
+                    .map(identity)
+            )
+        )
 
         if application.didChangeAnything {
             let deletedLocalCount = application.deletedLocalItems
@@ -7088,6 +7146,7 @@ extension iCloudStorageManager {
     /// every marker together, by `commitDeletionPlan`.
     private func applyDeletionMarker(
         _ target: CloudDeletionTarget,
+        isFirstApplication: Bool,
         appCoordinator: AppDataCoordinator,
         workspace: CloudDeletionWorkspace,
         localPresence: LocalDeletionTargetPresence,
@@ -7105,6 +7164,7 @@ extension iCloudStorageManager {
                 recordingId: target.id,
                 transcriptIds: [],
                 summaryIds: [],
+                isExplicit: isFirstApplication,
                 workspace: workspace,
                 into: &plan
             )
@@ -7129,7 +7189,7 @@ extension iCloudStorageManager {
             }
 
         case .transcript:
-            planTranscriptContentDeletion(transcriptId: target.id, into: &plan)
+            planTranscriptContentDeletion(transcriptId: target.id, isExplicit: isFirstApplication, into: &plan)
 
             guard holdsTargetLocally,
                   let transcript = try appCoordinator.coreDataManager.fetchTranscript(id: target.id),
@@ -7151,7 +7211,7 @@ extension iCloudStorageManager {
             }
 
         case .summary:
-            planSummaryContentDeletion(summaryIds: [target.id], into: &plan)
+            planSummaryContentDeletion(summaryIds: [target.id], isExplicit: isFirstApplication, into: &plan)
 
             guard holdsTargetLocally,
                   let summary = try appCoordinator.coreDataManager.fetchSummary(id: target.id),
@@ -7361,10 +7421,18 @@ extension iCloudStorageManager {
     }
 
     /// Adds a recording and everything hanging off it to the run's delete batch.
+    ///
+    /// `isExplicit` is true for a deletion request and for a marker's first
+    /// application on this device: its ids are issued even when a stale manifest
+    /// does not list them yet. A replayed marker passes false, so its ids are
+    /// filtered against the manifest like any other replay — tagging replays as
+    /// explicit re-sent every tombstone's deletes on every sync for the whole
+    /// retention window.
     private func planRecordingContentDeletion(
         recordingId: UUID,
         transcriptIds: [UUID],
         summaryIds: [UUID],
+        isExplicit: Bool,
         workspace: CloudDeletionWorkspace,
         into plan: inout CloudDeletionPlan
     ) {
@@ -7374,7 +7442,9 @@ extension iCloudStorageManager {
         )
         let recordingRecordID = CKRecord.ID(recordName: recordingRecordName)
         plan.recordIDsToDelete.insert(recordingRecordID)
-        plan.explicitlyTargetedRecordIDs.insert(recordingRecordID)
+        if isExplicit {
+            plan.explicitlyTargetedRecordIDs.insert(recordingRecordID)
+        }
         plan.recordingRecordNamesToUnindex.insert(recordingRecordName)
 
         var transcriptRecordNames = Set(
@@ -7398,8 +7468,10 @@ extension iCloudStorageManager {
         let explicitlyTargetedSummaryRecordIDs = summaryIds.map {
             CKRecord.ID(recordName: makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: $0))
         }
-        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedTranscriptRecordIDs)
-        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedSummaryRecordIDs)
+        if isExplicit {
+            plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedTranscriptRecordIDs)
+            plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedSummaryRecordIDs)
+        }
         plan.recordIDsToDelete.formUnion(transcriptRecordNames.map { CKRecord.ID(recordName: $0) })
         plan.recordIDsToDelete.formUnion(summaryRecordNames.map { CKRecord.ID(recordName: $0) })
         plan.transcriptRecordNamesToUnindex.formUnion(transcriptRecordNames)
@@ -7410,8 +7482,10 @@ extension iCloudStorageManager {
         let explicitlyTargetedLegacySummaryRecordIDs = summaryIds.map {
             CKRecord.ID(recordName: $0.uuidString)
         }
-        plan.recordIDsToDelete.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
-        plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
+        if isExplicit {
+            plan.recordIDsToDelete.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
+            plan.explicitlyTargetedRecordIDs.formUnion(explicitlyTargetedLegacySummaryRecordIDs)
+        }
         for record in workspace.legacySummaryRecords
         where record[CloudKitSummaryRecord.recordingIdField] as? String == recordingId.uuidString {
             plan.recordIDsToDelete.insert(record.recordID)
@@ -7420,12 +7494,15 @@ extension iCloudStorageManager {
 
     private func planTranscriptContentDeletion(
         transcriptId: UUID,
+        isExplicit: Bool,
         into plan: inout CloudDeletionPlan
     ) {
         let recordName = makeBackupRecordName(prefix: Self.backupTranscriptRecordPrefix, id: transcriptId)
         let recordID = CKRecord.ID(recordName: recordName)
         plan.recordIDsToDelete.insert(recordID)
-        plan.explicitlyTargetedRecordIDs.insert(recordID)
+        if isExplicit {
+            plan.explicitlyTargetedRecordIDs.insert(recordID)
+        }
         plan.transcriptRecordNamesToUnindex.insert(recordName)
         // The parent and summary references go in the same cloud mutation. Otherwise
         // a device restoring only the cloud backup could recreate a dangling
@@ -7435,19 +7512,26 @@ extension iCloudStorageManager {
 
     private func planSummaryContentDeletion(
         summaryIds: [UUID],
+        isExplicit: Bool,
         into plan: inout CloudDeletionPlan
     ) {
         for summaryId in summaryIds {
             let recordName = makeBackupRecordName(prefix: Self.backupSummaryRecordPrefix, id: summaryId)
             let recordID = CKRecord.ID(recordName: recordName)
             plan.recordIDsToDelete.insert(recordID)
-            plan.explicitlyTargetedRecordIDs.insert(recordID)
             plan.summaryRecordNamesToUnindex.insert(recordName)
+            if isExplicit {
+                plan.explicitlyTargetedRecordIDs.insert(recordID)
+            }
             // A summary's legacy sync record is named after the summary itself, so it
-            // is the one legacy record that needs no scan to find.
+            // is the one legacy record that needs no scan to find. Legacy ids are
+            // never indexed and pass the manifest filter by design, replay or not:
+            // an older client can still write one after this device's first pass.
             let legacyRecordID = CKRecord.ID(recordName: summaryId.uuidString)
             plan.recordIDsToDelete.insert(legacyRecordID)
-            plan.explicitlyTargetedRecordIDs.insert(legacyRecordID)
+            if isExplicit {
+                plan.explicitlyTargetedRecordIDs.insert(legacyRecordID)
+            }
             // The recording's scalar relationship and lifecycle status have to go too,
             // or a restore resurrects a dangling summary reference from the parent.
             plan.clearedSummaryIds.insert(summaryId.uuidString)
@@ -7740,6 +7824,7 @@ extension iCloudStorageManager {
             recordingId: recordingId,
             transcriptIds: transcriptIds,
             summaryIds: summaryIds,
+            isExplicit: true,
             workspace: workspace,
             into: &plan
         )
@@ -7751,7 +7836,7 @@ extension iCloudStorageManager {
     ) async throws -> Int {
         let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: true)
         var plan = CloudDeletionPlan()
-        planTranscriptContentDeletion(transcriptId: transcriptId, into: &plan)
+        planTranscriptContentDeletion(transcriptId: transcriptId, isExplicit: true, into: &plan)
         return try await commitDeletionPlan(plan, workspace: workspace).removedRecords
     }
 
@@ -7760,7 +7845,7 @@ extension iCloudStorageManager {
     ) async throws -> Int {
         let workspace = try await makeDeletionWorkspace(needsLegacySummaryRecords: false)
         var plan = CloudDeletionPlan()
-        planSummaryContentDeletion(summaryIds: summaryIds, into: &plan)
+        planSummaryContentDeletion(summaryIds: summaryIds, isExplicit: true, into: &plan)
         return try await commitDeletionPlan(plan, workspace: workspace).removedRecords
     }
 
@@ -7799,6 +7884,56 @@ extension iCloudStorageManager {
     /// immutable value types, so there is nothing for that to race with.
     nonisolated private static let legacySummaryRecordsAbsentAtKey = "iCloudLegacySummaryRecordsAbsentAtV2"
     nonisolated private static let legacySummaryRecordsAbsenceTTL: TimeInterval = 15 * 60
+
+    // MARK: - Issued deletion markers
+
+    /// V2 stores identities (name + deletion time); V1 stored bare names, which
+    /// could not tell a reused marker name from the marker it replaced.
+    nonisolated static let issuedDeletionMarkerIdentitiesKey = "iCloudIssuedDeletionMarkerIdentitiesV2"
+    nonisolated private static let legacyIssuedDeletionMarkerNamesKey = "iCloudIssuedDeletionMarkerNames"
+
+    /// One marker's identity: its record name and its `deletedAt`, to the
+    /// millisecond. A marker re-created for a later delete of the same item has
+    /// the same name and a later time. A marker with no usable time is
+    /// identified by name alone.
+    nonisolated static func deletionMarkerIdentity(recordName: String, deletedAt: Date?) -> String {
+        guard let deletedAt else { return "\(recordName)@undated" }
+        return "\(recordName)@\(Int64(deletedAt.timeIntervalSince1970 * 1000))"
+    }
+
+    /// Identities of the deletion markers this device has applied and issued at
+    /// least once. Device-local: every device issues a marker explicitly on its
+    /// own first pass.
+    nonisolated static func loadIssuedDeletionMarkerIdentities(
+        defaults: UserDefaults = .standard
+    ) -> Set<String> {
+        // The V1 set named markers without their time; it is dropped rather than
+        // trusted, which costs one explicit pass per live marker.
+        defaults.removeObject(forKey: legacyIssuedDeletionMarkerNamesKey)
+        return Set(defaults.stringArray(forKey: issuedDeletionMarkerIdentitiesKey) ?? [])
+    }
+
+    nonisolated static func saveIssuedDeletionMarkerIdentities(
+        _ identities: Set<String>,
+        defaults: UserDefaults = .standard
+    ) {
+        if identities.isEmpty {
+            defaults.removeObject(forKey: issuedDeletionMarkerIdentitiesKey)
+        } else {
+            defaults.set(identities.sorted(), forKey: issuedDeletionMarkerIdentitiesKey)
+        }
+    }
+
+    /// The issued set after a committed run: every marker the run applied, minus
+    /// the ones it retired. Markers withdrawn or retired elsewhere are absent
+    /// from `applicableMarkerIdentities` and drop out on their own, and a run
+    /// that finds no markers at all empties the set.
+    nonisolated static func issuedDeletionMarkerIdentitiesAfterCommit(
+        applicableMarkerIdentities: [String],
+        retiredMarkerIdentities: [String]
+    ) -> Set<String> {
+        Set(applicableMarkerIdentities).subtracting(retiredMarkerIdentities)
+    }
 
     nonisolated static var legacySummaryRecordsKnownAbsent: Bool {
         guard let absentAt = UserDefaults.standard.object(forKey: legacySummaryRecordsAbsentAtKey) as? Date else {
@@ -8020,98 +8155,201 @@ extension iCloudStorageManager {
         return "\(size)-\(Int64(modifiedTime))"
     }
 
+    /// The backup state signature for rows already read on the main context.
+    ///
+    /// Copying the values is all that stays on the main actor; the hash — a byte
+    /// walk over every transcript and summary body — and the audio file stats run
+    /// on a background task.
     private func computeBackupStateSignature(
         recordings: [RecordingEntry],
         transcripts: [TranscriptEntry],
         summaries: [SummaryEntry],
-        appCoordinator: AppDataCoordinator,
         options: CloudBackupOptions
-    ) -> String {
+    ) async -> String {
+        let input = Self.backupSignatureInput(
+            recordings: recordings,
+            transcripts: transcripts,
+            summaries: summaries,
+            options: options,
+            settings: options.includeSettings
+                ? collectSettingsForBackup(includeSensitiveSettings: options.includeSensitiveSettings)
+                : nil,
+            documentsURL: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        return await Task.detached(priority: .utility) {
+            Self.backupStateSignature(for: input)
+        }.value
+    }
+
+    /// Everything a backup state signature covers, copied out of Core Data so it
+    /// can be hashed off the main actor.
+    struct BackupSignatureInput: Sendable {
+        struct Recording: Sendable {
+            var tokens: [String]
+            /// Where the audio may be, in `CoreDataManager.getAbsoluteURL` order.
+            /// Empty unless audio is part of the backup.
+            var audioCandidatePaths: [String]
+        }
+
+        struct Setting: Sendable {
+            var key: String
+            var value: Data
+        }
+
+        var header: [String]
+        var recordings: [Recording]
+        var transcripts: [[String]]
+        var summaries: [[String]]
+        /// nil when settings are not backed up.
+        var settings: (sensitiveToken: String, values: [Setting])?
+    }
+
+    /// Copies the signature's values out of managed objects. Call on the queue of
+    /// the context that owns the rows.
+    nonisolated static func backupSignatureInput(
+        recordings: [RecordingEntry],
+        transcripts: [TranscriptEntry],
+        summaries: [SummaryEntry],
+        options: CloudBackupOptions,
+        settings: (values: [String: Data], includedSensitiveSettings: Bool)?,
+        documentsURL: URL?
+    ) -> BackupSignatureInput {
+        func dateToken(_ date: Date?) -> String {
+            guard let date else { return "-" }
+            return String(Int64(date.timeIntervalSince1970 * 1000))
+        }
+
+        let header = [
+            "v3",
+            options.includeAudioFiles ? "audio:on" : "audio:off",
+            options.includeSettings ? "settings:on" : "settings:off",
+            options.includeSensitiveSettings ? "sensitive:on" : "sensitive:off"
+        ]
+
+        let recordingInputs = recordings
+            .sorted { ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "") }
+            .map { recording -> BackupSignatureInput.Recording in
+                let tokens = [
+                    recording.id?.uuidString ?? "-",
+                    recording.recordingName ?? "-",
+                    recording.recordingURL ?? "-",
+                    dateToken(recording.recordingDate),
+                    dateToken(recording.createdAt),
+                    dateToken(recording.lastModified),
+                    String(recording.fileSize),
+                    String(recording.duration),
+                    recording.audioQuality ?? "-",
+                    recording.transcriptionStatus ?? "-",
+                    recording.summaryStatus ?? "-",
+                    recording.transcriptId?.uuidString ?? "-",
+                    recording.summaryId?.uuidString ?? "-",
+                    String(recording.locationLatitude),
+                    String(recording.locationLongitude),
+                    String(recording.locationAccuracy),
+                    dateToken(recording.locationTimestamp),
+                    recording.locationAddress ?? "-"
+                ]
+                var audioCandidatePaths: [String] = []
+                if options.includeAudioFiles,
+                   let storedURL = recording.recordingURL,
+                   let documentsURL {
+                    audioCandidatePaths = CoreDataManager
+                        .storedURLCandidates(storedURL, documentsURL: documentsURL)
+                        .map(\.path)
+                }
+                return BackupSignatureInput.Recording(tokens: tokens, audioCandidatePaths: audioCandidatePaths)
+            }
+
+        let transcriptInputs = transcripts
+            .sorted { ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "") }
+            .map { transcript in
+                [
+                    transcript.id?.uuidString ?? "-",
+                    transcript.recordingId?.uuidString ?? "-",
+                    transcript.engine ?? "-",
+                    dateToken(transcript.createdAt),
+                    dateToken(transcript.lastModified),
+                    String(transcript.processingTime),
+                    String(transcript.confidence),
+                    transcript.segments ?? "-",
+                    transcript.speakerMappings ?? "-",
+                    transcript.selectedRepresentation ?? "-"
+                ]
+            }
+
+        let summaryInputs = summaries
+            .sorted { ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "") }
+            .map { summary in
+                [
+                    summary.id?.uuidString ?? "-",
+                    summary.recordingId?.uuidString ?? "-",
+                    summary.transcriptId?.uuidString ?? "-",
+                    summary.summary ?? "-",
+                    summary.tasks ?? "-",
+                    summary.reminders ?? "-",
+                    summary.titles ?? "-",
+                    summary.contentType ?? "-",
+                    summary.aiMethod ?? "-",
+                    dateToken(summary.generatedAt),
+                    String(summary.version),
+                    String(summary.wordCount),
+                    String(summary.originalLength),
+                    String(summary.compressionRatio),
+                    String(summary.confidence),
+                    String(summary.processingTime)
+                ]
+            }
+
+        let settingsInput = settings.map { settings in
+            (
+                sensitiveToken: settings.includedSensitiveSettings ? "settings-sensitive:yes" : "settings-sensitive:no",
+                values: settings.values.keys.sorted().compactMap { key in
+                    settings.values[key].map { BackupSignatureInput.Setting(key: key, value: $0) }
+                }
+            )
+        }
+
+        return BackupSignatureInput(
+            header: header,
+            recordings: recordingInputs,
+            transcripts: transcriptInputs,
+            summaries: summaryInputs,
+            settings: settingsInput
+        )
+    }
+
+    /// Hashes a signature input. Pure apart from the audio file stats, and safe on
+    /// any thread. Produces the same digest the main-actor version always did, so
+    /// stored signatures stay valid across the change.
+    nonisolated static func backupStateSignature(for input: BackupSignatureInput) -> String {
         var hashBuilder = StableHashBuilder()
-        hashBuilder.combine("v3")
-        hashBuilder.combine(options.includeAudioFiles ? "audio:on" : "audio:off")
-        hashBuilder.combine(options.includeSettings ? "settings:on" : "settings:off")
-        hashBuilder.combine(options.includeSensitiveSettings ? "sensitive:on" : "sensitive:off")
+        input.header.forEach { hashBuilder.combine($0) }
 
-        let sortedRecordings = recordings.sorted {
-            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
-        }
-        for recording in sortedRecordings {
-            hashBuilder.combine(recording.id?.uuidString ?? "-")
-            hashBuilder.combine(recording.recordingName ?? "-")
-            hashBuilder.combine(recording.recordingURL ?? "-")
-            hashBuilder.combine(dateToken(recording.recordingDate))
-            hashBuilder.combine(dateToken(recording.createdAt))
-            hashBuilder.combine(dateToken(recording.lastModified))
-            hashBuilder.combine(String(recording.fileSize))
-            hashBuilder.combine(String(recording.duration))
-            hashBuilder.combine(recording.audioQuality ?? "-")
-            hashBuilder.combine(recording.transcriptionStatus ?? "-")
-            hashBuilder.combine(recording.summaryStatus ?? "-")
-            hashBuilder.combine(recording.transcriptId?.uuidString ?? "-")
-            hashBuilder.combine(recording.summaryId?.uuidString ?? "-")
-            hashBuilder.combine(String(recording.locationLatitude))
-            hashBuilder.combine(String(recording.locationLongitude))
-            hashBuilder.combine(String(recording.locationAccuracy))
-            hashBuilder.combine(dateToken(recording.locationTimestamp))
-            hashBuilder.combine(recording.locationAddress ?? "-")
-
-            if options.includeAudioFiles,
-               let localURL = appCoordinator.getAbsoluteURL(for: recording),
-               FileManager.default.fileExists(atPath: localURL.path) {
-                hashBuilder.combine(localURL.lastPathComponent)
-                hashBuilder.combine(audioFileSignature(for: localURL))
+        let fileManager = FileManager.default
+        for recording in input.recordings {
+            recording.tokens.forEach { hashBuilder.combine($0) }
+            // Same resolution as `getAbsoluteURL`: the first candidate that exists.
+            if let path = recording.audioCandidatePaths.first(where: { fileManager.fileExists(atPath: $0) }) {
+                let attributes = try? fileManager.attributesOfItem(atPath: path)
+                let size = (attributes?[.size] as? Int64) ?? 0
+                let modifiedTime = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                hashBuilder.combine((path as NSString).lastPathComponent)
+                hashBuilder.combine("\(size)-\(Int64(modifiedTime))")
             }
         }
-
-        let sortedTranscripts = transcripts.sorted {
-            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
+        for transcript in input.transcripts {
+            transcript.forEach { hashBuilder.combine($0) }
         }
-        for transcript in sortedTranscripts {
-            hashBuilder.combine(transcript.id?.uuidString ?? "-")
-            hashBuilder.combine(transcript.recordingId?.uuidString ?? "-")
-            hashBuilder.combine(transcript.engine ?? "-")
-            hashBuilder.combine(dateToken(transcript.createdAt))
-            hashBuilder.combine(dateToken(transcript.lastModified))
-            hashBuilder.combine(String(transcript.processingTime))
-            hashBuilder.combine(String(transcript.confidence))
-            hashBuilder.combine(transcript.segments ?? "-")
-            hashBuilder.combine(transcript.speakerMappings ?? "-")
-            hashBuilder.combine(transcript.selectedRepresentation ?? "-")
+        for summary in input.summaries {
+            summary.forEach { hashBuilder.combine($0) }
         }
-
-        let sortedSummaries = summaries.sorted {
-            ($0.id?.uuidString ?? "") < ($1.id?.uuidString ?? "")
-        }
-        for summary in sortedSummaries {
-            hashBuilder.combine(summary.id?.uuidString ?? "-")
-            hashBuilder.combine(summary.recordingId?.uuidString ?? "-")
-            hashBuilder.combine(summary.transcriptId?.uuidString ?? "-")
-            hashBuilder.combine(summary.summary ?? "-")
-            hashBuilder.combine(summary.tasks ?? "-")
-            hashBuilder.combine(summary.reminders ?? "-")
-            hashBuilder.combine(summary.titles ?? "-")
-            hashBuilder.combine(summary.contentType ?? "-")
-            hashBuilder.combine(summary.aiMethod ?? "-")
-            hashBuilder.combine(dateToken(summary.generatedAt))
-            hashBuilder.combine(String(summary.version))
-            hashBuilder.combine(String(summary.wordCount))
-            hashBuilder.combine(String(summary.originalLength))
-            hashBuilder.combine(String(summary.compressionRatio))
-            hashBuilder.combine(String(summary.confidence))
-            hashBuilder.combine(String(summary.processingTime))
-        }
-
-        if options.includeSettings {
-            let settings = collectSettingsForBackup(includeSensitiveSettings: options.includeSensitiveSettings)
-            hashBuilder.combine(settings.includedSensitiveSettings ? "settings-sensitive:yes" : "settings-sensitive:no")
-            for key in settings.values.keys.sorted() {
-                guard let valueData = settings.values[key] else { continue }
-                hashBuilder.combine(key)
-                hashBuilder.combine(valueData)
+        if let settings = input.settings {
+            hashBuilder.combine(settings.sensitiveToken)
+            for setting in settings.values {
+                hashBuilder.combine(setting.key)
+                hashBuilder.combine(setting.value)
             }
         }
-
         return hashBuilder.hexDigest
     }
 
@@ -9041,7 +9279,7 @@ extension iCloudStorageManager {
     /// identifier — because the cloud copy is deduplicated by one and the local rows
     /// by the other. If they disagree, devices trade uploads and deletions forever.
     /// Rows with no recording are never grouped, so they are always kept.
-    static func latestPerRecording<Item>(
+    nonisolated static func latestPerRecording<Item>(
         _ items: [Item],
         recordingId: (Item) -> UUID?,
         timestamp: (Item) -> Date?,
@@ -9416,7 +9654,20 @@ extension iCloudStorageManager {
     }
 
     static func backupSourceSelection(from coreDataManager: CoreDataManager) throws -> CloudBackupSourceSelection {
-        let allRecordings = try coreDataManager.getAllRecordings()
+        backupSourceSelection(
+            allRecordings: try coreDataManager.getAllRecordings(),
+            allTranscripts: try coreDataManager.getAllTranscripts(),
+            allSummaries: try coreDataManager.getAllSummaries()
+        )
+    }
+
+    /// The selection rules over rows already fetched, from any context. Call on
+    /// that context's queue.
+    nonisolated static func backupSourceSelection(
+        allRecordings: [RecordingEntry],
+        allTranscripts: [TranscriptEntry],
+        allSummaries: [SummaryEntry]
+    ) -> CloudBackupSourceSelection {
         let excludedRecordingIds = Set(allRecordings.compactMap { recording in
             recording.isCloudSyncDisabled ? recording.id : nil
         })
@@ -9424,11 +9675,11 @@ extension iCloudStorageManager {
             guard let recordingId = recording.id else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let syncableTranscripts = try coreDataManager.getAllTranscripts().filter { transcript in
+        let syncableTranscripts = allTranscripts.filter { transcript in
             guard let recordingId = transcript.recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)
         }
-        let syncableSummaries = try coreDataManager.getAllSummaries().filter { summary in
+        let syncableSummaries = allSummaries.filter { summary in
             let recordingId = summary.recordingId ?? summary.recording?.id
             guard let recordingId else { return true }
             return !excludedRecordingIds.contains(recordingId)

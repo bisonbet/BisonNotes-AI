@@ -127,7 +127,7 @@ struct WebImportSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                     .disabled(!canDismiss)

@@ -204,11 +204,11 @@ struct MistralAISettingsView: View {
             .toolbar {
 #if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    SheetCancelButton { dismiss() }
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") { saveSettings() }
+                    SheetConfirmButton(title: "Save") { saveSettings() }
                         .disabled(apiKey.isEmpty)
                 }
 #endif

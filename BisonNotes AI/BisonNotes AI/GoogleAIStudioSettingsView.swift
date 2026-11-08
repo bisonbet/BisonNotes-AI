@@ -130,13 +130,13 @@ struct GoogleAIStudioSettingsView: View {
             .toolbar {
 #if !os(macOS)
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         dismiss()
                     }
                 }
 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
+                    SheetConfirmButton(title: "Save") {
                         saveSettings()
                     }
                     .disabled(apiKey.isEmpty)

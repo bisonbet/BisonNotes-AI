@@ -313,7 +313,7 @@ private struct BackgroundProcessingWindowChrome: ViewModifier {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     maintenanceMenu
@@ -866,7 +866,7 @@ struct JobDetailView: View {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         dismiss()
                     }
                 }

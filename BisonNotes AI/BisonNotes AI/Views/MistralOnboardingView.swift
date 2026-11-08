@@ -65,7 +65,7 @@ struct MistralOnboardingView: View {
                 }
 #else
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    SheetCancelButton { dismiss() }
                 }
 #endif
             }

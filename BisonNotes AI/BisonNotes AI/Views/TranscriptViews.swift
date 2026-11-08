@@ -82,7 +82,23 @@ struct TranscriptsView: View {
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
     @State private var recordings: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
     @State private var importedTranscripts: [(recording: RecordingEntry, transcript: TranscriptData?)] = []
-    @State private var selectedRecording: RecordingEntry?
+    /// The recording whose transcript is open, kept per scene so it survives
+    /// opening and closing iPhone Duo and relaunches.
+    @SceneStorage("transcripts.selectedRecordingID") private var selectedTranscriptRecordingID: String?
+    /// The transcript waiting to open while the user decides what to do with
+    /// unsaved edits in the open one.
+    @State private var pendingTranscriptRecordingID: String?
+    /// Bumped on every open so the split view brings the editor forward even
+    /// when the selection did not change.
+    @State private var transcriptRevealToken = 0
+    /// "Show N more" switches the list column to the full list in place rather
+    /// than pushing a page. A page pushed inside the list column sits under the
+    /// detail when a split view is collapsed, so opening a row from it showed
+    /// nothing (iPhone and iPhone Duo).
+    @State private var transcriptFullList: TranscriptListSource?
+    @State private var showingUnsavedEditsPrompt = false
+    /// Reports unsaved edits in the editor in the detail column.
+    @State private var unsavedEditsGuard = UnsavedEditsGuard()
     @State private var showingAudioCleanupPrompt = false
     @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedLocationData: LocationData?
@@ -110,25 +126,30 @@ struct TranscriptsView: View {
     @State private var generatingSummaryRecordingIds: Set<UUID> = []
 
     var body: some View {
-        AdaptiveNavigationWrapper {
-            mainContentView
-        }
-        .sheet(item: $selectedRecording) { recording in
-            if let recordingId = recording.id,
-               let transcript = appCoordinator.getTranscriptData(for: recordingId) {
-                EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
-                    .environmentObject(appCoordinator)
-                    .environmentObject(recorderVM)
-                    .nativeMacModalSizing(width: 820, height: 720)
-                    .nativeMacPresentationContext(.modalSheet)
-            } else {
-                TranscriptDetailView(recording: recording, transcriptText: "")
-                    .environmentObject(appCoordinator)
-                    .environmentObject(recorderVM)
-                    .nativeMacModalSizing(width: 820, height: 720)
-                    .nativeMacPresentationContext(.modalSheet)
+        navigationRoot
+        #if !os(macOS)
+        .confirmationDialog(
+            "Save Changes to Transcript?",
+            isPresented: $showingUnsavedEditsPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Save Changes") {
+                if unsavedEditsGuard.save() {
+                    openPendingTranscript()
+                } else {
+                    pendingTranscriptRecordingID = nil
+                }
             }
+            Button("Discard Changes", role: .destructive) {
+                openPendingTranscript()
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTranscriptRecordingID = nil
+            }
+        } message: {
+            Text("Your transcript changes have not been saved.")
         }
+        #endif
         .sheet(item: $selectedLocationData) { locationData in
             LocationDetailView(locationData: locationData)
                 .nativeMacModalSizing(width: 680, height: 620)
@@ -212,6 +233,9 @@ struct TranscriptsView: View {
                 emptyStateView
             } else if filtered.isEmpty && filteredImported.isEmpty {
                 noResultsView
+            } else if let transcriptFullList {
+                // The full-list views carry their own date-filter banner and title.
+                transcriptFullListView(transcriptFullList)
             } else {
                 VStack(spacing: 0) {
                     if isDateFilterActive {
@@ -387,12 +411,12 @@ struct TranscriptsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
+                    SheetCancelButton {
                         showDateFilter = false
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Apply") {
+                    SheetConfirmButton(title: "Apply") {
                         isDateFilterActive = true
                         showDateFilter = false
                         refreshTrigger.toggle()
@@ -426,11 +450,12 @@ struct TranscriptsView: View {
                     }
 
                     if filtered.count > recentRecordings.count {
-                        NavigationLink {
-                            audioRecordingsFullListView
+                        Button {
+                            transcriptFullList = .audio
                         } label: {
                             moreRowView(remainingCount: filtered.count - recentRecordings.count)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
 
@@ -448,11 +473,12 @@ struct TranscriptsView: View {
                     }
 
                     if filteredImported.count > recentImportedTranscripts.count {
-                        NavigationLink {
-                            importedTranscriptsFullListView
+                        Button {
+                            transcriptFullList = .imported
                         } label: {
                             moreRowView(remainingCount: filteredImported.count - recentImportedTranscripts.count)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -622,6 +648,30 @@ struct TranscriptsView: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityHint(isExpanded ? "Collapses the transcript archive." : "Expands the transcript archive inline.")
+    }
+
+    @ViewBuilder
+    private func transcriptFullListView(_ source: TranscriptListSource) -> some View {
+        Group {
+            switch source {
+            case .audio:
+                audioRecordingsFullListView
+            case .imported:
+                importedTranscriptsFullListView
+            }
+        }
+        #if !os(macOS)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    transcriptFullList = nil
+                } label: {
+                    Label("Transcripts", systemImage: "chevron.backward")
+                }
+                .accessibilityIdentifier("bisonnotes.transcripts.full-list.back")
+            }
+        }
+        #endif
     }
 
     private var audioRecordingsFullListView: some View {
@@ -1177,9 +1227,114 @@ struct TranscriptsView: View {
         guard let recordingID = recording.id else { return }
         openWindow(id: NativeWindowID.transcript, value: recordingID)
         #else
-        selectedRecording = recording
+        guard let recordingID = recording.id?.uuidString else {
+            AppLog.shared.transcription("Edit Transcript tapped for a recording with no id", level: .error)
+            return
+        }
+        AppLog.shared.transcription(
+            "Edit Transcript tapped (alreadySelected=\(recordingID == selectedTranscriptRecordingID), " +
+                "unsavedEdits=\(unsavedEditsGuard.hasUnsavedChanges))",
+            level: .debug
+        )
+        // Tapping the transcript that is already selected must still show it:
+        // the list can be on screen with a selection left over.
+        if recordingID == selectedTranscriptRecordingID {
+            transcriptRevealToken &+= 1
+            return
+        }
+        if unsavedEditsGuard.hasUnsavedChanges {
+            // Opening another transcript replaces the editor in the detail
+            // column, so ask first rather than drop the edits.
+            pendingTranscriptRecordingID = recordingID
+            showingUnsavedEditsPrompt = true
+        } else {
+            selectedTranscriptRecordingID = recordingID
+            transcriptRevealToken &+= 1
+        }
         #endif
     }
+
+    #if !os(macOS)
+    private func openPendingTranscript() {
+        if let pendingTranscriptRecordingID {
+            selectedTranscriptRecordingID = pendingTranscriptRecordingID
+            transcriptRevealToken &+= 1
+        }
+        pendingTranscriptRecordingID = nil
+    }
+    #endif
+
+    // MARK: - Navigation
+
+    /// iOS and iPadOS show the list with the open transcript beside it at
+    /// regular width (iPhone Duo's inner display, iPad) and push it at compact
+    /// width. macOS opens transcripts in their own windows.
+    @ViewBuilder
+    private var navigationRoot: some View {
+        #if os(macOS)
+        AdaptiveNavigationWrapper {
+            mainContentView
+        }
+        #else
+        ListDetailSplitView(
+            selectionID: selectedTranscriptRecordingID,
+            revealToken: transcriptRevealToken,
+            dismissalStorageKey: "transcripts.detailDismissed",
+            // Leaving the editor with unsaved edits goes through its own
+            // Save/Discard prompt, whichever way the column was asked to change.
+            allowsLeavingDetail: { !unsavedEditsGuard.hasUnsavedChanges },
+            leaveRefused: { unsavedEditsGuard.requestClose() }
+        ) {
+            mainContentView
+        } detail: {
+            transcriptDetailColumn
+        }
+        .environment(\.unsavedEditsGuard, unsavedEditsGuard)
+        #endif
+    }
+
+    #if !os(macOS)
+    @ViewBuilder
+    private var transcriptDetailColumn: some View {
+        if let idString = selectedTranscriptRecordingID,
+           let recordingId = UUID(uuidString: idString),
+           let recording = appCoordinator.getRecording(id: recordingId) {
+            if let transcript = appCoordinator.getTranscriptData(for: recordingId) {
+                EditableTranscriptView(recording: recording, transcript: transcript, transcriptManager: TranscriptManager.shared)
+                    .environmentObject(appCoordinator)
+                    .environmentObject(recorderVM)
+                    // Fresh editor state for each transcript.
+                    .id(recordingId)
+                    .environment(\.embeddedDetailClose, EmbeddedDetailClose { selectedTranscriptRecordingID = nil })
+            } else {
+                ContentUnavailableView(
+                    "No Transcript Yet",
+                    systemImage: "text.badge.plus",
+                    description: Text("This recording's transcript will appear here when transcription finishes.")
+                )
+            }
+        } else if selectedTranscriptRecordingID != nil {
+            ContentUnavailableView(
+                "Transcript Not Available",
+                systemImage: "doc.text.magnifyingglass",
+                description: Text("This recording could not be found.")
+            )
+            .onAppear {
+                // A selection restored from scene storage can name a recording
+                // that was deleted or merged since. Drop it rather than leave a
+                // dead detail open that has to be backed out of by hand.
+                AppLog.shared.transcription("Cleared a transcript selection whose recording no longer exists", level: .debug)
+                selectedTranscriptRecordingID = nil
+            }
+        } else {
+            ContentUnavailableView(
+                "Select a Transcript",
+                systemImage: "text.alignleft",
+                description: Text("Choose a transcript from the list to read and edit it here.")
+            )
+        }
+    }
+    #endif
 
     private func presentLocation(_ locationData: LocationData) {
         #if os(macOS)
@@ -1713,6 +1868,11 @@ struct EditableTranscriptView: View {
     let transcript: TranscriptData
     let transcriptManager: TranscriptManager
     @Environment(\.dismiss) private var dismiss
+    /// Set when the editor sits in the Transcripts split's detail column.
+    @Environment(\.embeddedDetailClose) private var embeddedDetailClose
+    @Environment(\.unsavedEditsGuard) private var unsavedEditsGuard
+    /// Identifies this editor instance to `unsavedEditsGuard`.
+    @State private var unsavedEditsOwner = UUID()
     @Environment(\.nativeMacPresentationContext) private var presentationContext
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var locationAddress: String?
@@ -1858,8 +2018,19 @@ struct EditableTranscriptView: View {
         )
     }
 
-    private var editorContent: some View {
-        NavigationStack {
+    /// An embedded editor already sits in its column's navigation stack.
+    @ViewBuilder
+    private var editorNavigationContainer: some View {
+        if embeddedDetailClose != nil {
+            editorForm
+        } else {
+            NavigationStack {
+                editorForm
+            }
+        }
+    }
+
+    private var editorForm: some View {
             Group {
                 #if os(macOS)
                 // Native macOS needs one explicit scroll owner for the full
@@ -1899,15 +2070,26 @@ struct EditableTranscriptView: View {
                     }
                 }
                 #else
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") { dismiss() }
+                ToolbarItem(placement: .cancellationAction) {
+                    SheetCancelButton { requestClose() }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     transcriptSaveButton
                 }
                 #endif
             }
-        }
+            #if !os(macOS)
+            // In a pushed column the system Back would skip the unsaved-edits
+            // prompt (and so would its swipe); Cancel is the way back instead.
+            .navigationBarBackButtonHidden(embeddedDetailClose != nil)
+            // Hiding Back does not reliably stop the edge swipe in a collapsed
+            // split view, and a completed swipe destroys unsaved edits.
+            .background(InteractivePopDisabler(isDisabled: embeddedDetailClose != nil))
+            #endif
+    }
+
+    private var editorContent: some View {
+        editorNavigationContainer
         #if os(macOS)
         .focusedSceneValue(
             \.transcriptSaveAction,
@@ -1927,6 +2109,7 @@ struct EditableTranscriptView: View {
                 .frame(width: 0, height: 0)
             }
         }
+        #endif
         // A windowed editor is protected by NativeMacWindowCloseGuard, but a sheet
         // has no equivalent: Escape on macOS and swipe-down on iOS both dismiss
         // straight past the confirmation below. Block those while edits are
@@ -1955,7 +2138,6 @@ struct EditableTranscriptView: View {
         } message: {
             Text("Your transcript changes have not been saved.")
         }
-        #endif
         .alert("Rerun Transcription", isPresented: $showingRerunAlert) {
             Button("Cancel", role: .cancel) { }
             Button("Rerun", role: .destructive) {
@@ -1968,7 +2150,11 @@ struct EditableTranscriptView: View {
         .alert("Transcript Saved", isPresented: $showingSaveSuccessAlert) {
             Button("OK") {
                 showingSaveSuccessAlert = false
-                dismiss()
+                // A sheet closes after saving; a column keeps the transcript
+                // on screen.
+                if embeddedDetailClose == nil {
+                    dismiss()
+                }
             }
         } message: {
             Text("Your transcript changes have been saved.")
@@ -2104,6 +2290,20 @@ struct EditableTranscriptView: View {
     /// modifier chain stays within what the type checker can solve.
     var body: some View {
         editorContent
+        .onAppear {
+            unsavedEditsGuard?.register(
+                owner: unsavedEditsOwner,
+                save: saveForSelectionChange,
+                requestClose: { requestClose() }
+            )
+            unsavedEditsGuard?.update(owner: unsavedEditsOwner, hasUnsavedChanges: isTranscriptDirty)
+        }
+        .onDisappear {
+            unsavedEditsGuard?.unregister(owner: unsavedEditsOwner)
+        }
+        .onChange(of: isTranscriptDirty) { _, dirty in
+            unsavedEditsGuard?.update(owner: unsavedEditsOwner, hasUnsavedChanges: dirty)
+        }
         .onReceive(TranscriptCleanupQueue.shared.objectWillChange) { _ in
             // `objectWillChange` fires before the change lands; read it after.
             // The editor's body re-evaluates only when this recording's
@@ -2444,6 +2644,11 @@ struct EditableTranscriptView: View {
                 summaryData: enhancedSummary
             )
             .environmentObject(appCoordinator)
+            // This is a modal sheet, not a split-view column. Without the
+            // reset it inherits the embedded editor's close action, drops its
+            // own navigation stack and Done button, and a delete would clear
+            // the transcript selection behind unsaved edits.
+            .environment(\.embeddedDetailClose, nil)
         } else {
             VStack(spacing: 16) {
                 Image(systemName: "doc.text.magnifyingglass")
@@ -2522,7 +2727,40 @@ struct EditableTranscriptView: View {
         }
     }
 
-    #if os(macOS)
+    /// Cancel: asks before discarding unsaved edits, otherwise closes.
+    private func requestClose() {
+        if isTranscriptDirty && !isSaving {
+            showingCloseConfirmation = true
+        } else {
+            closeEditor()
+        }
+    }
+
+    /// Closes the sheet or window, or clears the split's selection when
+    /// embedded in a column.
+    private func closeEditor() {
+        if let embeddedDetailClose {
+            embeddedDetailClose()
+        } else {
+            dismiss()
+        }
+    }
+
+    /// Saves without closing, for the list's "Save Changes" before it opens
+    /// another transcript. False when the save failed; the error alert shows.
+    private func saveForSelectionChange() -> Bool {
+        guard !isSaving, !isReloadingTranscript else { return false }
+        isSaving = true
+        let didSave = saveTranscript()
+        isSaving = false
+        guard didSave else {
+            showingSaveErrorAlert = true
+            return false
+        }
+        savedTranscriptSnapshot = currentTranscriptSnapshot
+        return true
+    }
+
     private func saveAndClose() {
         guard !isSaving, isTranscriptDirty else { return }
 
@@ -2549,10 +2787,9 @@ struct EditableTranscriptView: View {
         showingCloseConfirmation = false
         isClosingAfterDecision = true
         DispatchQueue.main.async {
-            dismiss()
+            closeEditor()
         }
     }
-    #endif
 
     private func saveTranscript() -> Bool {
         guard let recordingId = recording.id else {
@@ -3358,10 +3595,10 @@ struct SpeakerEditingView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
-                        Button("Cancel") { dismiss() }
+                        SheetCancelButton { dismiss() }
                     }
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("Apply") { applyNames() }
+                        SheetConfirmButton(title: "Apply") { applyNames() }
                             .fontWeight(.semibold)
                     }
                 }
@@ -3624,7 +3861,7 @@ struct TranscriptDetailView: View {
                 }
                 #else
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    SheetDoneButton { dismiss() }
                 }
                 #endif
             }

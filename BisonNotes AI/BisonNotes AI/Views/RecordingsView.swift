@@ -249,6 +249,9 @@ struct RecordingsView: View {
 
                         Spacer()
 
+                        // On iOS Help is a toolbar item, so iPhone Duo can move
+                        // it into its vertical bar.
+                        #if os(macOS)
                         Button(action: {
                             openURL(BisonNotesDocumentation.releaseGuideURL)
                         }) {
@@ -260,6 +263,7 @@ struct RecordingsView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Help")
+                        #endif
                     }
 
                     VStack(spacing: 18) {
@@ -358,6 +362,17 @@ struct RecordingsView: View {
             }
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
+            #if os(iOS)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: {
+                        openURL(BisonNotesDocumentation.releaseGuideURL)
+                    }) {
+                        Label("Help", systemImage: "questionmark.circle")
+                    }
+                }
+            }
+            #endif
             .fileImporter(
                 isPresented: $showingFileImporter,
                 allowedContentTypes: fileImportContentTypes,

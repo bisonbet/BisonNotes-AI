@@ -155,7 +155,7 @@ struct OpenAICompatibleSettingsView: View {
             .toolbar {
 #if !os(macOS)
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    SheetDoneButton {
                         // Ensure it's enabled when user is done configuring
                         let selectedEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ?? ""
                         if selectedEngine == "OpenAI API Compatible" {
