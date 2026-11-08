@@ -79,6 +79,7 @@ extension AudioRecorderViewModel {
 		interruptionEndHandled = false
 		isInInterruption = true
 		deferredCallDuration = nil
+		pendingInterruptionEndShouldResume = nil
 		interruptionRecordingURL = recordingURL
 		recordingState = .interrupted(reason: .phoneCall, startedAt: interruptionDate)
 		recorderStoppedUnexpectedlyTime = nil
@@ -158,6 +159,7 @@ extension AudioRecorderViewModel {
 		interruptionEndHandled = true
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		await requestAudioRecovery(trigger: .foregroundReconciliation, recordingURL: url)
 	}
 
@@ -185,12 +187,16 @@ extension AudioRecorderViewModel {
 			return
 		}
 		if callInterruptionTracker.hasActiveCalls {
+			// Keep the event: iOS sends `.ended` once, and the call's end replays
+			// it (see `pendingInterruptionEndShouldResume`).
+			pendingInterruptionEndShouldResume = shouldResume
 			AppLog.shared.audioSession(
-				"Audio interruption ended while a CallKit call is still active; waiting for its correlated end event",
+				"Audio interruption ended while a CallKit call is still active; holding it for the call's end event",
 				level: .debug
 			)
 			return
 		}
+		pendingInterruptionEndShouldResume = nil
 
 		if let callDuration = deferredCallDuration, callDuration >= SHORT_CALL_THRESHOLD {
 			AppLog.shared.audioSession("Deferred long call detected (\(callDuration)s >= \(SHORT_CALL_THRESHOLD)s threshold) - asking user whether to resume")
@@ -370,6 +376,7 @@ extension AudioRecorderViewModel {
 		recordingIntentActive = false
 		recoveryCoordinator.invalidateRecordingSession(reason: "terminal interruption: \(reason)")
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		stopInterruptionWatchdog()
 		#endif
 		recordingBeingProcessed = true

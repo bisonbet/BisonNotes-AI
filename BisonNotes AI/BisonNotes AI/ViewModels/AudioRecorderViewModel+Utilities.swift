@@ -431,6 +431,7 @@ extension AudioRecorderViewModel {
 		#if os(iOS)
 		recordingIntentActive = false
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		#endif
 		if let url {
 			removeOwnedRecordingAttemptArtifact(at: url)

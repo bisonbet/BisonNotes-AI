@@ -212,6 +212,17 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	#if os(iOS)
 	var callObserver: CXCallObserver?
 	var callInterruptionTracker = CallInterruptionTracker()
+	/// The `.shouldResume` option of an AVAudioSession `.ended` that arrived
+	/// while a correlated CallKit call was still active, held for that call's
+	/// end event to act on. nil when no such event is waiting.
+	///
+	/// The `.ended` handler cannot start recovery while CallKit still reports a
+	/// call, and iOS sends `.ended` only once. Dropping it left a backgrounded
+	/// recording with nothing to restart it: an unanswered call that iOS hands
+	/// to Live Voicemail ends its ring (and the interruption) before the call
+	/// itself ends, so CallKit's end — which defers to `.ended` in the
+	/// background — arrived after the only `.ended` had already been discarded.
+	var pendingInterruptionEndShouldResume: Bool?
 	#endif
 	var deferredCallDuration: TimeInterval? // Set when CallKit defers during background
 	let SHORT_CALL_THRESHOLD: TimeInterval = 180 // 3 minutes
@@ -910,6 +921,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		interruptionRecordingURL = nil
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		interruptionEndHandled = false
 		recoveryFinalizedSegmentURLs.removeAll()
 		// A recovery cancelled mid-finalization can still be suspended inside
@@ -1098,6 +1110,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		recoveryCoordinator.invalidateRecordingSession(reason: "user stop")
 		deferredCallDuration = nil
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		stopInterruptionWatchdog()
 		#endif
 		finishRecordingStartup()
@@ -1216,6 +1229,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		recordingIntentActive = false
 		recoveryCoordinator.invalidateRecordingSession(reason: reason ?? "live transcription stopped")
 		callInterruptionTracker.removeAll()
+		pendingInterruptionEndShouldResume = nil
 		stopInterruptionWatchdog()
 		clearDeferredRecoverySnapshotForCurrentRecording()
 		#endif

@@ -613,6 +613,64 @@ final class AudioInterruptionRecoveryTests: XCTestCase {
         }
     }
 
+    /// Unanswered call sent to Live Voicemail while backgrounded: the ring's
+    /// interruption ends (with `.shouldResume`) while CallKit still reports the
+    /// call, and the call itself ends seconds later. The `.ended` must be held
+    /// and replayed by the call's end; dropping it left the recording stopped
+    /// until the user opened the app.
+    func testInterruptionEndedDuringAnActiveCallIsReplayedWhenTheCallEndsInBackground() async {
+        let viewModel = AudioRecorderViewModel(audioSessionManager: EnhancedAudioSessionManager())
+        let sessionID = UUID()
+        let callID = UUID()
+        let interruptionStartedAt = Date().addingTimeInterval(-25)
+        let callStartedAt = Date().addingTimeInterval(-5)
+        viewModel.recordingSessionID = sessionID
+        viewModel.recoveryCoordinator.beginRecordingSession(sessionID)
+        viewModel.recordingIntentActive = true
+        viewModel.appIsBackgrounding = true
+        viewModel.isInInterruption = true
+        viewModel.interruptionEndHandled = false
+        viewModel.interruptionRecordingURL = URL(fileURLWithPath: "/tmp/recording.m4a")
+        viewModel.recordingState = .interrupted(reason: .phoneCall, startedAt: interruptionStartedAt)
+        viewModel.callInterruptionTracker.observeStart(id: callID, at: callStartedAt)
+
+        viewModel.handleAudioInterruption(type: .ended, shouldResume: true)
+
+        XCTAssertEqual(viewModel.pendingInterruptionEndShouldResume, true, "The ended event is held, not dropped")
+        XCTAssertTrue(viewModel.isInInterruption)
+        XCTAssertFalse(viewModel.interruptionEndHandled)
+
+        let startedAt = viewModel.callInterruptionTracker.observeEnd(id: callID)
+        await viewModel.handleCallEnded(callStartedAt: startedAt, endedAt: Date())
+        viewModel.stopInterruptionWatchdog()
+
+        XCTAssertNil(viewModel.pendingInterruptionEndShouldResume)
+        XCTAssertTrue(viewModel.interruptionEndHandled, "The call's end replayed the held event")
+        XCTAssertFalse(viewModel.isInInterruption)
+        XCTAssertNil(viewModel.deferredCallDuration, "A short call resumes without the long-call prompt")
+    }
+
+    /// Without a held `.ended`, a background call end still defers to the
+    /// interruption-ended and foreground handlers, as before.
+    func testBackgroundCallEndWithoutAHeldInterruptionEndStillDefers() async {
+        let viewModel = AudioRecorderViewModel(audioSessionManager: EnhancedAudioSessionManager())
+        let sessionID = UUID()
+        viewModel.recordingSessionID = sessionID
+        viewModel.recoveryCoordinator.beginRecordingSession(sessionID)
+        viewModel.recordingIntentActive = true
+        viewModel.appIsBackgrounding = true
+        viewModel.isInInterruption = true
+        viewModel.interruptionEndHandled = false
+        viewModel.interruptionRecordingURL = URL(fileURLWithPath: "/tmp/recording.m4a")
+        viewModel.recordingState = .interrupted(reason: .phoneCall, startedAt: Date().addingTimeInterval(-7))
+
+        await viewModel.handleCallEnded(callStartedAt: nil, endedAt: Date())
+
+        XCTAssertNotNil(viewModel.deferredCallDuration)
+        XCTAssertTrue(viewModel.isInInterruption)
+        XCTAssertFalse(viewModel.interruptionEndHandled)
+    }
+
     /// A reclaim task is suspended across validation and export, and the parked
     /// entry is deliberately left on disk until its save lands. A second
     /// superseded session therefore reads the same entry again — and used to
