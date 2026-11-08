@@ -320,6 +320,43 @@ class CoreDataManager: ObservableObject {
     }
     #endif
 
+    /// Runs a read-only `body` on a private-queue context of this store, off the
+    /// main actor. For work that reads the whole library — the iCloud backup
+    /// signature walks every row and hashes every transcript and summary body —
+    /// and would otherwise stall the UI. `body` must copy what it needs out of the
+    /// context; managed objects never leave it. Rows saved after the context is
+    /// created are not seen, and unsaved view-context edits never are.
+    func performBackgroundRead<Result: Sendable>(
+        operation: String,
+        _ body: @escaping @Sendable (NSManagedObjectContext) throws -> Result
+    ) async throws -> Result {
+        #if DEBUG
+        if let injectedFailure = Self.injectedCollectionReadFailure,
+           Self.injectedCollectionReadOperation == nil ||
+                Self.injectedCollectionReadOperation == operation {
+            throw CoreDataCollectionReadError(operation: operation, failure: injectedFailure)
+        }
+        #endif
+        let backgroundContext = persistenceController.container.newBackgroundContext()
+        do {
+            return try await backgroundContext.perform {
+                try body(backgroundContext)
+            }
+        } catch let error as CoreDataCollectionReadError {
+            throw error
+        } catch {
+            let wrappedError = CoreDataCollectionReadError(
+                operation: operation,
+                failure: PersistenceStoreFailure(error: error)
+            )
+            AppLog.shared.coreData(
+                "durable_read_failed operation=\(operation) cause=\(wrappedError.failure.diagnosticDescription)",
+                level: .error
+            )
+            throw wrappedError
+        }
+    }
+
     /// The context that backs this manager. Restore and deletion coordination must use
     /// the coordinator's context rather than the process-wide shared persistence store.
     var managedObjectContext: NSManagedObjectContext {

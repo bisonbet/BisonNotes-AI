@@ -33,6 +33,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         "iCloudQuarantinedBackupRecordNamesV2",
         "iCloudQuarantinedLegacySummaryRecordNamesV2",
         "iCloudLegacySummaryRecordsAbsentAtV2",
+        "iCloudIssuedDeletionMarkerNames",
         "lastSyncDate"
     ]
 
@@ -435,6 +436,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             [
                 .flushOutboundTombstones,
                 .applyInboundTombstones,
+                .readLocalState,
                 .fetchCloudSnapshot,
                 .resolveWinners,
                 .writeContent,
@@ -628,11 +630,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         try createCompleteRecording(named: "Quiet activation")
         _ = try await runReconcile()
 
-        XCTAssertFalse(
-            try manager.shouldStartRoutineSnapshot(force: false),
-            "A quiet device that just synced has nothing to check"
-        )
-        XCTAssertTrue(try manager.shouldStartRoutineSnapshot(force: true), "A cold launch still forces one pass")
+        let shouldStart1 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertFalse(shouldStart1, "A quiet device that just synced has nothing to check")
+        let shouldStart2 = try await manager.shouldStartRoutineSnapshot(force: true)
+        XCTAssertTrue(shouldStart2, "A cold launch still forces one pass")
     }
 
     func testAStaleCheckEarnsARunAgain() async throws {
@@ -641,13 +642,15 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
         manager.lastSuccessfulRoutineSyncDate = Date().addingTimeInterval(-1_800)
 
-        XCTAssertTrue(try manager.shouldStartRoutineSnapshot(force: false))
+        let shouldStart3 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertTrue(shouldStart3)
     }
 
     func testAQueuedDeletionBypassesTheMaintenanceThrottle() async throws {
         let recordingId = try createCompleteRecording(named: "Deleted")
         _ = try await runReconcile()
-        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false))
+        let shouldStart4 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertFalse(shouldStart4)
 
         manager.enqueueRecordingDeletionForiCloud(
             recordingId: recordingId,
@@ -656,10 +659,8 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             requestedAt: Date()
         )
 
-        XCTAssertTrue(
-            try manager.shouldStartRoutineSnapshot(force: false),
-            "A deletion the user made must never wait out a maintenance window"
-        )
+        let shouldStart5 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertTrue(shouldStart5, "A deletion the user made must never wait out a maintenance window")
         XCTAssertEqual(manager.pendingCloudDeletionCount, 1)
     }
 
@@ -815,7 +816,8 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         transport.clearLedger()
 
         XCTAssertTrue(manager.cloudExecutor.isDeferred)
-        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false))
+        let shouldStart6 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertFalse(shouldStart6)
 
         let result = try await runReconcile(reason: .appBecameActive)
         XCTAssertNotNil(result.wasDeferredUntil, "A deferred sync must say so rather than look like a clean empty run")
@@ -966,13 +968,12 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
             "Records that never left the device must still look like pending work on the next activation"
         )
-        XCTAssertFalse(try manager.shouldStartRoutineSnapshot(force: false), "…but not until the backoff window has passed")
+        let shouldStart7 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertFalse(shouldStart7, "…but not until the backoff window has passed")
 
         clock.advance(901)
-        XCTAssertTrue(
-            try manager.shouldStartRoutineSnapshot(force: false),
-            "Once CloudKit is willing to talk again the outstanding upload must be retried"
-        )
+        let shouldStart8 = try await manager.shouldStartRoutineSnapshot(force: false)
+        XCTAssertTrue(shouldStart8, "Once CloudKit is willing to talk again the outstanding upload must be retried")
     }
 
     /// A conflict this device correctly loses still has to reach Core Data on the
@@ -1503,20 +1504,30 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
 
     /// An explicit deletion id must remain actionable even when the trusted manifest
     /// is stale because the content save and manifest write were separate operations.
-    func testAReplayedTombstoneKeepsExplicitDeleteIntentWhenManifestNoLongerNamesRecord() async throws {
+    ///
+    /// That holds for each device's *first* application of a marker. Only a device
+    /// that still holds an item can write it to the cloud, and that device's own
+    /// first pass issues the delete explicitly. Re-issuing it on every replay
+    /// re-sent every tombstone's deletes on every sync for the whole retention
+    /// window, so a replay is filtered against the manifest like any other.
+    func testATombstoneIssuesItsExplicitDeleteOnTheFirstPassOnly() async throws {
         try createCompleteRecording(named: "Replay cost")
         let deletedRecordingId = UUID()
         seedRetiredRecordingMarker(for: deletedRecordingId)
         seedTrustedManifest()
 
         _ = try await runReconcile()
+        XCTAssertTrue(
+            deletedRecordNames().contains("backup_recording_\(deletedRecordingId.uuidString)"),
+            "An explicit tombstone id must not be suppressed by a stale manifest on its first pass"
+        )
 
         transport.clearLedger()
         _ = try await runReconcile()
 
-        XCTAssertTrue(
+        XCTAssertFalse(
             deletedRecordNames().contains("backup_recording_\(deletedRecordingId.uuidString)"),
-            "An explicit tombstone id must not be suppressed by a stale manifest"
+            "A replay the manifest proves is already gone must not be re-sent"
         )
     }
 
@@ -2173,17 +2184,13 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
     func testAnEditMadeOutsideTheAutoBackupPathStillEarnsASync() async throws {
         let recordingId = try createCompleteRecording(named: "Original name")
         _ = try await runReconcile()
-        XCTAssertFalse(
-            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
-            "nothing has changed yet"
-        )
+        let shouldStart9 = try await manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator)
+        XCTAssertFalse(shouldStart9, "nothing has changed yet")
 
         try appCoordinator.coreDataManager.updateRecordingName(for: recordingId, newName: "Renamed")
 
-        XCTAssertTrue(
-            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
-            "A rename must not wait out the maintenance window just because it took a different code path"
-        )
+        let shouldStart10 = try await manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator)
+        XCTAssertTrue(shouldStart10, "A rename must not wait out the maintenance window just because it took a different code path")
     }
 
     func testAnAudioFailureDoesNotStopTheMetadataUpload() async throws {
@@ -2232,10 +2239,8 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             UserDefaults.standard.string(forKey: "iCloudBackupStateSignatureV1"),
             "Recording the signature here would let every later run skip the audio that never uploaded"
         )
-        XCTAssertTrue(
-            try manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator),
-            "…and the next activation has to pick the retry up"
-        )
+        let shouldStart11 = try await manager.shouldStartRoutineSnapshot(force: false, appCoordinator: appCoordinator)
+        XCTAssertTrue(shouldStart11, "…and the next activation has to pick the retry up")
     }
 
     // MARK: - Failure handling
@@ -2487,6 +2492,50 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             }
         )
         return names
+    }
+
+    /// A marker replays on every sync until its retention window closes. Tagging
+    /// each replay's ids as an explicit request exempted them from the manifest
+    /// filter, so every tombstone re-sent its deletes on every sync for thirty
+    /// days — a steady `deleted=50 deleteOrigin[explicit=50]` with nothing saved.
+    func testAReplayedMarkerIsIssuedExplicitlyOnlyOnThisDevicesFirstPass() async throws {
+        try createCompleteRecording(named: "Live")
+        seedTrustedManifest()
+        _ = try await runReconcile()
+
+        let markerNames = seedDeletionMarkers(count: 3, deletedAt: clock.now.addingTimeInterval(-60))
+        _ = try await runReconcile(reason: .appBecameActive)
+        let firstPass = try XCTUnwrap(metrics.lastReport)
+        XCTAssertEqual(
+            firstPass.deletesFromExplicitRequest, 3,
+            "A marker's first application still issues its ids, in case the manifest is stale"
+        )
+        XCTAssertEqual(iCloudStorageManager.loadIssuedDeletionMarkerNames(), Set(markerNames))
+
+        _ = try await runReconcile(reason: .appBecameActive)
+        let replay = try XCTUnwrap(metrics.lastReport)
+        XCTAssertEqual(replay.deletesFromExplicitRequest, 0, "A replay is no longer an explicit request")
+        XCTAssertEqual(
+            replay.deletesSuppressedAsAlreadyGone, 3,
+            "The manifest proves the replayed targets are gone, so nothing is re-sent"
+        )
+    }
+
+    func testIssuedMarkerNamesForgetRetiredAndVanishedMarkers() throws {
+        let issued = iCloudStorageManager.issuedDeletionMarkerNamesAfterCommit(
+            applicableMarkerNames: ["a", "b", "c"],
+            retiredMarkerNames: ["b"]
+        )
+        // "b" retired this run; anything withdrawn or retired elsewhere is simply
+        // not among the applicable markers any more.
+        XCTAssertEqual(issued, ["a", "c"])
+
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "IssuedMarkerNamesTest"))
+        defer { defaults.removePersistentDomain(forName: "IssuedMarkerNamesTest") }
+        iCloudStorageManager.saveIssuedDeletionMarkerNames(issued, defaults: defaults)
+        XCTAssertEqual(iCloudStorageManager.loadIssuedDeletionMarkerNames(defaults: defaults), issued)
+        iCloudStorageManager.saveIssuedDeletionMarkerNames([], defaults: defaults)
+        XCTAssertTrue(iCloudStorageManager.loadIssuedDeletionMarkerNames(defaults: defaults).isEmpty)
     }
 
     func testTombstonesDoNotMakeARunReadTheDatasetAgainForEachOne() async throws {

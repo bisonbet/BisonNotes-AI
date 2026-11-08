@@ -469,7 +469,7 @@ extension AppDataCoordinator {
             // isolated context.
             await Task.yield()
             do {
-                guard try iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else {
+                guard try await iCloudManager.shouldStartRoutineSnapshot(force: force, appCoordinator: self) else {
                     return
                 }
             } catch {
