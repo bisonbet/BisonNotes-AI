@@ -155,6 +155,31 @@ final class DiagnosticRetentionTests: XCTestCase {
         )
     }
 
+    /// Delivery and export-time pruning run on different queues; concurrent
+    /// read-modify-writes must not lose an entry.
+    func testConcurrentRecordsAndPrunesLoseNothing() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("metrickit-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let payloads = (0..<MetricKitDiagnosticStore.maximumPriorityEntries).map {
+            payload(Double($0) + 1, kinds: ["crashDiagnostics"])
+        }
+        let now = self.now
+
+        DispatchQueue.concurrentPerform(iterations: payloads.count * 2) { index in
+            if index % 2 == 0 {
+                MetricKitDiagnosticStore.record([payloads[index / 2]], at: url, now: now)
+            } else {
+                _ = MetricKitDiagnosticStore.loadRetained(at: url, now: now)
+            }
+        }
+
+        XCTAssertEqual(
+            MetricKitDiagnosticStore.loadRetained(at: url, now: now).count,
+            payloads.count
+        )
+    }
+
     func testExportPutsEachPayloadOnOneLine() {
         let text = MetricKitDiagnosticStore.exportText(entries([payload(1, kinds: ["crashDiagnostics"])]))
         let lines = text.components(separatedBy: "\n")

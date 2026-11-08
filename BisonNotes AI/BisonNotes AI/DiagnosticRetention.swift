@@ -135,6 +135,8 @@ enum MetricKitDiagnosticStore {
     /// Adds newly delivered payloads (each a `jsonRepresentation()` object) to
     /// the store at `url`, then applies the retention budget.
     static func record(_ payloads: [[String: Any]], at url: URL, now: Date = Date()) {
+        fileLock.lock()
+        defer { fileLock.unlock() }
         var entries = load(at: url, now: now)
         for payload in payloads {
             entries += self.entries(splitting: payload, receivedAt: now)
@@ -145,6 +147,8 @@ enum MetricKitDiagnosticStore {
     /// The retained entries at `url`. Rewrites the file when retention dropped
     /// anything, so expired payloads leave the device even when no new one arrives.
     static func loadRetained(at url: URL, now: Date = Date()) -> [Entry] {
+        fileLock.lock()
+        defer { fileLock.unlock() }
         let stored = load(at: url, now: now)
         let retained = retain(stored, now: now)
         if retained.count != stored.count || isLegacyFile(at: url) {
@@ -152,6 +156,12 @@ enum MetricKitDiagnosticStore {
         }
         return retained
     }
+
+    /// Serializes every read-modify-write of the file. MetricKit delivers on its
+    /// own queue while an export may be pruning: without this, the export could
+    /// load the old entries, a delivery could save a new crash, and the export's
+    /// stale write would then replace it.
+    private static let fileLock = NSLock()
 
     private static func load(at url: URL, now: Date) -> [Entry] {
         guard let data = try? Data(contentsOf: url) else { return [] }
