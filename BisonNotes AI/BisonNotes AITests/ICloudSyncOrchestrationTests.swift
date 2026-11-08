@@ -34,6 +34,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         "iCloudQuarantinedLegacySummaryRecordNamesV2",
         "iCloudLegacySummaryRecordsAbsentAtV2",
         "iCloudIssuedDeletionMarkerNames",
+        "iCloudIssuedDeletionMarkerIdentitiesV2",
         "lastSyncDate"
     ]
 
@@ -2503,14 +2504,18 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         seedTrustedManifest()
         _ = try await runReconcile()
 
-        let markerNames = seedDeletionMarkers(count: 3, deletedAt: clock.now.addingTimeInterval(-60))
+        let deletedAt = clock.now.addingTimeInterval(-60)
+        let markerNames = seedDeletionMarkers(count: 3, deletedAt: deletedAt)
         _ = try await runReconcile(reason: .appBecameActive)
         let firstPass = try XCTUnwrap(metrics.lastReport)
         XCTAssertEqual(
             firstPass.deletesFromExplicitRequest, 3,
             "A marker's first application still issues its ids, in case the manifest is stale"
         )
-        XCTAssertEqual(iCloudStorageManager.loadIssuedDeletionMarkerNames(), Set(markerNames))
+        XCTAssertEqual(
+            iCloudStorageManager.loadIssuedDeletionMarkerIdentities(),
+            Set(markerNames.map { iCloudStorageManager.deletionMarkerIdentity(recordName: $0, deletedAt: deletedAt) })
+        )
 
         _ = try await runReconcile(reason: .appBecameActive)
         let replay = try XCTUnwrap(metrics.lastReport)
@@ -2521,21 +2526,72 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         )
     }
 
-    func testIssuedMarkerNamesForgetRetiredAndVanishedMarkers() throws {
-        let issued = iCloudStorageManager.issuedDeletionMarkerNamesAfterCommit(
-            applicableMarkerNames: ["a", "b", "c"],
-            retiredMarkerNames: ["b"]
+    func testIssuedMarkerIdentitiesForgetRetiredAndVanishedMarkers() throws {
+        let issued = iCloudStorageManager.issuedDeletionMarkerIdentitiesAfterCommit(
+            applicableMarkerIdentities: ["a@1", "b@1", "c@1"],
+            retiredMarkerIdentities: ["b@1"]
         )
         // "b" retired this run; anything withdrawn or retired elsewhere is simply
         // not among the applicable markers any more.
-        XCTAssertEqual(issued, ["a", "c"])
+        XCTAssertEqual(issued, ["a@1", "c@1"])
 
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: "IssuedMarkerNamesTest"))
-        defer { defaults.removePersistentDomain(forName: "IssuedMarkerNamesTest") }
-        iCloudStorageManager.saveIssuedDeletionMarkerNames(issued, defaults: defaults)
-        XCTAssertEqual(iCloudStorageManager.loadIssuedDeletionMarkerNames(defaults: defaults), issued)
-        iCloudStorageManager.saveIssuedDeletionMarkerNames([], defaults: defaults)
-        XCTAssertTrue(iCloudStorageManager.loadIssuedDeletionMarkerNames(defaults: defaults).isEmpty)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "IssuedMarkerIdentitiesTest"))
+        defer { defaults.removePersistentDomain(forName: "IssuedMarkerIdentitiesTest") }
+        iCloudStorageManager.saveIssuedDeletionMarkerIdentities(issued, defaults: defaults)
+        XCTAssertEqual(iCloudStorageManager.loadIssuedDeletionMarkerIdentities(defaults: defaults), issued)
+        iCloudStorageManager.saveIssuedDeletionMarkerIdentities([], defaults: defaults)
+        XCTAssertTrue(iCloudStorageManager.loadIssuedDeletionMarkerIdentities(defaults: defaults).isEmpty)
+    }
+
+    func testAMarkerIdentityIncludesItsDeletionTime() {
+        let earlier = Date(timeIntervalSince1970: 1_000)
+        let later = Date(timeIntervalSince1970: 2_000)
+        XCTAssertNotEqual(
+            iCloudStorageManager.deletionMarkerIdentity(recordName: "backup_deletion_x", deletedAt: earlier),
+            iCloudStorageManager.deletionMarkerIdentity(recordName: "backup_deletion_x", deletedAt: later),
+            "A later delete of the same item reuses the marker name, and must not look issued"
+        )
+    }
+
+    /// Marker names come from the target id, so deleting an item again — after a
+    /// revive, say — reuses the name. If the earlier marker left the cloud while
+    /// this device was away, it must not still count as issued: that later
+    /// delete is exactly the first pass a stale manifest needs to be explicit.
+    func testADeleteThatReusesAMarkerNameIsExplicitAgain() async throws {
+        try createCompleteRecording(named: "Live")
+        seedTrustedManifest()
+        _ = try await runReconcile()
+
+        let targetId = UUID()
+        let markerID = CKRecord.ID(recordName: "backup_deletion_\(targetId.uuidString)")
+        seedRetiredRecordingMarker(for: targetId, deletedAt: clock.now.addingTimeInterval(-120))
+        _ = try await runReconcile(reason: .appBecameActive)
+        XCTAssertEqual(try XCTUnwrap(metrics.lastReport).deletesFromExplicitRequest, 1)
+
+        // The marker is retired or withdrawn on another device.
+        transport.storage.removeValue(forKey: markerID)
+        _ = try await runReconcile(reason: .appBecameActive)
+        XCTAssertTrue(
+            iCloudStorageManager.loadIssuedDeletionMarkerIdentities().isEmpty,
+            "A run that finds no markers must forget the ones it had issued"
+        )
+
+        // The same item is deleted again: same marker name, later time.
+        seedRetiredRecordingMarker(for: targetId, deletedAt: clock.now.addingTimeInterval(-30))
+        transport.clearLedger()
+        _ = try await runReconcile(reason: .appBecameActive)
+        XCTAssertEqual(
+            try XCTUnwrap(metrics.lastReport).deletesFromExplicitRequest, 1,
+            "A reused marker name is a new delete, and its first pass is explicit"
+        )
+        XCTAssertTrue(deletedRecordNames().contains("backup_recording_\(targetId.uuidString)"))
+
+        // Replaced in place, without a run in between, the later time alone is
+        // enough to tell the new marker from the old one.
+        seedRetiredRecordingMarker(for: targetId, deletedAt: clock.now.addingTimeInterval(-10))
+        transport.clearLedger()
+        _ = try await runReconcile(reason: .appBecameActive)
+        XCTAssertEqual(try XCTUnwrap(metrics.lastReport).deletesFromExplicitRequest, 1)
     }
 
     func testTombstonesDoNotMakeARunReadTheDatasetAgainForEachOne() async throws {

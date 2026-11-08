@@ -2728,7 +2728,7 @@ class iCloudStorageManager: ObservableObject {
         defaults.removeObject(forKey: Self.pendingTranscriptRemovalsKey)
         defaults.removeObject(forKey: Self.pendingImportedAudioRemovalsKey)
         // Every marker is gone with the erase; a new one must issue explicitly.
-        defaults.removeObject(forKey: Self.issuedDeletionMarkerNamesKey)
+        defaults.removeObject(forKey: Self.issuedDeletionMarkerIdentitiesKey)
         // The erase emptied the account, so "no legacy records" is now trivially
         // true — but it is cleared rather than set, because the next sync should
         // establish that from a scan rather than inherit it from a wipe.
@@ -6886,7 +6886,15 @@ extension iCloudStorageManager {
 
         let deletionRecords = try await fetchBackupRecords(
             recordType: Self.backupDeletionRecordType)
-        guard !deletionRecords.isEmpty else { return (DeletionMarkerApplication(), CloudDeletionTargets()) }
+        guard !deletionRecords.isEmpty else {
+            // No marker is in the cloud, so none this device issued is still
+            // live. Forgetting them here matters: a marker retired or withdrawn
+            // elsewhere while this device was away would otherwise stay "issued",
+            // and the next delete of the same item — same record name — would be
+            // filtered as a replay instead of issued explicitly.
+            Self.saveIssuedDeletionMarkerIdentities([])
+            return (DeletionMarkerApplication(), CloudDeletionTargets())
+        }
 
         /// A marker that survived the withdrawal check, kept alongside the record it
         /// came from so the marker itself can be retired once it has done its job.
@@ -6950,10 +6958,16 @@ extension iCloudStorageManager {
         // inside the loop is what made this phase fetch ten thousand records for a
         // hundred and fifty live ones, and spend six minutes doing it.
         // Markers this device has already issued once. A replay is filtered against
-        // the manifest instead of re-sending its deletes as explicit ids.
-        let issuedMarkerNames = Self.loadIssuedDeletionMarkerNames()
+        // the manifest instead of re-sending its deletes as explicit ids. A marker
+        // is identified by its name *and* its deletion time: names are derived from
+        // the target id, so a later delete of the same item reuses the name, and it
+        // must be a first application again.
+        let issuedMarkerIdentities = Self.loadIssuedDeletionMarkerIdentities()
+        func identity(_ marker: ApplicableMarker) -> String {
+            Self.deletionMarkerIdentity(recordName: marker.recordID.recordName, deletedAt: marker.deletedAt)
+        }
         func isFirstApplication(_ marker: ApplicableMarker) -> Bool {
-            !issuedMarkerNames.contains(marker.recordID.recordName)
+            !issuedMarkerIdentities.contains(identity(marker))
         }
 
         var workspace: CloudDeletionWorkspace?
@@ -7028,10 +7042,12 @@ extension iCloudStorageManager {
         // Only after the whole plan committed: a failed run must issue its markers
         // explicitly again. Pruning to the markers still in the cloud forgets the
         // retired and withdrawn ones, so the set never outgrows the marker list.
-        Self.saveIssuedDeletionMarkerNames(
-            Self.issuedDeletionMarkerNamesAfterCommit(
-                applicableMarkerNames: applicableMarkers.map(\.recordID.recordName),
-                retiredMarkerNames: plan.expiredMarkerIDsToRetire.map(\.recordName)
+        Self.saveIssuedDeletionMarkerIdentities(
+            Self.issuedDeletionMarkerIdentitiesAfterCommit(
+                applicableMarkerIdentities: applicableMarkers.map(identity),
+                retiredMarkerIdentities: applicableMarkers
+                    .filter { plan.expiredMarkerIDsToRetire.contains($0.recordID) }
+                    .map(identity)
             )
         )
 
@@ -7871,36 +7887,52 @@ extension iCloudStorageManager {
 
     // MARK: - Issued deletion markers
 
-    nonisolated static let issuedDeletionMarkerNamesKey = "iCloudIssuedDeletionMarkerNames"
+    /// V2 stores identities (name + deletion time); V1 stored bare names, which
+    /// could not tell a reused marker name from the marker it replaced.
+    nonisolated static let issuedDeletionMarkerIdentitiesKey = "iCloudIssuedDeletionMarkerIdentitiesV2"
+    nonisolated private static let legacyIssuedDeletionMarkerNamesKey = "iCloudIssuedDeletionMarkerNames"
 
-    /// Record names of the deletion markers this device has applied and issued at
-    /// least once. Device-local: every device issues a marker explicitly on its
-    /// own first pass.
-    nonisolated static func loadIssuedDeletionMarkerNames(
-        defaults: UserDefaults = .standard
-    ) -> Set<String> {
-        Set(defaults.stringArray(forKey: issuedDeletionMarkerNamesKey) ?? [])
+    /// One marker's identity: its record name and its `deletedAt`, to the
+    /// millisecond. A marker re-created for a later delete of the same item has
+    /// the same name and a later time. A marker with no usable time is
+    /// identified by name alone.
+    nonisolated static func deletionMarkerIdentity(recordName: String, deletedAt: Date?) -> String {
+        guard let deletedAt else { return "\(recordName)@undated" }
+        return "\(recordName)@\(Int64(deletedAt.timeIntervalSince1970 * 1000))"
     }
 
-    nonisolated static func saveIssuedDeletionMarkerNames(
-        _ names: Set<String>,
+    /// Identities of the deletion markers this device has applied and issued at
+    /// least once. Device-local: every device issues a marker explicitly on its
+    /// own first pass.
+    nonisolated static func loadIssuedDeletionMarkerIdentities(
+        defaults: UserDefaults = .standard
+    ) -> Set<String> {
+        // The V1 set named markers without their time; it is dropped rather than
+        // trusted, which costs one explicit pass per live marker.
+        defaults.removeObject(forKey: legacyIssuedDeletionMarkerNamesKey)
+        return Set(defaults.stringArray(forKey: issuedDeletionMarkerIdentitiesKey) ?? [])
+    }
+
+    nonisolated static func saveIssuedDeletionMarkerIdentities(
+        _ identities: Set<String>,
         defaults: UserDefaults = .standard
     ) {
-        if names.isEmpty {
-            defaults.removeObject(forKey: issuedDeletionMarkerNamesKey)
+        if identities.isEmpty {
+            defaults.removeObject(forKey: issuedDeletionMarkerIdentitiesKey)
         } else {
-            defaults.set(names.sorted(), forKey: issuedDeletionMarkerNamesKey)
+            defaults.set(identities.sorted(), forKey: issuedDeletionMarkerIdentitiesKey)
         }
     }
 
     /// The issued set after a committed run: every marker the run applied, minus
     /// the ones it retired. Markers withdrawn or retired elsewhere are absent
-    /// from `applicableMarkerNames` and drop out on their own.
-    nonisolated static func issuedDeletionMarkerNamesAfterCommit(
-        applicableMarkerNames: [String],
-        retiredMarkerNames: [String]
+    /// from `applicableMarkerIdentities` and drop out on their own, and a run
+    /// that finds no markers at all empties the set.
+    nonisolated static func issuedDeletionMarkerIdentitiesAfterCommit(
+        applicableMarkerIdentities: [String],
+        retiredMarkerIdentities: [String]
     ) -> Set<String> {
-        Set(applicableMarkerNames).subtracting(retiredMarkerNames)
+        Set(applicableMarkerIdentities).subtracting(retiredMarkerIdentities)
     }
 
     nonisolated static var legacySummaryRecordsKnownAbsent: Bool {
