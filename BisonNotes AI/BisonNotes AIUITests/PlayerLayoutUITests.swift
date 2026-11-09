@@ -52,10 +52,18 @@ final class PlayerLayoutUITests: XCTestCase {
                 "\(name): the transport appears more than once"
             )
             if transcript.exists {
+                let segment = app.buttons.matching(NSPredicate(format: "value CONTAINS 'deterministic transcript'")).firstMatch
+                XCTAssertTrue(segment.exists, "\(name): the transcript beside the player is not the recording's")
+
+                // Tapping a line plays from there even when nothing is playing
+                // yet — there is no player to seek until playback starts.
+                XCTAssertTrue(app.buttons["Play Audio"].exists, "\(name): expected to start paused")
+                segment.tap()
                 XCTAssertTrue(
-                    app.buttons.matching(NSPredicate(format: "value CONTAINS 'deterministic transcript'")).firstMatch.exists,
-                    "\(name): the transcript beside the player is not the recording's"
+                    app.buttons["Pause Audio"].waitForExistence(timeout: 5),
+                    "\(name): tapping a transcript line did not start playback"
                 )
+                if app.buttons["Pause Audio"].exists { app.buttons["Pause Audio"].tap() }
             }
         }
     }

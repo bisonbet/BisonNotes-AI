@@ -74,7 +74,8 @@ struct PlayerTranscriptView: View {
             : segment.text
 
         return Button {
-            recorderVM.seekToTime(segment.startTime)
+            // Plays from here whether or not audio is already playing.
+            recorderVM.playRecording(url: recordingURL, from: segment.startTime)
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {

@@ -115,6 +115,24 @@ extension AudioRecorderViewModel {
 	}
 
 	/// Seek to a specific time in the current audio playback
+	/// Plays `url` from `time`: seeks the running player, or starts one there.
+	///
+	/// `seekToTime` alone does nothing without a player, and there is none
+	/// before the first play or after `stopPlaying()` or the end of the audio,
+	/// both of which clear it. `playRecording` starts from `playingTime`, so a
+	/// new start begins at `time`. While a start is still being prepared, only
+	/// the position is updated; the pending start reads it when its player is
+	/// ready.
+	func playRecording(url: URL, from time: TimeInterval) {
+		if isPlaying, audioPlayer != nil {
+			seekToTime(time)
+			return
+		}
+		playingTime = max(0, time)
+		guard !isPreparingPlayback else { return }
+		playRecording(url: url)
+	}
+
 	func seekToTime(_ time: TimeInterval) {
 		guard let player = audioPlayer else { return }
 		player.currentTime = min(max(time, 0), player.duration)
