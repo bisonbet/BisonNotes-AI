@@ -280,7 +280,9 @@ final class ListDetailSplitUITests: XCTestCase {
         // without it this simulator did not restore, and nothing here can be
         // checked.
         let editorRestored = editor.waitForExistence(timeout: 10)
-        let transcriptsTab = app.buttons["bisonnotes.sidebar.transcripts"]
+        // iPad's floating tab bar exposes each tab as two nested buttons with
+        // the same identifier.
+        let transcriptsTab = app.buttons["bisonnotes.sidebar.transcripts"].firstMatch
         let sceneRestored = editorRestored || (transcriptsTab.waitForExistence(timeout: 5) && transcriptsTab.isSelected)
         attachScreenshot(of: app, named: "relaunch-transcripts")
         if !sceneRestored {
