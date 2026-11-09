@@ -25,9 +25,6 @@ extension AudioRecorderViewModel {
 			do {
 				try await enhancedAudioSessionManager.configurePlaybackSession()
 
-				// Store the current seek position before creating new player
-				let seekPosition = playingTime
-
 				let player = try await Self.makePreparedPlayer(url: url)
 
 				// The player was closed or a newer request replaced this one while
@@ -39,6 +36,12 @@ extension AudioRecorderViewModel {
 					return
 				}
 				pendingPlaybackRequestID = nil
+
+				// Read the position only now that the player is ready: a transcript
+				// tap during preparation moves `playingTime` (see
+				// `playRecording(url:from:)`), and a copy taken before the await
+				// would start at the earlier tap instead.
+				let seekPosition = playingTime
 
 				audioPlayer = player
 				audioPlayer?.delegate = self
@@ -121,8 +124,8 @@ extension AudioRecorderViewModel {
 	/// before the first play or after `stopPlaying()` or the end of the audio,
 	/// both of which clear it. `playRecording` starts from `playingTime`, so a
 	/// new start begins at `time`. While a start is still being prepared, only
-	/// the position is updated; the pending start reads it when its player is
-	/// ready.
+	/// the position is updated; the pending start reads it once its player is
+	/// ready, so the latest tap wins.
 	func playRecording(url: URL, from time: TimeInterval) {
 		if isPlaying, audioPlayer != nil {
 			seekToTime(time)

@@ -56,6 +56,25 @@ final class PlayFromHereTests: XCTestCase {
         )
     }
 
+    /// A second tap while the first tap's player is still being prepared wins:
+    /// the position is read once the player is ready, not copied before.
+    func testTheLatestTapWinsWhilePlaybackIsBeingPrepared() async throws {
+        let viewModel = AudioRecorderViewModel()
+        defer { viewModel.stopPlaying() }
+        viewModel.playRecording(url: audioURL, from: 3.0)
+        XCTAssertTrue(viewModel.isPreparingPlayback)
+        // Let the start get past configuring the session and into preparing
+        // the player, where the position used to be copied too early.
+        try await Task.sleep(for: .milliseconds(30))
+        viewModel.playRecording(url: audioURL, from: 0.5)
+
+        try await waitUntil { viewModel.isPlaying }
+        XCTAssertLessThan(
+            viewModel.audioPlayer?.currentTime ?? 9, 1.5,
+            "Playback should start at the later tap, not the first"
+        )
+    }
+
     func testPlayingFromATimeWhilePlayingSeeks() async throws {
         let viewModel = AudioRecorderViewModel()
         defer { viewModel.stopPlaying() }
