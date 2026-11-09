@@ -9,6 +9,18 @@
 import Foundation
 import Darwin
 
+/// The gate for every AI and transcription endpoint the user configures.
+///
+/// App Transport Security is off app-wide (`NSAllowsArbitraryLoads` in
+/// Info.plist) on purpose: users point the app at their own servers — Ollama,
+/// Whisper/Wyoming, an OpenAI-compatible proxy — often over plain HTTP on a LAN
+/// or a tailnet hostname, and those hosts cannot be listed ahead of time in
+/// `NSExceptionDomains`. ATS's local-networking exemption would still block
+/// HTTP to a tailnet hostname. So this policy, not ATS, decides what may be
+/// reached, and every `URLSession` that carries an API key or user content must
+/// use `EndpointRedirectGuard` so a redirect is held to the same policy.
+/// Security review 2026-11-08 (finding #1b) kept ATS off on purpose; see
+/// "Deliberate security decisions" in CLAUDE.md.
 enum EndpointSecurityPolicy {
     static let allowInsecurePublicEndpointsKey = "allowInsecurePublicAIEndpoints"
 

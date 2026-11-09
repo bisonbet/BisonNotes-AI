@@ -8,6 +8,7 @@
 
 import Foundation
 import OSLog
+import CoreData
 #if canImport(UIKit)
 import UIKit
 #else
@@ -120,7 +121,11 @@ struct LogExporter {
         )
 
         // ── Write to file ──
-        let text = sections.joined(separator: "\n")
+        // Scrub recording names, summary titles and file names out of every
+        // section: this file is emailed to support or anyone else, and those
+        // describe what was recorded. See `LogPrivacy`.
+        let redactionTerms = await MainActor.run { Self.userContentRedactionTerms() }
+        let text = LogPrivacy.redacting(redactionTerms, in: sections.joined(separator: "\n"))
 
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
@@ -139,6 +144,36 @@ struct LogExporter {
 
     /// Name of a diagnostic export, used here and by `TemporaryFileCleanupService`
     /// for the exports a crash leaves behind between runs.
+    /// Every recording name, recording file name and AI-generated summary title
+    /// in the library. Empty when storage is unavailable, so a broken store
+    /// never blocks a support export.
+    @MainActor
+    static func userContentRedactionTerms() -> [String] {
+        let persistence = PersistenceController.shared
+        guard persistence.storeState.isOperational else { return [] }
+        let context = persistence.container.viewContext
+        var terms: [String] = []
+
+        if let recordings = try? context.fetch(RecordingEntry.fetchRequest()) {
+            for recording in recordings {
+                if let name = recording.recordingName { terms.append(name) }
+                if let url = recording.recordingURL {
+                    let fileName = (url as NSString).lastPathComponent
+                    terms.append(fileName)
+                    terms.append((fileName as NSString).deletingPathExtension)
+                }
+            }
+        }
+        if let summaries = try? context.fetch(SummaryEntry.fetchRequest()) {
+            for summary in summaries {
+                guard let titlesJSON = summary.titles, let data = titlesJSON.data(using: .utf8),
+                      let titles = try? JSONDecoder().decode([TitleItem].self, from: data) else { continue }
+                terms.append(contentsOf: titles.map(\.text))
+            }
+        }
+        return terms
+    }
+
     static let exportFileNamePrefix = "BisonNotes-Logs-"
 
     static func isExportFileName(_ name: String) -> Bool {

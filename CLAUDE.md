@@ -145,6 +145,18 @@ Retries live in `CloudKitRetryPolicy`: honor `CKErrorRetryAfterKey`, bounded jit
 
 Recordings flagged `isCloudSyncDisabled` are excluded from all of the above. "Erase All iCloud Data" in Advanced Troubleshooting deletes every record and custom zone in the app's private CloudKit database, tombstones included, and never touches local data.
 
+### Deliberate security decisions
+
+Two settings look like findings and are kept on purpose. A security review on 2026-11-08 raised both; change them only with that trade-off in view.
+
+- **App Transport Security is off (`NSAllowsArbitraryLoads`).** Users point the app at their own Ollama, Whisper/Wyoming and OpenAI-compatible servers, often over plain HTTP on a LAN or a tailnet hostname, which `NSExceptionDomains` cannot list ahead of time and ATS's local-networking exemption would still block. `EndpointSecurityPolicy` is the gate instead: it validates every configured endpoint, and **every `URLSession` that carries an API key or user content must use `EndpointRedirectGuard`** (as a session delegate or a per-request delegate), so a redirect cannot carry a key or a transcript somewhere the policy would refuse.
+- **Start Recording runs without unlocking (`StartRecordingIntent.authenticationPolicy = .alwaysAllowed`).** Quick capture from the Action Button, Control Center or Siri on the lock screen is the point of those entry points. The cost is that someone holding the locked device can start the microphone.
+
+Two rules came out of the same review:
+
+- **Exports carry location only when chosen.** Summary PDF/RTF exports offer "with location" and "without location" whenever a recording has one, and the dialog names the place a with-location export would include. A PDF embeds a map, and a recording's location is often home.
+- **Logs never carry user content.** The diagnostic export is a file users email. Log an id or `LogPrivacy.describe(_:)` (a length), never a recording name, title, transcript text or file name. `LogExporter` also scrubs every known recording name, file name and summary title out of the export (`LogPrivacy.redacting`), but that is a backstop, not permission.
+
 ### AI Engine Integration
 New AI engines should follow the existing pattern:
 1. Create service class (e.g., `NewAIService.swift`)

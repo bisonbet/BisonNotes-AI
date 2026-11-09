@@ -921,7 +921,7 @@ class SummaryManager: ObservableObject {
         AppLog.shared.summarization("Tasks extracted: \(result.tasks.count)", level: .debug)
         AppLog.shared.summarization("Reminders extracted: \(result.reminders.count)", level: .debug)
         AppLog.shared.summarization("Content type: \(contentType.rawValue)", level: .debug)
-        AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
+        AppLog.shared.summarization("Recording name: \(LogPrivacy.describe(finalRecordingName))", level: .debug)
         AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
 
         return enhancedSummary
@@ -1058,7 +1058,7 @@ class SummaryManager: ObservableObject {
         AppLog.shared.summarization("Basic summary with extraction completed")
         AppLog.shared.summarization("Tasks extracted: \(tasks.count)", level: .debug)
         AppLog.shared.summarization("Reminders extracted: \(reminders.count)", level: .debug)
-        AppLog.shared.summarization("Recording name: '\(finalRecordingName)'", level: .debug)
+        AppLog.shared.summarization("Recording name: \(LogPrivacy.describe(finalRecordingName))", level: .debug)
         AppLog.shared.summarization("Quality score: \(qualityReport.formattedScore)", level: .debug)
 
         return enhancedSummary
@@ -1208,7 +1208,7 @@ class SummaryManager: ObservableObject {
         // Validate and fix the generated name
         let validatedName = RecordingNameGenerator.validateAndFixRecordingName(generatedName, originalName: "Recording")
 
-        AppLog.shared.summarization("Generated name: '\(validatedName)'", level: .debug)
+        AppLog.shared.summarization("Generated name: \(LogPrivacy.describe(validatedName))", level: .debug)
         return validatedName
     }
 
@@ -1220,7 +1220,10 @@ class SummaryManager: ObservableObject {
 
         // Only update if the new name is different and meaningful
         if newName != oldName && !newName.isEmpty && newName != "Recording" {
-            AppLog.shared.summarization("Updating name from '\(oldName)' to '\(newName)'", level: .debug)
+            AppLog.shared.summarization(
+                "Updating recording name (\(LogPrivacy.describe(oldName)) to \(LogPrivacy.describe(newName)))",
+                level: .debug
+            )
             if let coordinator = coordinator {
                 try await updateRecordingName(from: oldName, to: newName, recordingURL: recordingURL, coordinator: coordinator)
             } else {
