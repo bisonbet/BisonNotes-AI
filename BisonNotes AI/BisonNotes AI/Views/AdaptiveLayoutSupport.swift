@@ -133,38 +133,46 @@ struct ListDetailSplitView<ListContent: View, Detail: View>: View {
     }
 }
 
-/// A primary beside a secondary, split side by side with `ArrangementView` so on
-/// iPhone Duo the two sit either side of the fold rather than across it.
+/// A primary and a secondary laid out by `ArrangementView` either side of
+/// iPhone Duo's fold: side by side when the fold runs down the screen (book
+/// pose, or no fold at all), top and bottom when it runs across it (laptop
+/// pose — the primary on the top half, where you look, and the secondary on
+/// the bottom half).
 ///
 /// What the API does, learned on the simulators — keep these in mind before
 /// changing it:
 /// - `.split` with both axes divides a narrow phone top and bottom, leaving the
-///   primary in a half-height scroll view. The split here is horizontal only.
-/// - A horizontal-only split drops the secondary when there is no room beside
-///   the primary (iPhone, iPad portrait, the Duo closed). Anything only the
-///   secondary shows is then unreachable, so `primary` is told whether the
-///   split is active and must carry what matters when it is not.
+///   primary in a half-height scroll view. So the axis is chosen here, from the
+///   fold (`ArrangementSplit.axes(forDivisions:)`), never left to the style.
+/// - A split drops the secondary when there is no room for it (iPhone, iPad
+///   portrait, the Duo closed). Anything only the secondary shows is then
+///   unreachable, so `primary` is told the layout and must carry what matters
+///   when it is `.single`.
 /// - `splitArrangementAxis` follows the orientation whether or not the
 ///   secondary is shown (and is nil on the Duo's outer display), and the
-///   secondary's `onAppear` fires even where it is then dropped. Width is the
-///   reliable signal (`ArrangementSplit.isSplit`).
+///   secondary's `onAppear` fires even where it is then dropped. Size is the
+///   reliable signal (`ArrangementSplit.layout`).
 @available(iOS 27.1, *)
 struct SideBySideArrangement<Primary: View, Secondary: View>: View {
-    @ViewBuilder let primary: (_ isSplit: Bool) -> Primary
+    @ViewBuilder let primary: (_ layout: ArrangementLayout) -> Primary
     @ViewBuilder let secondary: () -> Secondary
 
-    @State private var arrangementWidth: CGFloat = 0
-    @State private var primaryWidth: CGFloat = 0
+    @State private var arrangementSize: CGSize = .zero
+    @State private var primarySize: CGSize = .zero
 
     var body: some View {
-        ArrangementView {
-            primary(ArrangementSplit.isSplit(primaryWidth: primaryWidth, arrangementWidth: arrangementWidth))
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { primaryWidth = $0 }
-        } secondary: {
-            secondary()
+        GeometryReader { proxy in
+            let divisions = proxy.reservedRegions(kind: .division).filter(\.isActive).map(\.frame)
+            let axes = ArrangementSplit.axes(forDivisions: divisions)
+            ArrangementView {
+                primary(ArrangementSplit.layout(primarySize: primarySize, arrangementSize: arrangementSize))
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { primarySize = $0 }
+            } secondary: {
+                secondary()
+            }
+            .arrangementViewStyle(.split.axes(axes))
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { arrangementSize = $0 }
         }
-        .arrangementViewStyle(.split.axes(.horizontal))
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { arrangementWidth = $0 }
     }
 }
 
@@ -207,12 +215,34 @@ struct InteractivePopDisabler: UIViewControllerRepresentable {
 }
 #endif
 
-/// Whether an arrangement's primary is sharing the width with its secondary.
+/// How an arrangement's primary is placed.
+enum ArrangementLayout: Equatable {
+    /// The primary has the whole space; the secondary is not shown.
+    case single
+    /// The secondary is beside the primary (book pose, iPad landscape).
+    case sideBySide
+    /// The primary is on top and the secondary below (laptop pose).
+    case topAndBottom
+}
+
+/// The arrangement decisions, pure so they can be tested.
 enum ArrangementSplit {
-    /// A primary narrower than 80% of the arrangement shares it. Until both are
-    /// measured, assume one column, so nothing is out of reach.
-    static func isSplit(primaryWidth: CGFloat, arrangementWidth: CGFloat) -> Bool {
-        primaryWidth > 0 && arrangementWidth > 0 && primaryWidth < arrangementWidth * 0.8
+    /// Side by side unless the fold runs across the screen — a division wider
+    /// than it is tall is the laptop pose, which splits top and bottom.
+    static func axes(forDivisions divisions: [CGRect]) -> Axis.Set {
+        guard let fold = divisions.first else { return .horizontal }
+        return fold.width > fold.height ? .vertical : .horizontal
+    }
+
+    /// A primary clearly smaller than the arrangement in one direction shares
+    /// it. Until both are measured, assume one column, so nothing is out of
+    /// reach.
+    static func layout(primarySize: CGSize, arrangementSize: CGSize) -> ArrangementLayout {
+        guard primarySize.width > 0, primarySize.height > 0,
+              arrangementSize.width > 0, arrangementSize.height > 0 else { return .single }
+        if primarySize.width < arrangementSize.width * 0.8 { return .sideBySide }
+        if primarySize.height < arrangementSize.height * 0.8 { return .topAndBottom }
+        return .single
     }
 }
 

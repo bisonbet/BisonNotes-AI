@@ -43,7 +43,22 @@ struct DeviceCapabilities {
             return false
         }
 
-        let components = modelName
+        return hasActionButton(modelIdentifier: modelName)
+        #endif
+    }
+
+    /// iPhones in an Action Button family that have no Action Button. There is
+    /// no API to ask, so these are listed by identifier.
+    /// - `iPhone19,4`: iPhone Duo.
+    static let iPhonesWithoutActionButton: Set<String> = ["iPhone19,4"]
+
+    /// Whether an iPhone model identifier has an Action Button. Pure, for tests.
+    static func hasActionButton(modelIdentifier: String) -> Bool {
+        guard modelIdentifier.hasPrefix("iPhone"),
+              !iPhonesWithoutActionButton.contains(modelIdentifier) else {
+            return false
+        }
+        let components = modelIdentifier
             .replacingOccurrences(of: "iPhone", with: "")
             .split(separator: ",")
             .compactMap { Int($0) }
@@ -57,9 +72,9 @@ struct DeviceCapabilities {
 
         // iPhone16,1 and iPhone16,2 are iPhone 15 Pro / Pro Max, the first
         // iPhones with Action Button. Later iPhone identifier families include
-        // Action Button across the currently supported lineup.
+        // Action Button across the currently supported lineup, except the
+        // models in `iPhonesWithoutActionButton`.
         return major > 16 || (major == 16 && (minor == 1 || minor == 2))
-        #endif
     }
 
     /// Check if device has sufficient RAM for basic Whisper models
@@ -102,8 +117,13 @@ struct DeviceCapabilities {
         return String(format: "%.1f GB", ram)
     }
 
-    /// Get device model name
+    /// Get device model name. In the simulator `uname` reports the host
+    /// architecture, so the simulated model's identifier is used instead.
     static var modelName: String {
+        if let simulatedModel = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],
+           !simulatedModel.isEmpty {
+            return simulatedModel
+        }
         var systemInfo = utsname()
         uname(&systemInfo)
         let machineMirror = Mirror(reflecting: systemInfo.machine)

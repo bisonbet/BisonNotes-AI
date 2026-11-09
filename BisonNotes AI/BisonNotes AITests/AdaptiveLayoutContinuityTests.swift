@@ -123,19 +123,28 @@ final class ListDetailSplitColumnTests: XCTestCase {
     }
 }
 
-/// Record and the player show their secondary content beside the primary only
-/// when ArrangementView really put a secondary there.
+/// Record, the player and Setup lay out around iPhone Duo's fold, and show
+/// their secondary content only where ArrangementView really put it.
 @MainActor
 final class RecordArrangementTests: XCTestCase {
+    func testTheFoldDecidesTheSplit() {
+        // Book pose: the fold runs down the screen — side by side.
+        XCTAssertEqual(ArrangementSplit.axes(forDivisions: [CGRect(x: 500, y: 0, width: 20, height: 900)]), .horizontal)
+        // Laptop pose: the fold runs across it — top and bottom.
+        XCTAssertEqual(ArrangementSplit.axes(forDivisions: [CGRect(x: 0, y: 500, width: 900, height: 20)]), .vertical)
+        // No fold (iPad, flat): side by side, never a narrow top/bottom split.
+        XCTAssertEqual(ArrangementSplit.axes(forDivisions: []), .horizontal)
+    }
+
     func testThePrimaryAloneIsNotASplit() {
         // iPhone portrait, the Duo's outer display: the primary fills it.
-        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 402, arrangementWidth: 402))
-        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 382, arrangementWidth: 382))
-        // iPad landscape: two halves.
-        XCTAssertTrue(ArrangementSplit.isSplit(primaryWidth: 465, arrangementWidth: 930))
+        XCTAssertEqual(ArrangementSplit.layout(primarySize: CGSize(width: 402, height: 874), arrangementSize: CGSize(width: 402, height: 874)), .single)
+        // iPad landscape or the book pose: two halves side by side.
+        XCTAssertEqual(ArrangementSplit.layout(primarySize: CGSize(width: 465, height: 834), arrangementSize: CGSize(width: 930, height: 834)), .sideBySide)
+        // Laptop pose: the primary has the full width and the top half.
+        XCTAssertEqual(ArrangementSplit.layout(primarySize: CGSize(width: 900, height: 480), arrangementSize: CGSize(width: 900, height: 980)), .topAndBottom)
         // Not measured yet: assume one column, so nothing is out of reach.
-        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 0, arrangementWidth: 930))
-        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 465, arrangementWidth: 0))
+        XCTAssertEqual(ArrangementSplit.layout(primarySize: .zero, arrangementSize: CGSize(width: 930, height: 834)), .single)
     }
 }
 
@@ -160,5 +169,26 @@ final class PlayerTranscriptTests: XCTestCase {
         XCTAssertEqual(PlayerTranscriptView.timeLabel(0), "0:00")
         XCTAssertEqual(PlayerTranscriptView.timeLabel(65.9), "1:05")
         XCTAssertEqual(PlayerTranscriptView.timeLabel(3_600), "60:00")
+    }
+}
+
+/// Action Button support is decided by model identifier; there is no API.
+final class ActionButtonSupportTests: XCTestCase {
+    func testIPhoneDuoHasNoActionButton() {
+        XCTAssertFalse(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone19,4"))
+    }
+
+    func testActionButtonIPhones() {
+        XCTAssertTrue(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone16,1"), "iPhone 15 Pro")
+        XCTAssertTrue(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone16,2"), "iPhone 15 Pro Max")
+        XCTAssertTrue(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone17,1"))
+        XCTAssertTrue(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone19,1"))
+    }
+
+    func testOlderIPhonesAndOtherDevicesHaveNone() {
+        XCTAssertFalse(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone16,3"), "iPhone 15")
+        XCTAssertFalse(DeviceCapabilities.hasActionButton(modelIdentifier: "iPhone15,2"))
+        XCTAssertFalse(DeviceCapabilities.hasActionButton(modelIdentifier: "iPad16,3"))
+        XCTAssertFalse(DeviceCapabilities.hasActionButton(modelIdentifier: "arm64"))
     }
 }

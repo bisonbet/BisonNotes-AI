@@ -337,11 +337,17 @@ struct RecordingsView: View {
     private var recordContent: some View {
         #if os(iOS)
         if #available(iOS 27.1, *) {
-            SideBySideArrangement { isSplit in
-                if isSplit {
-                    splitPrimaryColumn
-                } else {
+            SideBySideArrangement { layout in
+                switch layout {
+                case .single:
                     stackedRecordContent
+                case .sideBySide:
+                    splitPrimaryColumn(showsHero: showsHero)
+                case .topAndBottom:
+                    // Laptop pose: Start Recording on the top half, above the
+                    // fold; the library and imports below it. Half a screen has
+                    // no room for the logo.
+                    splitPrimaryColumn(showsHero: false)
                 }
             } secondary: {
                 splitSecondaryColumn
@@ -354,7 +360,7 @@ struct RecordingsView: View {
         #endif
     }
 
-    private var splitPrimaryColumn: some View {
+    private func splitPrimaryColumn(showsHero: Bool) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 recordHeader
