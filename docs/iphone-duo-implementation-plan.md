@@ -1,6 +1,6 @@
 # iPhone Duo: first-class layout plan
 
-Status: **M1, M2 and M3 implemented; M4 and M5 not started.** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
+Status: **M1–M3 merged (PR #156). M4 implemented and M5 covered on `iphone-duo-m4`; device checks in the poses remain.** Prepared 2026-11-01 on branch `iphone-duo-implementation`, cut from `v3.0` at `8dfca3b`.
 
 Source paths below are relative to `BisonNotes AI/BisonNotes AI/` unless they start with `docs/`.
 
@@ -227,6 +227,25 @@ Each milestone ships on its own and keeps iOS 18.5 / iPadOS 18.5 working. Duo-on
   - Use Apple's sample shape directly: `ArrangementView { player } secondary: { synchronized transcript }` with `.split.axes(.horizontal)`. Player only in portrait; player | transcript when wide or folded.
   - Transport buttons keep their position across poses ("small adjustments over rearrangement").
 - **Custom centred elements.** Check the splash, the empty states and the download/progress panels. Anything interactive that can land in the crease moves to `reservedRegions`-aware placement. Text-only views can stay centred.
+
+**M4 status (2026-11-08): implemented.**
+- **`SideBySideArrangement`** (`Views/AdaptiveLayoutSupport.swift`) wraps `ArrangementView` for both screens. What the API does, found on the simulators:
+  - `.split` with both axes divides a narrow phone top and bottom, so Start Recording landed below the cut of a half-height scroll view. The split is horizontal only.
+  - A horizontal-only split drops the secondary when there is no room beside the primary: iPhone, iPad portrait, the Duo closed. iPad landscape splits 465 | 465.
+  - `splitArrangementAxis` follows the orientation whether or not the secondary is shown, and is nil on the Duo's outer display. The secondary's `onAppear` fires even where it is then dropped. Width is the reliable signal (`ArrangementSplit.isSplit`): when the primary has the whole width, it shows everything itself.
+- **Record:** the controls beside the live transcript and the library/import actions. Without room, the original single column. On short screens (`verticalSizeClass == .compact`) the logo and subtitle hide. The live transcript is not capped at four lines when it has its own side.
+- **Player:** the new `PlayerTranscriptView` follows playback beside the player. The current segment is highlighted and kept in view, tapping a segment seeks, and speaker names and the chosen representation are respected. Without room the player is unchanged. The transport stays put. In the library column the "Audio Player" header is replaced by the recording's title, Export is a toolbar item, and Close is a toolbar item only side by side (pushed has Back).
+- **Laptop pose:** no change made yet. Decide on the device whether the controls should move to the bottom half.
+- **Centred custom elements:** the splash has no controls, and the empty states sit inside a list column, never across the fold. Nothing moved.
+- Tests: `RecordLayoutUITests` and `PlayerLayoutUITests`, plus `RecordArrangementTests` and `PlayerTranscriptTests`.
+
+**M5 status (2026-11-08):**
+- **Dynamic Type:** `RecordLayoutUITests` checks default and AX3 (Start Recording on screen without scrolling, portrait and landscape) and AX5 (everything reachable).
+- **Sheet placement:** not set. System sheets already move out of the fold (M0, book pose), and `presentationPlacement` needs iOS 27.0.
+- **`backgroundExtensionEffect` / `ConcentricRectangle`:** not needed. The splash gradient already ignores the safe area and has no bars over it, and no card sits flush with a screen edge.
+- **Split View on either half, and a pinned PiP video:** not drivable from XCTest. They are in the manual Duo checks of the testing regimen.
+- **Open-row highlight (M3 leftover):** the row whose item is open has an accent outline and the selected accessibility trait.
+- **Docs:** the "iPhone Duo and Adaptive Layout Gate" is in `docs/testing-regimen.md`, and the "iPhone Duo layout" rules are in CLAUDE.md.
 
 **Exit:** In book and laptop screenshots, no button or slider intersects the division region. On the outer display in landscape, the record button is visible without scrolling at the default text size and at AX3.
 

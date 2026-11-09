@@ -28,19 +28,6 @@ struct RecordingsView: View {
     @State private var showingWebImport = false
     @State private var showingRecorderError = false
     @State private var recorderErrorMessage = ""
-    /// Widths of the arrangement and of its primary; the secondary is beside the
-    /// primary only when the primary has clearly less than the whole width.
-    @State private var arrangementWidth: CGFloat = 0
-    @State private var arrangementPrimaryWidth: CGFloat = 0
-
-    private var isArrangementSplit: Bool {
-        Self.isArrangementSplit(primaryWidth: arrangementPrimaryWidth, arrangementWidth: arrangementWidth)
-    }
-
-    /// Pure, for tests: a primary narrower than 80% of the arrangement shares it.
-    static func isArrangementSplit(primaryWidth: CGFloat, arrangementWidth: CGFloat) -> Bool {
-        primaryWidth > 0 && arrangementWidth > 0 && primaryWidth < arrangementWidth * 0.8
-    }
 
     private enum FileImportKind {
         case audio
@@ -341,42 +328,24 @@ struct RecordingsView: View {
 
     // MARK: - Layout
 
-    /// On iOS 27.1 the screen is an `ArrangementView`: the controls beside the
-    /// live transcript and the library and import actions, split side by side so
-    /// the two sit either side of iPhone Duo's fold rather than across it.
-    ///
-    /// The split is horizontal only. `.split` with both axes divided a narrow
-    /// screen top and bottom, which left Start Recording below the cut of a
-    /// half-height scroll view. Horizontal-only shows the secondary just when
-    /// there is room beside the primary — iPad landscape, the Duo open — and
-    /// leaves it out of the view tree otherwise (iPhone, iPad portrait, the Duo
-    /// closed). Whenever the primary has the arrangement's whole width, the
-    /// secondary is not beside it, and the primary shows the full single column,
-    /// so nothing the secondary holds is ever out of reach.
-    ///
-    /// Width is the only reliable signal. `splitArrangementAxis` follows the
-    /// orientation whether or not the secondary is shown, and is nil on the
-    /// Duo's outer display; the secondary's `onAppear` fires during the first
-    /// layout even where it is then dropped, with no `onDisappear` after.
-    /// Earlier systems and macOS keep the single column.
+    /// On iOS 27.1 the controls sit beside the live transcript and the library
+    /// and import actions (`SideBySideArrangement`), either side of iPhone Duo's
+    /// fold. Without room beside them the primary shows the original single
+    /// column, so nothing is out of reach. Earlier systems and macOS keep the
+    /// single column.
     @ViewBuilder
     private var recordContent: some View {
         #if os(iOS)
         if #available(iOS 27.1, *) {
-            ArrangementView {
-                Group {
-                    if isArrangementSplit {
-                        splitPrimaryColumn
-                    } else {
-                        stackedRecordContent
-                    }
+            SideBySideArrangement { isSplit in
+                if isSplit {
+                    splitPrimaryColumn
+                } else {
+                    stackedRecordContent
                 }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { arrangementPrimaryWidth = $0 }
             } secondary: {
                 splitSecondaryColumn
             }
-            .arrangementViewStyle(.split.axes(.horizontal))
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { arrangementWidth = $0 }
         } else {
             stackedRecordContent
         }

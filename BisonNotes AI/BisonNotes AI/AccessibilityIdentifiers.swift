@@ -79,6 +79,7 @@ enum BisonNotesAccessibilityID {
     static let localSpeakerDeleteModelButton = "bisonnotes.settings.local-speaker-labels.delete-model"
 
     static let audioPlayerPlaybackSection = "bisonnotes.audio-player.playback"
+    static let audioPlayerTranscript = "bisonnotes.audio-player.transcript"
     static let audioScrubber = "bisonnotes.audio-player.scrubber"
     static let audioPlayPauseButton = "bisonnotes.audio-player.play-pause"
     static let audioSkipBackwardButton = "bisonnotes.audio-player.skip-backward"

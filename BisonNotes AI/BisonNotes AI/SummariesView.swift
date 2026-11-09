@@ -808,6 +808,7 @@ struct SummariesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .openInDetailHighlight(recording.id?.uuidString == selectedSummaryRecordingID, cornerRadius: 18)
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(

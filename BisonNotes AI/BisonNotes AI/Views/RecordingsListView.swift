@@ -924,6 +924,7 @@ struct RecordingsListView: View {
         }
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .openInDetailHighlight(recording.url == selectedRecordingForPlayer?.url, cornerRadius: 16)
         .contextMenu {
             if recording.hasLocalAudio && !isSelectionMode {
                 Button {

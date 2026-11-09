@@ -123,18 +123,42 @@ final class ListDetailSplitColumnTests: XCTestCase {
     }
 }
 
-/// The Record screen shows its library and import actions beside the controls
-/// only when ArrangementView really put a secondary there.
+/// Record and the player show their secondary content beside the primary only
+/// when ArrangementView really put a secondary there.
 @MainActor
 final class RecordArrangementTests: XCTestCase {
     func testThePrimaryAloneIsNotASplit() {
         // iPhone portrait, the Duo's outer display: the primary fills it.
-        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 402, arrangementWidth: 402))
-        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 382, arrangementWidth: 382))
+        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 402, arrangementWidth: 402))
+        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 382, arrangementWidth: 382))
         // iPad landscape: two halves.
-        XCTAssertTrue(RecordingsView.isArrangementSplit(primaryWidth: 465, arrangementWidth: 930))
+        XCTAssertTrue(ArrangementSplit.isSplit(primaryWidth: 465, arrangementWidth: 930))
         // Not measured yet: assume one column, so nothing is out of reach.
-        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 0, arrangementWidth: 930))
-        XCTAssertFalse(RecordingsView.isArrangementSplit(primaryWidth: 465, arrangementWidth: 0))
+        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 0, arrangementWidth: 930))
+        XCTAssertFalse(ArrangementSplit.isSplit(primaryWidth: 465, arrangementWidth: 0))
+    }
+}
+
+/// Which transcript segment the player's read-along highlights.
+@MainActor
+final class PlayerTranscriptTests: XCTestCase {
+    private let segments = [
+        TranscriptSegment(speaker: "A", text: "one", startTime: 0, endTime: 4),
+        TranscriptSegment(speaker: "B", text: "two", startTime: 4, endTime: 9),
+        TranscriptSegment(speaker: "A", text: "three", startTime: 12, endTime: 15)
+    ]
+
+    func testTheSegmentThatHasStartedIsCurrent() {
+        XCTAssertEqual(PlayerTranscriptView.segmentIndex(at: 0, in: segments), 0)
+        XCTAssertEqual(PlayerTranscriptView.segmentIndex(at: 5, in: segments), 1)
+        XCTAssertEqual(PlayerTranscriptView.segmentIndex(at: 10, in: segments), 1, "A gap keeps the last segment")
+        XCTAssertEqual(PlayerTranscriptView.segmentIndex(at: 30, in: segments), 2)
+        XCTAssertNil(PlayerTranscriptView.segmentIndex(at: 0, in: []))
+    }
+
+    func testTimeLabels() {
+        XCTAssertEqual(PlayerTranscriptView.timeLabel(0), "0:00")
+        XCTAssertEqual(PlayerTranscriptView.timeLabel(65.9), "1:05")
+        XCTAssertEqual(PlayerTranscriptView.timeLabel(3_600), "60:00")
     }
 }

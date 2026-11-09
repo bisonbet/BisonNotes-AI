@@ -133,6 +133,41 @@ struct ListDetailSplitView<ListContent: View, Detail: View>: View {
     }
 }
 
+/// A primary beside a secondary, split side by side with `ArrangementView` so on
+/// iPhone Duo the two sit either side of the fold rather than across it.
+///
+/// What the API does, learned on the simulators — keep these in mind before
+/// changing it:
+/// - `.split` with both axes divides a narrow phone top and bottom, leaving the
+///   primary in a half-height scroll view. The split here is horizontal only.
+/// - A horizontal-only split drops the secondary when there is no room beside
+///   the primary (iPhone, iPad portrait, the Duo closed). Anything only the
+///   secondary shows is then unreachable, so `primary` is told whether the
+///   split is active and must carry what matters when it is not.
+/// - `splitArrangementAxis` follows the orientation whether or not the
+///   secondary is shown (and is nil on the Duo's outer display), and the
+///   secondary's `onAppear` fires even where it is then dropped. Width is the
+///   reliable signal (`ArrangementSplit.isSplit`).
+@available(iOS 27.1, *)
+struct SideBySideArrangement<Primary: View, Secondary: View>: View {
+    @ViewBuilder let primary: (_ isSplit: Bool) -> Primary
+    @ViewBuilder let secondary: () -> Secondary
+
+    @State private var arrangementWidth: CGFloat = 0
+    @State private var primaryWidth: CGFloat = 0
+
+    var body: some View {
+        ArrangementView {
+            primary(ArrangementSplit.isSplit(primaryWidth: primaryWidth, arrangementWidth: arrangementWidth))
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { primaryWidth = $0 }
+        } secondary: {
+            secondary()
+        }
+        .arrangementViewStyle(.split.axes(.horizontal))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { arrangementWidth = $0 }
+    }
+}
+
 /// Turns off the navigation controller's edge swipe while `isDisabled`, for a
 /// detail whose system Back is hidden because leaving must go through its own
 /// prompt. Hiding the Back button does not reliably stop the swipe in a
@@ -171,6 +206,31 @@ struct InteractivePopDisabler: UIViewControllerRepresentable {
     }
 }
 #endif
+
+/// Whether an arrangement's primary is sharing the width with its secondary.
+enum ArrangementSplit {
+    /// A primary narrower than 80% of the arrangement shares it. Until both are
+    /// measured, assume one column, so nothing is out of reach.
+    static func isSplit(primaryWidth: CGFloat, arrangementWidth: CGFloat) -> Bool {
+        primaryWidth > 0 && arrangementWidth > 0 && primaryWidth < arrangementWidth * 0.8
+    }
+}
+
+// MARK: - Open-row highlight
+
+extension View {
+    /// Outlines the list row whose item is open in the detail column, so the
+    /// list beside it shows which one you are reading — and says so to
+    /// VoiceOver.
+    func openInDetailHighlight(_ isOpen: Bool, cornerRadius: CGFloat) -> some View {
+        overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.accentColor, lineWidth: 2)
+                .opacity(isOpen ? 1 : 0)
+        )
+        .accessibilityAddTraits(isOpen ? .isSelected : [])
+    }
+}
 
 // MARK: - Embedded detail presentation
 
