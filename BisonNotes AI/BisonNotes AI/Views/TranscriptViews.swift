@@ -958,6 +958,7 @@ struct TranscriptsView: View {
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .openInDetailHighlight(recordingData.recording.id?.uuidString == selectedTranscriptRecordingID, cornerRadius: 18)
         .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptRowPrefix + recordingId)
     }
 
@@ -1054,6 +1055,7 @@ struct TranscriptsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
+        .openInDetailHighlight(recordingData.recording.id?.uuidString == selectedTranscriptRecordingID, cornerRadius: 18)
         .accessibilityIdentifier(
             BisonNotesAccessibilityID.transcriptRowPrefix
                 + (

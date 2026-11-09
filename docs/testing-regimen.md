@@ -69,6 +69,46 @@ Automated audit failures must either be fixed or documented with a specific exce
 
 The Local Speaker Labels settings surface must expose the toggle, method names, Recommended/Experimental status, up-to-8 and up-to-10 speaker limitations, status/progress, download/cancel/delete actions, and post-recording-only boundary through text and accessible labels—not color or icons alone. Repository UI audit coverage is automated; physical-device and native-Mac accessibility evidence remains a release-candidate gate.
 
+## iPhone Duo and Adaptive Layout Gate
+
+Run this after changes to navigation, list/detail screens, Record, the audio player, toolbars, or anything that lays out differently by width. The rules these tests protect are in CLAUDE.md under "iPhone Duo layout".
+
+### Automated
+
+Run the UI tests below on three simulators, one at a time — running them in parallel starves the launches and every test times out at its first wait:
+
+- iPhone 17 (compact; the pushed list → detail path)
+- iPad Pro 11" (regular; list beside detail, and the side-by-side Record and player in landscape)
+- iPhone Duo (its outer display; vertical tab strip and side-strip bars)
+
+```bash
+xcodebuild test -project "BisonNotes AI/BisonNotes AI.xcodeproj" -scheme "BisonNotes AI" \
+  -destination 'platform=iOS Simulator,name=<device>' \
+  -only-testing:"BisonNotes AIUITests/ListDetailSplitUITests" \
+  -only-testing:"BisonNotes AIUITests/RecordLayoutUITests" \
+  -only-testing:"BisonNotes AIUITests/PlayerLayoutUITests" \
+  -only-testing:"BisonNotes AIUITests/BisonNotesAIUITests"
+```
+
+Expected: everything passes. Tests that need a pushed detail skip on iPad, and the relaunch-restore test skips where the system did not restore the scene; each skip states why. The decision logic behind these screens is unit-tested in `AdaptiveLayoutContinuityTests.swift` (`ListDetailSplitColumnTests`, `RecordArrangementTests`, `PlayerTranscriptTests`, `UnsavedEditsGuardTests`).
+
+What the simulators cannot do, so these stay manual:
+
+- The Duo simulator opens, closes and folds only from Xcode's Device Hub; nothing in XCTest drives it.
+- Its outer display does not rotate under `XCUIDevice.orientation`, so Duo landscape is covered only by the iPhone landscape runs.
+- It does not restore scene state after a relaunch.
+
+### Manual, on an iPhone Duo
+
+For each pose — closed portrait, closed landscape (tent), open flat, book, laptop — and in Split View on each half of the inner display:
+
+- Transcripts, Summaries, and the recordings library: open an item from the first rows and from a "Show N more" page. Closing or opening the device keeps the open item. Flat is about 40/60; the book pose rebalances to 50/50 around the fold.
+- Transcript editor: edit a segment, then tap another transcript, Cancel, or swipe from the left edge. Each asks Save / Discard / Cancel, and nothing is lost.
+- Record: Start Recording is on screen without scrolling; open, the controls and the library/import actions sit either side of the fold with nothing on the crease. Record while folding and unfolding: the timer and live transcript continue.
+- Player: open, the transcript follows playback beside the player and tapping a line plays from there; the transport stays put across poses. Play audio while folding and unfolding.
+- Pin a Picture in Picture video and repeat Record and the player: nothing clips.
+- Largest Dynamic Type sizes in closed landscape: Start Recording and the transport stay reachable.
+
 ## Release Candidate Gate
 
 Run the local pre-merge gate, then run:
@@ -142,6 +182,7 @@ The app supports these DEBUG-only launch arguments for deterministic UI tests:
 - `--ui-testing`: enables stable first-launch defaults and the app-ready marker.
 - `--reset-test-data`: clears local Core Data rows and test fixture files in the test app container.
 - `--seed-sample-recording`: creates a local sample recording, transcript, and summary without microphone, network, CloudKit, or model downloads.
+- `--seed-sample-library`: adds six more recordings with transcripts and summaries over recent days, so lists show date sections and a "Show N more" page.
 - `--disable-cloud-services`: forces iCloud sync and automatic CloudKit work off for the test process.
 - `--show-first-setup`: keeps the first-launch setup screen visible for setup accessibility audits.
 

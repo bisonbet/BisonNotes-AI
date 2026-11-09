@@ -79,35 +79,9 @@ struct SimpleSettingsView: View {
 
     var body: some View {
         AdaptiveNavigationWrapper {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    headerSection
-                    processingOptionSection
-                    if selectedOption == .mistralAI {
-                        mistralAIInfoSection
-                    } else if selectedOption == .onDeviceAI {
-                        onDeviceAIInfoSection
-                    } else if selectedOption == .chooseLater {
-                        chooseLaterSection
-                    }
-                    saveSection
-
-                    if !isFirstLaunch && DeviceCapabilities.supportsActionButton {
-                        actionButtonSection
-                    }
-
-                    Spacer(minLength: 40)
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 96)
-                .frame(maxWidth: 700)
-                .frame(maxWidth: .infinity)
-            }
+            setupContent
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
-            .accessibilityLabel("Setup")
-            .accessibilityIdentifier(BisonNotesAccessibilityID.setupScroll)
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -497,6 +471,92 @@ struct SimpleSettingsView: View {
             }
 
         }
+    }
+
+    // MARK: - Layout
+
+    /// On iOS 27.1 Setup splits around iPhone Duo's fold: the processing-method
+    /// picker and its Save button in the primary — the top half in the laptop
+    /// pose, one side in the book pose — and the option's description and the
+    /// Action Button guide in the secondary. Without room for both, the single
+    /// column in its original order. Earlier systems and macOS keep the single
+    /// column.
+    @ViewBuilder
+    private var setupContent: some View {
+        #if os(iOS)
+        if #available(iOS 27.1, *) {
+            SideBySideArrangement { layout in
+                if layout == .single {
+                    setupColumn(isMain: true) { stackedSetupSections }
+                } else {
+                    setupColumn(isMain: true) {
+                        headerSection
+                        processingOptionSection
+                        saveSection
+                    }
+                }
+            } secondary: {
+                setupColumn(isMain: false) { setupDetailSections }
+            }
+        } else {
+            setupColumn(isMain: true) { stackedSetupSections }
+        }
+        #else
+        setupColumn(isMain: true) { stackedSetupSections }
+        #endif
+    }
+
+    @ViewBuilder
+    private var stackedSetupSections: some View {
+        headerSection
+        processingOptionSection
+        selectedOptionInfoSection
+        saveSection
+        if showsActionButtonSection {
+            actionButtonSection
+        }
+    }
+
+    @ViewBuilder
+    private var setupDetailSections: some View {
+        selectedOptionInfoSection
+        if showsActionButtonSection {
+            actionButtonSection
+        }
+    }
+
+    @ViewBuilder
+    private var selectedOptionInfoSection: some View {
+        if selectedOption == .mistralAI {
+            mistralAIInfoSection
+        } else if selectedOption == .onDeviceAI {
+            onDeviceAIInfoSection
+        } else if selectedOption == .chooseLater {
+            chooseLaterSection
+        }
+    }
+
+    private var showsActionButtonSection: Bool {
+        !isFirstLaunch && DeviceCapabilities.supportsActionButton
+    }
+
+    /// One scrolling column. The main one — the whole screen, or the picker
+    /// side of a split — carries the Setup label and identifier, so they are
+    /// found exactly once.
+    private func setupColumn<Content: View>(isMain: Bool, @ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                content()
+                Spacer(minLength: 40)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 96)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityLabel(isMain ? "Setup" : "Setup details")
+        .accessibilityIdentifier(isMain ? BisonNotesAccessibilityID.setupScroll : "bisonnotes.setup.details")
     }
 
     private var actionButtonSection: some View {

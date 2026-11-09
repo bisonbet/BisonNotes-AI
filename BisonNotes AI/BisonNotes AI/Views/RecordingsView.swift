@@ -15,6 +15,9 @@ struct RecordingsView: View {
     @EnvironmentObject var importManager: FileImportManager
     @EnvironmentObject var transcriptImportManager: TranscriptImportManager
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
     @State private var showingFileImporter = false
     @State private var fileImportKind: FileImportKind = .audio
     @StateObject private var webImportManager = WebImportManager()
@@ -234,132 +237,7 @@ struct RecordingsView: View {
 
     var body: some View {
         AdaptiveNavigationWrapper {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Record")
-                                .font(.largeTitle.weight(.bold))
-                                .foregroundColor(.primary)
-
-                            Text("Capture audio, import files, and pick up previous recordings.")
-                                .font(.subheadline)
-                                .foregroundColor(.primary)
-                        }
-
-                        Spacer()
-
-                        // On iOS Help is a toolbar item, so iPhone Duo can move
-                        // it into its vertical bar.
-                        #if os(macOS)
-                        Button(action: {
-                            openURL(BisonNotesDocumentation.releaseGuideURL)
-                        }) {
-                            Image(systemName: "questionmark.circle")
-                                .font(.title3)
-                                .frame(width: 40, height: 40)
-                                .background(Color(.secondarySystemGroupedBackground))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Help")
-                        #endif
-                    }
-
-                    VStack(spacing: 18) {
-                        Image("AppLogo")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 116, height: 116)
-                            .accessibilityHidden(true)
-
-                        VStack(spacing: 6) {
-                            Text("BisonNotes AI")
-                                .font(.title.weight(.bold))
-                                .foregroundColor(.primary)
-
-                            Text("Ready when you are.")
-                                .font(.subheadline)
-                                .foregroundColor(.primary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-
-                    VStack(spacing: 14) {
-                        if recorderVM.isRecording {
-                            recordingTimerView
-                            recordingControls
-                        } else {
-                            startRecordingButton
-                        }
-
-                        VStack(spacing: 10) {
-                            homeActionButton(
-                                HomeActionConfig(
-                                    title: "View Recordings",
-                                    subtitle: "Browse saved audio",
-                                    systemImage: "list.bullet",
-                                    tint: .accentColor,
-                                    accessibilityIdentifier: BisonNotesAccessibilityID.viewRecordingsButton
-                                )
-                            ) {
-                                presentRecordingsLibrary()
-                            }
-
-                            homeActionButton(
-                                HomeActionConfig(
-                                    title: "Import Audio Files",
-                                    subtitle: "Add audio from Files",
-                                    systemImage: "plus.circle",
-                                    tint: .green,
-                                    accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
-                                )
-                            ) {
-                                beginFileImport(.audio)
-                            }
-
-                            homeActionButton(
-                                HomeActionConfig(
-                                    title: "Import From Link",
-                                    subtitle: "Add web audio or captions",
-                                    systemImage: "link.badge.plus",
-                                    tint: .blue,
-                                    accessibilityIdentifier: BisonNotesAccessibilityID.importLinkButton
-                                )
-                            ) {
-                                showingWebImport = true
-                            }
-
-                            // Video import button hidden — feature not yet ready for users
-
-                            homeActionButton(
-                                HomeActionConfig(
-                                    title: "Import Transcripts",
-                                    subtitle: "Add text files",
-                                    systemImage: "doc.text",
-                                    tint: .purple,
-                                    accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
-                                )
-                            ) {
-                                beginFileImport(.transcript)
-                            }
-                        }
-
-                        if recorderVM.isRecording {
-                            recordingStatusPanel
-                        }
-                    }
-                    .padding(18)
-                    .background(Color(.secondarySystemGroupedBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 32)
-                .frame(maxWidth: 620)
-                .frame(maxWidth: .infinity)
-            }
+            recordContent
             .scrollIndicators(.hidden)
             .background(Color(.systemGroupedBackground))
             #if os(iOS)
@@ -448,7 +326,253 @@ struct RecordingsView: View {
 #endif
     }
 
-    private var recordingStatusPanel: some View {
+    // MARK: - Layout
+
+    /// On iOS 27.1 the controls sit beside the live transcript and the library
+    /// and import actions (`SideBySideArrangement`), either side of iPhone Duo's
+    /// fold. Without room beside them the primary shows the original single
+    /// column, so nothing is out of reach. Earlier systems and macOS keep the
+    /// single column.
+    @ViewBuilder
+    private var recordContent: some View {
+        #if os(iOS)
+        if #available(iOS 27.1, *) {
+            SideBySideArrangement { layout in
+                switch layout {
+                case .single:
+                    stackedRecordContent
+                case .sideBySide:
+                    splitPrimaryColumn(showsHero: showsHero)
+                case .topAndBottom:
+                    // Laptop pose: Start Recording on the top half, above the
+                    // fold; the library and imports below it. Half a screen has
+                    // no room for the logo.
+                    splitPrimaryColumn(showsHero: false)
+                }
+            } secondary: {
+                splitSecondaryColumn
+            }
+        } else {
+            stackedRecordContent
+        }
+        #else
+        stackedRecordContent
+        #endif
+    }
+
+    private func splitPrimaryColumn(showsHero: Bool) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                recordHeader
+                if showsHero {
+                    recordHero
+                }
+                controlsCard(includingLiveTranscript: false)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 32)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var splitSecondaryColumn: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if recorderVM.isRecording {
+                    liveTranscriptPanel(lineLimit: nil)
+                }
+                homeActionsCard
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 32)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// The single column every system before iOS 27.1 shows.
+    private var stackedRecordContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                recordHeader
+                if showsHero {
+                    recordHero
+                }
+                VStack(spacing: 14) {
+                    recordingButtons
+                    homeActionButtons
+                    if recorderVM.isRecording {
+                        recordingStatusPanel(includingLiveTranscript: true)
+                    }
+                }
+                .padding(18)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 32)
+            .frame(maxWidth: 620)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    /// Short and wide — iPhone Duo's outer display in landscape, an iPhone on
+    /// its side — has no room for the logo above the record button.
+    private var showsHero: Bool {
+        #if os(iOS)
+        verticalSizeClass != .compact
+        #else
+        true
+        #endif
+    }
+
+    private var recordHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Record")
+                    .font(.largeTitle.weight(.bold))
+                    .foregroundColor(.primary)
+
+                if showsHero {
+                    Text("Capture audio, import files, and pick up previous recordings.")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                }
+            }
+
+            Spacer()
+
+            // On iOS Help is a toolbar item, so iPhone Duo can move
+            // it into its vertical bar.
+            #if os(macOS)
+            Button(action: {
+                openURL(BisonNotesDocumentation.releaseGuideURL)
+            }) {
+                Image(systemName: "questionmark.circle")
+                    .font(.title3)
+                    .frame(width: 40, height: 40)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Help")
+            #endif
+        }
+    }
+
+    private var recordHero: some View {
+        VStack(spacing: 18) {
+            Image("AppLogo")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 116, height: 116)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 6) {
+                Text("BisonNotes AI")
+                    .font(.title.weight(.bold))
+                    .foregroundColor(.primary)
+
+                Text("Ready when you are.")
+                    .font(.subheadline)
+                    .foregroundColor(.primary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+    }
+
+    @ViewBuilder
+    private var recordingButtons: some View {
+        if recorderVM.isRecording {
+            recordingTimerView
+            recordingControls
+        } else {
+            startRecordingButton
+        }
+    }
+
+    private func controlsCard(includingLiveTranscript: Bool) -> some View {
+        VStack(spacing: 14) {
+            recordingButtons
+            if recorderVM.isRecording {
+                recordingStatusPanel(includingLiveTranscript: includingLiveTranscript)
+            }
+        }
+        .padding(18)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var homeActionsCard: some View {
+        homeActionButtons
+            .padding(18)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var homeActionButtons: some View {
+        VStack(spacing: 10) {
+            homeActionButton(
+                HomeActionConfig(
+                    title: "View Recordings",
+                    subtitle: "Browse saved audio",
+                    systemImage: "list.bullet",
+                    tint: .accentColor,
+                    accessibilityIdentifier: BisonNotesAccessibilityID.viewRecordingsButton
+                )
+            ) {
+                presentRecordingsLibrary()
+            }
+
+            homeActionButton(
+                HomeActionConfig(
+                    title: "Import Audio Files",
+                    subtitle: "Add audio from Files",
+                    systemImage: "plus.circle",
+                    tint: .green,
+                    accessibilityIdentifier: BisonNotesAccessibilityID.importAudioButton
+                )
+            ) {
+                beginFileImport(.audio)
+            }
+
+            homeActionButton(
+                HomeActionConfig(
+                    title: "Import From Link",
+                    subtitle: "Add web audio or captions",
+                    systemImage: "link.badge.plus",
+                    tint: .blue,
+                    accessibilityIdentifier: BisonNotesAccessibilityID.importLinkButton
+                )
+            ) {
+                showingWebImport = true
+            }
+
+            // Video import button hidden — feature not yet ready for users
+
+            homeActionButton(
+                HomeActionConfig(
+                    title: "Import Transcripts",
+                    subtitle: "Add text files",
+                    systemImage: "doc.text",
+                    tint: .purple,
+                    accessibilityIdentifier: BisonNotesAccessibilityID.importTranscriptButton
+                )
+            ) {
+                beginFileImport(.transcript)
+            }
+        }
+    }
+
+    private func recordingStatusPanel(includingLiveTranscript: Bool) -> some View {
         VStack(spacing: 12) {
             // Phase 5: State-aware status indicator
             HStack(spacing: 8) {
@@ -472,35 +596,43 @@ struct RecordingsView: View {
                     .accessibilityLabel("Background recording enabled")
             }
 
-            // Live transcript display
-            if !recorderVM.liveTranscriptText.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "waveform")
-                            .font(.caption)
-                            .foregroundColor(.accentColor)
-                        Text("Live Transcript")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.accentColor)
-                    }
-                    Text(recorderVM.liveTranscriptText)
-                        .font(.caption)
-                        .foregroundColor(.primary)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(4)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(.tertiarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityCard(
-                    label: "Live Transcript",
-                    value: recorderVM.liveTranscriptText,
-                    hint: "Updates as speech is recognized during recording."
-                )
-                .accessibilityIdentifier(BisonNotesAccessibilityID.liveTranscript)
+            // Beside the controls on iOS 27.1, the live transcript has its own
+            // side; in the single column it stays under the status.
+            if includingLiveTranscript {
+                liveTranscriptPanel(lineLimit: 4)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func liveTranscriptPanel(lineLimit: Int?) -> some View {
+        if !recorderVM.liveTranscriptText.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    Text("Live Transcript")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.accentColor)
+                }
+                Text(recorderVM.liveTranscriptText)
+                    .font(lineLimit == nil ? .body : .caption)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(lineLimit)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.tertiarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .accessibilityCard(
+                label: "Live Transcript",
+                value: recorderVM.liveTranscriptText,
+                hint: "Updates as speech is recognized during recording."
+            )
+            .accessibilityIdentifier(BisonNotesAccessibilityID.liveTranscript)
         }
     }
 

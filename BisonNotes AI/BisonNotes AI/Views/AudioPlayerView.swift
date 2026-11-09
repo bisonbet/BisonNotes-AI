@@ -15,6 +15,9 @@ struct AudioPlayerView: View {
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @Environment(\.dismiss) private var dismiss
     @Environment(\.nativeMacPresentationContext) private var presentationContext
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
     @State private var duration: TimeInterval = 0
     @State private var showingShareSheet = false
     @State private var editableTitle: String = ""
@@ -56,8 +59,16 @@ struct AudioPlayerView: View {
         )
     }
 
-    var body: some View {
+    /// The player: title, Keep on This Device, transcript and trim actions, and
+    /// the scrubber and transport. Its layout does not change with the
+    /// arrangement — transport buttons stay where they are ("small adjustments
+    /// over rearrangement").
+    private var playerColumn: some View {
         VStack(spacing: 0) {
+            // In the library's detail column the recording's title is the
+            // navigation title and Export is a toolbar item, so the page has no
+            // header of its own.
+            if !isEmbeddedInSplitColumn {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Audio Player")
@@ -77,6 +88,7 @@ struct AudioPlayerView: View {
             .padding(.horizontal, 20)
             .padding(.top, 18)
             .padding(.bottom, 14)
+            }
 
             ScrollView {
                 VStack(spacing: 16) {
@@ -178,7 +190,7 @@ struct AudioPlayerView: View {
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerPlaybackSection)
 
-                    if !isNativeMacModelessWindow {
+                    if !isNativeMacModelessWindow && !isEmbeddedInSplitColumn {
                         Button("Close") {
                             closeAudioPlayer()
                         }
@@ -191,10 +203,69 @@ struct AudioPlayerView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 24)
             }
+    }
+    }
+
+    /// On iOS 27.1 the recording's transcript follows playback beside the
+    /// player when there is room (`SideBySideArrangement`), either side of
+    /// iPhone Duo's fold. Without room the player is shown alone, as before.
+    @ViewBuilder
+    private var playerLayout: some View {
+        #if os(iOS)
+        if #available(iOS 27.1, *) {
+            SideBySideArrangement { _ in
+                playerColumn
+            } secondary: {
+                PlayerTranscriptView(recordingURL: recording.url)
+            }
+        } else {
+            playerColumn
         }
+        #else
+        playerColumn
+        #endif
+    }
+
+    /// In the recordings library the player is a detail column: `onClose`
+    /// clears the library's selection.
+    private var isEmbeddedInSplitColumn: Bool {
+        #if os(iOS)
+        onClose != nil
+        #else
+        false
+        #endif
+    }
+
+    var body: some View {
+        playerLayout
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.systemGroupedBackground))
+        #if os(iOS)
+        .navigationTitle(isEmbeddedInSplitColumn ? displayTitle : "")
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
         .toolbar {
+            #if os(iOS)
+            if isEmbeddedInSplitColumn {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        prepareAudioExport()
+                    } label: {
+                        Label("Export Audio", systemImage: "square.and.arrow.up")
+                    }
+                    .accessibilityLabel("Export Audio for \(displayTitle)")
+                    .accessibilityHint("Opens sharing options for this audio file.")
+                }
+                // A pushed column has Back; side by side there is nothing else
+                // to close the player with.
+                if horizontalSizeClass == .regular {
+                    ToolbarItem(placement: .cancellationAction) {
+                        SheetDoneButton(title: "Close") { closeAudioPlayer() }
+                            .accessibilityLabel("Close Audio Player")
+                    }
+                }
+            }
+            #endif
             #if os(macOS)
             if isNativeMacModelessWindow {
                 ToolbarItem(placement: .secondaryAction) {

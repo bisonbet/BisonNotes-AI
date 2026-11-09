@@ -199,6 +199,16 @@ Mac Catalyst was removed in Phase 4.3 of the native migration. The iOS target su
 
 The historical Catalyst guards in the `bisonbet/textual` fork are no longer required by this app and can be dropped when that separate repository is next rebased.
 
+### iPhone Duo layout
+
+iPhone Duo opens and closes constantly, crossing the compact/regular boundary each time, and its inner display has a fold. The plan is `docs/iphone-duo-implementation-plan.md`; the tests are the "iPhone Duo and Adaptive Layout Gate" in `docs/testing-regimen.md`. These rules keep it working:
+
+- **One view tree for every size class.** Never switch between different navigation containers (or a sheet and a full-screen cover) by size class: crossing the boundary tears the tree down and loses the section, the open item and any sheet. Appearance never depends on size class either.
+- **System bars only.** Toolbar items carry a title *and* a symbol so iPhone Duo can move them into its vertical side strip; in-content button rows stay horizontal and eat space.
+- **List and detail go in `ListDetailSplitView`** (`Views/AdaptiveLayoutSupport.swift`), never a sheet. Its documentation is the contract: the caller owns the selection and the container never clears it; every open bumps `revealToken`; a detail with unsaved work is never left without its prompt (`allowsLeavingDetail`, `UnsavedEditsGuard`, `InteractivePopDisabler`); and **nothing is ever pushed inside the list column** — show "Show N more" pages in place.
+- **Primary beside secondary goes in `SideBySideArrangement`** (iOS 27.1, `ArrangementView` split horizontally). The secondary is dropped when there is no room, so the primary is told whether the split is active and must carry everything that matters when it is not. Width is the only reliable signal; `splitArrangementAxis` and the secondary's `onAppear` are not.
+- **No interactive control across the fold.** Centered custom layouts are what land in the crease; system sheets, menus and split views move out of it on their own. Do not cap split-view column widths, or the book pose cannot rebalance them around the fold.
+
 ### User Guide Releases
 
 Every app release ships with its own complete user guide in `docs/user-guide/bisonnotes-ai-v<major>-<minor>.html`, published at the same slug on bisonnetworking.com; `/bisonnotes-ai/` redirects to the current App Store release's guide. In-app Help opens the installed version's guide through `BisonNotesDocumentation`, using section anchors (`bn-ai`) that are identical in every guide. Bumping `MARKETING_VERSION` to a new minor version without adding its guide fails `BisonNotesDocumentationTests`. Never rename or remove a `bn-*` id or the legacy `bn23-ai`/`bn24-ai`/`bn25-ai` aliases. The process is in `docs/user-guide/README.md`.

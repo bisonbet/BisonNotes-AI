@@ -123,7 +123,9 @@ final class BisonNotesAIAccessibilityTests: XCTestCase {
             "--disable-cloud-services"
         ] + extraArguments
         app.launch()
-        XCTAssertTrue(app.buttons["bisonnotes.record.view-recordings"].waitForExistence(timeout: 20))
+        // Scene storage restores the last tab, so go to Record rather than
+        // assume the app opens there.
+        app.showRecordScreen()
         return app
     }
 

@@ -130,15 +130,31 @@ final class ListDetailSplitUITests: XCTestCase {
 
         play.tap()
 
-        let closePlayer = app.buttons["Close Audio Player"]
-        XCTAssertTrue(closePlayer.waitForExistence(timeout: 8))
+        // The playback section's container identifier hides its buttons' own,
+        // so the play button is found by its label.
+        let transport = app.buttons.matching(NSPredicate(format: "label == 'Play Audio' OR label == 'Pause Audio'")).firstMatch
+        XCTAssertTrue(transport.waitForExistence(timeout: 8), "The player did not open")
+        XCTAssertTrue(transport.isHittable, "The player's play button is off screen")
+        XCTAssertFalse(
+            app.staticTexts["Audio Player"].exists,
+            "In the library's column the player uses the recording's title, not its own header"
+        )
         attachScreenshot(of: app, named: isRegularWidth ? "regular-library-and-player" : "compact-player-pushed")
 
-        // Close returns to the library either way.
-        closePlayer.tap()
+        // Beside the library there is no Back, so the player has a Close;
+        // pushed, Back returns to the library.
+        let closePlayer = app.buttons["Close Audio Player"]
+        if closePlayer.waitForExistence(timeout: 2) {
+            closePlayer.tap()
+        } else {
+            let back = app.buttons.matching(NSPredicate(format: "identifier == 'BackButton'"))
+                .allElementsBoundByIndex.first(where: \.isHittable)
+            XCTAssertNotNil(back, "No way back from the pushed player")
+            back?.tap()
+        }
         XCTAssertTrue(play.waitForExistence(timeout: 5))
         XCTAssertTrue(play.isHittable)
-        XCTAssertFalse(closePlayer.exists)
+        XCTAssertFalse(transport.exists)
     }
 
     /// A real library: several transcripts, date sections and a "Show N more" page.
@@ -264,7 +280,9 @@ final class ListDetailSplitUITests: XCTestCase {
         // without it this simulator did not restore, and nothing here can be
         // checked.
         let editorRestored = editor.waitForExistence(timeout: 10)
-        let transcriptsTab = app.buttons["bisonnotes.sidebar.transcripts"]
+        // iPad's floating tab bar exposes each tab as two nested buttons with
+        // the same identifier.
+        let transcriptsTab = app.buttons["bisonnotes.sidebar.transcripts"].firstMatch
         let sceneRestored = editorRestored || (transcriptsTab.waitForExistence(timeout: 5) && transcriptsTab.isSelected)
         attachScreenshot(of: app, named: "relaunch-transcripts")
         if !sceneRestored {
