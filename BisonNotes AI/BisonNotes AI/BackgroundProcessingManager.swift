@@ -1309,12 +1309,19 @@ class BackgroundProcessingManager: ObservableObject {
 
                 outputCommitted = true
 
-                try Task.checkCancellation()
+                // No cancellation check from here on: the transcript or
+                // summary is durable, so a cancel or an interruption that
+                // arrives now must not mark the job as unfinished. Resuming
+                // it would re-run the transcription or pay for the summary
+                // again.
 
                 // Job completed successfully
                 let completedJob = processingJob.withStatus(.completed).withProgress(1.0)
                 try await updateJob(completedJob)
                 completionStatePersisted = true
+                // A cancel that arrived after the commit was not acted on;
+                // its reason must not be read by the next job's cancellation.
+                cancellationReason = nil
 
                 AppLog.shared.backgroundProcessing("Job completed: \(nextJob.type.displayName)")
 

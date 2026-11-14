@@ -336,7 +336,9 @@ class RecordingWorkflowManager: ObservableObject {
         }
 
         let oldName = recordingEntry.recordingName ?? "unknown"
-        AppLog.shared.backgroundProcessing("Updating recording name from '\(oldName)' to '\(newName)'")
+        AppLog.shared.backgroundProcessing(
+            "Updating recording name: \(LogPrivacy.describe(oldName)) -> \(LogPrivacy.describe(newName))"
+        )
 
         // Clean any [Watch] tags from the new name and use it directly
         let finalName = newName.replacingOccurrences(of: " [Watch]", with: "")

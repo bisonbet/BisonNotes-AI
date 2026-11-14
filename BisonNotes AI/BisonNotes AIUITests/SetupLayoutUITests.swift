@@ -86,11 +86,22 @@ final class SetupLayoutUITests: XCTestCase {
         XCTAssertTrue(scroll.waitForExistence(timeout: 8))
         for _ in 0..<5 where !guide.exists { app.swipeUp() }
 
-        if model == "iPhone19,4" || model.hasPrefix("iPad") {
-            XCTAssertFalse(guide.exists, "\(model) has no Action Button, so Setup must not explain one")
-        } else if model.hasPrefix("iPhone") {
+        guard model.hasPrefix("iPhone") || model.hasPrefix("iPad") else { return }
+        if Self.hasActionButton(modelIdentifier: model) {
             XCTAssertTrue(guide.exists, "\(model) has an Action Button; Setup should explain it")
+        } else {
+            XCTAssertFalse(guide.exists, "\(model) has no Action Button, so Setup must not explain one")
         }
+    }
+
+    /// The app's rule (`DeviceCapabilities.hasActionButton`), which a UI test
+    /// cannot call: iPhone 15 Pro and Pro Max (`iPhone16,1` and `iPhone16,2`)
+    /// and every later iPhone family, except iPhone Duo.
+    private static func hasActionButton(modelIdentifier: String) -> Bool {
+        guard modelIdentifier.hasPrefix("iPhone"), modelIdentifier != "iPhone19,4" else { return false }
+        let numbers = modelIdentifier.dropFirst("iPhone".count).split(separator: ",").compactMap { Int($0) }
+        guard numbers.count == 2 else { return false }
+        return numbers[0] > 16 || (numbers[0] == 16 && (numbers[1] == 1 || numbers[1] == 2))
     }
 
     @MainActor

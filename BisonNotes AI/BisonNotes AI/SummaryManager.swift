@@ -1236,7 +1236,10 @@ class SummaryManager: ObservableObject {
     }
 
     private func updateRecordingName(from oldName: String, to newName: String, recordingURL: URL, coordinator: AppDataCoordinator) async throws {
-        AppLog.shared.summarization("Starting file rename process: '\(oldName)' -> '\(newName)'", level: .debug)
+        AppLog.shared.summarization(
+            "Starting file rename process: \(LogPrivacy.describe(oldName)) -> \(LogPrivacy.describe(newName))",
+            level: .debug
+        )
 
         // Get the recording from Core Data using the coordinator
         guard let recordingEntry = try coordinator.coreDataManager.fetchRecording(url: recordingURL),

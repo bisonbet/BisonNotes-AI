@@ -958,7 +958,7 @@ struct TranscriptsView: View {
         .padding(16)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
-        .openInDetailHighlight(recordingData.recording.id?.uuidString == selectedTranscriptRecordingID, cornerRadius: 18)
+        .openInDetailHighlight(isOpenInDetail(recordingData.recording.id, selectedID: selectedTranscriptRecordingID), cornerRadius: 18)
         .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptRowPrefix + recordingId)
     }
 
@@ -1055,7 +1055,7 @@ struct TranscriptsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18))
-        .openInDetailHighlight(recordingData.recording.id?.uuidString == selectedTranscriptRecordingID, cornerRadius: 18)
+        .openInDetailHighlight(isOpenInDetail(recordingData.recording.id, selectedID: selectedTranscriptRecordingID), cornerRadius: 18)
         .accessibilityIdentifier(
             BisonNotesAccessibilityID.transcriptRowPrefix
                 + (
@@ -3069,7 +3069,7 @@ struct EditableTranscriptView: View {
                         object: nil,
                         userInfo: ["recordingId": recordingId, "newName": trimmedName]
                     )
-                    AppLog.shared.transcription("Updated recording title from transcript editor to: \(trimmedName)")
+                    AppLog.shared.transcription("Updated recording title from transcript editor: \(LogPrivacy.describe(trimmedName))")
                 }
             } catch {
                 await MainActor.run {

@@ -335,8 +335,11 @@ struct MediaOperationRecoveryStore {
         }
 
         for receiptURL in receiptURLs {
-            let receipt = try readReceipt(at: receiptURL)
-            guard receipt.recordingID == recordingID else { continue }
+            // An unreadable receipt belongs to some other delivery and is left
+            // for review, as in `pendingOperation`; it must not stop this
+            // recording's receipts from being closed.
+            guard let receipt = try? readReceipt(at: receiptURL),
+                  receipt.recordingID == recordingID else { continue }
             let operation = MediaOperation(
                 receipt: receipt,
                 stagingURL: try stagingURL(for: receipt),
@@ -835,7 +838,7 @@ extension MediaOperationRecoveryStore {
         }
 
         if linkResult == 0 {
-            try fileManager.removeItem(at: sourceURL)
+            removeInstalledSource(at: sourceURL)
             return
         }
 
@@ -881,7 +884,22 @@ extension MediaOperationRecoveryStore {
             }
             throw POSIXError(POSIXErrorCode(rawValue: errorCode) ?? .EIO)
         }
-        try fileManager.removeItem(at: sourceURL)
+        removeInstalledSource(at: sourceURL)
+    }
+
+    /// Removes the staging copy once the destination link exists. The file is
+    /// published at that point, so a failure here must not fail the install:
+    /// the receipt moves on to `.published`, and reconciliation removes a
+    /// staging copy left beside a published, referenced artifact.
+    private func removeInstalledSource(at sourceURL: URL) {
+        do {
+            try fileManager.removeItem(at: sourceURL)
+        } catch {
+            AppLog.shared.fileManagement(
+                "Published media kept its staging copy for later cleanup: \(error.localizedDescription)",
+                level: .error
+            )
+        }
     }
 
     private func logReconciliation(_ receipt: MediaOperationReceipt, disposition: String) {

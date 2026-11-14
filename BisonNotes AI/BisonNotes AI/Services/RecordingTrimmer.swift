@@ -205,8 +205,7 @@ enum RecordingTrimmer {
             AppFileProtection.apply(to: outputURL)
 
             AppLog.shared.recording(
-                "Trimmed \(sourceURL.lastPathComponent) to \(outputURL.lastPathComponent): "
-                    + "\(String(format: "%.1f", duration))s, passthrough=\(usedPassthrough)"
+                "Trimmed a recording: \(String(format: "%.1f", duration))s, passthrough=\(usedPassthrough)"
             )
             return RecordingTrimResult(
                 outputURL: outputURL,
@@ -243,7 +242,7 @@ enum RecordingTrimmer {
             try FileManager.default.removeItem(at: url)
         } catch {
             AppLog.shared.fileManagement(
-                "Could not remove partial trim output \(url.lastPathComponent): \(error.localizedDescription)",
+                "Could not remove partial trim output: \(error.localizedDescription)",
                 level: .error
             )
         }

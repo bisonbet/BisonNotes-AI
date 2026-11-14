@@ -248,6 +248,14 @@ enum ArrangementSplit {
 
 // MARK: - Open-row highlight
 
+/// Whether a row's item is the one open in the detail column. A row with no id
+/// is never the open one: compared as optionals, it would match "nothing is
+/// selected".
+func isOpenInDetail(_ rowID: UUID?, selectedID: String?) -> Bool {
+    guard let rowID, let selectedID else { return false }
+    return rowID.uuidString == selectedID
+}
+
 extension View {
     /// Outlines the list row whose item is open in the detail column, so the
     /// list beside it shows which one you are reading — and says so to

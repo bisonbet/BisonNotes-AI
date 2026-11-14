@@ -445,7 +445,7 @@ final class EnhancedFileManager: ObservableObject {
             guard FileManager.default.fileExists(atPath: target.path) else { continue }
             do {
                 try FileManager.default.removeItem(at: target)
-                AppLog.shared.fileManagement("Deleted file: \(target.lastPathComponent)")
+                AppLog.shared.fileManagement("Deleted file: \(LogPrivacy.describe(target.lastPathComponent))")
             } catch {
                 if error.isThumbnailGenerationError {
                     AppLog.shared.fileManagement(

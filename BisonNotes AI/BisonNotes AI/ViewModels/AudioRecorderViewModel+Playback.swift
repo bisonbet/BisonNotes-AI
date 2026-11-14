@@ -117,7 +117,6 @@ extension AudioRecorderViewModel {
 		}
 	}
 
-	/// Seek to a specific time in the current audio playback
 	/// Plays `url` from `time`: seeks the running player, or starts one there.
 	///
 	/// `seekToTime` alone does nothing without a player, and there is none
@@ -136,6 +135,7 @@ extension AudioRecorderViewModel {
 		playRecording(url: url)
 	}
 
+	/// Seek to a specific time in the current audio playback
 	func seekToTime(_ time: TimeInterval) {
 		guard let player = audioPlayer else { return }
 		player.currentTime = min(max(time, 0), player.duration)
@@ -163,11 +163,18 @@ extension AudioRecorderViewModel {
 
 extension AudioRecorderViewModel: AVAudioPlayerDelegate {
 	nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+		let finishedPlayer = ObjectIdentifier(player)
 		Task { @MainActor [weak self] in
 			guard let self else { return }
+			// A finish reported for a player that has since been replaced
+			// must not touch the one that is playing now.
+			guard audioPlayer.map(ObjectIdentifier.init) == finishedPlayer else { return }
 			isPlaying = false
 			audioPlayer = nil
 			stopPlayingTimer()
+			// The next start reads `playingTime`. Left at the end, Play would
+			// start a player there and finish again at once.
+			playingTime = 0
 
 			// Deactivate audio session when playback finishes to restore other audio apps
 			Task { @MainActor [weak self] in

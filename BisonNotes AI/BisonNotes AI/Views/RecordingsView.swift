@@ -361,58 +361,54 @@ struct RecordingsView: View {
     }
 
     private func splitPrimaryColumn(showsHero: Bool) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                recordHeader
-                if showsHero {
-                    recordHero
-                }
-                controlsCard(includingLiveTranscript: false)
+        recordColumn(spacing: 22) {
+            recordHeader(showsSubtitle: showsHero)
+            if showsHero {
+                recordHero
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 32)
-            .frame(maxWidth: 620)
-            .frame(maxWidth: .infinity)
+            recordCard {
+                recordingButtons
+                if recorderVM.isRecording {
+                    recordingStatusPanel(includingLiveTranscript: false)
+                }
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     private var splitSecondaryColumn: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                if recorderVM.isRecording {
-                    liveTranscriptPanel(lineLimit: nil)
-                }
-                homeActionsCard
+        recordColumn(spacing: 18) {
+            if recorderVM.isRecording {
+                liveTranscriptPanel(lineLimit: nil)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 18)
-            .padding(.bottom, 32)
-            .frame(maxWidth: 620)
-            .frame(maxWidth: .infinity)
+            recordCard {
+                homeActionButtons
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     /// The single column every system before iOS 27.1 shows.
     private var stackedRecordContent: some View {
+        recordColumn(spacing: 22) {
+            recordHeader(showsSubtitle: showsHero)
+            if showsHero {
+                recordHero
+            }
+            recordCard {
+                recordingButtons
+                homeActionButtons
+                if recorderVM.isRecording {
+                    recordingStatusPanel(includingLiveTranscript: true)
+                }
+            }
+        }
+    }
+
+    /// One scrolling column of the Record screen: the whole screen, or one
+    /// side of a split.
+    private func recordColumn<Content: View>(spacing: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                recordHeader
-                if showsHero {
-                    recordHero
-                }
-                VStack(spacing: 14) {
-                    recordingButtons
-                    homeActionButtons
-                    if recorderVM.isRecording {
-                        recordingStatusPanel(includingLiveTranscript: true)
-                    }
-                }
-                .padding(18)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 22))
+            VStack(alignment: .leading, spacing: spacing) {
+                content()
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -421,6 +417,15 @@ struct RecordingsView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+    }
+
+    private func recordCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(spacing: 14) {
+            content()
+        }
+        .padding(18)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 
     /// Short and wide — iPhone Duo's outer display in landscape, an iPhone on
@@ -433,14 +438,16 @@ struct RecordingsView: View {
         #endif
     }
 
-    private var recordHeader: some View {
+    /// The subtitle goes wherever the logo goes: a column with no room for
+    /// one has no room for the other.
+    private func recordHeader(showsSubtitle: Bool) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Record")
                     .font(.largeTitle.weight(.bold))
                     .foregroundColor(.primary)
 
-                if showsHero {
+                if showsSubtitle {
                     Text("Capture audio, import files, and pick up previous recordings.")
                         .font(.subheadline)
                         .foregroundColor(.primary)
@@ -497,25 +504,6 @@ struct RecordingsView: View {
         } else {
             startRecordingButton
         }
-    }
-
-    private func controlsCard(includingLiveTranscript: Bool) -> some View {
-        VStack(spacing: 14) {
-            recordingButtons
-            if recorderVM.isRecording {
-                recordingStatusPanel(includingLiveTranscript: includingLiveTranscript)
-            }
-        }
-        .padding(18)
-        .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 22))
-    }
-
-    private var homeActionsCard: some View {
-        homeActionButtons
-            .padding(18)
-            .background(Color(.secondarySystemGroupedBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 
     private var homeActionButtons: some View {

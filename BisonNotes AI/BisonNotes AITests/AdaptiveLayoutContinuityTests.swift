@@ -165,6 +165,27 @@ final class PlayerTranscriptTests: XCTestCase {
         XCTAssertNil(PlayerTranscriptView.segmentIndex(at: 0, in: []))
     }
 
+    func testSpeakerLabelsFollowTheTranscriptEditor() {
+        XCTAssertEqual(PlayerTranscriptView.speakerLabel(for: "speaker_2", mappings: [:]), "Speaker 2")
+        XCTAssertEqual(PlayerTranscriptView.speakerLabel(for: "speaker_2", mappings: ["speaker_2": "Dana"]), "Dana")
+        XCTAssertEqual(
+            PlayerTranscriptView.speakerLabel(for: "speaker_2", mappings: ["speaker_2": ""]), "Speaker 2",
+            "An empty name is not a name"
+        )
+        // A transcript without speaker labels says nothing on every line.
+        XCTAssertNil(PlayerTranscriptView.speakerLabel(for: "Speaker", mappings: ["Speaker": "Speaker"]))
+        XCTAssertNil(PlayerTranscriptView.speakerLabel(for: "Unknown", mappings: [:]))
+        XCTAssertNil(PlayerTranscriptView.speakerLabel(for: "", mappings: [:]))
+    }
+
+    func testARowWithoutAnIDIsNeverTheOpenOne() {
+        let id = UUID()
+        XCTAssertTrue(isOpenInDetail(id, selectedID: id.uuidString))
+        XCTAssertFalse(isOpenInDetail(id, selectedID: UUID().uuidString))
+        XCTAssertFalse(isOpenInDetail(id, selectedID: nil))
+        XCTAssertFalse(isOpenInDetail(nil, selectedID: nil), "Nothing selected is not a match for a row with no id")
+    }
+
     func testTimeLabels() {
         XCTAssertEqual(PlayerTranscriptView.timeLabel(0), "0:00")
         XCTAssertEqual(PlayerTranscriptView.timeLabel(65.9), "1:05")

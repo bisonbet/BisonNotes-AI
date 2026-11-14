@@ -369,7 +369,7 @@ extension FileImportManager {
         case .clearFlagsOnly(let recording):
             try RecordingArchiveService.shared.clearArchiveFlags(for: recording)
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-            AppLog.shared.fileManagement("Cleared archive flags for \(recording.recordingName ?? "unknown") (local audio still present)")
+            AppLog.shared.fileManagement("Cleared archive flags for \(recording.id?.uuidString ?? "unknown") (local audio still present)")
 
         case .restoreWithCopy(let recording):
             let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -493,7 +493,7 @@ extension FileImportManager {
                 throw error
             }
             NotificationCenter.default.post(name: NSNotification.Name("RecordingAdded"), object: nil)
-            AppLog.shared.fileManagement("Restored archived recording \(recording.recordingName ?? "unknown") from import \(sourceURL.lastPathComponent)")
+            AppLog.shared.fileManagement("Restored archived recording \(recording.id?.uuidString ?? "unknown") from an imported file")
         }
     }
 

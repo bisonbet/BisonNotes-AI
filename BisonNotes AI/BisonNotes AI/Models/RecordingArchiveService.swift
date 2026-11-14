@@ -109,7 +109,7 @@ class RecordingArchiveService: ObservableObject {
             }
             do {
                 try FileManager.default.removeItem(at: url)
-                AppLog.shared.recording("Archived: removed local audio \(url.lastPathComponent)")
+                AppLog.shared.recording("Archived: removed local audio \(LogPrivacy.describe(url.lastPathComponent))")
             } catch {
                 // Continue to the remaining recordings, as the sidecar cleanup
                 // below already does. Every selected row was marked archived
@@ -216,7 +216,7 @@ class RecordingArchiveService: ObservableObject {
                 isolatedRecording.fileSize = fileSize
             }
         }
-        AppLog.shared.recording("Restored archived recording: \(recording.recordingName ?? "unknown")")
+        AppLog.shared.recording("Restored archived recording: \(recording.id?.uuidString ?? "unknown")")
     }
 
     /// Clear archive flags on a recording whose local audio is already present.
@@ -233,7 +233,7 @@ class RecordingArchiveService: ObservableObject {
             isolatedRecording.archiveNote = nil
             isolatedRecording.lastModified = Date()
         }
-        AppLog.shared.recording("Cleared archive flags (local audio intact): \(recording.recordingName ?? "unknown")")
+        AppLog.shared.recording("Cleared archive flags (local audio intact): \(recording.id?.uuidString ?? "unknown")")
     }
 
     // MARK: - Archive Locations
@@ -346,7 +346,7 @@ class RecordingArchiveService: ObservableObject {
                 mediaRecoveryStore: mediaRecoveryStore
             )
             AppLog.shared.recording(
-                "Resumed an interrupted archive restore for \(recording.recordingName ?? "unknown")"
+                "Resumed an interrupted archive restore for \(recording.id?.uuidString ?? "unknown")"
             )
             return resumed
         }
@@ -383,11 +383,16 @@ class RecordingArchiveService: ObservableObject {
             // downloaded copy remains recoverable if either later cleanup step
             // fails.
             try restoreRecording(recording, newAudioURL: destinationURL)
+            // The restore is durable from here. A receipt that cannot be
+            // advanced is a loose end for launch reconciliation, never a
+            // failed restore, and must not skip retiring the source below.
             if let committed = operation {
-                operation = try mediaRecoveryStore.markMetadataCommitted(
-                    committed,
-                    recordingID: recording.id
-                )
+                afterCommit("Recording the archive restore as committed", category: .recording) {
+                    operation = try mediaRecoveryStore.markMetadataCommitted(
+                        committed,
+                        recordingID: recording.id
+                    )
+                }
             }
 
             retainedArchiveSource = retireArchiveSource(
@@ -457,7 +462,12 @@ class RecordingArchiveService: ObservableObject {
             }
             try restoreRecording(recording, newAudioURL: operation.publishedURL)
         }
-        operation = try mediaRecoveryStore.markMetadataCommitted(operation, recordingID: recording.id)
+        // The recording points at the published audio from here; see
+        // `restoreArchivedRecording` for why the receipt update cannot fail it.
+        let uncommitted = operation
+        afterCommit("Recording the resumed archive restore as committed", category: .recording) {
+            operation = try mediaRecoveryStore.markMetadataCommitted(uncommitted, recordingID: recording.id)
+        }
 
         let retained = retireArchiveSource(
             at: sourceURL,

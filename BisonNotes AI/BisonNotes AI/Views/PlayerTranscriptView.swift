@@ -12,6 +12,9 @@ import SwiftUI
 
 struct PlayerTranscriptView: View {
     let recordingURL: URL
+    /// False when the player could not load the audio: its Play button is
+    /// disabled then, and so are the lines here.
+    var canPlay = true
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
     @State private var transcript: TranscriptData?
@@ -32,7 +35,15 @@ struct PlayerTranscriptView: View {
         .background(Color(.systemGroupedBackground))
         .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerTranscript)
         .onAppear(perform: loadTranscript)
+        // A first transcript, a re-run and a replacement each post their own
+        // notification; stale lines here would play from the old timestamps.
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
+            loadTranscript()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionRerunCompleted"))) { _ in
+            loadTranscript()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptReplacementCompleted"))) { _ in
             loadTranscript()
         }
     }
@@ -68,10 +79,8 @@ struct PlayerTranscriptView: View {
     }
 
     private func segmentRow(_ segment: TranscriptSegment, in transcript: TranscriptData, isCurrent: Bool) -> some View {
-        let speaker = transcript.speakerMappings[segment.speaker] ?? segment.speaker
-        let text = transcript.selectedRepresentation == .cleaned
-            ? (segment.cleanup?.normalizedText ?? segment.text)
-            : segment.text
+        let speaker = Self.speakerLabel(for: segment.speaker, mappings: transcript.speakerMappings)
+        let text = transcript.text(for: segment, representation: transcript.selectedRepresentation)
 
         return Button {
             // Plays from here whether or not audio is already playing.
@@ -82,7 +91,7 @@ struct PlayerTranscriptView: View {
                     Text(Self.timeLabel(segment.startTime))
                         .font(.caption.monospacedDigit())
                         .foregroundColor(.secondary)
-                    if !speaker.isEmpty {
+                    if let speaker {
                         Text(speaker)
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.accentColor)
@@ -101,7 +110,8 @@ struct PlayerTranscriptView: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(speaker.isEmpty ? Self.timeLabel(segment.startTime) : "\(speaker), \(Self.timeLabel(segment.startTime))")
+        .disabled(!canPlay)
+        .accessibilityLabel(speaker.map { "\($0), \(Self.timeLabel(segment.startTime))" } ?? Self.timeLabel(segment.startTime))
         .accessibilityValue(text)
         .accessibilityHint("Plays the recording from here.")
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
@@ -119,6 +129,21 @@ struct PlayerTranscriptView: View {
     /// first segment nothing is current.
     static func segmentIndex(at time: TimeInterval, in segments: [TranscriptSegment]) -> Int? {
         segments.lastIndex { $0.startTime <= time }
+    }
+
+    /// The speaker to show for a segment, by the transcript editor's rules
+    /// (`TranscriptSegmentView`): the name the user gave it, else `speaker_2`
+    /// as "Speaker 2". The placeholder speakers of a transcript without
+    /// speaker labels show nothing.
+    static func speakerLabel(for speaker: String, mappings: [String: String]) -> String? {
+        guard !speaker.isEmpty, speaker != "Speaker", speaker != "Unknown" else { return nil }
+        if let mapped = mappings[speaker], !mapped.isEmpty {
+            return mapped
+        }
+        if speaker.hasPrefix("speaker_") {
+            return "Speaker \(speaker.dropFirst("speaker_".count))"
+        }
+        return speaker
     }
 
     static func timeLabel(_ time: TimeInterval) -> String {

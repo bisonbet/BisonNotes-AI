@@ -216,7 +216,7 @@ struct AudioPlayerView: View {
             SideBySideArrangement { _ in
                 playerColumn
             } secondary: {
-                PlayerTranscriptView(recordingURL: recording.url)
+                PlayerTranscriptView(recordingURL: recording.url, canPlay: audioLoadError == nil)
             }
         } else {
             playerColumn
@@ -642,7 +642,7 @@ struct AudioPlayerView: View {
                         userInfo: ["recordingId": recordingId, "newName": trimmedName]
                     )
                     AccessibilitySupport.announce("Recording title updated to \(trimmedName)")
-                    AppLog.shared.recording("Updated recording title from AudioPlayerView to: \(trimmedName)")
+                    AppLog.shared.recording("Updated recording title from AudioPlayerView: \(LogPrivacy.describe(trimmedName))")
                 }
             } catch {
                 await MainActor.run {
