@@ -42,6 +42,19 @@ final class LogPrivacyTests: XCTestCase {
         XCTAssertEqual(LogPrivacy.redacting(["Meeting"], in: "Content type: Meeting"), "Content type: Meeting")
     }
 
+    /// An audio file named after its recording's id must not scrub that id out
+    /// of the log lines that identify the recording.
+    func testIdentifiersAreNeverScrubbed() {
+        let id = "E902566E-9C1C-4281-9E1C-BBA7DF79747A"
+        XCTAssertFalse(LogPrivacy.isRedactable(id))
+        XCTAssertFalse(LogPrivacy.isRedactable("\(id).m4a"))
+        XCTAssertFalse(LogPrivacy.isRedactable(id.lowercased()))
+        let line = "Recording UUID: \(id), Transcript UUID: \(id)"
+        XCTAssertEqual(LogPrivacy.redacting([id, "\(id).m4a", "Team Sync"], in: line), line)
+        // A name that merely contains an id is still a name.
+        XCTAssertTrue(LogPrivacy.isRedactable("Call \(id)"))
+    }
+
     func testALongerNameIsReplacedWholeBeforeAShorterOneInsideIt() {
         let scrubbed = LogPrivacy.redacting(["Team Sync", "Team Sync Follow Up"], in: "Opened Team Sync Follow Up")
         XCTAssertEqual(scrubbed, "Opened \(LogPrivacy.placeholder)")

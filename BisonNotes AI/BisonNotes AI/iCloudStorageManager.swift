@@ -4012,8 +4012,7 @@ extension iCloudStorageManager {
         manifestWasTrusted: Bool,
         recordingRecordNames: Set<String>,
         transcriptRecordNames: Set<String>,
-        summaryRecordNames: Set<String>,
-        includeAudioAssets: Bool = false
+        summaryRecordNames: Set<String>
     ) async throws -> BackupCloudSnapshot {
         var snapshot = BackupCloudSnapshot()
         snapshot.manifest = manifest
@@ -4029,7 +4028,7 @@ extension iCloudStorageManager {
         if !recordingIDs.isEmpty {
             let outcome = try await cloudExecutor.fetch(
                 recordingIDs,
-                desiredKeys: includeAudioAssets ? nil : Self.recordingMetadataKeys
+                desiredKeys: Self.recordingMetadataKeys
             )
             recordMetrics(fetch: outcome)
             try outcome.throwIfIncomplete()
@@ -4798,8 +4797,7 @@ extension iCloudStorageManager {
                     manifestWasTrusted: manifestState.isTrusted,
                     recordingRecordNames: [],
                     transcriptRecordNames: [],
-                    summaryRecordNames: [],
-                    includeAudioAssets: includeAudioFiles
+                    summaryRecordNames: []
                 )
             }
 
@@ -4860,8 +4858,15 @@ extension iCloudStorageManager {
 
             if includeAudioFiles {
                 // The snapshot skipped audio assets. Bring them down only for the
-                // recordings that are about to be written to disk.
-                recordingRecords = try await recordingRecordsWithAudioAssets(recordingRecords)
+                // recordings whose audio is not already on this device.
+                let localAudioByteCounts = try localAudioByteCountsByRecordingId(
+                    appCoordinator: appCoordinator,
+                    fileManager: fileManager
+                )
+                recordingRecords = try await recordingRecordsWithAudioAssets(
+                    recordingRecords,
+                    localAudioByteCounts: localAudioByteCounts
+                )
             }
 
             let trustedActiveManifest = try await fetchTrustedActiveManifestRecordNames()
@@ -5154,8 +5159,16 @@ extension iCloudStorageManager {
                     entry.assignIfChanged(\.fileSize, int64Value(from: record[Self.fieldFileSize]))
                     entry.assignIfChanged(\.duration, doubleValue(from: record[Self.fieldDuration]))
                     entry.assignIfChanged(\.audioQuality, record[Self.fieldAudioQuality] as? String)
-                    entry.assignIfChanged(\.transcriptionStatus, record[Self.fieldTranscriptionStatus] as? String)
-                    entry.assignIfChanged(\.summaryStatus, record[Self.fieldSummaryStatus] as? String)
+                    // A record that states no status says nothing about it. Writing
+                    // nil here cleared the status the relink below repairs to
+                    // "completed" for a linked transcript, so the two rewrote the
+                    // row against each other on every restore of an unchanged record.
+                    if let transcriptionStatus = record[Self.fieldTranscriptionStatus] as? String {
+                        entry.assignIfChanged(\.transcriptionStatus, transcriptionStatus)
+                    }
+                    if let summaryStatus = record[Self.fieldSummaryStatus] as? String {
+                        entry.assignIfChanged(\.summaryStatus, summaryStatus)
+                    }
                     entry.assignIfChanged(\.transcriptId, (record[Self.fieldTranscriptId] as? String).flatMap { UUID(uuidString: $0) })
                     entry.assignIfChanged(\.summaryId, (record[Self.fieldSummaryId] as? String).flatMap { UUID(uuidString: $0) })
                     entry.assignIfChanged(\.locationLatitude, doubleValue(from: record[Self.fieldLocationLatitude]))
@@ -5169,11 +5182,21 @@ extension iCloudStorageManager {
                     result.localItemsKeptAsNewer += 1
                 }
 
+                // Same rule as the asset fetch above. A record the backup leg has
+                // just saved still carries this device's own staged upload, and a
+                // tie counts as the cloud winning, so without it every pass copied
+                // audio this device already holds back over itself.
                 if applyCloudRecording,
                    includeAudioFiles,
                    let asset = record[Self.fieldAudioAsset] as? CKAsset,
                    let assetURL = asset.fileURL,
-                   fileManager.fileExists(atPath: assetURL.path) {
+                   fileManager.fileExists(atPath: assetURL.path),
+                   Self.cloudAudioNeedsDownload(
+                       localAudioByteCount: existing.flatMap {
+                           localAudioByteCount(for: $0, appCoordinator: appCoordinator, fileManager: fileManager)
+                       },
+                       cloudAudioByteCount: Self.cloudAudioByteCount(record)
+                   ) {
                     let backupFileName = (record[Self.fieldAudioFileName] as? String) ?? "\(recordingId.uuidString).m4a"
                     // Use recording ID as the filename to avoid collisions when
                     // multiple recordings share the same original basename.
@@ -5379,7 +5402,16 @@ extension iCloudStorageManager {
                     entry.assignIfChanged(\.titles, record[Self.fieldTitles] as? String)
                     entry.assignIfChanged(\.contentType, record[Self.fieldContentType] as? String)
                     entry.assignIfChanged(\.aiMethod, record[Self.fieldAIMethod] as? String)
-                    entry.assignIfChanged(\.generatedAt, record[Self.fieldGeneratedAt] as? Date)
+                    entry.assignIfChanged(
+                        \.generatedAt,
+                        Self.restoredSummaryTimestamp(
+                            cloudContentTimestamp: backupRecordContentTimestamp(
+                                record,
+                                keys: Self.summaryContentTimestampKeys
+                            ),
+                            cloudGeneratedAt: record[Self.fieldGeneratedAt] as? Date
+                        )
+                    )
                     entry.assignIfChanged(\.version, Int32(intValue(from: record[Self.fieldVersion], defaultValue: 1)))
                     entry.assignIfChanged(\.wordCount, Int32(intValue(from: record[Self.fieldWordCount])))
                     entry.assignIfChanged(\.originalLength, Int32(intValue(from: record[Self.fieldOriginalLength])))
@@ -7571,9 +7603,11 @@ extension iCloudStorageManager {
     /// request are retained because content and manifest writes are not atomic: a
     /// first-time delete can target a name the stale manifest does not list yet.
     ///
-    /// Two deliberate exceptions. Legacy `CD_EnhancedSummary` ids were never indexed
-    /// and are found by scan, so they pass through untouched; and an untrusted
-    /// manifest never claimed to name everything, so nothing is filtered against it.
+    /// Two deliberate exceptions. Legacy `CD_EnhancedSummary` ids were never indexed,
+    /// so the manifest cannot vouch for them: they are filtered only against what
+    /// is known about legacy records (`liveLegacyRecordNames`), and pass through
+    /// when nothing is. And an untrusted manifest never claimed to name everything,
+    /// so nothing is filtered against it.
     private static func contentRecordIDsWorthDeleting(
         _ plan: CloudDeletionPlan,
         workspace: CloudDeletionWorkspace?
@@ -7585,14 +7619,35 @@ extension iCloudStorageManager {
         let indexed = manifest.recordings
             .union(manifest.transcripts)
             .union(manifest.summaries)
+        let liveLegacy = liveLegacyRecordNames(in: workspace)
         return plan.recordIDsToDelete.filter { recordID in
             if plan.explicitlyTargetedRecordIDs.contains(recordID) {
                 return true
             }
             let name = recordID.recordName
             let isManifestManaged = manifestManagedRecordPrefixes.contains { name.hasPrefix($0) }
-            return isManifestManaged ? indexed.contains(name) : true
+            if isManifestManaged {
+                return indexed.contains(name)
+            }
+            return liveLegacy.map { $0.contains(name) } ?? true
         }
+    }
+
+    /// The legacy `CD_EnhancedSummary` records known to exist, or nil when this
+    /// run does not know.
+    ///
+    /// A replayed summary tombstone names its legacy record on every sync, and
+    /// those deletes used to be issued every time — fourteen or fifteen a pass on
+    /// an account whose scan had just found no legacy records at all. A scan from
+    /// this run lists them exactly; the absence memo says there are none, and it
+    /// expires and is cleared by any legacy write, so an older client's later
+    /// record is still found. Without either, nothing is known and every legacy
+    /// id is issued as before.
+    private static func liveLegacyRecordNames(in workspace: CloudDeletionWorkspace) -> Set<String>? {
+        if !workspace.legacySummaryRecords.isEmpty {
+            return Set(workspace.legacySummaryRecords.map(\.recordID.recordName))
+        }
+        return legacySummaryRecordsKnownAbsent ? [] : nil
     }
 
     /// What a plan's content deletes are made of, counted the same way
@@ -7626,7 +7681,8 @@ extension iCloudStorageManager {
         explicitlyTargetedRecordIDs: Set<CKRecord.ID>,
         expiredMarkerCount: Int,
         withdrawnMarkerCount: Int,
-        indexedRecordNames: Set<String>?
+        indexedRecordNames: Set<String>?,
+        liveLegacyRecordNames: Set<String>? = nil
     ) -> CloudDeleteComposition {
         var composition = CloudDeleteComposition()
         composition.retiredMarkers = expiredMarkerCount
@@ -7646,10 +7702,16 @@ extension iCloudStorageManager {
             let name = recordID.recordName
             let isManifestManaged = manifestManagedRecordPrefixes.contains { name.hasPrefix($0) }
             if !isManifestManaged {
-                // Legacy `CD_EnhancedSummary` ids were never indexed, so the filter
-                // waves them through on every run — which is exactly the shape that
-                // makes a steady `deleted=` look alarming when it is inert.
-                composition.legacySummaries += 1
+                // Legacy `CD_EnhancedSummary` ids were never indexed. They are
+                // issued unless the legacy records are known and this one is not
+                // among them — the same decision `contentRecordIDsWorthDeleting`
+                // makes — and an issued one is still reported by origin, because a
+                // steady `deleted=` made of these looks alarming when it is inert.
+                if let liveLegacyRecordNames, !liveLegacyRecordNames.contains(name) {
+                    composition.suppressedAsAlreadyGone += 1
+                } else {
+                    composition.legacySummaries += 1
+                }
             } else if indexed.contains(name) {
                 // Issued, and the manifest says the record is live. This is the one
                 // origin that means content is genuinely going away, so leaving it
@@ -7678,7 +7740,10 @@ extension iCloudStorageManager {
             explicitlyTargetedRecordIDs: plan.explicitlyTargetedRecordIDs,
             expiredMarkerCount: plan.expiredMarkerIDsToRetire.count,
             withdrawnMarkerCount: plan.markerIDsToWithdraw.count,
-            indexedRecordNames: trustedManifest
+            indexedRecordNames: trustedManifest,
+            liveLegacyRecordNames: workspace.flatMap { workspace in
+                workspace.manifestRecords.isTrusted ? Self.liveLegacyRecordNames(in: workspace) : nil
+            }
         )
         // Everything below rides in the batch issued on the next line.
         // `composition.retiredMarkers` deliberately does not: those go out in a
@@ -9090,6 +9155,19 @@ extension iCloudStorageManager {
         return cloudTimestamp >= localTimestamp
     }
 
+    /// The timestamp a restored summary row takes from its cloud record.
+    ///
+    /// It has to be the one the two legs compare — `lastModified` first — and not
+    /// `generatedAt` on its own. `SummaryEntry` has a single timestamp, so a cloud
+    /// record whose `lastModified` is later than its `generatedAt` (an older build
+    /// or another client wrote them apart) restored a row that was still older
+    /// than the cloud copy: the backup leg declined to upload it and the restore
+    /// leg wrote the same stale value again, on every sync, forever. Taking the
+    /// compared value makes the row agree with the cloud after one pass.
+    static func restoredSummaryTimestamp(cloudContentTimestamp: Date?, cloudGeneratedAt: Date?) -> Date? {
+        cloudContentTimestamp ?? cloudGeneratedAt
+    }
+
     /// True when a local item changed after another device deleted it, so the later
     /// edit wins and the tombstone should be withdrawn instead of applied.
     static func shouldReviveLocallyModifiedItem(localTimestamp: Date?, deletedAt: Date) -> Bool {
@@ -9248,14 +9326,78 @@ extension iCloudStorageManager {
 
     /// Brings the audio assets down for records that are about to be written to
     /// disk. The snapshot deliberately arrives without them.
-    private func recordingRecordsWithAudioAssets(_ records: [CKRecord]) async throws -> [CKRecord] {
+    /// Whether a cloud recording's audio has to be brought down to this device.
+    ///
+    /// Only when it is not here already: no local file, or one whose size differs
+    /// from the size the cloud record states. Asking only "does the cloud record
+    /// have audio" refetched every backed-up asset on every sync, and the restore
+    /// loop then copied each one over the identical local file — gigabytes of
+    /// downloads and disk writes a day for a library that had not changed. A cloud
+    /// record with no stated size (an older backup) cannot show a difference, so
+    /// existing local audio is kept.
+    nonisolated static func cloudAudioNeedsDownload(
+        localAudioByteCount: Int64?,
+        cloudAudioByteCount: Int64?
+    ) -> Bool {
+        guard let localAudioByteCount else { return true }
+        guard let cloudAudioByteCount, cloudAudioByteCount > 0 else { return false }
+        return localAudioByteCount != cloudAudioByteCount
+    }
+
+    private static func cloudAudioByteCount(_ record: CKRecord) -> Int64? {
+        if let byteCount = record[fieldAudioByteCount] as? Int64 { return byteCount }
+        if let byteCount = record[fieldAudioByteCount] as? Int { return Int64(byteCount) }
+        return nil
+    }
+
+    /// The size of a recording's audio file on this device, or nil when there is
+    /// no file.
+    private func localAudioByteCount(
+        for recording: RecordingEntry,
+        appCoordinator: AppDataCoordinator,
+        fileManager: FileManager
+    ) -> Int64? {
+        guard let url = appCoordinator.coreDataManager.getAbsoluteURL(for: recording),
+              let size = (try? fileManager.attributesOfItem(atPath: url.path))?[.size] as? NSNumber else {
+            return nil
+        }
+        return size.int64Value
+    }
+
+    private func localAudioByteCountsByRecordingId(
+        appCoordinator: AppDataCoordinator,
+        fileManager: FileManager
+    ) throws -> [UUID: Int64] {
+        var byteCounts: [UUID: Int64] = [:]
+        for recording in try appCoordinator.coreDataManager.getAllRecordings() {
+            guard let id = recording.id,
+                  let byteCount = localAudioByteCount(
+                      for: recording, appCoordinator: appCoordinator, fileManager: fileManager
+                  ) else { continue }
+            byteCounts[id] = byteCount
+        }
+        return byteCounts
+    }
+
+    private func recordingRecordsWithAudioAssets(
+        _ records: [CKRecord],
+        localAudioByteCounts: [UUID: Int64]
+    ) async throws -> [CKRecord] {
         // Requiring `audioSignature` skipped older backups: they carry an asset
         // but predate that field, so a bootstrap scan — which omits `audioAsset`
         // — handed them to the restore loop with no asset at all and they were
         // silently restored as metadata-only entries. Any record whose audio
         // metadata says an asset should be there is refetched.
         let recordsMissingAssets = records.filter { record in
-            record[Self.fieldAudioAsset] == nil && hasAudioBackupFields(record)
+            guard record[Self.fieldAudioAsset] == nil, hasAudioBackupFields(record) else { return false }
+            let recordingId = decodeBackupRecordUUID(
+                recordName: record.recordID.recordName,
+                prefix: Self.backupRecordingRecordPrefix
+            )
+            return Self.cloudAudioNeedsDownload(
+                localAudioByteCount: recordingId.flatMap { localAudioByteCounts[$0] },
+                cloudAudioByteCount: Self.cloudAudioByteCount(record)
+            )
         }
         guard !recordsMissingAssets.isEmpty else { return records }
 

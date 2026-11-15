@@ -1028,6 +1028,10 @@ final class RunReport: @unchecked Sendable {
             generationSeconds += seconds
             self.outputTokens += outputTokens
         }
+        // One line per passage is hundreds per run, and the breadcrumb buffer
+        // holds 750 lines in all. The run's own summary carries the totals and
+        // the rate, so only a passage that did not end normally is worth a line.
+        guard finishReason != "stop" else { return }
         let rate = seconds > 0 ? Double(outputTokens) / seconds : 0
         AppLog.shared.transcription(
             "[TranscriptCleanup] Generation: "

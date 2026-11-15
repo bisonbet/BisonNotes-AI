@@ -494,7 +494,10 @@ extension WatchConnectivityManager {
         guard watchConnectivitySupported else { return }
 
         guard let session = session, session.activationState == .activated, session.isReachable else {
-            AppLog.shared.watchConnectivity("Cannot send command - watch not reachable or session not activated", level: .error)
+            // The usual case, not a failure: this runs on every activation,
+            // and the watch is unreachable whenever its app is not open. At
+            // error level it filled the persistent error log.
+            AppLog.shared.watchConnectivity("Command not sent - watch not reachable or session not activated", level: .debug)
             return
         }
 

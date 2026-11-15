@@ -30,8 +30,17 @@ enum LogPrivacy {
     /// only multi-word names, file names and long single words qualify.
     static func isRedactable(_ term: String) -> Bool {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 4 else { return false }
+        guard trimmed.count >= 4, !isIdentifier(trimmed) else { return false }
         return trimmed.contains(" ") || trimmed.contains(".") || trimmed.count >= 12
+    }
+
+    /// Whether a term is an id rather than something a person wrote: a UUID,
+    /// or a file named after one. Audio files are often named by their
+    /// recording's id, and scrubbing that removed the id from every log line
+    /// that names the recording — the one thing a log is meant to keep.
+    static func isIdentifier(_ term: String) -> Bool {
+        UUID(uuidString: term) != nil
+            || UUID(uuidString: (term as NSString).deletingPathExtension) != nil
     }
 
     /// Replaces every redactable term in `text` with the placeholder,

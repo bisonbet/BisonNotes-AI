@@ -2767,9 +2767,10 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             cloudRecording(survivorRecordName, "Still there", file: "kept.m4a")
         ])
 
-        // The manifest read brings both records down first; the asset refetch asks
-        // for them a second time. Another device deletes one of them in between, so
-        // only the confirming read knows it is gone.
+        // The manifest read brings both records down first, without their audio;
+        // the asset refetch is the only read of them with every field. Another
+        // device deletes one of them in between, so only that confirming read
+        // knows it is gone.
         var fullReadCount = 0
         transport.beforeFetch = { transport in
             guard case .fetch(let names, let desiredKeys) = transport.ledger.last,
@@ -2778,7 +2779,6 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
                 return
             }
             fullReadCount += 1
-            guard fullReadCount == 2 else { return }
             transport.storage.removeValue(forKey: CKRecord.ID(recordName: recordingRecordName))
         }
 
@@ -2796,7 +2796,7 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
             appCoordinator.coreDataManager.getRecording(id: survivorId),
             "…while everything that read did not object to is restored as normal"
         )
-        XCTAssertEqual(fullReadCount, 2, "The refetch this covers has to have happened")
+        XCTAssertEqual(fullReadCount, 1, "The refetch this covers has to have happened, and only once")
     }
 
     /// A failed restore copy is a transient local-cache/filesystem condition, not
@@ -2877,6 +2877,199 @@ final class ICloudSyncOrchestrationTests: XCTestCase {
         let restoredURL = try XCTUnwrap(appCoordinator.coreDataManager.getAbsoluteURL(for: restoredRecording))
         XCTAssertTrue(FileManager.default.fileExists(atPath: restoredURL.path))
         XCTAssertEqual(try Data(contentsOf: restoredURL), Data("cloud audio that becomes available to the next pass".utf8))
+    }
+
+    func testARestoredSummaryTakesTheTimestampTheLegsCompare() {
+        let generatedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let lastModified = generatedAt.addingTimeInterval(60)
+        XCTAssertEqual(
+            iCloudStorageManager.restoredSummaryTimestamp(
+                cloudContentTimestamp: lastModified, cloudGeneratedAt: generatedAt
+            ),
+            lastModified
+        )
+        XCTAssertEqual(
+            iCloudStorageManager.restoredSummaryTimestamp(cloudContentTimestamp: nil, cloudGeneratedAt: generatedAt),
+            generatedAt
+        )
+    }
+
+    /// A cloud summary whose `lastModified` is later than its `generatedAt` used
+    /// to stay "newer in iCloud" forever: the restore wrote `generatedAt` back, the
+    /// row was still older than the value the backup leg compares, and nothing
+    /// ever made the two agree.
+    func testASummaryWithSplitCloudTimestampsSettlesAfterOnePass() async throws {
+        _ = try createCompleteRecording(named: "Split timestamps")
+        _ = try await runReconcile()
+
+        let summary = try XCTUnwrap(try appCoordinator.coreDataManager.getAllSummaries().first)
+        let summaryId = try XCTUnwrap(summary.id)
+        let recordID = CKRecord.ID(recordName: "backup_summary_\(summaryId.uuidString)")
+        let cloudRecord = try XCTUnwrap(transport.storage[recordID])
+        let generatedAt = try XCTUnwrap(cloudRecord["generatedAt"] as? Date)
+        let laterLastModified = generatedAt.addingTimeInterval(60)
+        cloudRecord["lastModified"] = laterLastModified
+        transport.storage[recordID] = cloudRecord
+
+        _ = try await runReconcile(reason: .appBecameActive)
+        XCTAssertEqual(
+            try XCTUnwrap(appCoordinator.coreDataManager.getAllSummaries().first).generatedAt,
+            laterLastModified,
+            "The row must take the timestamp the backup leg compares against"
+        )
+
+        _ = try await runReconcile(reason: .appBecameActive)
+        let settled = try XCTUnwrap(transport.storage[recordID])
+        XCTAssertEqual(settled["generatedAt"] as? Date, laterLastModified, "The cloud record's two timestamps agree again")
+        XCTAssertEqual(settled["lastModified"] as? Date, laterLastModified)
+        XCTAssertEqual(
+            try XCTUnwrap(appCoordinator.coreDataManager.getAllSummaries().first).generatedAt,
+            laterLastModified
+        )
+    }
+
+    func testCloudAudioIsDownloadedOnlyWhenItIsNotAlreadyHere() {
+        // No local file: bring it down.
+        XCTAssertTrue(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: nil, cloudAudioByteCount: 900))
+        XCTAssertTrue(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: nil, cloudAudioByteCount: nil))
+        // The same audio is already on this device.
+        XCTAssertFalse(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: 900, cloudAudioByteCount: 900))
+        // A different file is.
+        XCTAssertTrue(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: 900, cloudAudioByteCount: 1_200))
+        // An older backup states no size, so it cannot show a difference.
+        XCTAssertFalse(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: 900, cloudAudioByteCount: nil))
+        XCTAssertFalse(iCloudStorageManager.cloudAudioNeedsDownload(localAudioByteCount: 900, cloudAudioByteCount: 0))
+    }
+
+    /// A routine pass must leave audio this device already holds alone. It used
+    /// to fetch every backed-up asset and copy each over the identical local
+    /// file, renaming it to the recording's id, on every sync.
+    func testARoutineReconcileLeavesAudioAlreadyOnThisDeviceAlone() async throws {
+        let sameAudio = Data("audio this device already holds".utf8)
+        let outcome = try await reconcileRecordingWithLocalAudio(local: sameAudio, cloud: sameAudio)
+
+        XCTAssertEqual(outcome.result.restoreResult.audioFilesRestored, 0)
+        XCTAssertEqual(outcome.result.restoreResult.audioFilesFailedToRestore, 0)
+        XCTAssertEqual(outcome.recordingURL, outcome.localFileName, "The recording must keep pointing at its own file")
+        XCTAssertEqual(try Data(contentsOf: outcome.localURL), sameAudio)
+        // The backup leg may read the record in full once, before saving a
+        // metadata change. The restore leg must not read it again for its audio.
+        XCTAssertLessThanOrEqual(
+            outcome.fullFetchCount, 1,
+            "Audio already on this device must not be downloaded again by the restore"
+        )
+    }
+
+    /// The counterpart: audio that differs from the cloud's, where the cloud
+    /// copy is the newer one, is still brought down.
+    func testARoutineReconcileStillRestoresAudioThatDiffersFromTheCloud() async throws {
+        let cloudAudio = Data("the cloud copy of this recording's audio".utf8)
+        let outcome = try await reconcileRecordingWithLocalAudio(
+            local: Data("stale".utf8), cloud: cloudAudio, cloudIsNewer: true
+        )
+
+        XCTAssertEqual(outcome.result.restoreResult.audioFilesRestored, 1)
+        let restored = try XCTUnwrap(appCoordinator.getRecording(id: outcome.recordingId))
+        let restoredURL = try XCTUnwrap(appCoordinator.coreDataManager.getAbsoluteURL(for: restored))
+        defer { try? FileManager.default.removeItem(at: restoredURL) }
+        XCTAssertEqual(try Data(contentsOf: restoredURL), cloudAudio)
+    }
+
+    private struct LocalAudioReconcileOutcome {
+        let result: CloudReconcileResult
+        let recordingId: UUID
+        let localFileName: String
+        let localURL: URL
+        let recordingURL: String?
+        let fullFetchCount: Int
+    }
+
+    /// One recording whose audio file is in Documents, with a cloud record that
+    /// carries audio and an equal content timestamp, run through a reconcile
+    /// with audio backup on.
+    private func reconcileRecordingWithLocalAudio(
+        local: Data,
+        cloud: Data,
+        cloudIsNewer: Bool = false
+    ) async throws -> LocalAudioReconcileOutcome {
+        let recordingId = UUID()
+        let now = Date()
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let localFileName = "sync-audio-test-\(UUID().uuidString).m4a"
+        let localURL = documents.appendingPathComponent(localFileName)
+        try local.write(to: localURL)
+        addTeardownBlock { try? FileManager.default.removeItem(at: localURL) }
+        // What the backup leg computes for this file, so an unchanged file is not
+        // uploaded again: its size and whole-second modification time.
+        let attributes = try FileManager.default.attributesOfItem(atPath: localURL.path)
+        let modified = try XCTUnwrap(attributes[.modificationDate] as? Date)
+        let localSignature = "\(local.count)-\(Int64(modified.timeIntervalSince1970))"
+
+        let context = appCoordinator.coreDataManager.managedObjectContext
+        let recording = RecordingEntry(context: context)
+        recording.id = recordingId
+        recording.recordingName = "Local audio"
+        recording.recordingDate = now
+        recording.createdAt = now
+        recording.lastModified = now
+        recording.recordingURL = localFileName
+        recording.duration = 12
+        recording.fileSize = Int64(local.count)
+        recording.audioQuality = AudioQuality.whisperOptimized.rawValue
+        recording.transcriptionStatus = ProcessingStatus.notStarted.rawValue
+        recording.summaryStatus = ProcessingStatus.notStarted.rawValue
+        try context.save()
+
+        let cloudAudioURL = tempDirectory.appendingPathComponent("cloud-\(UUID().uuidString).m4a")
+        try cloud.write(to: cloudAudioURL)
+        let recordName = "backup_recording_\(recordingId.uuidString)"
+        transport.seed([
+            CloudKitTestRecords.record(
+                type: "CD_BackupRecording",
+                name: recordName,
+                fields: [
+                    "recordingName": "Local audio",
+                    "recordingDate": now,
+                    "createdAt": now,
+                    "lastModified": cloudIsNewer ? now.addingTimeInterval(60) : now,
+                    "recordingURL": localFileName,
+                    "duration": 12.0,
+                    "fileSize": cloud.count,
+                    "audioQuality": AudioQuality.whisperOptimized.rawValue,
+                    "audioAsset": CKAsset(fileURL: cloudAudioURL),
+                    "audioFileName": localFileName,
+                    "audioByteCount": Int64(cloud.count),
+                    "audioSignature": cloudIsNewer ? "another-device-signature" : localSignature,
+                    "syncLifecycle": "active",
+                    "syncSchemaVersion": 2
+                ]
+            )
+        ])
+        seedTrustedManifest()
+
+        let previousAudioSetting = UserDefaults.standard.object(forKey: "iCloudBackupIncludeAudioFiles")
+        UserDefaults.standard.set(true, forKey: "iCloudBackupIncludeAudioFiles")
+        defer {
+            if let previousAudioSetting {
+                UserDefaults.standard.set(previousAudioSetting, forKey: "iCloudBackupIncludeAudioFiles")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "iCloudBackupIncludeAudioFiles")
+            }
+        }
+
+        let result = try await runReconcile(reason: .appBecameActive)
+        return LocalAudioReconcileOutcome(
+            result: result,
+            recordingId: recordingId,
+            localFileName: localFileName,
+            localURL: localURL,
+            recordingURL: appCoordinator.getRecording(id: recordingId)?.recordingURL,
+            fullFetchCount: transport.ledger.filter { operation in
+                // A fetch with no key list brings every field down, assets included.
+                guard case .fetch(let names, let desiredKeys) = operation, desiredKeys == nil else { return false }
+                return names.contains(recordName)
+            }.count
+        )
     }
 
     /// A marker is the only record other devices have of a delete they did not

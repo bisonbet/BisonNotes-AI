@@ -404,6 +404,52 @@ final class CloudSyncMetricsTests: XCTestCase {
     }
 
 
+    /// A replayed summary tombstone names its legacy record on every sync. When
+    /// the legacy records are known, one that is not among them is not issued.
+    func testALegacyDeleteProvenAbsentIsSuppressed() {
+        let legacyID = recordID("3D093F00-843C-4FC1-8CF9-46F712322F32")
+
+        let unknown = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [legacyID],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
+            indexedRecordNames: []
+        )
+        XCTAssertEqual(unknown.legacySummaries, 1, "Nothing is known about legacy records, so it is issued")
+
+        let knownAbsent = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [legacyID],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
+            indexedRecordNames: [],
+            liveLegacyRecordNames: []
+        )
+        XCTAssertEqual(knownAbsent.legacySummaries, 0)
+        XCTAssertEqual(knownAbsent.suppressedAsAlreadyGone, 1)
+
+        let stillThere = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [legacyID],
+            explicitlyTargetedRecordIDs: [],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
+            indexedRecordNames: [],
+            liveLegacyRecordNames: [legacyID.recordName]
+        )
+        XCTAssertEqual(stillThere.legacySummaries, 1, "A legacy record the scan found is still deleted")
+
+        let explicit = iCloudStorageManager.deleteComposition(
+            recordIDsToDelete: [legacyID],
+            explicitlyTargetedRecordIDs: [legacyID],
+            expiredMarkerCount: 0,
+            withdrawnMarkerCount: 0,
+            indexedRecordNames: [],
+            liveLegacyRecordNames: []
+        )
+        XCTAssertEqual(explicit.explicit, 1, "A first-time delete is always issued")
+    }
+
     func testWithdrawnMarkersAreCountedAsTheirOwnOrigin() {
         let composition = iCloudStorageManager.deleteComposition(
             recordIDsToDelete: [],
