@@ -769,6 +769,8 @@ private func configureMLXMemoryForIOS() {
 
 extension MLXSwiftDownloadManager {
     private func performDownload(modelID id: String, generation: Int) async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.modelDownload)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         let config = ModelConfiguration(id: id)
         _ = try await downloadModel(hub: defaultHubApi, configuration: config) { [weak self] progress in
             Task { @MainActor [weak self] in
@@ -1102,6 +1104,8 @@ private actor MLXSwiftService {
     }
 
     private func loadContainer() async throws -> ModelContainer {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.mlxModelLoad)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         let modelId = UserDefaults.standard.string(forKey: MLXSwiftSettingsKeys.modelId)
             ?? MLXSwiftSettingsKeys.defaultModelId
 

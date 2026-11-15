@@ -2136,6 +2136,8 @@ class CoreDataManager: ObservableObject {
     /// `announceDeletedTranscriptContent` once the main context reflects the
     /// save — at once for the main context, after the merge for a sibling.
     private func commit(_ saveContext: NSManagedObjectContext, operation: String) throws -> Set<UUID> {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.coreDataSave)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         #if DEBUG
         if let injectedFailure = Self.injectedSaveFailure,
            (Self.injectedSaveOperation == nil || Self.injectedSaveOperation == operation) {

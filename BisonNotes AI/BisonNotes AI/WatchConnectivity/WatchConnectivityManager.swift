@@ -701,22 +701,28 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        // The import itself runs on the main queue after this returns, so the
+        // interval is ended there; every rejection before the hand-off ends it here.
+        let diskWriteSignpost = DiskWriteSignposts.begin(.watchTransfer)
         AppLog.shared.watchConnectivity("Received file from watch")
 
         let metadata = file.metadata ?? [:]
 
         guard let transferType = metadata["transferType"] as? String else {
             AppLog.shared.watchConnectivity("Received file transfer without transfer type - ignoring", level: .error)
+            DiskWriteSignposts.end(diskWriteSignpost)
             return
         }
 
         guard transferType == "complete_recording" || transferType == "reliable_recording" else {
             AppLog.shared.watchConnectivity("Unknown transfer type: \(transferType)", level: .error)
+            DiskWriteSignposts.end(diskWriteSignpost)
             return
         }
 
         guard let metadataData = Self.propertyListData(for: metadata) else {
             AppLog.shared.watchConnectivity("Received watch file metadata was not a valid property list", level: .error)
+            DiskWriteSignposts.end(diskWriteSignpost)
             return
         }
 
@@ -732,6 +738,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
             try fileManager.moveItem(at: file.fileURL, to: stagedURL)
         } catch {
             AppLog.shared.watchConnectivity("Failed to stage received watch file: \(error.localizedDescription)", level: .error)
+            DiskWriteSignposts.end(diskWriteSignpost)
             return
         }
 
@@ -739,10 +746,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
             guard let metadata = Self.propertyListPayload(from: metadataData) else {
                 AppLog.shared.watchConnectivity("Failed to decode received watch file metadata", level: .error)
                 try? FileManager.default.removeItem(at: stagedURL)
+                DiskWriteSignposts.end(diskWriteSignpost)
                 return
             }
             self.handleWatchRecordingReceived(fileURL: stagedURL, metadata: metadata)
             try? FileManager.default.removeItem(at: stagedURL)
+            DiskWriteSignposts.end(diskWriteSignpost)
         }
     }
 }

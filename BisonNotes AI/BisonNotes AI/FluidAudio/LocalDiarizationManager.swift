@@ -100,6 +100,8 @@ actor LocalDiarizationManager: LocalDiarizationModelManaging, LocalDiarizing {
         for method: LocalDiarizationMethod,
         progress: @escaping @Sendable (LocalDiarizationProgress) -> Void
     ) async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.modelDownload)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         let methodKey = method.rawValue
         if let existing = preparationTasks[methodKey] {
             try await existing.task.value
