@@ -701,6 +701,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.watchTransfer)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         AppLog.shared.watchConnectivity("Received file from watch")
 
         let metadata = file.metadata ?? [:]

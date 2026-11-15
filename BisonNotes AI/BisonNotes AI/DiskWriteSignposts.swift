@@ -26,6 +26,19 @@ enum DiskWritePhase: Sendable, CaseIterable {
     case transcriptCleanup
     case cloudSync
     case recordingMerge
+    /// From recording intent to stop, including interruption recovery.
+    case recording
+    case audioImport
+    case watchTransfer
+    /// Parakeet, speaker-label, Transcript Cleanup and on-device summary models.
+    case modelDownload
+    /// Loading an on-device MLX summary model.
+    case mlxModelLoad
+    /// Every `CoreDataManager` save. Nested inside the other phases, so it
+    /// measures the SQLite share of their writes rather than adding to them.
+    case coreDataSave
+    /// The first minute after launch.
+    case launchWindow
 
     /// `mxSignpost` takes a `StaticString`, so the names are spelled out here.
     var signpostName: StaticString {
@@ -37,6 +50,13 @@ enum DiskWritePhase: Sendable, CaseIterable {
         case .transcriptCleanup: return "TranscriptCleanup"
         case .cloudSync: return "CloudSync"
         case .recordingMerge: return "RecordingMerge"
+        case .recording: return "Recording"
+        case .audioImport: return "AudioImport"
+        case .watchTransfer: return "WatchTransfer"
+        case .modelDownload: return "ModelDownload"
+        case .mlxModelLoad: return "MLXModelLoad"
+        case .coreDataSave: return "CoreDataSave"
+        case .launchWindow: return "LaunchWindow"
         }
     }
 }
@@ -46,7 +66,9 @@ enum DiskWritePhase: Sendable, CaseIterable {
 enum DiskWriteSignposts {
     static let category = "DiskWrites"
 
-    struct Interval {
+    /// Unchecked because `OSSignpostID` is a plain value with no Sendable
+    /// annotation; an interval is ended once, from wherever it was handed.
+    struct Interval: @unchecked Sendable {
         fileprivate let phase: DiskWritePhase
         fileprivate let id: OSSignpostID
     }
@@ -78,6 +100,12 @@ enum DiskWriteMetricsLog {
     }
 
     static func record(_ payload: MXMetricPayload) {
+        // iOS also delivers empty, zero-length reports on some launches. They
+        // carry no disk metrics and only cluttered the export with `n/a` lines.
+        let hasSignposts = payload.signpostMetrics?.contains {
+            $0.signpostCategory == DiskWriteSignposts.category
+        } == true
+        guard payload.diskIOMetrics != nil || hasSignposts else { return }
         let line = summary(of: payload)
         file.append(LogTrimPolicy.clamp(line, maxBytes: 4 * 1024))
         AppLog.shared.info("MetricKit daily metrics: \(line)", category: .general)
@@ -85,9 +113,12 @@ enum DiskWriteMetricsLog {
 
     static func exportText() -> String {
         let text = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
-        return text.isEmpty
-            ? "No MetricKit metric reports yet. iOS delivers one about once a day."
-            : text
+        guard !text.isEmpty else {
+            return "No MetricKit metric reports yet. iOS delivers one about once a day."
+        }
+        // Intervals nest, so their writes overlap rather than add up.
+        return "Phases overlap: ASRModelLoad and SpeakerLabels run inside Transcription, "
+            + "and CoreDataSave inside every other phase.\n" + text
     }
 
     static func summary(of payload: MXMetricPayload) -> String {

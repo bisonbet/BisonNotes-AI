@@ -334,6 +334,8 @@ final class TranscriptCleanupModelManager: ObservableObject {
     }
 
     private func downloadModel() async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.modelDownload)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         #if !os(watchOS) && canImport(MLXLLM) && canImport(MLXLMCommon)
         let configuration = ModelConfiguration(
             id: TranscriptCleanupSettings.modelId,

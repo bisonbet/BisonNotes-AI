@@ -42,6 +42,11 @@ class AppDelegateCore: NSObject, UNUserNotificationCenterDelegate, MXMetricManag
     @MainActor static weak var recorderViewModel: AudioRecorderViewModel?
 
     func completeLaunchSetup() {
+        let launchWindow = DiskWriteSignposts.begin(.launchWindow)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            DiskWriteSignposts.end(launchWindow)
+        }
+
         // Set notification delegate
         UNUserNotificationCenter.current().delegate = self
 

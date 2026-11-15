@@ -334,6 +334,8 @@ final class FluidAudioManager: ObservableObject {
     // MARK: - Download & Prepare
 
     func downloadAndPrepareModel() async throws {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.modelDownload)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         #if canImport(FluidAudio)
         // If a download is already running, await its real outcome instead of returning a
         // false success. Previously this returned immediately, so a concurrent/retry call

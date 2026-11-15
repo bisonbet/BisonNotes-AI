@@ -124,7 +124,20 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	// The user intent remains active while iOS has stopped the current recorder
 	// and the recovery coordinator is deciding whether it can continue.
-	var recordingIntentActive = false
+	var recordingIntentActive = false {
+		didSet {
+			guard recordingIntentActive != oldValue else { return }
+			if recordingIntentActive {
+				recordingDiskWriteSignpost = DiskWriteSignposts.begin(.recording)
+			} else if let interval = recordingDiskWriteSignpost {
+				DiskWriteSignposts.end(interval)
+				recordingDiskWriteSignpost = nil
+			}
+		}
+	}
+	/// Spans the whole recording intent, so every stop path ends it; see
+	/// `recordingIntentActive`.
+	private var recordingDiskWriteSignpost: DiskWriteSignposts.Interval?
 
 	#if os(iOS)
 	let recoveryCoordinator = AudioInterruptionRecoveryCoordinator()

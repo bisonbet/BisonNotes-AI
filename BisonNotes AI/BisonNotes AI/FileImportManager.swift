@@ -61,6 +61,8 @@ extension FileImportManager {
 
     @discardableResult
     func importAudioFiles(from urls: [URL]) async -> Set<URL> {
+        let diskWriteSignpost = DiskWriteSignposts.begin(.audioImport)
+        defer { DiskWriteSignposts.end(diskWriteSignpost) }
         guard persistenceController.storeState.isOperational else {
             AppLog.shared.coreData(
                 "Audio import withheld because local storage is unavailable",
