@@ -265,3 +265,8 @@ filled primary buttons must set that tint explicitly rather than inherit the
 foreground accent. Avoid hard-coded `.blue` text on tinted or glass surfaces.
 Short action labels should remain readable on the Duo outer display, with
 context carried by accessibility labels and adaptive stacking for Larger Text.
+
+Native macOS disables generated Swift asset convenience extensions in Debug and
+Release. Generated `Color.accent` uses an unqualified `.accent` initializer that
+conflicts with the shared `Color(NSColor)` compatibility initializer. Typed asset
+resources and named asset lookup remain enabled; do not edit DerivedSources.
