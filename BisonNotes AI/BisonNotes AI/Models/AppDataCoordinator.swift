@@ -215,10 +215,7 @@ class AppDataCoordinator: ObservableObject {
                 .filter { $0.audioQuality != "imported" }
                 .compactMap { getAbsoluteURL(for: $0)?.path }
         } catch {
-            AppLog.shared.coreData(
-                "Could not calculate recording storage usage: \(error.localizedDescription)",
-                level: .error
-            )
+            AppLog.shared.logError(error, "Could not calculate recording storage usage", category: .coreData)
             return "Unavailable"
         }
 

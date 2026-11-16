@@ -764,9 +764,9 @@ struct SummariesView: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: summary == nil ? "doc.text.magnifyingglass" : "doc.text.fill")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(summary == nil ? .accentColor : .bisonActionForeground)
+                    .foregroundColor(.bisonActionForeground)
                     .frame(width: 38, height: 38)
-                    .background((summary == nil ? Color.accentColor : Color.bisonActionForeground).opacity(0.14))
+                    .background(Color.bisonActionForeground.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 11))
 
                 VStack(alignment: .leading, spacing: 6) {

@@ -49,7 +49,12 @@ extension AudioRecorderViewModel {
                 #endif
                 finishRecordingStartup()
                 recordingState = .idle
+                #if targetEnvironment(simulator)
+                errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone "
+                    + "in simulator menu, or test on a physical device."
+                #else
                 errorMessage = "Failed to start recording: \(error.localizedDescription)"
+                #endif
                 AppLog.shared.logError(error, "Recorder startup failed", category: .recording)
                 try? await enhancedAudioSessionManager.deactivateSession()
             }

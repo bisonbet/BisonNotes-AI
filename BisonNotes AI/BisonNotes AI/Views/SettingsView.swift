@@ -141,9 +141,14 @@ struct SettingsView: View {
                 await recorderVM.fetchInputs()
             }
         }
-        .task(id: [showingAdvancedTroubleshooting, isRunningCloudBackupAction]) {
-            // Re-measured when troubleshooting closes or a restore finishes,
-            // the two things on this screen that add or remove audio.
+        .task(id: StorageMeasurementTrigger(
+            showingAdvancedTroubleshooting: showingAdvancedTroubleshooting,
+            isRunningCloudBackupAction: isRunningCloudBackupAction,
+            lastSyncDate: iCloudManager.lastSyncDate
+        )) {
+            // Re-measured when troubleshooting closes, a restore finishes, or
+            // an automatic sync completes — the things that add or remove
+            // audio while this screen stays visible.
             recordingsStorageText = await appCoordinator.recordingsStorageUsageText()
         }
         .onChange(of: selectedAIEngine) { _, newEngine in
@@ -1406,6 +1411,13 @@ struct SettingsView: View {
 }
 
 // MARK: - Supporting Structures
+
+/// Re-runs the Settings storage measurement when audio may have changed.
+private struct StorageMeasurementTrigger: Equatable {
+    let showingAdvancedTroubleshooting: Bool
+    let isRunningCloudBackupAction: Bool
+    let lastSyncDate: Date?
+}
 
 private enum MacSystemAudioPermissionAlert: Identifiable {
     case rationale

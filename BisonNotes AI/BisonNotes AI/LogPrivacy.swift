@@ -65,16 +65,22 @@ enum LogPrivacy {
 
         // Older breadcrumbs may name a recording that was renamed or deleted,
         // or contain coordinates. Database terms alone cannot protect those.
+        guard let identifiers else { return placeholder }
         var result = redactingLegacyFields(in: text)
         for term in usable {
             let pattern = "(?<![\\p{L}\\p{N}_])" + NSRegularExpression.escapedPattern(for: term)
                 + "(?![\\p{L}\\p{N}_])"
-            guard let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
-                  let identifiers else { return placeholder }
+            guard let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else {
+                return placeholder
+            }
             let range = NSRange(result.startIndex..., in: result)
+            let matches = expression.matches(in: result, range: range)
+            // Most terms never occur. Only scan the whole export for UUIDs
+            // when this term has something to redact.
+            guard !matches.isEmpty else { continue }
             let protected = identifiers.matches(in: result, range: range).map(\.range)
             var redactions: [NSRange] = []
-            for match in expression.matches(in: result, range: range) {
+            for match in matches {
                 // A name equal to a UUID segment must not damage that UUID.
                 // A name surrounding a UUID still needs its other text removed.
                 guard !protected.contains(where: {
