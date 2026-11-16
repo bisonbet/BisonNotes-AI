@@ -182,6 +182,26 @@ Use a signed native build. The Phase 3 gate is complete only when the automated 
 
 Phase 2 hardware/runtime cases such as external-microphone hot swap, ScreenCaptureKit meeting audio, long background processing, export/share destinations, and archive bookmark restoration remain mandatory before Phase 4 beta even if the Phase 3 Mac-idiom gate is green.
 
+## Recorder Startup Responsiveness
+
+Run `RecorderStartupTests`, `AudioInterruptionRecoveryTests`,
+`AudioRecorderFallbackTests`, `AudioTranscriptionRegressionTests`, and
+`Swift6AudioConcurrencyTests` in the iOS unit-test target after startup changes.
+The startup suite uses a worker probe and gated recorder doubles to verify that
+`record()` runs off the main thread, false starts are rejected, Stop and newer
+requests win, interruption state survives, and usable short audio is retained
+for unprocessed-recording recovery. It does not prove microphone capture or
+absence of a device-only runtime warning.
+
+With an iPhone attached to Xcode, start ordinary recording and the standard
+fallback after Live Transcription fails. Confirm the initial start no longer
+reports the synchronous AVAudioSession activation warning, controls stay
+responsive, metering advances, and Stop produces playable non-zero audio. Also
+stop immediately during startup, start again, and interrupt startup with a call;
+confirm no late recording begins, no newer session is deactivated, and usable
+audio survives. Repeat without the debugger attached. Pause/resume and existing
+continuation startup paths remain separate hardware regression cases.
+
 ## Manual Hardware Validation
 
 Simulator tests are not enough for these capabilities. Capture evidence for every release candidate:
