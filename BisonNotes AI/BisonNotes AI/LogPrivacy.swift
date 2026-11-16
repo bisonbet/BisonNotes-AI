@@ -127,7 +127,7 @@ enum LogPrivacy {
 
     private static let safeFileFields: NSRegularExpression? = {
         let reference = "(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?:\\.[a-zA-Z0-9]+)?"
-            + "|<[0-9]+ chars>|<empty>)"
+            + "|<[0-9]+ chars>|<empty>|domain=[a-zA-Z0-9_.-]+, code=-?[0-9]+)"
         return try? NSRegularExpression(
             pattern: "^\\s*" + reference + "(?:\\s*(?:->|\\+)\\s*" + reference + ")*"
                 + "(?:: domain=[a-zA-Z0-9_.-]+, code=-?[0-9]+| \\(compression: [0-9]+, size: [0-9]+\\))?\\s*$"
@@ -137,6 +137,42 @@ enum LogPrivacy {
     private static let legacyFields = try? NSRegularExpression(
         pattern: "(?im)(?:" + [
             "Saving location data - lat:",
+            "Archive: failed to create staging dir:",
+            "Archive: failed to resolve bookmark:",
+            "Audio export: failed to create staging dir:",
+            "Could not remove unusable startup artifact:",
+            "DOCX extraction error:",
+            "Error checking for existing recording:",
+            "Error deleting recording:",
+            "Error deleting summary:",
+            "Error deleting transcript:",
+            "Error fetching recording by name:",
+            "Error fetching recording:",
+            "Error getting file metadata:",
+            "Error loading file relationships:",
+            "Error saving file relationships:",
+            "Error saving preservation changes:",
+            "Error scanning documents directory:",
+            "Failed to load asset properties:",
+            "Failed to remove superseded duplicates:",
+            "Failed to rename audio file:",
+            "Failed to save Core Data entry:",
+            "Failed to save URL migrations:",
+            "Failed to save URL update:",
+            "Failed to save URL updates:",
+            "Failed to save cleanup changes:",
+            "Failed to save cleanup:",
+            "Failed to save fixes:",
+            "Failed to save missing file cleanup:",
+            "Failed to save name update:",
+            "Failed to save repaired summaries:",
+            "Failed to save transcript entry:",
+            "Failed to start transcription job:",
+            "Fallback transcription also failed:",
+            "LiveTranscriptionService: export failed:",
+            "Recorder startup failed:",
+            "Unexpected DOCX extraction error:",
+            "Export failed:",
             "Creating summary for recording:",
             "No valid URL found for recording:",
             "Could not resolve URL for recording:",
@@ -179,6 +215,8 @@ enum LogPrivacy {
             "Archive: failed to stage "
         ].map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
             + "|(?:Updated URL(?: by name match)? for recording ID|Fixed path for recording ID"
-            + "|Updated recording URL for ID) [0-9a-fA-F-]{36}:)([^\\r\\n]*)"
+            + "|Updated recording URL for ID) [0-9a-fA-F-]{36}:)"
+            + "([^\\r\\n]*(?:\\r?\\n(?!\\[\\d{4}-|"
+            + "\\[(?:DEBUG|INFO|NOTICE|ERROR|FAULT|DEFAULT|LIFECYCLE)\\]|[─=]{3,})[^\\r\\n]*)*)"
     )
 }

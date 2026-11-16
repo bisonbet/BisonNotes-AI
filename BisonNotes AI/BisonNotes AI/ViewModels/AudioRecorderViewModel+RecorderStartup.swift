@@ -4,11 +4,14 @@ import Foundation
 extension AudioRecorderViewModel {
     func beginAVAudioRecorderStartup(at url: URL) {
         let generation = recordingStartupGeneration
+        let previousStartup = recorderStartupTask
+        let interruptionEpoch = recorderStartupInterruptionEpoch
         let artifact = recordingAttemptArtifacts.first { $0.url == url.standardizedFileURL }
         recorderStartupTask = Task { @MainActor in
             defer {
                 if recordingStartupGeneration == generation { recorderStartupTask = nil }
             }
+            await previousStartup?.value
             guard wantsRecorderStartup(generation: generation, url: url) else { return }
             do {
                 let recorder = try await makeStartedRecorder(at: url)
@@ -18,7 +21,7 @@ extension AudioRecorderViewModel {
                     return
                 }
                 #if os(iOS)
-                if isInInterruption {
+                if isInInterruption || recorderStartupInterruptionEpoch != interruptionEpoch {
                     // Recovery waits for this worker before sealing its file.
                     recorder.stop()
                     finishRecordingStartup()
@@ -37,7 +40,7 @@ extension AudioRecorderViewModel {
                 await preserveOrRemoveStartupArtifact(artifact)
                 guard wantsRecorderStartup(generation: generation, url: url) else { return }
                 #if os(iOS)
-                if isInInterruption {
+                if isInInterruption || recorderStartupInterruptionEpoch != interruptionEpoch {
                     finishRecordingStartup()
                     return
                 }

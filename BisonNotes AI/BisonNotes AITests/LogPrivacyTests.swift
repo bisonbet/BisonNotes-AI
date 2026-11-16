@@ -32,6 +32,33 @@ final class LogPrivacyTests: XCTestCase {
         XCTAssertTrue(scrubbed.contains("[Summarization] Updating name from"), "Everything else in the line stays readable")
     }
 
+    func testLegacyErrorPayloadsAreRedactedWithoutDatabaseTerms() {
+        for prefix in [
+            "Error getting file metadata:", "DOCX extraction error:", "Failed to save URL update:"
+        ] {
+            let output = LogPrivacy.redacting([], in: "[ERROR] " + prefix
+                + " Error Domain=NSCocoaErrorDomain Code=260 NSFilePath=/private/Therapy.m4a")
+            XCTAssertFalse(output.contains("Therapy"))
+            XCTAssertFalse(output.contains("NSFilePath"))
+            XCTAssertTrue(output.contains(LogPrivacy.placeholder))
+            let safe = "[ERROR] " + prefix + " domain=NSCocoaErrorDomain, code=260"
+            XCTAssertEqual(LogPrivacy.redacting([], in: safe), safe)
+        }
+    }
+
+    func testMultilineLegacyPayloadStopsAtLogAndSectionBoundaries() {
+        let next = "[2026-11-15 20:00:00.000] [INFO] [General] saved=2"
+        for prefix in ["Starting DOCX extraction for:", "Recording name:", "DOCX extraction error:"] {
+            let log = "[ERROR] " + prefix + " Session\nPrivate diagnosis.docx\r\nsecret path\n"
+                + next + "\n" + String(repeating: "─", count: 80) + "\nDIAGNOSTICS"
+            let output = LogPrivacy.redacting([], in: log)
+            XCTAssertFalse(output.contains("Private diagnosis"))
+            XCTAssertFalse(output.contains("secret path"))
+            XCTAssertTrue(output.contains(next))
+            XCTAssertTrue(output.contains("DIAGNOSTICS"))
+        }
+    }
+
     func testShortSensitiveNamesAreScrubbedAsWholeWords() {
         XCTAssertTrue(LogPrivacy.isRedactable("Therapy"))
         XCTAssertTrue(LogPrivacy.isRedactable("Q3"))

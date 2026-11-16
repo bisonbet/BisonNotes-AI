@@ -75,6 +75,7 @@ extension AudioRecorderViewModel {
 			return
 		}
 
+		recorderStartupInterruptionEpoch &+= 1
 		let interruptionDate = Date()
 		interruptionEndHandled = false
 		isInInterruption = true

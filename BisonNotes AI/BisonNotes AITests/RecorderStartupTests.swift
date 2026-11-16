@@ -58,12 +58,15 @@ private final class StartupSessionController: AudioSessionControlling {
 private final class StartupStubRecorder: AVAudioRecorder {
     private var running = false
     let events: StartupEvents
-    init(url: URL, events: StartupEvents) throws {
+    let beforeRecord: (@Sendable () -> Void)?
+    init(url: URL, events: StartupEvents, beforeRecord: (@Sendable () -> Void)? = nil) throws {
         self.events = events
+        self.beforeRecord = beforeRecord
         try super.init(url: url, settings: AudioQuality.whisperOptimized.settings)
     }
     override var isRecording: Bool { running }
     override func record() -> Bool {
+        beforeRecord?()
         events.started()
         running = true
         FileManager.default.createFile(atPath: url.path, contents: Data([0]))
@@ -250,6 +253,62 @@ final class RecorderStartupTests: XCTestCase {
         try file.write(from: buffer)
     }
 
+    func testEndedInterruptionBeforeWorkerReturnsStillDefersToRecovery() async throws {
+        let fixture = try makeModel()
+        let model = fixture.model
+        defer { try? FileManager.default.removeItem(at: fixture.url.deletingLastPathComponent()) }
+        let gate = StartupGate()
+        let events = StartupEvents()
+        installStart(on: model, gate: gate, events: events)
+        model.beginAVAudioRecorderStartup(at: fixture.url)
+        let task = try XCTUnwrap(model.recorderStartupTask)
+        await gate.waitUntilEntered()
+        try writeShortAudio(to: fixture.url)
+        model.handleAudioInterruption(type: .began, shouldResume: false)
+        model.handleAudioInterruption(type: .ended, shouldResume: false)
+        await gate.release()
+        await task.value
+        XCTAssertFalse(model.isRecording)
+        XCTAssertTrue(model.recordingIntentActive)
+        XCTAssertTrue(model.interruptionEndHandled)
+        XCTAssertEqual(events.snapshot.stops, 1)
+    }
+
+    func testNewStartupWaitsUntilOldRecordCallAndStopFinish() async throws {
+        let fixture = try makeModel()
+        let model = fixture.model
+        defer { try? FileManager.default.removeItem(at: fixture.url.deletingLastPathComponent()) }
+        let entered = expectation(description: "Inside blocking record call")
+        let release = DispatchSemaphore(value: 0)
+        let events = StartupEvents()
+        model.recorderStartForTesting = { url in
+            try await RecorderStartup.start {
+                try StartupStubRecorder(url: url, events: events, beforeRecord: {
+                    entered.fulfill()
+                    release.wait()
+                })
+            }
+        }
+        model.beginAVAudioRecorderStartup(at: fixture.url)
+        await fulfillment(of: [entered], timeout: 5)
+        model.isStartingRecording = false
+        model.recordingStartupGeneration += 1
+        model.isStartingRecording = true
+        let gate = StartupGate()
+        model.recorderStartForTesting = { _ in
+            XCTAssertEqual(events.snapshot.stops, 1)
+            await gate.pause()
+            throw RecorderStartupError.didNotStart
+        }
+        model.beginAVAudioRecorderStartup(at: fixture.url)
+        let task = try XCTUnwrap(model.recorderStartupTask)
+        release.signal()
+        await gate.waitUntilEntered()
+        await gate.release()
+        await task.value
+        XCTAssertFalse(model.isRecording)
+    }
+
     func testStartupFailureClearsIntentAndReportsError() async throws {
         let fixture = try makeModel()
         let model = fixture.model
@@ -266,6 +325,12 @@ final class RecorderStartupTests: XCTestCase {
         XCTAssertEqual(controller.activeCalls, [false])
     }
 
+    #endif
+}
+
+@MainActor
+extension RecorderStartupTests {
+    #if os(iOS)
     private struct Fixture {
         let model: AudioRecorderViewModel
         let controller: StartupSessionController

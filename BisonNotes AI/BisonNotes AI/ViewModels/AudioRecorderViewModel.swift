@@ -79,6 +79,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	var audioRecorder: AVAudioRecorder?
 	/// Recovery and Stop wait for a pending worker before inspecting or releasing its audio.
 	var recorderStartupTask: Task<Void, Never>?
+	var recorderStartupInterruptionEpoch: UInt64 = 0
 	var audioPlayer: AVAudioPlayer?
 	/// Identifies the playback request whose player is still being prepared off
 	/// the main actor. Stopping clears it and a newer request replaces it, so a
@@ -646,6 +647,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	/// the wait — stopped and started again — so a newer start owns the
 	/// startup flag and this one must neither proceed nor clear it.
 	private func waitForTranscriptCleanupToUnwind(startupGeneration generation: UInt64) async -> Bool {
+        // A stopped worker may still be inside record(), which can activate I/O.
+        // Drain it before this request configures the shared audio session.
+        await recorderStartupTask?.value
 		let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(
 			timeout: Self.transcriptCleanupUnwindTimeout
 		)
