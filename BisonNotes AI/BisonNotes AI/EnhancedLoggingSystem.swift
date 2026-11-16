@@ -373,6 +373,12 @@ final class AppLog: Sendable {
 
     // MARK: - Convenience: Level Methods
 
+    /// Error descriptions/userInfo can repeat private file paths or content.
+    /// Keep the operation, system domain and code in every output channel.
+    func logError(_ error: Error, _ operation: String, category: LogCategory = .general) {
+        log("\(operation): \(LogPrivacy.errorDescription(error))", level: .error, category: category)
+    }
+
     func error(_ message: String, category: LogCategory = .general) {
         log(message, level: .error, category: category)
     }

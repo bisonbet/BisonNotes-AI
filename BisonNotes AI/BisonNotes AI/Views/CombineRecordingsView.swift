@@ -276,7 +276,7 @@ struct CombineRecordingsView: View {
             if position == "First" {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.title3)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
             }
         }
         .padding()
@@ -349,7 +349,7 @@ struct CombineRecordingsView: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(isCombining ? Color.gray : Color.blue)
+                    .fill(isCombining ? Color.gray : Color.bisonPrimaryAction)
             )
             .foregroundColor(.white)
         }

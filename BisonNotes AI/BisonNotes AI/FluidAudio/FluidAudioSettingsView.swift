@@ -84,7 +84,11 @@ struct FluidAudioSettingsView: View {
                 }
 
                 if enableFluidAudio {
-                    nativeSettingsCard(title: "Parakeet Model Status", systemImage: "shippingbox", tint: .blue) {
+                    nativeSettingsCard(
+                        title: "Parakeet Model Status",
+                        systemImage: "shippingbox",
+                        tint: .bisonActionForeground
+                    ) {
                         parakeetModelStatus
                     }
                 }

@@ -537,7 +537,7 @@ struct RecordingsView: View {
                     title: "Import From Link",
                     subtitle: "Add web audio or captions",
                     systemImage: "link.badge.plus",
-                    tint: .blue,
+                    tint: .bisonActionForeground,
                     accessibilityIdentifier: BisonNotesAccessibilityID.importLinkButton
                 )
             ) {
@@ -671,7 +671,7 @@ struct RecordingsView: View {
             HStack {
                 Image(systemName: "gear.circle.fill")
                     .font(.title3)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Background Processing")
@@ -695,7 +695,7 @@ struct RecordingsView: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.blue.opacity(0.1))
+                    .fill(Color.bisonActionForeground.opacity(0.1))
             )
             .padding(.horizontal, 40)
         }
@@ -752,7 +752,7 @@ struct RecordingsView: View {
             case .waitingForUserDecision:
                 // Blue waiting dot
                 Circle()
-                    .fill(Color.blue)
+                    .fill(Color.bisonActionForeground)
                     .frame(width: 12, height: 12)
 
             default:

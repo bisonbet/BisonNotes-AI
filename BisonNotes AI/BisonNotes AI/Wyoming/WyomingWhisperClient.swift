@@ -251,7 +251,9 @@ class WyomingWhisperClient: ObservableObject {
     // MARK: - Transcription
 
     func transcribeAudio(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("WyomingWhisperClient.transcribeAudio called for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "WyomingWhisperClient.transcribeAudio called for: \(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
 
         // Check if file is longer than 5 minutes and needs chunking
         let duration = try await getAudioDuration(url: url)
@@ -270,7 +272,10 @@ class WyomingWhisperClient: ObservableObject {
     }
 
     private func transcribeAudioStandard(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("WyomingWhisperClient.transcribeAudioStandard called for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "WyomingWhisperClient.transcribeAudioStandard called for: "
+                + "\(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
 
         // Only start background task if this is not a chunk (chunks are managed by parent method)
         isProcessingChunk = url.lastPathComponent.contains("chunk_")
@@ -548,7 +553,9 @@ class WyomingWhisperClient: ObservableObject {
     }
 
     private func transcribeAudioWithChunking(url: URL, recordingId: UUID, maxChunkDuration: TimeInterval) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Starting chunked Wyoming transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "Starting chunked Wyoming transcription for: \(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
 
         // Start background task for long-running transcription (only if we should manage background tasks)
         if shouldManageBackgroundTask {
@@ -790,7 +797,10 @@ class WyomingWhisperClient: ObservableObject {
             }
         }
 
-        AppLog.shared.transcription("Audio chunk created: \(outputURL.lastPathComponent)", level: .debug)
+        AppLog.shared.transcription(
+            "Audio chunk created: \(LogPrivacy.fileReference(outputURL.lastPathComponent))",
+            level: .debug
+        )
     }
 
     // MARK: - Status Properties

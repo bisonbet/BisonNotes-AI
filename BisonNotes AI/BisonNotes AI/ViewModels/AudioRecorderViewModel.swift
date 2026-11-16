@@ -72,10 +72,14 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	/// in place but Core Data has not acknowledged it — the window in which both
 	/// of this path's production bugs lived. Never set outside tests.
 	var mergeCommitFailureForTesting: (any Error)?
+	var recorderStartForTesting: (@Sendable (URL) async throws -> sending AVAudioRecorder)?
 	#endif
 	var cancellables = Set<AnyCancellable>()
 
 	var audioRecorder: AVAudioRecorder?
+	/// Recovery and Stop wait for a pending worker before inspecting or releasing its audio.
+	var recorderStartupTask: Task<Void, Never>?
+	var recorderStartupInterruptionEpoch: UInt64 = 0
 	var audioPlayer: AVAudioPlayer?
 	/// Identifies the playback request whose player is still being prepared off
 	/// the main actor. Stopping clears it and a newer request replaces it, so a
@@ -643,6 +647,9 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	/// the wait — stopped and started again — so a newer start owns the
 	/// startup flag and this one must neither proceed nor clear it.
 	private func waitForTranscriptCleanupToUnwind(startupGeneration generation: UInt64) async -> Bool {
+        // A stopped worker may still be inside record(), which can activate I/O.
+        // Drain it before this request configures the shared audio session.
+        await recorderStartupTask?.value
 		let unwound = await TranscriptCleanupCoordinator.waitUntilNoRunIsActive(
 			timeout: Self.transcriptCleanupUnwindTimeout
 		)
@@ -661,7 +668,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 
 	/// Advanced by every accepted start request, so work suspended on behalf
 	/// of one request can tell when a stop and a new start replaced it.
-	private var recordingStartupGeneration: UInt64 = 0
+	var recordingStartupGeneration: UInt64 = 0
 
 	/// True while the start request `generation` is still the one in progress.
 	/// `isStartingRecording` alone is not enough after a suspension: a stop
@@ -979,48 +986,13 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 			return
 		}
 
-		do {
-			#if os(macOS)
-			Task { @MainActor in
-				await self.setupMacRecording(at: audioFilename)
-			}
-			return
-			#else
-			// Use Whisper-optimized quality for all recordings
-			let selectedQuality = AudioQuality.whisperOptimized
-			let settings = selectedQuality.settings
-
-			audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
-			audioRecorder?.delegate = self
-			AppFileProtection.apply(to: audioFilename)
-
-			// Enable metering for silence detection (used for smart checkpoints)
-			audioRecorder?.isMeteringEnabled = true
-
-			#if targetEnvironment(simulator)
-			AppLog.shared.recording("Running on iOS Simulator - audio recording may have limitations", level: .debug)
-			#endif
-
-			// No background task needed here - audio background mode keeps recording alive
-			audioRecorder?.record()
-			AppFileProtection.apply(to: audioFilename)
-
-			markRecordingStarted()
-			#endif
-
-		} catch {
-			#if os(iOS)
-			recordingIntentActive = false
-			recoveryCoordinator.invalidateRecordingSession(reason: "recorder startup failed")
-			#endif
-			finishRecordingStartup()
-			#if targetEnvironment(simulator)
-			errorMessage = "Recording failed on simulator. Enable Device → Microphone → Internal Microphone in simulator menu, or test on a physical device."
-			AppLog.shared.recording("Simulator audio error: \(error.localizedDescription)", level: .error)
-			#else
-			errorMessage = "Failed to start recording: \(error.localizedDescription)"
-			#endif
+		#if os(macOS)
+		Task { @MainActor in
+			await self.setupMacRecording(at: audioFilename)
 		}
+		#else
+		beginAVAudioRecorderStartup(at: audioFilename)
+		#endif
 	}
 
 	func markRecordingStarted() {
@@ -1111,6 +1083,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 	func stopRecording() {
 	#if os(iOS)
 		let stoppingRecordingSessionID = recordingSessionID
+		let stoppingStartupTask = recorderStartupTask
 		// Captured here, not inside the merge below: the merge is scheduled
 		// asynchronously, and a recording started before it runs replaces
 		// `recordingSegments` and `mainRecordingURL` with its own.
@@ -1203,6 +1176,7 @@ class AudioRecorderViewModel: NSObject, ObservableObject, AVAudioRecorderDelegat
 		// Deactivate audio session to restore high-quality music playback.
 		#if os(iOS)
 		Task { @MainActor [weak self] in
+			await stoppingStartupTask?.value
 			guard let self,
 				  self.recordingSessionID == stoppingRecordingSessionID,
 				  !self.recordingIntentActive else { return }

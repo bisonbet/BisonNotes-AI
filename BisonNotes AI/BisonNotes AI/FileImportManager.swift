@@ -299,7 +299,7 @@ extension FileImportManager {
             throw ImportError.copyFailed(error.localizedDescription)
         }
 
-        AppLog.shared.fileManagement("Successfully imported: \(filename)")
+        AppLog.shared.fileManagement("Successfully imported: \(LogPrivacy.fileReference(filename))")
     }
 
     /// Decision about how to handle an incoming import URL based on the archive
@@ -619,7 +619,9 @@ extension FileImportManager {
             throw ImportError.copyFailed(error.localizedDescription)
         }
 
-        AppLog.shared.fileManagement("Successfully extracted audio from video: \(audioFilename)")
+        AppLog.shared.fileManagement(
+            "Successfully extracted audio from video: \(LogPrivacy.fileReference(audioFilename))"
+        )
     }
 
     private func generateUniqueFilename(for sourceURL: URL) -> String {
@@ -736,7 +738,7 @@ extension FileImportManager {
             recordingEntry.duration = duration
 
         } catch {
-            AppLog.shared.fileManagement("Error getting file metadata: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error getting file metadata", category: .fileManagement)
             context.delete(recordingEntry)
             if let importError = error as? ImportError {
                 throw importError
@@ -754,7 +756,7 @@ extension FileImportManager {
             try coreDataManager.saveContext(operation: "imported recording creation")
             AppLog.shared.fileManagement("Created Core Data entry for imported file")
         } catch {
-            AppLog.shared.fileManagement("Failed to save Core Data entry: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to save Core Data entry", category: .fileManagement)
             context.delete(recordingEntry)
             throw ImportError.persistenceFailed(error.localizedDescription)
         }

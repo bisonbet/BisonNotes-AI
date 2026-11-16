@@ -465,7 +465,7 @@ enum ErrorSeverity: Int, CaseIterable, Sendable {
 
     var color: Color {
         switch self {
-        case .low: return .blue
+        case .low: return .bisonActionForeground
         case .medium: return .orange
         case .high: return .red
         case .critical: return .purple
@@ -570,7 +570,7 @@ enum SummaryQualityLevel: CaseIterable, Sendable {
     var color: Color {
         switch self {
         case .excellent: return .green
-        case .good: return .blue
+        case .good: return .bisonActionForeground
         case .fair: return .orange
         case .poor: return .red
         case .unacceptable: return .purple

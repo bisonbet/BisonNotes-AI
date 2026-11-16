@@ -121,9 +121,9 @@ struct LogExporter {
         )
 
         // ── Write to file ──
-        // Scrub recording names, summary titles and file names out of every
-        // section: this file is emailed to support or anyone else, and those
-        // describe what was recorded. See `LogPrivacy`.
+        // Scrub known names and older messages carrying names/files/coordinates.
+        // Older entries must also be safe when their recording was renamed or
+        // deleted, or the database is unavailable. See `LogPrivacy`.
         let redactionTerms = await MainActor.run { Self.userContentRedactionTerms() }
         let text = LogPrivacy.redacting(redactionTerms, in: sections.joined(separator: "\n"))
 

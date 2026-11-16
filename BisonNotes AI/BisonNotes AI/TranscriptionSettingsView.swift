@@ -131,7 +131,7 @@ struct TranscriptionSettingsView: View {
     }
 
     private var modernFileTranscriptionSection: some View {
-        TranscriptionSettingsCard(title: "Files & Re-runs", systemImage: "doc.text", tint: .blue) {
+        TranscriptionSettingsCard(title: "Files & Re-runs", systemImage: "doc.text", tint: .bisonActionForeground) {
             Text("Select the engine used for imported files, re-runs, and post-recording transcription.")
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -146,7 +146,7 @@ struct TranscriptionSettingsView: View {
 
             Divider()
 
-            modernEngineGroupHeader("Cloud (Higher Accuracy)", systemImage: "cloud", tint: .blue)
+            modernEngineGroupHeader("Cloud (Higher Accuracy)", systemImage: "cloud", tint: .bisonActionForeground)
             modernEngineOptionRow(
                 engine: .mistralAI,
                 title: "Mistral AI",

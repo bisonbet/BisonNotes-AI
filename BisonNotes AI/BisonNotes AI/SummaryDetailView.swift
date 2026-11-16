@@ -770,7 +770,7 @@ struct SummaryDetailView: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 10)
-                        .background(isUpdatingLocation ? Color.gray : Color.blue)
+                        .background(isUpdatingLocation ? Color.gray : Color.bisonPrimaryAction)
                         .cornerRadius(8)
                     }
                     .disabled(isUpdatingLocation)
@@ -801,7 +801,7 @@ struct SummaryDetailView: View {
                 HStack {
                     Image(systemName: "calendar.circle.fill")
                         .font(.title3)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Recording Date & Time")
@@ -860,7 +860,7 @@ struct SummaryDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "info.circle")
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
                 Text("Metadata")
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
@@ -1214,7 +1214,7 @@ struct SummaryDetailView: View {
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: "calendar.badge.clock")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
                     Text("Recording Date & Time")
                         .font(.headline)
                     Spacer()
@@ -1245,7 +1245,7 @@ struct SummaryDetailView: View {
                     .foregroundColor(.white)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
-                    .background(isUpdatingDate ? Color.gray : Color.blue)
+                    .background(isUpdatingDate ? Color.gray : Color.bisonPrimaryAction)
                     .cornerRadius(10)
                 }
                 .disabled(isUpdatingDate)
@@ -2215,7 +2215,7 @@ struct EnhancedTaskRowView: View {
 
     private var categoryColor: Color {
         switch task.category {
-        case .call: return .blue
+        case .call: return .bisonActionForeground
         case .meeting: return .orange
         case .purchase: return .green
         case .research: return .indigo
@@ -2403,7 +2403,7 @@ struct EnhancedReminderRowView: View {
         case .immediate: return .red
         case .today: return .orange
         case .thisWeek: return .yellow
-        case .later: return .blue
+        case .later: return .bisonActionForeground
         }
     }
 }
@@ -2557,7 +2557,7 @@ struct TitleSelectorView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
                                     Image(systemName: "brain.head.profile")
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.bisonActionForeground)
                                     Text("AI-Generated Titles")
                                         .font(.headline)
                                     Spacer()
@@ -2613,6 +2613,7 @@ struct TitleSelectorView: View {
                                             #endif
                                         }
                                         .buttonStyle(.borderedProminent)
+                                        .tint(.bisonPrimaryAction)
                                         .disabled(customTitleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                                     }
                                 }
@@ -2773,7 +2774,7 @@ struct DateTimeEditorView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Image(systemName: "clock.arrow.circlepath")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.bisonActionForeground)
                         Text("Current Date & Time")
                             .font(.headline)
                         Spacer()
@@ -2871,7 +2872,7 @@ struct DateTimeEditorView: View {
                                 .font(.body)
                                 .fontWeight(.medium)
                                 .foregroundColor(.white)
-                                .background(Color.blue)
+                                .background(Color.bisonPrimaryAction)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
 
@@ -3015,7 +3016,7 @@ struct LocationPickerView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Image(systemName: "location")
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.bisonActionForeground)
                                 Text("Use Current Location")
                                     .font(.headline)
                                 Spacer()
@@ -3039,7 +3040,7 @@ struct LocationPickerView: View {
                                 .font(.body)
                                 .fontWeight(.medium)
                                 .foregroundColor(.white)
-                                .background(isGettingCurrentLocation ? Color.gray : Color.blue)
+                                .background(isGettingCurrentLocation ? Color.gray : Color.bisonPrimaryAction)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
                             .disabled(isGettingCurrentLocation)
@@ -3165,6 +3166,7 @@ struct LocationPickerView: View {
                                             useManualLocation()
                                         }
                                         .buttonStyle(.borderedProminent)
+                                        .tint(.bisonPrimaryAction)
                                         .disabled(!isValidManualEntry)
                                     }
                                 }
@@ -3528,7 +3530,7 @@ struct LocationResultRow: View {
             HStack(spacing: 12) {
                 Image(systemName: "mappin.circle")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(result.name)

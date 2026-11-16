@@ -23,10 +23,19 @@ This matrix tracks common tasks against the app surfaces that must remain usable
 
 - VoiceOver: Supported for setup, record, recordings, audio player, transcripts, summaries, settings, and watch recording. Validate with the automated audits plus the manual device checks in `docs/testing-regimen.md`.
 - Voice Control: Supported for common iPhone/iPad tasks through visible labels and unique contextual action names. Validate import, playback, transcript, summary, and settings flows manually.
-- Dynamic Type: Supported by SwiftUI system fonts and wrapping controls. Validate through largest accessibility sizes because several card/list layouts are dense.
+- Dynamic Type: Supported by SwiftUI system fonts and wrapping controls. `RecordingReadabilityUITests` exercises the library and transcription choices at the largest accessibility size, including scrolling and cancellation. Validate other dense card/list layouts and physical devices manually.
 - Increase Contrast, Reduce Transparency, Bold Text, Differentiate Without Color, and Grayscale: Expected to work through system colors and explicit text/status labels. Validate manually before release.
 - Reduce Motion: Recording indicators on phone and watch should avoid required motion when Reduce Motion is enabled.
 - Local Speaker Labels status: Recommended, Experimental, Download Required, progress, warnings, and destructive actions must not depend on color or icon alone. Speaker-label processing is completed-audio only and must not be presented as Live Transcription.
 - Captions and Audio Descriptions: Do not claim for v1. BisonNotes produces transcripts, but it does not provide time-synchronized captions for all audio/video playback or audio descriptions.
+
+Recordings readability coverage includes light/dark contrast audits of the list
+and shared transcription-options sheet, plus cancellation/reopening from the
+library and cancellation from Transcripts and the audio player. `ActionColorContrastTests` checks
+adaptive link colors in light/dark and increased-contrast traits, destructive icon
+contrast, tinted surfaces, and white text on the primary button fill.
+`ActionReadabilityUITests` covers the overflow menu and beta editor Copy/Share/Save
+actions in light/dark mode, plus the editor actions at Largest Text. Physical-device Increase
+Contrast/Reduce Transparency checks remain part of the release gate.
 
 Local Speaker Labels accessibility evidence is split: automated simulator settings/audit coverage is repository evidence, while VoiceOver/Voice Control, keyboard focus, Dynamic Type, progress announcements, warning text, and rename-flow results on physical iPhone/iPad and native macOS remain pending release-candidate gates. This matrix does not claim those manual gates are complete.

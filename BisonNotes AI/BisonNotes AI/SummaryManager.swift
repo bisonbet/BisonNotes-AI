@@ -1244,7 +1244,11 @@ class SummaryManager: ObservableObject {
         // Get the recording from Core Data using the coordinator
         guard let recordingEntry = try coordinator.coreDataManager.fetchRecording(url: recordingURL),
               let recordingId = recordingEntry.id else {
-            AppLog.shared.summarization("Could not find recording in Core Data for file: \(recordingURL.lastPathComponent)", level: .error)
+            AppLog.shared.summarization(
+                "Could not find recording in Core Data for file: "
+                    + "\(LogPrivacy.fileReference(recordingURL.lastPathComponent))",
+                level: .error
+            )
             return
         }
 

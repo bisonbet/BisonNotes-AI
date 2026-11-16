@@ -52,7 +52,7 @@ struct EnhancedDeleteDialog: View {
                                 icon: "text.quote",
                                 title: "Transcript",
                                 status: relationships.transcriptExists ? "Available" : "Not available",
-                                color: relationships.transcriptExists ? .blue : .gray
+                                color: relationships.transcriptExists ? .bisonActionForeground : .gray
                             )
 
                             FileStatusRow(
@@ -99,13 +99,16 @@ struct EnhancedDeleteDialog: View {
                     if relationships.summaryExists && preserveSummary {
                         HStack {
                             Image(systemName: "info.circle.fill")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                             Text("The summary will be preserved and can be accessed later, even without the original recording.")
                                 .font(.caption)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                         }
                         .padding()
-                        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(
+                            Color.bisonActionForeground.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
                     }
 
 #if !os(macOS)

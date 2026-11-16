@@ -18,6 +18,7 @@ class SummaryRegenerationManager: ObservableObject {
     @Published var currentlyProcessing: String = ""
     @Published var regenerationResults: RegenerationResults?
     @Published var showingRegenerationAlert = false
+    @Published private(set) var hasSummaries = false
 
     private let summaryManager: SummaryManager
     private let transcriptManager: TranscriptManager
@@ -259,6 +260,7 @@ class SummaryRegenerationManager: ObservableObject {
     private func completeRegeneration(with results: RegenerationResults) {
         regenerationResults = results
         isRegenerating = false
+        refreshAvailability()
         showingRegenerationAlert = true
     }
 
@@ -271,19 +273,29 @@ class SummaryRegenerationManager: ObservableObject {
         return ""
     }
 
+    /// Read by `.disabled(...)` in a view `body`, so it must not touch the
+    /// store: it used to load every recording, transcript and summary on each
+    /// redraw of AI Settings. `refreshAvailability()` keeps the answer current.
     var canRegenerate: Bool {
-        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
+        !isRegenerating && hasSummaries
+    }
+
+    /// Re-reads whether any summary exists. Call when the screen appears; the
+    /// manager calls it itself once a regeneration finishes.
+    func refreshAvailability() {
+        let found: Bool
         do {
-            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
+            found = try appCoordinator.coreDataManager.countSummaries() > 0
         } catch {
             AppLog.shared.summarization(
-                "Summary regeneration unavailable because local recordings could not be read: \(error.localizedDescription)",
+                "Summary regeneration unavailable because local summaries could not be counted: \(error.localizedDescription)",
                 level: .error
             )
-            return false
+            found = false
         }
-        let summariesCount = recordingsWithData.compactMap { $0.summary }.count
-        return !isRegenerating && summariesCount > 0
+        if found != hasSummaries {
+            hasSummaries = found
+        }
     }
 }
 

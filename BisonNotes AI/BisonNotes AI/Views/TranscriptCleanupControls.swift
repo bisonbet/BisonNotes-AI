@@ -106,6 +106,7 @@ struct TranscriptCleanupControls: View {
                     transcriptCleanupModelManager.startDownload()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
             }
         }
         .onAppear {

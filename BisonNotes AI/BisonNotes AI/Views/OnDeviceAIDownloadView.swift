@@ -57,7 +57,7 @@ struct OnDeviceAIDownloadView: View {
             VStack(spacing: 12) {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 60))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
 
                 Text("Download Required Models")
                     .font(.title2)
@@ -91,7 +91,7 @@ struct OnDeviceAIDownloadView: View {
             VStack(spacing: 12) {
                 HStack {
                     Image(systemName: "wifi")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
                     Text("Total Download Size: \(totalDownloadSize)")
                         .font(.headline)
                 }
@@ -109,7 +109,7 @@ struct OnDeviceAIDownloadView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Image(systemName: "exclamationmark.circle")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.bisonActionForeground)
                         Text("Keep this app open while downloading")
                             .font(.subheadline)
                             .fontWeight(.medium)
@@ -124,7 +124,7 @@ struct OnDeviceAIDownloadView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.blue.opacity(0.1))
+                        .fill(Color.bisonActionForeground.opacity(0.1))
                 )
             }
 
@@ -137,7 +137,7 @@ struct OnDeviceAIDownloadView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.blue)
+                    .background(Color.bisonPrimaryAction)
                     .foregroundColor(.white)
                     .cornerRadius(12)
                 }
@@ -164,7 +164,7 @@ struct OnDeviceAIDownloadView: View {
         HStack(spacing: 16) {
             Image(systemName: icon)
                 .font(.title2)
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
                 .frame(width: 40)
 
             VStack(alignment: .leading, spacing: 4) {

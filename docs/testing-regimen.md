@@ -67,6 +67,36 @@ Run the local pre-merge gate after changes that touch SwiftUI layout, labels, na
 
 Automated audit failures must either be fixed or documented with a specific exception and manual evidence. Keep `docs/accessibility-matrix.md`, `docs/app-store-accessibility.md`, and the public accessibility page in sync with the actual evidence.
 
+### Recordings Readability Focused Gate
+
+Run `BisonNotes AITests/ActionColorContrastTests` and
+`BisonNotes AIUITests/RecordingReadabilityUITests`. The color tests resolve light,
+dark, and increased-contrast traits against actual system backgrounds. The UI
+tests audit the library and open transcription-options sheet in light/dark mode,
+verify the largest accessibility text size is really active, scroll to the
+choices, cancel/reopen, and open the same sheet from Transcripts and the audio player. Fixtures have
+no transcript; these tests never start transcription or download a model.
+Contrast audits retain failures on visible controls and complete foreground
+text. Dimmed, non-hittable background elements outside the active viewport and
+static text partially clipped at its vertical edges are recorded separately;
+clipped text is excluded only when its full height can fit after scrolling.
+Every exclusion carries the element and viewport bounds in a result attachment.
+The alternative action must fit completely inside the options viewport.
+
+Also run `BisonNotes AIUITests/ActionReadabilityUITests`. It checks the native
+Recordings overflow menu in light/dark mode, confirms each menu row fits one
+standard-height line, opens Archive by Date, and checks Copy/Share/Save contrast
+in the beta transcript editor. Largest Text coverage scrolls to the transcript
+actions and verifies their contextual labels and touch sizes. Action-focused
+audits record any out-of-scope findings as attachments; these do not claim a
+whole-screen or whole-app audit. Color tests additionally check 10–18 percent
+tinted surfaces in normal and increased-contrast traits.
+
+Run the UI suite sequentially on a compact iPhone, iPhone Duo, and iPad. Keep the
+screenshot attachments. On devices, also check Increase Contrast and Reduce
+Transparency together and separately, plus the Duo poses listed below. Simulator
+contrast results do not replace that manual release gate.
+
 The Local Speaker Labels settings surface must expose the toggle, method names, Recommended/Experimental status, up-to-8 and up-to-10 speaker limitations, status/progress, download/cancel/delete actions, and post-recording-only boundary through text and accessible labels—not color or icons alone. Repository UI audit coverage is automated; physical-device and native-Mac accessibility evidence remains a release-candidate gate.
 
 ## iPhone Duo and Adaptive Layout Gate
@@ -151,6 +181,26 @@ Use a signed native build. The Phase 3 gate is complete only when the automated 
 - Verify the Dock/Finder icon is the BisonNotes icon rather than a blank placeholder.
 
 Phase 2 hardware/runtime cases such as external-microphone hot swap, ScreenCaptureKit meeting audio, long background processing, export/share destinations, and archive bookmark restoration remain mandatory before Phase 4 beta even if the Phase 3 Mac-idiom gate is green.
+
+## Recorder Startup Responsiveness
+
+Run `RecorderStartupTests`, `AudioInterruptionRecoveryTests`,
+`AudioRecorderFallbackTests`, `AudioTranscriptionRegressionTests`, and
+`Swift6AudioConcurrencyTests` in the iOS unit-test target after startup changes.
+The startup suite uses a worker probe and gated recorder doubles to verify that
+`record()` runs off the main thread, false starts are rejected, Stop and newer
+requests win, interruption state survives, and usable short audio is retained
+for unprocessed-recording recovery. It does not prove microphone capture or
+absence of a device-only runtime warning.
+
+With an iPhone attached to Xcode, start ordinary recording and the standard
+fallback after Live Transcription fails. Confirm the initial start no longer
+reports the synchronous AVAudioSession activation warning, controls stay
+responsive, metering advances, and Stop produces playable non-zero audio. Also
+stop immediately during startup, start again, and interrupt startup with a call;
+confirm no late recording begins, no newer session is deactivated, and usable
+audio survives. Repeat without the debugger attached. Pause/resume and existing
+continuation startup paths remain separate hardware regression cases.
 
 ## Manual Hardware Validation
 

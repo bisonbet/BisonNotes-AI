@@ -94,6 +94,9 @@ extension AudioRecorderViewModel {
 	private func executeAudioRecovery(
 		_ request: AudioRecoveryRequest
 	) async -> AudioRecoveryExecutionResult {
+		// A startup worker may still own and write the first segment. Let it
+		// stop/hand over before recovery inspects the file or activates a continuation.
+		await recorderStartupTask?.value
 		guard isCurrentAudioRecovery(request) else {
 			AppLog.shared.audioSession(
 				"Cancelled stale audio recovery \(request.id.uuidString)",

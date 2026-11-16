@@ -148,7 +148,7 @@ struct MistralTranscribeSettingsView: View {
                 nativeSettingsCard(
                     title: "Connection",
                     systemImage: "network",
-                    tint: .blue
+                    tint: .bisonActionForeground
                 ) {
                     HStack(spacing: 12) {
                         Button(action: testConnection) {
@@ -177,7 +177,7 @@ struct MistralTranscribeSettingsView: View {
                 nativeSettingsCard(
                     title: "Features & Limits",
                     systemImage: "list.bullet.rectangle",
-                    tint: .blue
+                    tint: .bisonActionForeground
                 ) {
                     LazyVGrid(
                         columns: [
@@ -238,7 +238,7 @@ struct MistralTranscribeSettingsView: View {
     private func nativeFeature(icon: String, title: String, description: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: icon)
-                .foregroundStyle(.blue)
+                .foregroundStyle(Color.bisonActionForeground)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 3) {

@@ -29,18 +29,8 @@ extension AudioRecorderViewModel {
             finishRecordingStartup()
             #endif
         case .avAudioRecorder:
-            let selectedQuality = AudioQuality.whisperOptimized
-            let settings = selectedQuality.settings
-            do {
-                audioRecorder = try AVAudioRecorder(url: url, settings: settings)
-                audioRecorder?.delegate = self
-                audioRecorder?.isMeteringEnabled = true
-                audioRecorder?.record()
-                markRecordingStarted()
-            } catch {
-                finishRecordingStartup()
-                errorMessage = "Failed to start recording: \(error.localizedDescription)"
-            }
+            beginAVAudioRecorderStartup(at: url)
+            await recorderStartupTask?.value
         }
     }
 }

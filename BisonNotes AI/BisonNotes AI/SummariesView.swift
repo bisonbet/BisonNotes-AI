@@ -325,7 +325,7 @@ struct SummariesView: View {
     private var activeDateFilterBanner: some View {
         HStack {
             Image(systemName: "calendar")
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
             Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
                 .font(.subheadline)
             Spacer()
@@ -764,9 +764,9 @@ struct SummariesView: View {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: summary == nil ? "doc.text.magnifyingglass" : "doc.text.fill")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(summary == nil ? .accentColor : .blue)
+                    .foregroundColor(.bisonActionForeground)
                     .frame(width: 38, height: 38)
-                    .background((summary == nil ? Color.accentColor : Color.blue).opacity(0.14))
+                    .background(Color.bisonActionForeground.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 11))
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -856,7 +856,7 @@ struct SummariesView: View {
                 .font(.caption)
 
             Image(systemName: (recording.summary != nil) ? "doc.text.fill" : "doc.text.magnifyingglass")
-                .foregroundColor((recording.summary != nil) ? .blue : .gray)
+                .foregroundColor((recording.summary != nil) ? .bisonActionForeground : .gray)
                 .font(.caption)
         }
         .padding(.horizontal, 8)
@@ -893,7 +893,7 @@ struct SummariesView: View {
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 12)
                     .frame(height: 34)
-                    .background(Color.blue.opacity(0.14))
+                    .background(Color.bisonActionForeground.opacity(0.14))
                     .foregroundColor(.primary)
                     .clipShape(Capsule())
             }

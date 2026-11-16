@@ -98,7 +98,7 @@ struct MacRecordingSettingsPane: View {
                         title: "Location Services",
                         subtitle: "Capture location data with recordings",
                         systemImage: "location.fill",
-                        tint: .blue
+                        tint: .bisonActionForeground
                     )
                 }
                 .accessibilityValue(AccessibilitySupport.statusValue(isOn: recorderVM.isLocationTrackingEnabled))

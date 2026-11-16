@@ -86,7 +86,7 @@ struct IntegrationSelectionView: View {
                         HStack(spacing: 16) {
                             Image(systemName: "calendar")
                                 .font(.title2)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                                 .frame(width: 32)
 
                             VStack(alignment: .leading, spacing: 4) {

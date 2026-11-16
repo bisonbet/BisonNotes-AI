@@ -224,7 +224,7 @@ struct MLXSwiftSettingsView: View {
                     .font(.subheadline)
                 }
 
-                nativeSettingsCard(title: "Models", systemImage: "shippingbox", tint: .blue) {
+                nativeSettingsCard(title: "Models", systemImage: "shippingbox", tint: .bisonActionForeground) {
                     ForEach(Array(visibleModels.enumerated()), id: \.element.id) { index, model in
                         if index > 0 {
                             Divider()
@@ -234,7 +234,8 @@ struct MLXSwiftSettingsView: View {
                 }
 
                 if downloadManager.isDownloading || downloadManager.isDownloadQueued {
-                    nativeSettingsCard(title: "Download Progress", systemImage: "arrow.down.circle", tint: .blue) {
+                    nativeSettingsCard(title: "Download Progress",
+                                       systemImage: "arrow.down.circle", tint: .bisonActionForeground) {
                         downloadProgressView
                     }
                 }
@@ -380,7 +381,7 @@ struct MLXSwiftSettingsView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
             }
         } else if (downloadManager.isDownloading || downloadManager.isDownloadQueued)
                     && downloadManager.modelId == model.id {
@@ -401,7 +402,7 @@ struct MLXSwiftSettingsView: View {
             } label: {
                 Image(systemName: "arrow.down.circle")
                     .font(.title2)
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
             }
             .disabled(downloadManager.isDownloading || downloadManager.isDownloadQueued)
         }
@@ -603,7 +604,7 @@ struct MLXSwiftSettingsView: View {
             topP = MLXSwiftSettingsKeys.defaultTopP
             repetitionPenalty = MLXSwiftSettingsKeys.defaultRepetitionPenalty
         }
-        .foregroundColor(.blue)
+        .foregroundColor(.bisonActionForeground)
     }
 }
 

@@ -18,7 +18,7 @@ struct MacStorageICloudCard: View {
     let onCheckForCloudData: () -> Void
 
     var body: some View {
-        MacSettingsCard(title: "iCloud Sync", systemImage: "icloud", tint: .blue) {
+        MacSettingsCard(title: "iCloud Sync", systemImage: "icloud", tint: .bisonActionForeground) {
             Toggle(
                 "Enable iCloud Sync",
                 isOn: Binding(
@@ -78,7 +78,7 @@ struct MacStorageICloudCard: View {
                 title: "Syncing with iCloud...",
                 subtitle: "Applying eligible changes and cleanup across devices",
                 systemImage: "arrow.triangle.2.circlepath",
-                tint: .blue,
+                tint: .bisonActionForeground,
                 showsProgress: true
             )
         } else if let message = iCloudManager.lastMaintenanceMessage {

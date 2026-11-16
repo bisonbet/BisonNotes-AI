@@ -321,6 +321,7 @@ struct TrimRecordingView: View {
                             applySuggestion(suggestion)
                         }
                         .buttonStyle(.borderedProminent)
+                        .tint(.bisonPrimaryAction)
                         .controlSize(.small)
                         .disabled(isTrimming)
                         Button("Scan Again") { startScan() }
@@ -388,7 +389,7 @@ struct TrimRecordingView: View {
             }
             .frame(maxWidth: .infinity)
             .padding()
-            .background(RoundedRectangle(cornerRadius: 12).fill(canTrim ? Color.blue : Color.gray))
+            .background(RoundedRectangle(cornerRadius: 12).fill(canTrim ? Color.bisonPrimaryAction : Color.gray))
             .foregroundColor(.white)
         }
         .buttonStyle(.plain)
@@ -717,7 +718,7 @@ struct TrimRangeSlider: View {
 
     private func handleShape(edge: RecordingTrimMath.Edge, isActive: Bool) -> some View {
         RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .fill(isEnabled ? Color.accentColor : Color.gray)
+            .fill(isEnabled ? Color.bisonPrimaryAction : Color.gray)
             .frame(width: handleWidth, height: trackHeight + 10)
             .overlay(
                 Image(systemName: edge == .start ? "chevron.compact.left" : "chevron.compact.right")
