@@ -165,7 +165,7 @@ class MistralTranscribeService: NSObject, ObservableObject {
         currentStatus = "Preparing audio file..."
         progress = 0.0
 
-        AppLog.shared.transcription("Starting Mistral transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Mistral input: \(LogPrivacy.fileReference(url.lastPathComponent))")
 
         do {
             guard url.isFileURL && FileManager.default.fileExists(atPath: url.path) else {

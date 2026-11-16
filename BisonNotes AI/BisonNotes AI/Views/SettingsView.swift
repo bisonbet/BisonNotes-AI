@@ -47,6 +47,9 @@ struct SettingsView: View {
     @State private var isRunningCloudBackupAction = false
     @State private var cloudBackupActionMessage = ""
     @State private var cloudBackupActionIsError = false
+    /// Measured outside `body`: this screen redraws whenever sync, the recorder
+    /// or a sheet changes state, and measuring storage reads every recording.
+    @State private var recordingsStorageText: String?
 
     init() {
         // Initialize regeneration manager with the coordinator's registry manager
@@ -137,6 +140,11 @@ struct SettingsView: View {
             Task {
                 await recorderVM.fetchInputs()
             }
+        }
+        .task(id: [showingAdvancedTroubleshooting, isRunningCloudBackupAction]) {
+            // Re-measured when troubleshooting closes or a restore finishes,
+            // the two things on this screen that add or remove audio.
+            recordingsStorageText = await appCoordinator.recordingsStorageUsageText()
         }
         .onChange(of: selectedAIEngine) { _, newEngine in
             SummaryManager.shared.setEngine(newEngine)
@@ -247,7 +255,7 @@ struct SettingsView: View {
                 title: "AI Engines",
                 subtitle: selectedAIEngine,
                 systemImage: "sparkles",
-                tint: .blue,
+                tint: .bisonActionForeground,
                 trailing: {
                     ModernStatusPill(text: "Available", tint: .green)
                 },
@@ -352,7 +360,7 @@ struct SettingsView: View {
                     title: "Location Services",
                     subtitle: "Capture location data with recordings",
                     systemImage: "location.fill",
-                    tint: .blue
+                    tint: .bisonActionForeground
                 )
             }
             .foregroundStyle(.primary)
@@ -374,7 +382,7 @@ struct SettingsView: View {
         ModernSettingsCard(
             title: "iCloud Sync",
             systemImage: "icloud",
-            tint: .blue,
+            tint: .bisonActionForeground,
             trailing: {
                 ModernStatusPill(text: iCloudManager.isEnabled ? "Enabled" : "Disabled", tint: iCloudManager.isEnabled ? .green : .secondary)
             }
@@ -405,7 +413,7 @@ struct SettingsView: View {
                         title: "Syncing with iCloud...",
                         subtitle: "Applying eligible changes and cleanup across devices",
                         systemImage: "arrow.triangle.2.circlepath",
-                        tint: .blue,
+                        tint: .bisonActionForeground,
                         showsProgress: true
                     )
                 } else if let message = iCloudManager.lastMaintenanceMessage {
@@ -545,7 +553,7 @@ struct SettingsView: View {
                     tint: .teal
                 )
                 Spacer()
-                Text(totalRecordingsStorageString)
+                Text(recordingsStorageText ?? "Calculating…")
                     .font(.subheadline.weight(.semibold))
                     .foregroundColor(.secondary)
             }
@@ -554,7 +562,7 @@ struct SettingsView: View {
                 title: "Background Processing",
                 subtitle: "Manage transcription and summarization jobs",
                 systemImage: "gearshape.2",
-                tint: .blue,
+                tint: .bisonActionForeground,
                 action: { presentBackgroundProcessing() }
             )
 
@@ -656,7 +664,9 @@ struct SettingsView: View {
                     } label: {
                         HStack {
                             Image(systemName: recorderVM.selectedInput?.uid == input.uid ? "largecircle.fill.circle" : "circle")
-                                .foregroundColor(recorderVM.selectedInput?.uid == input.uid ? .blue : .gray)
+                                .foregroundColor(
+                                    recorderVM.selectedInput?.uid == input.uid ? .bisonActionForeground : .gray
+                                )
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(input.portName)
                                     .foregroundColor(.primary)
@@ -973,7 +983,7 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
                 Spacer()
-                Text(totalRecordingsStorageString)
+                Text(recordingsStorageText ?? "Calculating…")
                     .foregroundColor(.secondary)
             }
 
@@ -1393,39 +1403,6 @@ struct SettingsView: View {
         regenerationManager.setEngine(selectedAIEngine)
     }
 
-    private var totalRecordingsStorageString: String {
-        let recordingsWithData: [(recording: RecordingEntry, transcript: TranscriptData?, summary: EnhancedSummaryData?)]
-        do {
-            recordingsWithData = try appCoordinator.getAllRecordingsWithData()
-        } catch {
-            AppLog.shared.coreData(
-                "Could not calculate recording storage usage: \(error.localizedDescription)",
-                level: .error
-            )
-            return "Unavailable"
-        }
-        var totalSize: Int64 = 0
-
-        for entry in recordingsWithData {
-            // Skip imported transcripts
-            if entry.recording.audioQuality == "imported" {
-                continue
-            }
-
-            guard let url = appCoordinator.getAbsoluteURL(for: entry.recording),
-                  FileManager.default.fileExists(atPath: url.path) else {
-                continue
-            }
-
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-               let size = attributes[.size] as? Int64 {
-                totalSize += size
-            }
-        }
-
-        return ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
-    }
-
 }
 
 // MARK: - Supporting Structures
@@ -1516,6 +1493,7 @@ struct CloudReviewItemsView: View {
                                 Label("Restore", systemImage: "arrow.down.doc")
                             }
                             .buttonStyle(.borderedProminent)
+                            .tint(.bisonPrimaryAction)
                             .disabled(workingItemId != nil || iCloudManager.isScanningCloudReviewItems)
 
                             Button(role: .destructive) {

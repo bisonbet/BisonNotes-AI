@@ -18,8 +18,8 @@ The page describes supported accessibility features, known limitations, and the 
 | --- | --- | --- |
 | VoiceOver | Supported | Automated audits for Record, Recordings list, Audio Player, Transcripts, Summaries, Summary detail, Setup, and Settings; manual device pass required. |
 | Voice Control | Supported | Buttons and rows use visible labels or contextual accessibility labels. Manual task completion required. |
-| Larger Text | Supported | Uses SwiftUI system text and wrapping. Manual largest Dynamic Type pass required. |
-| Sufficient Contrast | Supported | Uses system colors and non-color status text. Manual light/dark and Increase Contrast pass required. |
+| Larger Text | Supported | Uses SwiftUI system text and wrapping. Automated library/transcription-options and transcript-action coverage at the largest accessibility size; manual device pass required. |
+| Sufficient Contrast | Supported | Uses system colors and non-color status text. Focused library/transcription-options, menu, and transcript-action light/dark audits plus action-color trait checks; manual device, Increase Contrast, and Reduce Transparency pass required. |
 | Reduced Motion | Supported | Phone and watch recording indicators respect Reduce Motion. Manual pass required. |
 | Captions | Do not claim | Transcripts are available, but playback does not provide synchronized caption tracks for all media. |
 | Audio Descriptions | Do not claim | App does not provide audio-description tracks. |

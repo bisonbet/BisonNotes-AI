@@ -52,7 +52,10 @@ actor AudioCleanupService {
     /// Returns the URL of a cleaned temporary file. The original file is not modified.
     func cleanAudio(at sourceURL: URL, config: CleanupConfig = .default) async throws -> URL {
         let startTime = Date()
-        AppLog.shared.fileManagement("AudioCleanupService: Starting audio cleanup for \(sourceURL.lastPathComponent)")
+        AppLog.shared.fileManagement(
+            "AudioCleanupService: Starting audio cleanup for "
+                + "\(LogPrivacy.fileReference(sourceURL.lastPathComponent))"
+        )
 
         // Validate source file
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {

@@ -470,7 +470,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Migrated \(updatedCount) URLs to relative paths")
             } catch {
-                AppLog.shared.coreData("Failed to save URL migrations: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save URL migrations", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -841,7 +841,7 @@ class CoreDataManager: ObservableObject {
         do {
             return try context.fetch(fetchRequest).first
         } catch {
-            AppLog.shared.coreData("Error fetching recording by name: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error fetching recording by name", category: .coreData)
             return nil
         }
     }
@@ -946,7 +946,7 @@ class CoreDataManager: ObservableObject {
             }
             AppLog.shared.coreData("Deleted transcript with ID: \(id?.uuidString ?? "nil")")
         } catch {
-            AppLog.shared.coreData("Error deleting transcript: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error deleting transcript", category: .coreData)
             throw error
         }
     }
@@ -1225,7 +1225,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Successfully repaired \(repairedCount) orphaned summaries in Core Data")
             } catch {
-                AppLog.shared.coreData("Failed to save repaired summaries: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save repaired summaries", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -1300,7 +1300,7 @@ class CoreDataManager: ObservableObject {
                 "Removed \(transcriptsDeleted) superseded transcript row(s) and \(summariesDeleted) superseded summary row(s)"
             )
         } catch {
-            AppLog.shared.coreData("Failed to remove superseded duplicates: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to remove superseded duplicates", category: .coreData)
             throw error
         }
 
@@ -1433,7 +1433,7 @@ class CoreDataManager: ObservableObject {
                 try save(committing: effects)
                 AppLog.shared.coreData("Cleanup complete: deleted \(summariesDeleted) duplicate/orphaned summaries, \(transcriptsDeleted) duplicate/orphaned transcripts")
             } catch {
-                AppLog.shared.coreData("Failed to save cleanup changes: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save cleanup changes", category: .coreData)
                 throw error
             }
         } else {
@@ -1913,7 +1913,7 @@ class CoreDataManager: ObservableObject {
             }
             AppLog.shared.coreData("Successfully deleted summary with ID: \(id)")
         } catch {
-            AppLog.shared.coreData("Error deleting summary: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error deleting summary", category: .coreData)
             throw error
         }
     }
@@ -2045,7 +2045,7 @@ class CoreDataManager: ObservableObject {
             try save(committing: effects, localOnly: !enqueueCloudDeletion)
             AppLog.shared.coreData("Recording deleted: \(id)")
         } catch {
-            AppLog.shared.coreData("Error deleting recording: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error deleting recording", category: .coreData)
             throw error
         }
     }
@@ -2711,7 +2711,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Cleaned up \(cleanedCount) orphaned recordings")
             } catch {
-                AppLog.shared.coreData("Failed to save cleanup: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save cleanup", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -2747,7 +2747,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Fixed \(fixedCount) incompletely deleted recordings")
             } catch {
-                AppLog.shared.coreData("Failed to save fixes: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save fixes", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -2777,7 +2777,7 @@ class CoreDataManager: ObservableObject {
             // Check if the file actually exists
             if let url = getAbsoluteURL(for: recording) {
                 if !FileManager.default.fileExists(atPath: url.path) {
-                    AppLog.shared.coreData("Cleaning up recording with missing file: \(url.lastPathComponent)", level: .debug)
+                    AppLog.shared.coreData("Missing audio: id=\(recording.id?.uuidString ?? "nil")", level: .debug)
 
                     // Only delete if there's no transcript or summary to preserve
                     let hasTranscript = recording.transcript != nil
@@ -2821,7 +2821,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Cleaned up \(cleanedCount) recordings with missing files")
             } catch {
-                AppLog.shared.coreData("Failed to save missing file cleanup: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save missing file cleanup", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -2884,9 +2884,18 @@ class CoreDataManager: ObservableObject {
                         updatedCount += 1
                         // Only log if the filename actually changed or if this is a real path change
                         if oldURL.lastPathComponent != newURL.lastPathComponent {
-                            AppLog.shared.coreData("Updated URL for recording ID \(recording.id?.uuidString ?? "nil"): \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)", level: .debug)
+                            AppLog.shared.coreData(
+                                "Updated URL for recording ID \(recording.id?.uuidString ?? "nil"): "
+                                    + "\(LogPrivacy.fileReference(oldURL.lastPathComponent)) -> "
+                                    + "\(LogPrivacy.fileReference(newURL.lastPathComponent))",
+                                level: .debug
+                            )
                         } else {
-                            AppLog.shared.coreData("Fixed path for recording ID \(recording.id?.uuidString ?? "nil"): \(newURL.lastPathComponent)", level: .debug)
+                            AppLog.shared.coreData(
+                                "Fixed path for recording ID \(recording.id?.uuidString ?? "nil"): "
+                                    + "\(LogPrivacy.fileReference(newURL.lastPathComponent))",
+                                level: .debug
+                            )
                         }
                     } else {
                         // If no exact filename match, try to find by recording name
@@ -2904,16 +2913,27 @@ class CoreDataManager: ObservableObject {
                                 recording.recordingURL = urlToRelativePath(newURL)
                                 recording.lastModified = Date()
                                 updatedCount += 1
-                                AppLog.shared.coreData("Updated URL by name match for recording ID \(recording.id?.uuidString ?? "nil"): \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)", level: .debug)
+                                AppLog.shared.coreData(
+                                    "Updated URL by name match for recording ID "
+                                        + "\(recording.id?.uuidString ?? "nil"): "
+                                        + "\(LogPrivacy.fileReference(oldURL.lastPathComponent)) -> "
+                                        + "\(LogPrivacy.fileReference(newURL.lastPathComponent))",
+                                    level: .debug
+                                )
                             } else {
-                                AppLog.shared.coreData("Could not find file for recording ID \(recording.id?.uuidString ?? "nil"), expected filename: \(filename), available files: \(fileURLs.count)", level: .error)
+                                AppLog.shared.coreData(
+                                    "Could not find file for recording ID \(recording.id?.uuidString ?? "nil"), "
+                                        + "expected filename: \(LogPrivacy.fileReference(filename)), available files: "
+                                        + "\(fileURLs.count)",
+                                    level: .error
+                                )
                             }
                         } else {
                             AppLog.shared.coreData("Could not find file for recording ID \(recording.id?.uuidString ?? "nil")", level: .error)
                         }
                     }
                 } catch {
-                    AppLog.shared.coreData("Error scanning documents directory: \(error)", level: .error)
+                    AppLog.shared.logError(error, "Error scanning documents directory", category: .coreData)
                     throw error
                 }
             }
@@ -2925,7 +2945,7 @@ class CoreDataManager: ObservableObject {
                 try context.save()
                 AppLog.shared.coreData("Saved \(updatedCount) URL updates to Core Data")
             } catch {
-                AppLog.shared.coreData("Failed to save URL updates: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to save URL updates", category: .coreData)
                 context.rollback()
                 throw error
             }
@@ -2942,9 +2962,12 @@ class CoreDataManager: ObservableObject {
 
         do {
             try context.save()
-            AppLog.shared.coreData("Updated recording URL for ID \(recording.id?.uuidString ?? "nil"): \(newURL.lastPathComponent)")
+            AppLog.shared.coreData(
+                "Updated recording URL for ID \(recording.id?.uuidString ?? "nil"): "
+                    + "\(LogPrivacy.fileReference(newURL.lastPathComponent))"
+            )
         } catch {
-            AppLog.shared.coreData("Failed to save URL update: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to save URL update", category: .coreData)
         }
     }
 

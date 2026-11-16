@@ -156,7 +156,7 @@ Two settings look like findings and are kept on purpose. A security review on 20
 Two rules came out of the same review:
 
 - **Exports carry location only when chosen.** Summary PDF/RTF exports offer "with location" and "without location" whenever a recording has one, and the dialog names the place a with-location export would include. A PDF embeds a map, and a recording's location is often home.
-- **Logs never carry user content.** The diagnostic export is a file users email. Log an id or `LogPrivacy.describe(_:)` (a length), never a recording name, title, transcript text or file name. `LogExporter` also scrubs every known recording name, file name and summary title out of the export (`LogPrivacy.redacting`), but that is a backstop, not permission.
+- **Logs never carry user content.** The diagnostic export is a file users email. Log an id or `LogPrivacy.describe(_:)` (a length), never a recording name, title, transcript text or coordinates. Use `LogPrivacy.fileReference(_:)` for file names: UUID-based names remain useful, and other names become lengths. File-operation errors use `LogPrivacy.errorDescription(_:)` (domain/code), since descriptions and userInfo can repeat private paths. `LogExporter` also scrubs known names, including short whole words, and the identified older message formats even when the recording was renamed/deleted or storage is unavailable. This is a backstop, not permission to log content.
 
 ### AI Engine Integration
 New AI engines should follow the existing pattern:
@@ -255,3 +255,13 @@ For AI-generated content display:
 - `BisonNotes_AI.xcdatamodeld/`: Core Data model definitions
 
 The active supported deployment minimums are iOS 18.5 and native macOS 15. Speaker models are explicitly downloaded over HTTPS, cached for offline use, and kept independent from Parakeet assets; they are never fetched implicitly when a transcription starts. See the user guide and testing regimen for user workflow and release-gate details.
+
+### Action color contrast
+
+Use `Color.bisonActionForeground` (the adaptive `AccentColor` asset) for blue
+text, links, and control tint. It includes light, dark, and increased-contrast
+variants. Keep `Color.bisonPrimaryAction` for solid fills behind white text;
+filled primary buttons must set that tint explicitly rather than inherit the
+foreground accent. Avoid hard-coded `.blue` text on tinted or glass surfaces.
+Short action labels should remain readable on the Duo outer display, with
+context carried by accessibility labels and adaptive stacking for Larger Text.

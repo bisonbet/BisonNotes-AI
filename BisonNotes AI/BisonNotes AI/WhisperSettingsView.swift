@@ -60,7 +60,7 @@ struct WhisperSettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Image(systemName: "arrow.left.arrow.right")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Communication Protocol")
                                     .font(.subheadline)
@@ -131,7 +131,7 @@ struct WhisperSettingsView: View {
                                 .padding(.horizontal, 8)
                                 .background(
                                     RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color.blue.opacity(0.1))
+                                        .fill(Color.bisonActionForeground.opacity(0.1))
                                 )
                         }
                     }
@@ -190,8 +190,8 @@ struct WhisperSettingsView: View {
                                 .font(.caption)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.1))
-                                .foregroundColor(.blue)
+                                .background(Color.bisonActionForeground.opacity(0.1))
+                                .foregroundColor(.bisonActionForeground)
                                 .cornerRadius(6)
                             }
 
@@ -208,7 +208,7 @@ struct WhisperSettingsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Image(systemName: "network")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Test Connection")
                                     .font(.subheadline)
@@ -232,8 +232,11 @@ struct WhisperSettingsView: View {
                             }
                             .padding(.vertical, 8)
                             .padding(.horizontal, 12)
-                            .background(isConfigurationValid ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
-                            .foregroundColor(isConfigurationValid ? .blue : .gray)
+                            .background(
+                                isConfigurationValid
+                                    ? Color.bisonActionForeground.opacity(0.1) : Color.gray.opacity(0.1)
+                            )
+                            .foregroundColor(isConfigurationValid ? .bisonActionForeground : .gray)
                             .cornerRadius(8)
                         }
                         .disabled(!isConfigurationValid || isTesting)
@@ -403,7 +406,7 @@ struct WhisperInstructionRow: View {
                 .fontWeight(.bold)
                 .foregroundColor(.white)
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(Color.blue))
+                .background(Circle().fill(Color.bisonPrimaryAction))
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)

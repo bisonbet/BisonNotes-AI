@@ -76,7 +76,7 @@ class RecordingWorkflowManager: ObservableObject {
 
             // Store location data if available
             if let locationData = locationData {
-                AppLog.shared.backgroundProcessing("Saving location data - lat: \(locationData.latitude), lon: \(locationData.longitude)")
+                AppLog.shared.backgroundProcessing("Saving location data for recording=\(recordingId)")
                 recordingEntry.locationLatitude = locationData.latitude
                 recordingEntry.locationLongitude = locationData.longitude
                 recordingEntry.locationTimestamp = locationData.timestamp
@@ -162,7 +162,7 @@ class RecordingWorkflowManager: ObservableObject {
         }
 
         // Log recording for debugging/analytics
-        AppLog.shared.backgroundProcessing("Creating summary for recording: \(recordingEntry.recordingName ?? "unknown")")
+        AppLog.shared.backgroundProcessing("Creating summary for recording=\(recordingId)")
         AppLog.shared.backgroundProcessing("Recording UUID: \(recordingId), Transcript UUID: \(transcriptId)", level: .debug)
 
         // Capture existing summaries before creating the new one. A failed
@@ -275,7 +275,9 @@ class RecordingWorkflowManager: ObservableObject {
                     try SummaryAttachmentStore.shared.migrate(from: oldId, to: summaryData.id)
                     AppLog.shared.backgroundProcessing("Migrated supplemental data from \(oldId) to \(summaryData.id)", level: .debug)
                 } catch {
-                    AppLog.shared.backgroundProcessing("Failed to migrate supplemental data from \(oldId): \(error)", level: .error)
+                    AppLog.shared.logError(
+                        error, "Failed to migrate supplemental data from \(oldId)", category: .backgroundProcessing
+                    )
                 }
             }
 
@@ -357,7 +359,7 @@ class RecordingWorkflowManager: ObservableObject {
             try context.save()
             AppLog.shared.backgroundProcessing("Recording name updated successfully")
         } catch {
-            AppLog.shared.backgroundProcessing("Failed to save name update: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to save name update", category: .backgroundProcessing)
         }
     }
 
@@ -371,7 +373,7 @@ class RecordingWorkflowManager: ObservableObject {
             let results = try context.fetch(fetchRequest)
             return results.first
         } catch {
-            AppLog.shared.backgroundProcessing("Error fetching recording: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error fetching recording", category: .backgroundProcessing)
             return nil
         }
     }
@@ -379,7 +381,10 @@ class RecordingWorkflowManager: ObservableObject {
     private func updateAudioFileName(recordingEntry: RecordingEntry, oldName: String, newName: String) {
         guard let urlString = recordingEntry.recordingURL,
               let oldURL = URL(string: urlString) else {
-            AppLog.shared.backgroundProcessing("No valid URL found for recording: \(recordingEntry.recordingName ?? "unknown")", level: .error)
+            AppLog.shared.backgroundProcessing(
+                "No valid URL found for recording=\(recordingEntry.id?.uuidString ?? "unknown")",
+                level: .error
+            )
             return
         }
 
@@ -391,7 +396,7 @@ class RecordingWorkflowManager: ObservableObject {
                 try FileManager.default.moveItem(at: oldURL, to: newURL)
                 recordingEntry.recordingURL = newURL.absoluteString
                 recordingEntry.lastModified = Date()
-                AppLog.shared.backgroundProcessing("Audio file renamed: \(oldURL.lastPathComponent) -> \(newURL.lastPathComponent)")
+                AppLog.shared.backgroundProcessing("Audio renamed: id=\(recordingEntry.id?.uuidString ?? "nil")")
 
                 // Save the changes to Core Data
                 try context.save()
@@ -403,7 +408,10 @@ class RecordingWorkflowManager: ObservableObject {
                 if FileManager.default.fileExists(atPath: newURL.path) {
                     recordingEntry.recordingURL = newURL.absoluteString
                     recordingEntry.lastModified = Date()
-                    AppLog.shared.backgroundProcessing("Updated Core Data URL to match existing file: \(newURL.lastPathComponent)")
+                    AppLog.shared.backgroundProcessing(
+                        "Updated Core Data URL to match existing file: "
+                            + "\(LogPrivacy.fileReference(newURL.lastPathComponent))"
+                    )
 
                     // Save the changes to Core Data
                     try context.save()
@@ -427,10 +435,12 @@ class RecordingWorkflowManager: ObservableObject {
                     try context.save()
                     AppLog.shared.backgroundProcessing("Core Data updated with new URL (despite thumbnail warning)")
                 } catch {
-                    AppLog.shared.backgroundProcessing("Failed to save Core Data after file rename: \(error)", level: .error)
+                    AppLog.shared.logError(
+                        error, "Failed to save Core Data after file rename", category: .backgroundProcessing
+                    )
                 }
             } else {
-                AppLog.shared.backgroundProcessing("Failed to rename audio file: \(error.localizedDescription)", level: .error)
+                AppLog.shared.logError(error, "Failed to rename audio file", category: .backgroundProcessing)
             }
         }
     }
@@ -489,7 +499,7 @@ class RecordingWorkflowManager: ObservableObject {
                 audioTracks = asset.tracks(withMediaType: .audio)
             }
         } catch {
-            AppLog.shared.backgroundProcessing("Failed to load asset properties: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to load asset properties", category: .backgroundProcessing)
             return false
         }
 

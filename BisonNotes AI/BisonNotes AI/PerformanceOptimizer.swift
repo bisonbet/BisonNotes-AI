@@ -244,7 +244,7 @@ class PerformanceOptimizer: ObservableObject {
     // MARK: - Streaming File Processing
 
     func processLargeFileWithStreaming(_ url: URL, chunkSize: Int = 1024 * 1024) async throws -> Data {
-        logger.info("Starting streaming processing for file: \(url.lastPathComponent)")
+        logger.info("Starting streaming processing for file: \(LogPrivacy.fileReference(url.lastPathComponent))")
 
         let fileHandle = try FileHandle(forReadingFrom: url)
         defer { try? fileHandle.close() }

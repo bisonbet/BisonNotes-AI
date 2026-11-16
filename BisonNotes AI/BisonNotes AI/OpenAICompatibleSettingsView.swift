@@ -241,7 +241,7 @@ struct OpenAICompatibleSettingsView: View {
             } else {
                 HStack {
                     Image(systemName: "info.circle")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
                     Text("Not currently selected as AI engine")
                         .font(.subheadline)
                 }
@@ -265,7 +265,7 @@ struct OpenAICompatibleSettingsView: View {
                     .foregroundColor(.secondary)
             } icon: {
                 Image(systemName: "info.circle")
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
             }
         }
     }
@@ -278,7 +278,7 @@ struct OpenAICompatibleSettingsView: View {
                     Spacer()
                     Button(action: { showingAPIKeyInfo = true }) {
                         Image(systemName: "info.circle")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.bisonActionForeground)
                     }
                 }
 
@@ -399,11 +399,13 @@ struct OpenAICompatibleSettingsView: View {
                                     HStack {
                                         Text(modelId)
                                             .font(.subheadline)
-                                            .foregroundColor(selectedModel == modelId ? .blue : .primary)
+                                            .foregroundColor(
+                                                selectedModel == modelId ? .bisonActionForeground : .primary
+                                            )
                                         Spacer()
                                         if selectedModel == modelId {
                                             Image(systemName: "checkmark.circle.fill")
-                                                .foregroundColor(.blue)
+                                                .foregroundColor(.bisonActionForeground)
                                                 .font(.caption)
                                         }
                                     }
@@ -525,7 +527,7 @@ struct OpenAICompatibleSettingsView: View {
                 if !baseURL.isEmpty {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.bisonActionForeground)
                             .font(.caption)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Auto-Detected Format")
@@ -560,7 +562,7 @@ struct OpenAICompatibleSettingsView: View {
                             if manualFormat == "string" {
                                 HStack(alignment: .top, spacing: 6) {
                                     Image(systemName: "info.circle.fill")
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.bisonActionForeground)
                                         .font(.caption)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Simple String Format")
@@ -577,7 +579,7 @@ struct OpenAICompatibleSettingsView: View {
                             } else {
                                 HStack(alignment: .top, spacing: 6) {
                                     Image(systemName: "info.circle.fill")
-                                        .foregroundColor(.blue)
+                                        .foregroundColor(.bisonActionForeground)
                                         .font(.caption)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("Content Blocks Format")
@@ -596,7 +598,7 @@ struct OpenAICompatibleSettingsView: View {
                         .padding(.top, 4)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 8)
-                        .background(Color.blue.opacity(0.1))
+                        .background(Color.bisonActionForeground.opacity(0.1))
                         .cornerRadius(8)
                     }
                 }
@@ -753,7 +755,7 @@ struct FeatureRow: View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 4) {

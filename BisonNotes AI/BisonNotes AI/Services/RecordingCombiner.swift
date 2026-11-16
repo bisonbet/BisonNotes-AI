@@ -23,7 +23,7 @@ class RecordingCombiner {
     ///   - outputURL: URL where the combined file should be saved
     /// - Returns: The URL of the combined file
     func combineRecordings(firstURL: URL, secondURL: URL, outputURL: URL) async throws -> URL {
-        logger.info("Starting to combine recordings: \(firstURL.lastPathComponent) + \(secondURL.lastPathComponent)")
+        logger.info("Combining two recordings")
 
         // Load both audio assets
         let firstAsset = AVURLAsset(url: firstURL)
@@ -76,7 +76,7 @@ class RecordingCombiner {
             do {
                 try await exportSession.export(to: outputURL, as: .m4a)
             } catch {
-                logger.error("Export failed: \(error.localizedDescription)")
+                logger.error("Export failed: \(LogPrivacy.errorDescription(error))")
                 throw RecordingCombinerError.exportFailed(error.localizedDescription)
             }
         } else {
@@ -85,7 +85,7 @@ class RecordingCombiner {
 
             guard exportSession.status == .completed else {
                 if let error = exportSession.error {
-                    logger.error("Export failed: \(error.localizedDescription)")
+                    logger.error("Export failed: \(LogPrivacy.errorDescription(error))")
                     throw RecordingCombinerError.exportFailed(error.localizedDescription)
                 } else {
                     throw RecordingCombinerError.exportFailed("Unknown export error")
@@ -93,7 +93,7 @@ class RecordingCombiner {
             }
         }
 
-        logger.info("Successfully combined recordings to: \(outputURL.lastPathComponent)")
+        logger.info("Successfully combined recordings to: \(LogPrivacy.fileReference(outputURL.lastPathComponent))")
         return outputURL
     }
 

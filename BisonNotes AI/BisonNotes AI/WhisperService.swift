@@ -333,7 +333,9 @@ class WhisperService: ObservableObject {
     // MARK: - Single File Transcription
 
     private func performSingleTranscription(url: URL, recordingId: UUID? = nil) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Starting single file transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "Starting single file transcription for: \(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
         AppLog.shared.transcription("Protocol: \(config.whisperProtocol.rawValue)", level: .debug)
 
         // Route based on protocol
@@ -346,7 +348,9 @@ class WhisperService: ObservableObject {
     }
 
     private func performRESTTranscription(url: URL) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Starting REST API transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "Starting REST API transcription for: \(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
 
         // Check if this looks like a very short audio file that shouldn't complete in 2.5 seconds
         let asset = AVURLAsset(url: url)
@@ -399,9 +403,15 @@ class WhisperService: ObservableObject {
             // Check if this is a recorded file vs imported file
             let filename = url.lastPathComponent
             if filename.starts(with: "recording_") {
-                AppLog.shared.transcription("Recorded file detected: \(filename)", level: .debug)
+                AppLog.shared.transcription(
+                    "Recorded file detected: \(LogPrivacy.fileReference(filename))",
+                    level: .debug
+                )
             } else {
-                AppLog.shared.transcription("Imported file detected: \(filename)", level: .debug)
+                AppLog.shared.transcription(
+                    "Imported file detected: \(LogPrivacy.fileReference(filename))",
+                    level: .debug
+                )
             }
 
             // File system metadata analysis
@@ -430,7 +440,7 @@ class WhisperService: ObservableObject {
             self.progress = 0.0
         }
 
-        AppLog.shared.transcription("Starting transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting transcription for: \(LogPrivacy.fileReference(url.lastPathComponent))")
 
         // Validate URL
         guard url.isFileURL else {
@@ -666,7 +676,9 @@ class WhisperService: ObservableObject {
     }
 
     private func performWyomingTranscription(url: URL, recordingId: UUID?) async throws -> TranscriptionResult {
-        AppLog.shared.transcription("Starting Wyoming protocol transcription for: \(url.lastPathComponent)")
+        AppLog.shared.transcription(
+            "Starting Wyoming protocol transcription for: \(LogPrivacy.fileReference(url.lastPathComponent))"
+        )
 
         guard let wyomingClient = wyomingClient else {
             throw WhisperError.serverError("Wyoming client not initialized")
@@ -761,7 +773,10 @@ class WhisperService: ObservableObject {
             }
         }
 
-        AppLog.shared.transcription("Detecting language for: \(url.lastPathComponent)", level: .debug)
+        AppLog.shared.transcription(
+            "Detecting language for: \(LogPrivacy.fileReference(url.lastPathComponent))",
+            level: .debug
+        )
 
         // Create multipart form data request for language detection
         let boundary = UUID().uuidString

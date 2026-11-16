@@ -586,7 +586,11 @@ class RecordingArchiveService: ObservableObject {
             guard let parsed = Self.parseArchiveToken(fromFilename: url.lastPathComponent),
                   let recording = recordingsByToken[parsed.token],
                   let recordingId = recording.id else {
-                AppLog.shared.recording("Archive: exported URL did not match a staged recording: \(url.lastPathComponent)", level: .debug)
+                AppLog.shared.recording(
+                    "Archive: exported URL did not match a staged recording: "
+                        + "\(LogPrivacy.fileReference(url.lastPathComponent))",
+                    level: .debug
+                )
                 continue
             }
 
@@ -598,7 +602,7 @@ class RecordingArchiveService: ObservableObject {
             }
 
             guard Self.isSupportedArchiveDestination(url) else {
-                AppLog.shared.recording("Archive: rejected non-iCloud destination \(url.path)", level: .error)
+                AppLog.shared.recording("Archive: rejected non-iCloud destination", level: .error)
                 continue
             }
 
@@ -661,7 +665,11 @@ class RecordingArchiveService: ObservableObject {
                 if existingObject == nil {
                     context.delete(locationObject)
                 }
-                AppLog.shared.recording("Archive: skipped untrackable destination URL \(url.lastPathComponent)", level: .error)
+                AppLog.shared.recording(
+                    "Archive: skipped untrackable destination URL "
+                        + "\(LogPrivacy.fileReference(url.lastPathComponent))",
+                    level: .error
+                )
                 continue
             }
             locationObject.setValue(bookmarkData, forKey: "bookmarkData")
@@ -772,7 +780,7 @@ class RecordingArchiveService: ObservableObject {
                 }
                 return url
             } catch {
-                AppLog.shared.recording("Archive: failed to resolve bookmark: \(error.localizedDescription)", level: .error)
+                AppLog.shared.logError(error, "Archive: failed to resolve bookmark", category: .recording)
             }
         }
 
@@ -901,7 +909,7 @@ class RecordingArchiveService: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
-            AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
+            AppLog.shared.logError(error, "Audio export: failed to create staging dir", category: .recording)
             // See above: staging failure must not expose live recording files to the mover.
             return []
         }
@@ -932,7 +940,7 @@ class RecordingArchiveService: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
-            AppLog.shared.recording("Audio export: failed to create staging dir: \(error.localizedDescription)", level: .error)
+            AppLog.shared.logError(error, "Audio export: failed to create staging dir", category: .recording)
             return FileManager.default.fileExists(atPath: sourceURL.path) ? sourceURL : nil
         }
 
@@ -971,7 +979,11 @@ class RecordingArchiveService: ObservableObject {
             }
             return destURL
         } catch {
-            AppLog.shared.recording("Audio export: failed to stage \(sourceURL.lastPathComponent): \(error.localizedDescription)", level: .error)
+            AppLog.shared.logError(
+                error,
+                "Audio export: failed to stage \(LogPrivacy.fileReference(sourceURL.lastPathComponent))",
+                category: .recording
+            )
             return nil
         }
     }
@@ -996,7 +1008,7 @@ class RecordingArchiveService: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
         } catch {
-            AppLog.shared.recording("Archive: failed to create staging dir: \(error.localizedDescription)", level: .error)
+            AppLog.shared.logError(error, "Archive: failed to create staging dir", category: .recording)
             // See above: staging failure must not expose live recording files to the mover.
             return []
         }
@@ -1017,7 +1029,11 @@ class RecordingArchiveService: ObservableObject {
             do {
                 try FileManager.default.copyItem(at: sourceURL, to: destURL)
             } catch {
-                AppLog.shared.recording("Archive: failed to stage \(sourceURL.lastPathComponent): \(error.localizedDescription)", level: .error)
+                AppLog.shared.logError(
+                    error,
+                    "Archive: failed to stage \(LogPrivacy.fileReference(sourceURL.lastPathComponent))",
+                    category: .recording
+                )
                 continue
             }
 

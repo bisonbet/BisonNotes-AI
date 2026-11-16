@@ -387,7 +387,7 @@ final class EnhancedFileManager: ObservableObject {
                     summary.transcript = previousSummaryTranscript
                     summary.transcriptId = previousSummaryTranscriptID
                 }
-                AppLog.shared.fileManagement("Error saving preservation changes: \(error)", level: .error)
+                AppLog.shared.logError(error, "Error saving preservation changes", category: .fileManagement)
                 throw FileManagementError.persistenceError(error.localizedDescription)
             }
 
@@ -399,7 +399,9 @@ final class EnhancedFileManager: ObservableObject {
                 try deleteAudioAndSidecars(at: normalizedURL, hasRecording: relationships.hasRecording)
                 AppLog.shared.fileManagement("Preserved summary (kept recording entry, removed transcript)")
             } catch {
-                AppLog.shared.fileManagement("Saved preservation changes but could not remove audio: \(error)", level: .error)
+                AppLog.shared.logError(
+                    error, "Saved preservation changes but could not remove audio", category: .fileManagement
+                )
                 throw FileManagementError.deletionFailed(error.localizedDescription)
             }
 
@@ -495,7 +497,10 @@ final class EnhancedFileManager: ObservableObject {
     private func getRecordingDate(for url: URL) -> Date {
         // Check if file exists before trying to get its creation date
         guard FileManager.default.fileExists(atPath: url.path) else {
-            AppLog.shared.fileManagement("File does not exist, using current date for: \(url.lastPathComponent)", level: .debug)
+            AppLog.shared.fileManagement(
+                "File does not exist, using current date for: \(LogPrivacy.fileReference(url.lastPathComponent))",
+                level: .debug
+            )
             return Date()
         }
 
@@ -503,7 +508,11 @@ final class EnhancedFileManager: ObservableObject {
             let resourceValues = try url.resourceValues(forKeys: [.creationDateKey])
             return resourceValues.creationDate ?? Date()
         } catch {
-            AppLog.shared.fileManagement("Error getting creation date for \(url.lastPathComponent): \(error)", level: .error)
+            AppLog.shared.logError(
+                error,
+                "Error getting creation date for \(LogPrivacy.fileReference(url.lastPathComponent))",
+                category: .fileManagement
+            )
             return Date()
         }
     }
@@ -522,7 +531,7 @@ final class EnhancedFileManager: ObservableObject {
             let data = try JSONEncoder().encode(fileRelationships)
             try data.write(to: relationshipsURL)
         } catch {
-            AppLog.shared.fileManagement("Error saving file relationships: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error saving file relationships", category: .fileManagement)
         }
     }
 
@@ -570,7 +579,7 @@ final class EnhancedFileManager: ObservableObject {
                 AppLog.shared.fileManagement("Normalized \(duplicateCount) duplicate URL entries when loading file relationships")
             }
         } catch {
-            AppLog.shared.fileManagement("Error loading file relationships: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error loading file relationships", category: .fileManagement)
             fileRelationships = [:]
         }
     }

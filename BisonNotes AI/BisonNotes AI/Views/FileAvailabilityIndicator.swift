@@ -33,7 +33,7 @@ struct FileAvailabilityIndicator: View {
         case "green":
             return .green
         case "blue":
-            return .blue
+            return .bisonActionForeground
         case "orange":
             return .orange
         case "purple":
@@ -110,7 +110,7 @@ struct FileRelationshipSummary: View {
                 if relationships.iCloudSyncEligible {
                     Image(systemName: "icloud.fill")
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
                         .help("Eligible for iCloud sync")
                 }
             }
@@ -121,7 +121,7 @@ struct FileRelationshipSummary: View {
                         icon: "waveform",
                         label: "Recording",
                         available: relationships.hasRecording,
-                        color: .blue
+                        color: .bisonActionForeground
                     )
 
                     FileDetailRow(

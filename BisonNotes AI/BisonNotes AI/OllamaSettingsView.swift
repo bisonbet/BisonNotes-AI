@@ -199,7 +199,7 @@ struct OllamaSettingsView: View {
             }
         }
         .disabled(isTestingConnection || serverURL.isEmpty)
-        .foregroundColor(.blue)
+        .foregroundColor(.bisonActionForeground)
     }
 
     @ViewBuilder

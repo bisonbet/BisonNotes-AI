@@ -63,7 +63,7 @@ struct GoogleAIStudioSettingsView: View {
                             .font(.headline)
 
                         Slider(value: $temperature, in: 0.0...1.0, step: 0.1)
-                            .accentColor(.blue)
+                            .accentColor(.bisonActionForeground)
 
                         Text("Controls randomness (0.0 = deterministic, 1.0 = very random)")
                             .font(.caption)

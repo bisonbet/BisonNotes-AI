@@ -135,7 +135,7 @@ struct MistralAISettingsView: View {
                         Text("Temperature: \(temperature, specifier: "%.1f")")
                             .font(.headline)
                         Slider(value: $temperature, in: 0...1, step: 0.1)
-                            .accentColor(.blue)
+                            .accentColor(.bisonActionForeground)
                         Text("Lower = more focused & consistent, Higher = more creative")
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -290,7 +290,7 @@ struct MistralAISettingsView: View {
         case "Premium":
             return .purple
         case "Standard":
-            return .blue
+            return .bisonActionForeground
         default:
             return .green
         }

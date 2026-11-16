@@ -199,10 +199,13 @@ class LiveTranscriptionService: ObservableObject {
             let finalM4AURL = try await exportToM4A(from: cafURL, to: finalURL)
             // Clean up temp .caf
             try? FileManager.default.removeItem(at: cafURL)
-            AppLog.shared.transcription("LiveTranscriptionService: stopped, saved to \(finalM4AURL.lastPathComponent)")
+            AppLog.shared.transcription(
+                "LiveTranscriptionService: stopped, saved to "
+                    + "\(LogPrivacy.fileReference(finalM4AURL.lastPathComponent))"
+            )
             return (finalM4AURL, finalTranscript)
         } catch {
-            AppLog.shared.transcription("LiveTranscriptionService: export failed: \(error)", level: .error)
+            AppLog.shared.logError(error, "LiveTranscriptionService: export failed", category: .transcription)
             try? FileManager.default.removeItem(at: cafURL)
             return (nil, finalTranscript)
         }

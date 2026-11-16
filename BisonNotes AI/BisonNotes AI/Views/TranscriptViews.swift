@@ -99,7 +99,6 @@ struct TranscriptsView: View {
     @State private var showingUnsavedEditsPrompt = false
     /// Reports unsaved edits in the editor in the detail column.
     @State private var unsavedEditsGuard = UnsavedEditsGuard()
-    @State private var showingAudioCleanupPrompt = false
     @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedLocationData: LocationData?
     @State private var locationAddresses: [URL: String] = [:]
@@ -155,28 +154,9 @@ struct TranscriptsView: View {
                 .nativeMacModalSizing(width: 680, height: 620)
                 .nativeMacPresentationContext(.modalSheet)
         }
-        .confirmationDialog(
-            "Clean Audio Before Transcribing?",
-            isPresented: $showingAudioCleanupPrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Clean & Transcribe") {
-                if let recording = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: recording, cleanFirst: true, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Transcribe As-Is") {
-                if let recording = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: recording, cleanFirst: false, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                recordingPendingTranscription = nil
-            }
-        } message: {
-            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        .sheet(item: $recordingPendingTranscription) { recording in
+            AudioTranscriptionOptionsSheet(recording: recording)
+                .environmentObject(appCoordinator)
         }
         .confirmationDialog(
             "Delete Transcript?",
@@ -366,7 +346,7 @@ struct TranscriptsView: View {
     private var activeDateFilterBanner: some View {
         HStack {
             Image(systemName: "calendar")
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
             Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
                 .font(.subheadline)
             Spacer()
@@ -1817,9 +1797,8 @@ struct TranscriptsView: View {
         // Skip if this recording already has a queued or processing transcription job.
         guard !transcriptionStarter.hasActiveTranscriptionJob(for: recording, appCoordinator: appCoordinator) else { return }
 
-        // Ask the user whether to clean audio first; the dialog buttons route to TranscriptionStarter.
+        // The shared sheet owns cleanup choice, dismissal and transcription start.
         recordingPendingTranscription = recording
-        showingAudioCleanupPrompt = true
     }
 
     private func setupTranscriptionCompletionCallback() {
@@ -2375,12 +2354,14 @@ struct EditableTranscriptView: View {
         #if os(macOS)
         Button("Save", action: saveAndClose)
             .fontWeight(.semibold)
+            .foregroundStyle(.primary)
             .disabled(!isTranscriptDirty || isSaving)
             .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptSaveButton)
             .accessibilityHint("Saves transcript changes and closes this window.")
         #else
-        Button("Save", action: saveForMobile)
+        SheetConfirmButton(title: "Save", action: saveForMobile)
             .fontWeight(.semibold)
+            .tint(.primary)
             .disabled(isSaving || isReloadingTranscript)
             .accessibilityIdentifier(BisonNotesAccessibilityID.transcriptSaveButton)
         #endif
@@ -2554,18 +2535,9 @@ struct EditableTranscriptView: View {
                     .foregroundColor(.secondary)
             }
 
-            HStack {
-                Button {
-                    copySelectedTranscriptText()
-                } label: {
-                    Label("Copy \(transcriptRepresentation.title)", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.bordered)
-
-                ShareLink(item: selectedRepresentationText) {
-                    Label("Share \(transcriptRepresentation.title)", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(.bordered)
+            ViewThatFits(in: .horizontal) {
+                HStack { transcriptTextActions }
+                VStack(alignment: .leading) { transcriptTextActions }
             }
         } header: {
             Text("Transcript Text")
@@ -2576,6 +2548,35 @@ struct EditableTranscriptView: View {
                 Text("Summaries use the version you save here, so saving Cleaned sends the cleaned text to your summary engine.")
             }
         }
+    }
+
+    @ViewBuilder
+    private var transcriptTextActions: some View {
+        Button {
+            copySelectedTranscriptText()
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(LibraryIconButtonStyle())
+        .foregroundStyle(Color.bisonActionForeground)
+        .accessibilityLabel("Copy \(transcriptRepresentation.title)")
+        .accessibilityIdentifier("bisonnotes.transcript.copy")
+
+        ShareLink(item: selectedRepresentationText) {
+            Label("Share", systemImage: "square.and.arrow.up")
+                .labelStyle(.titleAndIcon)
+                .fixedSize()
+                .padding(.horizontal, 12)
+                .frame(minHeight: 44)
+        }
+        .buttonStyle(LibraryIconButtonStyle())
+        .foregroundStyle(Color.bisonActionForeground)
+        .accessibilityLabel("Share \(transcriptRepresentation.title)")
+        .accessibilityIdentifier("bisonnotes.transcript.share")
     }
 
     private var recordingTitleEditor: some View {
@@ -2608,7 +2609,7 @@ struct EditableTranscriptView: View {
                             Text("Generating Summary…")
                         } else if hasSummary {
                             Image(systemName: "doc.text.fill")
-                                .foregroundColor(.blue)
+                                .foregroundColor(.bisonActionForeground)
                             Text("View Summary")
                         } else {
                             Image(systemName: "doc.text.magnifyingglass")
@@ -3450,7 +3451,7 @@ struct TranscriptSegmentView: View {
     }
 
     private static let speakerColors: [Color] = [
-        .blue, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
+        .bisonActionForeground, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
     ]
 
     private var speakerColor: Color {
@@ -3572,7 +3573,7 @@ struct SpeakerEditingView: View {
     @State private var editingNames: [String: String] = [:]
 
     private static let speakerColors: [Color] = [
-        .blue, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
+        .bisonActionForeground, .purple, .orange, .teal, .pink, .indigo, .mint, .cyan, .brown, .green
     ]
 
     init(speakerIds: [String], speakerMappings: Binding<[String: String]>) {
@@ -3634,6 +3635,7 @@ struct SpeakerEditingView: View {
                         applyNames()
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(.bisonPrimaryAction)
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("speakerEditorApplyButton")
                 }

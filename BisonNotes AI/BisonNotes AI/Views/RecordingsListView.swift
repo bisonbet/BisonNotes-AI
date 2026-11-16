@@ -19,6 +19,7 @@ class DeletionData: ObservableObject {
 struct RecordingsListView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.nativeMacPresentationContext) private var presentationContext
     @EnvironmentObject var recorderVM: AudioRecorderViewModel
     @EnvironmentObject var appCoordinator: AppDataCoordinator
@@ -87,7 +88,6 @@ struct RecordingsListView: View {
     // Transcript-from-recording flow
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
-    @State private var showingAudioCleanupPrompt = false
     @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
@@ -156,11 +156,20 @@ struct RecordingsListView: View {
             recordingsContent
         }
         .background(Color(.systemGroupedBackground))
-        .searchable(text: $searchText, prompt: "Search recordings...")
+        .tint(.bisonActionForeground)
         #if os(iOS)
+        // Keep the compact system search at ordinary sizes. With Larger Text,
+        // put it in the navigation area so it cannot cover enlarged metadata.
+        .searchable(
+            text: $searchText,
+            placement: dynamicTypeSize.isAccessibilitySize ? .navigationBarDrawer(displayMode: .always) : .automatic,
+            prompt: "Search recordings..."
+        )
         // Inside the NavigationStack, so its bar (vertical on iPhone Duo)
         // shows these items. The macOS window toolbar below sits outside.
         .toolbar { iOSLibraryToolbar }
+        #else
+        .searchable(text: $searchText, prompt: "Search recordings...")
         #endif
         .sheet(isPresented: $showDateFilter) {
             dateFilterSheet
@@ -342,28 +351,9 @@ struct RecordingsListView: View {
                     .nativeMacPresentationContext(.modalSheet)
             }
         }
-        .confirmationDialog(
-            "Clean Audio Before Transcribing?",
-            isPresented: $showingAudioCleanupPrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Clean & Transcribe") {
-                if let recording = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: recording, cleanFirst: true, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Transcribe As-Is") {
-                if let recording = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: recording, cleanFirst: false, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                recordingPendingTranscription = nil
-            }
-        } message: {
-            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        .sheet(item: $recordingPendingTranscription) { recording in
+            AudioTranscriptionOptionsSheet(recording: recording)
+                .environmentObject(appCoordinator)
         }
     }
 
@@ -472,6 +462,7 @@ struct RecordingsListView: View {
                     Label("Combine", systemImage: "link")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
                 .controlSize(.small)
             }
 
@@ -480,6 +471,7 @@ struct RecordingsListView: View {
                     Label("Archive", systemImage: "archivebox")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
                 .controlSize(.small)
             }
 
@@ -488,6 +480,7 @@ struct RecordingsListView: View {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
                 .controlSize(.small)
             }
 
@@ -505,22 +498,22 @@ struct RecordingsListView: View {
     private var recordingActionMenuItems: some View {
         if recordings.count >= 2 {
             Button(action: { beginSelection(.combine) }) {
-                Label("Combine Recordings", systemImage: "link")
+                Label("Combine", systemImage: "link")
             }
         }
 
         Button(action: { beginSelection(.archive) }) {
-            Label("Archive Selected", systemImage: "archivebox")
+            Label("Archive", systemImage: "archivebox")
         }
 
         Button(action: { beginSelection(.export) }) {
-            Label("Export Selected", systemImage: "square.and.arrow.up")
+            Label("Export", systemImage: "square.and.arrow.up")
         }
 
         Button(action: {
             showingArchiveOlderThan = true
         }) {
-            Label("Archive Older Than...", systemImage: "calendar.badge.clock")
+            Label("Archive by Date", systemImage: "calendar.badge.clock")
         }
     }
 
@@ -727,7 +720,7 @@ struct RecordingsListView: View {
     private var activeDateFilterBanner: some View {
         HStack {
             Image(systemName: "calendar")
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
             Text("\(dateFilterStart, format: .dateTime.month().day()) - \(dateFilterEnd, format: .dateTime.month().day())")
                 .font(.subheadline)
                 .fontWeight(.medium)
@@ -851,13 +844,15 @@ struct RecordingsListView: View {
                                 .font(.headline)
                                 .foregroundColor(.primary)
                                 .multilineTextAlignment(.leading)
-                                .lineLimit(2)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
 
                             ViewThatFits(in: .horizontal) {
-                                HStack(spacing: 8) {
-                                    recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
-                                    recordingMetaLabel(systemImage: "timer", text: recording.durationString)
-                                    recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                if !dynamicTypeSize.isAccessibilitySize {
+                                    HStack(spacing: 8) {
+                                        recordingMetaLabel(systemImage: "calendar", text: recording.dateString)
+                                        recordingMetaLabel(systemImage: "timer", text: recording.durationString)
+                                        recordingMetaLabel(systemImage: "externaldrive", text: recording.fileSizeString)
+                                    }
                                 }
 
                                 VStack(alignment: .leading, spacing: 4) {
@@ -872,10 +867,10 @@ struct RecordingsListView: View {
                             if recording.isCloudSyncDisabled {
                                 Label("Keep on This Device", systemImage: "iphone")
                                     .font(.caption.weight(.medium))
-                                    .foregroundColor(.indigo)
+                                    .foregroundColor(.primary)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color.indigo.opacity(0.12), in: Capsule())
+                                    .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
                             }
 
                         }
@@ -962,11 +957,11 @@ struct RecordingsListView: View {
             showLocationDetails(locationData)
         }, label: {
             Label("View Location", systemImage: "location.fill")
-                .font(.caption)
-                .fontWeight(.medium)
+                .font(.subheadline.weight(.semibold))
+                .frame(minHeight: 44, alignment: .leading)
         })
         .buttonStyle(.plain)
-        .foregroundColor(.accentColor)
+        .foregroundColor(.bisonActionForeground)
         .accessibilityLabel("View Location for \(recordingName)")
     }
 
@@ -991,9 +986,9 @@ struct RecordingsListView: View {
 
     private func recordingMetaLabel(systemImage: String, text: String) -> some View {
         Label(text, systemImage: systemImage)
-            .font(.caption)
+            .font(.subheadline)
             .foregroundColor(.primary)
-            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func recordingRowContext(
@@ -1020,15 +1015,15 @@ struct RecordingsListView: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: "archivebox.fill")
-                        .font(.caption)
+                        .font(.subheadline)
                     Text(recording.archivedAtString.map { "Archived \($0)" } ?? "Archived")
-                        .font(.caption)
+                        .font(.subheadline)
                         .fontWeight(.medium)
                     Text(recording.hasLocalAudio ? "Local audio present" : "Audio offloaded")
-                        .font(.caption)
+                        .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                .foregroundColor(.orange)
+                .foregroundColor(.primary)
 
                 if let location = recording.recordingId.flatMap({ archiveLocationsByRecordingID[$0] }) {
                     Label("\(location.providerDisplayName) / \(location.displayName)", systemImage: "externaldrive.badge.checkmark")
@@ -1041,7 +1036,7 @@ struct RecordingsListView: View {
             FileAvailabilityIndicator(
                 status: relationships.availabilityStatus,
                 showLabel: true,
-                size: .small
+                size: .large
             )
         }
     }
@@ -1052,7 +1047,7 @@ struct RecordingsListView: View {
             recordingIconButton(
                 "Export Audio",
                 systemImage: "square.and.arrow.up",
-                tint: .accentColor,
+                tint: .primary,
                 recordingName: recording.name
             ) {
                 prepareExport(for: recording)
@@ -1065,15 +1060,15 @@ struct RecordingsListView: View {
             }) {
                 if restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId {
                     ProgressView()
-                        .frame(width: 34, height: 34)
+                        .frame(minWidth: 44, minHeight: 44)
                 } else {
                     Image(systemName: "arrow.down.circle.fill")
                         .font(.headline)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .foregroundStyle(Color.bisonActionForeground)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LibraryIconButtonStyle())
             .disabled(restoringArchiveRecordingId != nil && restoringArchiveRecordingId == recording.recordingId)
             .accessibilityLabel("Restore Audio for \(recording.name)")
         } else if recording.isArchived && recording.hasLocalAudio {
@@ -1093,7 +1088,7 @@ struct RecordingsListView: View {
             } label: {
                 playRecordingIcon
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LibraryIconButtonStyle())
             .accessibilityLabel("Play Audio for \(recording.name)")
             .accessibilityIdentifier("bisonnotes.recording.action.play-audio")
         }
@@ -1115,12 +1110,8 @@ struct RecordingsListView: View {
     private var playRecordingIcon: some View {
         Image(systemName: "play.fill")
             .font(.headline)
-            .foregroundColor(.accentColor)
-            .frame(width: 44, height: 44)
-            .background(
-                Color.accentColor.opacity(0.12),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
+            .foregroundColor(.primary)
+            .frame(minWidth: 44, minHeight: 44)
     }
 
     @ViewBuilder
@@ -1129,7 +1120,7 @@ struct RecordingsListView: View {
             recordingIconButton(
                 recording.isCloudSyncDisabled ? "Allow iCloud Sync" : "Keep on This Device",
                 systemImage: recording.isCloudSyncDisabled ? "iphone" : "icloud",
-                tint: recording.isCloudSyncDisabled ? .indigo : .blue,
+                tint: recording.isCloudSyncDisabled ? .bisonActionForeground : .primary,
                 recordingId: recording.recordingId,
                 recordingName: recording.name
             ) {
@@ -1149,10 +1140,9 @@ struct RecordingsListView: View {
             Image(systemName: systemImage)
                 .font(.headline)
                 .foregroundColor(tint)
-                .frame(width: 44, height: 44)
-                .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(minWidth: 44, minHeight: 44)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LibraryIconButtonStyle())
         .accessibilityLabel(recordingName.map { "\(label) for \($0)" } ?? label)
         .accessibilityIdentifier(identifier(forRecordingIconLabel: label, recordingId: recordingId))
     }
@@ -1160,8 +1150,8 @@ struct RecordingsListView: View {
     /// Labeled "Generate Transcript" action shown beneath each recording row.
     /// Hidden for archived recordings with no local audio. Hidden once a transcript exists —
     /// users edit the transcript from the Transcripts tab.
-    /// - In progress → orange pill with spinner + phase label.
-    /// - Otherwise → accent "Generate Transcript" pill that opens the cleanup confirmation dialog.
+    /// - In progress → neutral status surface with spinner + phase label.
+    /// - Otherwise → filled primary action that opens transcription options.
     @ViewBuilder
     private func transcriptActionButton(for recording: AudioRecordingFile) -> some View {
         if recording.hasLocalAudio,
@@ -1186,31 +1176,21 @@ struct RecordingsListView: View {
             Button(action: {
                 if !isProcessing {
                     recordingPendingTranscription = entry
-                    showingAudioCleanupPrompt = true
                 }
             }) {
                 HStack(spacing: 8) {
                     if isProcessing {
                         ProgressView()
                             .scaleEffect(0.8)
-                            .tint(.orange)
+                            .tint(.primary)
                         Text(processingLabel)
                     } else {
                         Image(systemName: "text.bubble")
                         Text("Generate Transcript")
                     }
                 }
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    (isProcessing ? Color.orange : Color.accentColor).opacity(0.12),
-                    in: Capsule()
-                )
-                .foregroundColor(isProcessing ? .orange : .accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LibraryPrimaryActionButtonStyle())
             .disabled(isProcessing)
             .accessibilityLabel(accessibilityLabel)
             .accessibilityValue(isProcessing ? "In progress" : "Ready")
@@ -1634,7 +1614,7 @@ struct RecordingsListView: View {
         VStack(spacing: 6) {
             HStack {
                 Image(systemName: "info.circle")
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
                 Text(selectionAction.instruction)
                     .font(.subheadline)
                     .fontWeight(.medium)
@@ -1909,7 +1889,7 @@ struct RecordingsListView: View {
                         .padding()
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill((archiveOlderThanMatchCount ?? 0) > 0 ? Color.accentColor : Color.gray)
+                                .fill((archiveOlderThanMatchCount ?? 0) > 0 ? Color.bisonPrimaryAction : Color.gray)
                         )
                 }
                 .disabled(archiveOlderThanMatchCount == nil || archiveOlderThanMatchCount == 0)

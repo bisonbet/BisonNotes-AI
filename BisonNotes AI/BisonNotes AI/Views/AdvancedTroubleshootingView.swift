@@ -201,7 +201,11 @@ struct AdvancedTroubleshootingView: View {
     }
 
     private var localDataReportSection: some View {
-        troubleshootingCard(title: "Local Data Report", systemImage: "doc.text.magnifyingglass", tint: .blue) {
+        troubleshootingCard(
+            title: "Local Data Report",
+            systemImage: "doc.text.magnifyingglass",
+            tint: .bisonActionForeground
+        ) {
             Text("""
             Read-only inspection of local Core Data rows, relationships, identities, and expected local audio.
             No rows, files, or cloud records are changed.
@@ -351,6 +355,7 @@ struct AdvancedTroubleshootingView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.borderedProminent)
+        .tint(.bisonPrimaryAction)
     }
 
     private var operationProgress: some View {

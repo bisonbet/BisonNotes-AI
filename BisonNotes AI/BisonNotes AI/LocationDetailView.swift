@@ -36,7 +36,7 @@ struct LocationDetailView: View {
                 // Map view
                 Map(position: .constant(.region(region))) {
                     Marker("Recording Location", coordinate: CLLocationCoordinate2D(latitude: locationData.latitude, longitude: locationData.longitude))
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color.bisonActionForeground)
                 }
                 .frame(height: 300)
 
@@ -129,7 +129,7 @@ struct LocationDetailView: View {
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding()
-                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.bisonPrimaryAction, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             .accessibilityLabel("Open in Maps")
 

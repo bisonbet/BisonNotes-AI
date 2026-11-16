@@ -311,6 +311,7 @@ struct AISettingsView: View {
             let currentEngine = UserDefaults.standard.string(forKey: "SelectedAIEngine") ??
                 AIEngineType.mlxSwift.rawValue
             viewModel.regenerationManager.setEngine(currentEngine)
+            viewModel.regenerationManager.refreshAvailability()
             self.refreshEngineStatuses()
         }
         .alert("Error", isPresented: $errorHandler.showingErrorAlert) {
@@ -508,6 +509,7 @@ struct AISettingsView: View {
                     refreshEngineStatuses()
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
                 .accessibilityIdentifier("bisonnotes.ai-settings.use-engine")
                 .accessibilityHint("Makes \(engine.displayName) the engine used for summaries.")
             }
@@ -673,7 +675,7 @@ struct AISettingsView: View {
     }
 
     private var modernEngineLibrarySection: some View {
-        AISettingsCard(title: "Engine Library", systemImage: "square.grid.2x2", tint: .blue) {
+        AISettingsCard(title: "Engine Library", systemImage: "square.grid.2x2", tint: .bisonActionForeground) {
             VStack(alignment: .leading, spacing: 12) {
                 modernEngineGroupHeader("On-Device", systemImage: "iphone")
                 ForEach(engines(in: .onDevice), id: \.self) { engine in

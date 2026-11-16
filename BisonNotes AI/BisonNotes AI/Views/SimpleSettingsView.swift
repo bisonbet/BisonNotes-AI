@@ -52,7 +52,7 @@ enum ProcessingOption: String, CaseIterable {
         case .onDeviceAI:
             return .green
         case .chooseLater:
-            return .blue
+            return .bisonActionForeground
         }
     }
 }
@@ -215,7 +215,7 @@ struct SimpleSettingsView: View {
                 .frame(width: 48, height: 48)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(Color.accentColor.gradient)
+                        .fill(Color.bisonPrimaryAction.gradient)
                 )
                 .accessibilityHidden(true)
 
@@ -320,7 +320,7 @@ struct SimpleSettingsView: View {
                 InlineNotice(
                     title: "Device Compatibility",
                     systemImage: "info.circle.fill",
-                    tint: .blue
+                    tint: .bisonActionForeground
                 ) {
                     Text("On-Device AI requires 4GB+ RAM. Your device has \(String(format: "%.1f", DeviceCapabilities.totalRAMInGB))GB RAM.")
                         .font(.caption2)
@@ -339,7 +339,7 @@ struct SimpleSettingsView: View {
                 tint: .green
             )
 
-            DetailGroup(title: "Setup Process", tint: .blue) {
+            DetailGroup(title: "Setup Process", tint: .bisonActionForeground) {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Step 1: Download transcription model (150-520MB)")
                     FeatureBullet(text: "Step 2: Download AI summary model (2-3GB)")
@@ -375,7 +375,7 @@ struct SimpleSettingsView: View {
                 }
             }
 
-            DetailGroup(title: "Setup Process", tint: .blue) {
+            DetailGroup(title: "Setup Process", tint: .bisonActionForeground) {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Step 1: Create free Mistral account (~1 min)")
                     FeatureBullet(text: "Step 2: Generate an API key (~30 sec)")
@@ -391,10 +391,10 @@ struct SimpleSettingsView: View {
                 title: "Advanced & Other Options",
                 subtitle: "Configure providers manually from app settings. Existing provider configuration is preserved.",
                 systemImage: "slider.horizontal.3",
-                tint: .blue
+                tint: .bisonActionForeground
             )
 
-            DetailGroup(title: "Available Options", tint: .blue) {
+            DetailGroup(title: "Available Options", tint: .bisonActionForeground) {
                 VStack(alignment: .leading, spacing: 8) {
                     FeatureBullet(text: "Compatible APIs - Use LiteLLM, vLLM, or similar proxies")
                     FeatureBullet(text: "Google AI Studio - Advanced Gemini AI processing")
@@ -890,7 +890,7 @@ struct FeatureBullet: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.caption)
-                .foregroundColor(.blue)
+                .foregroundColor(.bisonActionForeground)
                 .padding(.top, 2)
                 .accessibilityHidden(true)
 

@@ -194,12 +194,17 @@ final class TranscriptionStarter: ObservableObject {
                 let documentsCleanedURL = documentsURL.appendingPathComponent(cleanedFilename)
                 try? FileManager.default.removeItem(at: documentsCleanedURL)
                 try FileManager.default.copyItem(at: tempCleanedURL, to: documentsCleanedURL)
-                AppLog.shared.transcription("Copied cleaned audio to Documents: \(cleanedFilename)", level: .debug)
+                AppLog.shared.transcription(
+                    "Copied cleaned audio to Documents: \(LogPrivacy.fileReference(cleanedFilename))",
+                    level: .debug
+                )
                 await AudioCleanupService.shared.removeTempFile(at: tempCleanedURL)
 
                 performEnhancedTranscription(for: recording, sourceAudioURL: documentsCleanedURL, appCoordinator: appCoordinator)
             } catch {
-                AppLog.shared.transcription("Audio cleanup failed, falling back to original: \(error)", level: .error)
+                AppLog.shared.logError(
+                    error, "Audio cleanup failed, falling back to original", category: .transcription
+                )
                 performEnhancedTranscription(for: recording, sourceAudioURL: nil, appCoordinator: appCoordinator)
             }
         }
@@ -233,7 +238,7 @@ final class TranscriptionStarter: ObservableObject {
                         : "Transcription job was already active"
                 )
             } catch {
-                AppLog.shared.transcription("Failed to start transcription job: \(error)", level: .error)
+                AppLog.shared.logError(error, "Failed to start transcription job", category: .transcription)
 
                 if isPersistenceBoundaryFailure(error) {
                     // A direct transcription would bypass the failed durable
@@ -348,7 +353,7 @@ final class TranscriptionStarter: ObservableObject {
                         AppLog.shared.transcription("Transcription failed or returned empty result", level: .error)
                     }
                 } catch {
-                    AppLog.shared.transcription("Fallback transcription also failed: \(error)", level: .error)
+                    AppLog.shared.logError(error, "Fallback transcription also failed", category: .transcription)
                 }
 
                 // The source is retained on every failure. The successful

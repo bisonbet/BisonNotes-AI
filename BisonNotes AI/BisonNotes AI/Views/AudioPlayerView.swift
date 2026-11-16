@@ -34,7 +34,6 @@ struct AudioPlayerView: View {
     // Transcript-from-recording flow
     @ObservedObject private var transcriptionStarter = TranscriptionStarter.shared
     @ObservedObject private var backgroundProcessingManager = BackgroundProcessingManager.shared
-    @State private var showingAudioCleanupPrompt = false
     @State private var recordingPendingTranscription: RecordingEntry?
     @State private var selectedRecordingForTranscript: RecordingEntry?
     @State private var transcriptStateRefresh = false
@@ -310,28 +309,9 @@ struct AudioPlayerView: View {
                     .nativeMacPresentationContext(.modalSheet)
             }
         }
-        .confirmationDialog(
-            "Clean Audio Before Transcribing?",
-            isPresented: $showingAudioCleanupPrompt,
-            titleVisibility: .visible
-        ) {
-            Button("Clean & Transcribe") {
-                if let pending = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: pending, cleanFirst: true, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Transcribe As-Is") {
-                if let pending = recordingPendingTranscription {
-                    recordingPendingTranscription = nil
-                    transcriptionStarter.startTranscription(for: pending, cleanFirst: false, appCoordinator: appCoordinator)
-                }
-            }
-            Button("Cancel", role: .cancel) {
-                recordingPendingTranscription = nil
-            }
-        } message: {
-            Text("Cleaning reduces static and normalizes volume, which can improve transcription accuracy. The original audio file is not changed.")
+        .sheet(item: $recordingPendingTranscription) { recording in
+            AudioTranscriptionOptionsSheet(recording: recording)
+                .environmentObject(appCoordinator)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TranscriptionCompleted"))) { _ in
             transcriptStateRefresh.toggle()
@@ -426,9 +406,12 @@ struct AudioPlayerView: View {
         HStack(alignment: .center, spacing: 12) {
             Image(systemName: isCloudSyncDisabled ? "iphone" : "icloud")
                 .font(.headline)
-                .foregroundColor(isCloudSyncDisabled ? .indigo : .blue)
+                .foregroundColor(isCloudSyncDisabled ? .indigo : .bisonActionForeground)
                 .frame(width: 34, height: 34)
-                .background((isCloudSyncDisabled ? Color.indigo : Color.blue).opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(
+                    (isCloudSyncDisabled ? Color.indigo : Color.bisonActionForeground).opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Keep on This Device")
@@ -472,31 +455,21 @@ struct AudioPlayerView: View {
             Button(action: {
                 if !isProcessing, audioLoadError == nil {
                     recordingPendingTranscription = entry
-                    showingAudioCleanupPrompt = true
                 }
             }) {
                 HStack(spacing: 8) {
                     if isProcessing {
                         ProgressView()
                             .scaleEffect(0.8)
-                            .tint(.white)
+                            .tint(.primary)
                         Text("Transcribing…")
                     } else {
                         Image(systemName: "text.bubble")
                         Text("Generate Transcript")
                     }
                 }
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    (isProcessing ? Color.orange : Color.accentColor).opacity(0.12),
-                    in: Capsule()
-                )
-                .foregroundColor(isProcessing ? .orange : .accentColor)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(LibraryPrimaryActionButtonStyle())
             .disabled(isProcessing || audioLoadError != nil)
             .accessibilityLabel(
                 isProcessing
@@ -505,6 +478,7 @@ struct AudioPlayerView: View {
             )
             .accessibilityValue(isProcessing ? "In progress" : "Ready")
             .accessibilityHint("Opens options before generating a transcript from this audio.")
+            .accessibilityIdentifier(BisonNotesAccessibilityID.audioPlayerTranscript)
             .id("transcript-action-\(recordingId)-\(isProcessing)-\(transcriptStateRefresh)")
         }
     }
@@ -759,6 +733,7 @@ struct RecordingTitleEditorView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
                 .controlSize(.regular)
                 .accessibilityLabel(isSaving ? "Saving Recording Title" : "Save Recording Title")
                 .accessibilityHint("Saves the edited recording title.")

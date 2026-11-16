@@ -163,9 +163,9 @@ struct PreferencesView: View {
             HStack(spacing: 10) {
                 Image(systemName: "clock")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
                     .frame(width: 30, height: 30)
-                    .background(Color.blue.opacity(0.14))
+                    .background(Color.bisonActionForeground.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 9))
 
                 Text("Time Format")
@@ -223,9 +223,9 @@ struct PreferencesView: View {
             HStack(spacing: 14) {
                 Image(systemName: format == .twelveHour ? "clock" : "clock.badge")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.bisonActionForeground)
                     .frame(width: 38, height: 38)
-                    .background(Color.blue.opacity(0.14))
+                    .background(Color.bisonActionForeground.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 11))
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -239,7 +239,7 @@ struct PreferencesView: View {
 
                     Text("Example: \(userPreferences.formatDate(Date(), dateStyle: .medium, includeTime: true))")
                         .font(.caption2)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.bisonActionForeground)
                         .opacity(userPreferences.timeFormat == format ? 1.0 : 0.6)
                 }
 
@@ -247,10 +247,13 @@ struct PreferencesView: View {
 
                 Image(systemName: userPreferences.timeFormat == format ? "checkmark.circle.fill" : "circle")
                     .font(.title3)
-                    .foregroundColor(userPreferences.timeFormat == format ? .blue : .secondary)
+                    .foregroundColor(userPreferences.timeFormat == format ? .bisonActionForeground : .secondary)
             }
             .padding(14)
-            .background(userPreferences.timeFormat == format ? Color.blue.opacity(0.12) : Color(.tertiarySystemGroupedBackground))
+            .background(
+                userPreferences.timeFormat == format
+                    ? Color.bisonActionForeground.opacity(0.12) : Color(.tertiarySystemGroupedBackground)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 15))
         }
         .buttonStyle(.plain)

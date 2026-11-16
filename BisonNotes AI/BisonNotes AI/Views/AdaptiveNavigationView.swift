@@ -94,7 +94,7 @@ struct AdaptiveNavigationView: View {
                         .accessibilityIdentifier("bisonnotes.sidebar.\(item.rawValue.lowercased())")
                 }
             }
-            .tint(Color.bisonPrimaryAction)
+            .tint(Color.bisonActionForeground)
             .navigationTitle("BisonNotes AI")
             .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 360)
         } detail: {

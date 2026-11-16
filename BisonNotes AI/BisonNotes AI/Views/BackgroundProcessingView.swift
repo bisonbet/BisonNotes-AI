@@ -126,7 +126,7 @@ struct BackgroundProcessingView: View {
                     title: "Active",
                     value: "\(processingManager.activeJobs.filter { $0.status == .processing }.count)",
                     icon: "gear",
-                    color: .blue
+                    color: .bisonActionForeground
                 )
 
                 StatCard(
@@ -271,7 +271,7 @@ struct BackgroundProcessingView: View {
         case .queued:
             return .orange
         case .processing:
-            return .blue
+            return .bisonActionForeground
         case .completed:
             return .green
         case .failed:
@@ -625,7 +625,7 @@ struct StatusBadge: View {
         case .queued:
             return .orange
         case .processing:
-            return .blue
+            return .bisonActionForeground
         case .completed:
             return .green
         case .failed:

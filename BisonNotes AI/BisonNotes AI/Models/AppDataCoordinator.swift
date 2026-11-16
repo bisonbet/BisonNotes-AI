@@ -202,6 +202,37 @@ class AppDataCoordinator: ObservableObject {
         return coreDataManager.getAbsoluteURL(for: recording)
     }
 
+    /// Formatted size on disk of this device's recording audio, imported
+    /// transcripts excluded.
+    ///
+    /// Call it from `.task`, never from a view `body`: it reads every recording
+    /// row. Only the rows are read here — transcripts and summaries are not
+    /// needed to size audio — and the files are sized off the main actor.
+    func recordingsStorageUsageText() async -> String {
+        let paths: [String]
+        do {
+            paths = try coreDataManager.getAllRecordings()
+                .filter { $0.audioQuality != "imported" }
+                .compactMap { getAbsoluteURL(for: $0)?.path }
+        } catch {
+            AppLog.shared.coreData(
+                "Could not calculate recording storage usage: \(error.localizedDescription)",
+                level: .error
+            )
+            return "Unavailable"
+        }
+
+        let totalSize = await Task.detached(priority: .utility) {
+            paths.reduce(into: Int64(0)) { total, path in
+                if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+                   let size = attributes[.size] as? Int64 {
+                    total += size
+                }
+            }
+        }.value
+        return ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+    }
+
     /// Gets the stored URL for a recording without checking file existence (for archived recordings)
     func getStoredURL(for recording: RecordingEntry) -> URL? {
         return coreDataManager.getStoredURL(for: recording)

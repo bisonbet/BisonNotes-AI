@@ -429,7 +429,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             let count = try context.count(for: fetchRequest)
             return count > 0
         } catch {
-            AppLog.shared.transcription("Error checking for existing recording: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error checking for existing recording", category: .transcription)
             throw TranscriptImportError.databaseError("Failed to check existing recordings: \(error.localizedDescription)")
         }
     }
@@ -549,7 +549,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // We'll use Apple's built-in Archive API (available from Foundation)
         let fileManager = FileManager.default
 
-        AppLog.shared.transcription("Starting DOCX extraction for: \(url.lastPathComponent)")
+        AppLog.shared.transcription("Starting DOCX extraction for: \(LogPrivacy.fileReference(url.lastPathComponent))")
 
         // Read the DOCX file as data
         let docxData = try Data(contentsOf: url)
@@ -603,10 +603,10 @@ class TranscriptImportManager: NSObject, ObservableObject {
             return text
 
         } catch let error as TranscriptImportError {
-            AppLog.shared.transcription("DOCX extraction error: \(error)", level: .error)
+            AppLog.shared.logError(error, "DOCX extraction error", category: .transcription)
             throw error
         } catch {
-            AppLog.shared.transcription("Unexpected DOCX extraction error: \(error.localizedDescription)", level: .error)
+            AppLog.shared.logError(error, "Unexpected DOCX extraction error", category: .transcription)
             throw TranscriptImportError.readFailed("Failed to extract text from DOCX: \(error.localizedDescription)")
         }
     }
@@ -654,7 +654,11 @@ class TranscriptImportManager: NSObject, ObservableObject {
                     let fileNameData = Data(bytes[fileNameStart..<fileNameEnd])
                     if let fileName = String(data: fileNameData, encoding: .utf8) {
                         filesFound += 1
-                        AppLog.shared.transcription("Found ZIP entry: \(fileName) (compression: \(compressionMethod), size: \(compressedSize))", level: .debug)
+                        AppLog.shared.transcription(
+                            "Found ZIP entry: \(LogPrivacy.fileReference(fileName)) (compression: "
+                                + "\(compressionMethod), size: \(compressedSize))",
+                            level: .debug
+                        )
 
                         // Check if this is the document.xml file
                         if fileName == "word/document.xml" {
@@ -1104,7 +1108,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             recordingEntry.duration = duration
 
         } catch {
-            AppLog.shared.transcription("Error getting file metadata: \(error)", level: .error)
+            AppLog.shared.logError(error, "Error getting file metadata", category: .transcription)
             context.delete(recordingEntry)
             if let transcriptError = error as? TranscriptImportError {
                 throw transcriptError
@@ -1122,10 +1126,10 @@ class TranscriptImportManager: NSObject, ObservableObject {
         // Save the context
         do {
             try coreDataManager.saveContext(operation: "imported recording creation")
-            AppLog.shared.transcription("Created Core Data entry for imported transcript: \(name)")
+            AppLog.shared.transcription("Created Core Data entry for imported transcript=\(recordingId)")
         } catch {
             context.delete(recordingEntry)
-            AppLog.shared.transcription("Failed to save Core Data entry: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to save Core Data entry", category: .transcription)
             throw TranscriptImportError.databaseError("Failed to save to database: \(error.localizedDescription)")
         }
 
@@ -1183,7 +1187,7 @@ class TranscriptImportManager: NSObject, ObservableObject {
             recording.transcriptId = previousTranscriptID
             recording.transcriptionStatus = previousTranscriptionStatus
             recording.lastModified = previousLastModified
-            AppLog.shared.transcription("Failed to save transcript entry: \(error)", level: .error)
+            AppLog.shared.logError(error, "Failed to save transcript entry", category: .transcription)
             throw TranscriptImportError.databaseError("Failed to save transcript: \(error.localizedDescription)")
         }
     }

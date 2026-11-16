@@ -107,7 +107,10 @@ struct ArchiveConfirmationView: View {
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding()
-                            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .background(
+                                Color.bisonPrimaryAction,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
                         }
 
                         Button(action: onCancel) {

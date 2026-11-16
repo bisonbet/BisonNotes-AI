@@ -15,7 +15,7 @@ struct MacAdvancedSettingsPane: View {
             title: "Advanced",
             subtitle: "Open background jobs, local troubleshooting, and app information."
         ) {
-            MacSettingsCard(title: "Background Processing", systemImage: "gearshape.2", tint: .blue) {
+            MacSettingsCard(title: "Background Processing", systemImage: "gearshape.2", tint: .bisonActionForeground) {
                 Text(
                     "Monitor transcription and summarization jobs without changing their state when this window closes."
                 )
@@ -29,6 +29,7 @@ struct MacAdvancedSettingsPane: View {
                     Label("Open Background Processing", systemImage: "arrow.up.forward.app")
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.bisonPrimaryAction)
             }
 
             MacSettingsCard(title: "Diagnostics", systemImage: "stethoscope", tint: .orange) {

@@ -12,6 +12,7 @@ enum BisonNotesUITestSupport {
     static let uiTestingArgument = "--ui-testing"
     static let resetDataArgument = "--reset-test-data"
     static let seedSampleRecordingArgument = "--seed-sample-recording"
+    static let seedUntranscribedRecordingArgument = "--seed-untranscribed-recording"
     /// Several recordings with transcripts and summaries across recent days, so
     /// lists show date sections and a "Show N more" page as a real library does.
     static let seedSampleLibraryArgument = "--seed-sample-library"
@@ -103,7 +104,8 @@ enum BisonNotesUITestSupport {
             resetPersistentData(in: appCoordinator.coreDataManager)
         }
 
-        if ProcessInfo.processInfo.arguments.contains(seedSampleRecordingArgument) {
+        if ProcessInfo.processInfo.arguments.contains(seedSampleRecordingArgument)
+            || ProcessInfo.processInfo.arguments.contains(seedUntranscribedRecordingArgument) {
             seedSampleRecordingIfNeeded(appCoordinator: appCoordinator)
         }
 
@@ -165,8 +167,15 @@ enum BisonNotesUITestSupport {
                 date: Date(timeIntervalSince1970: 1_772_000_000),
                 fileSize: fileSize,
                 duration: 2.0,
-                quality: .whisperOptimized
+                quality: .whisperOptimized,
+                locationData: ProcessInfo.processInfo.arguments.contains(seedUntranscribedRecordingArgument)
+                    ? LocationData(
+                        latitude: 37.3349, longitude: -122.0090, timestamp: Date(),
+                        accuracy: 10, address: "Cupertino, CA"
+                    ) : nil
             )
+
+            if ProcessInfo.processInfo.arguments.contains(seedUntranscribedRecordingArgument) { return }
 
             let segments = [
                 TranscriptSegment(
